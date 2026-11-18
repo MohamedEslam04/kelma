@@ -648,6 +648,7 @@ fn item(id: &str, conv: &str, created: i64) -> OutboxItem {
         html: format!("<p>{id}</p>"),
         subject: None,
         reply_to: None,
+        mentions: None,
         kind: OutboxKind::Text,
         payload_path: None,
         created_ms: created,
@@ -913,4 +914,34 @@ fn v2_database_gains_the_saved_table() {
     s.save_message(&saved("c", "1", 1)).unwrap();
     assert_eq!(s.saved_messages().unwrap().len(), 1);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn outbox_keeps_the_mentions_property_and_old_rows_have_none() {
+    let s = Store::open_in_memory().unwrap();
+    let mut with = item("m", "c1", 1);
+    with.mentions = Some(r#"[{"itemid":0}]"#.into());
+    s.enqueue(&with).unwrap();
+    s.enqueue(&item("p", "c1", 2)).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due[0].mentions.as_deref(), Some(r#"[{"itemid":0}]"#));
+    assert_eq!(due[1].mentions, None);
+}
+
+#[test]
+fn delete_conversation_forgets_the_chat_its_messages_and_draft_only() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_conversation(&conv("g", ConvKind::Group, "Group", 5))
+        .unwrap();
+    s.upsert_conversation(&conv("h", ConvKind::Group, "Other", 4))
+        .unwrap();
+    s.upsert_message(&msg("1", "g", 1)).unwrap();
+    s.upsert_message(&msg("2", "h", 2)).unwrap();
+    s.set_draft("g", "half", None).unwrap();
+    s.delete_conversation("g").unwrap();
+    assert!(s.conversation("g").unwrap().is_none());
+    assert!(s.message("1").unwrap().is_none());
+    assert!(s.draft("g").unwrap().is_none());
+    assert!(s.conversation("h").unwrap().is_some());
+    assert!(s.message("2").unwrap().is_some());
 }
