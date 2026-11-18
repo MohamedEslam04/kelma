@@ -1,0 +1,332 @@
+//! Static emoji table: search, `:shortcode:` lookup and skin tones.
+//!
+//! The table in `table.rs` is generated from Unicode data by `gen/gen.py` and
+//! checked in, so nothing here touches the network.
+
+mod table;
+
+/// Emoji picker category, in Unicode `emoji-test.txt` group order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Category {
+    SmileysEmotion,
+    PeopleBody,
+    AnimalsNature,
+    FoodDrink,
+    TravelPlaces,
+    Activities,
+    Objects,
+    Symbols,
+    Flags,
+}
+
+impl Category {
+    pub const ALL: [Category; 9] = [
+        Category::SmileysEmotion,
+        Category::PeopleBody,
+        Category::AnimalsNature,
+        Category::FoodDrink,
+        Category::TravelPlaces,
+        Category::Activities,
+        Category::Objects,
+        Category::Symbols,
+        Category::Flags,
+    ];
+
+    /// Display label, as the picker shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Category::SmileysEmotion => "Smileys & Emotion",
+            Category::PeopleBody => "People & Body",
+            Category::AnimalsNature => "Animals & Nature",
+            Category::FoodDrink => "Food & Drink",
+            Category::TravelPlaces => "Travel & Places",
+            Category::Activities => "Activities",
+            Category::Objects => "Objects",
+            Category::Symbols => "Symbols",
+            Category::Flags => "Flags",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Emoji {
+    /// The emoji itself, fully qualified (includes U+FE0F where required).
+    pub ch: &'static str,
+    /// CLDR short name, e.g. `thumbs up`.
+    pub name: &'static str,
+    /// Lowercase search words: name words plus CLDR keywords.
+    pub keywords: &'static [&'static str],
+    pub category: Category,
+    /// Whether [`with_skin_tone`] can apply a Fitzpatrick modifier.
+    pub skin_tones: bool,
+}
+
+/// Teams' own shortcodes (`:like:`, `:laugh:`, ...), which CLDR names lack.
+const ALIASES: [(&str, &str); 6] = [
+    ("heart", "\u{2764}\u{FE0F}"),
+    ("like", "\u{1F44D}"),
+    ("laugh", "\u{1F606}"),
+    ("surprised", "\u{1F62E}"),
+    ("sad", "\u{1F622}"),
+    ("angry", "\u{1F620}"),
+];
+
+/// Most hits [`autocomplete`] returns.
+const AUTOCOMPLETE_LIMIT: usize = 8;
+
+/// Every emoji, in picker order (category, then Unicode order).
+pub fn all() -> &'static [Emoji] {
+    table::EMOJI
+}
+
+/// Lowercase, with every run of non-alphanumerics collapsed to `_`.
+fn shortcode_of(s: &str) -> String {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+/// Look up `heart`, `like`, `thumbs_up`, `:Thumbs_Up:`, ... Teams aliases win
+/// over CLDR short names (spaces become underscores).
+pub fn by_shortcode(code: &str) -> Option<&'static Emoji> {
+    let code = shortcode_of(code);
+    if code.is_empty() {
+        return None;
+    }
+    if let Some((_, ch)) = ALIASES.iter().find(|(alias, _)| *alias == code) {
+        return all().iter().find(|e| e.ch == *ch);
+    }
+    all().iter().find(|e| shortcode_of(e.name) == code)
+}
+
+/// Case-insensitive search, best matches first: an exact shortcode (or, failing
+/// that, a Teams alias starting with `q`, so `:hea` offers the heart), then
+/// names starting with `q`, then word-prefix matches on name or keywords, then
+/// plain substrings. Ties keep table order. An empty query finds nothing.
+pub fn search(q: &str, limit: usize) -> Vec<&'static Emoji> {
+    let q = q.trim().to_lowercase();
+    if q.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let exact = by_shortcode(&q).or_else(|| {
+        let (_, ch) = ALIASES.iter().find(|(alias, _)| alias.starts_with(&q))?;
+        all().iter().find(|e| e.ch == *ch)
+    });
+    let mut hits: Vec<(u8, &'static Emoji)> = all()
+        .iter()
+        .filter(|e| exact != Some(*e))
+        .filter_map(|e| rank(e, &q).map(|tier| (tier, e)))
+        .collect();
+    hits.sort_by_key(|(tier, _)| *tier); // stable: table order within a tier
+    exact
+        .into_iter()
+        .chain(hits.into_iter().map(|(_, e)| e))
+        .take(limit)
+        .collect()
+}
+
+/// Match tier of `e` for lowercase query `q` (lower is better), if any.
+fn rank(e: &Emoji, q: &str) -> Option<u8> {
+    let name = e.name.to_lowercase();
+    if name.starts_with(q) {
+        return Some(1);
+    }
+    let word_prefix = name
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w.starts_with(q))
+        || name.contains(&format!(" {q}"))
+        || e.keywords.iter().any(|k| k.starts_with(q));
+    if word_prefix {
+        return Some(2);
+    }
+    (name.contains(q) || e.keywords.iter().any(|k| k.contains(q))).then_some(3)
+}
+
+/// Inline `:shortcode` completion. If the text before the cursor ends in a
+/// `:` followed by at least two word characters, and that `:` is not glued to
+/// a preceding alphanumeric (so `12:30` and `a:he` do not trigger), returns
+/// the byte offset of the `:` and the matching emoji.
+pub fn autocomplete(text_before_cursor: &str) -> Option<(usize, Vec<&'static Emoji>)> {
+    let colon = text_before_cursor.rfind(':')?;
+    let typed = &text_before_cursor[colon + 1..];
+    if typed.chars().count() < 2 || !typed.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    if text_before_cursor[..colon]
+        .chars()
+        .next_back()
+        .is_some_and(char::is_alphanumeric)
+    {
+        return None;
+    }
+    let hits = search(&typed.replace('_', " "), AUTOCOMPLETE_LIMIT);
+    (!hits.is_empty()).then_some((colon, hits))
+}
+
+/// `e` with Fitzpatrick tone `tone` (1..=5, light to dark) applied, or its
+/// plain form for tone 0, an out-of-range tone, or an emoji without tones.
+/// The modifier goes right after the base codepoint, replacing a following
+/// U+FE0F, which is how Unicode spells the single-tone variants.
+pub fn with_skin_tone(e: &Emoji, tone: u8) -> String {
+    if !e.skin_tones || !(1..=5).contains(&tone) {
+        return e.ch.to_string();
+    }
+    let modifier = char::from_u32(0x1F3FA + u32::from(tone)).unwrap_or('\u{1F3FB}');
+    let mut chars = e.ch.chars().peekable();
+    let mut out = String::new();
+    out.extend(chars.next());
+    out.push(modifier);
+    if chars.peek() == Some(&'\u{FE0F}') {
+        chars.next();
+    }
+    out.extend(chars);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(name: &str) -> &'static Emoji {
+        all().iter().find(|e| e.name == name).unwrap()
+    }
+
+    #[test]
+    fn table_is_big_and_every_category_is_populated() {
+        assert!(all().len() > 1500, "only {} emoji", all().len());
+        for c in Category::ALL {
+            assert!(all().iter().any(|e| e.category == c), "{c:?} is empty");
+            assert!(!c.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn table_has_no_skin_tone_variants_and_every_entry_has_keywords() {
+        for e in all() {
+            assert!(!e.name.contains("skin tone"), "{}", e.name);
+            assert!(!e.keywords.is_empty(), "{}", e.name);
+        }
+    }
+
+    #[test]
+    fn search_heart_puts_red_heart_first() {
+        let r = search("heart", 10);
+        assert_eq!(r[0].ch, "\u{2764}\u{FE0F}");
+        assert!(r.len() > 1 && r.len() <= 10);
+    }
+
+    #[test]
+    fn search_is_case_insensitive_and_empty_query_finds_nothing() {
+        assert_eq!(search("HEART", 1)[0].ch, "\u{2764}\u{FE0F}");
+        assert!(search("", 10).is_empty());
+        assert!(search("  ", 10).is_empty());
+        assert!(search("heart", 0).is_empty());
+    }
+
+    #[test]
+    fn search_ranks_prefix_before_substring() {
+        // "ring" is a word-prefix of "ring" / "ringed planet" but only a
+        // substring inside "earring", "boring", ...
+        let r = search("ring", 500);
+        let is_prefix = |e: &Emoji| {
+            e.name
+                .to_lowercase()
+                .split(' ')
+                .any(|w| w.starts_with("ring"))
+                || e.keywords.iter().any(|k| k.starts_with("ring"))
+        };
+        let first_sub = r
+            .iter()
+            .position(|e| !is_prefix(e))
+            .expect("a substring hit");
+        assert!(first_sub > 0);
+        assert!(r[first_sub..].iter().all(|e| !is_prefix(e)));
+    }
+
+    #[test]
+    fn search_matches_keywords() {
+        let r = search("yes", 20);
+        assert!(r.iter().any(|e| e.name == "thumbs up"));
+    }
+
+    #[test]
+    fn search_honours_limit() {
+        assert_eq!(search("face", 3).len(), 3);
+    }
+
+    #[test]
+    fn shortcodes_teams_aliases() {
+        assert_eq!(by_shortcode("like").unwrap().ch, "\u{1F44D}");
+        assert_eq!(by_shortcode("heart").unwrap().ch, "\u{2764}\u{FE0F}");
+        assert_eq!(by_shortcode("laugh").unwrap().ch, "\u{1F606}");
+        assert_eq!(by_shortcode("surprised").unwrap().ch, "\u{1F62E}");
+        assert_eq!(by_shortcode("sad").unwrap().ch, "\u{1F622}");
+        assert_eq!(by_shortcode("angry").unwrap().ch, "\u{1F620}");
+    }
+
+    #[test]
+    fn shortcodes_cldr_names() {
+        assert_eq!(by_shortcode("thumbs_up").unwrap().ch, "\u{1F44D}");
+        assert_eq!(by_shortcode(":Thumbs_Up:").unwrap().ch, "\u{1F44D}");
+        assert_eq!(by_shortcode("red_heart").unwrap().ch, "\u{2764}\u{FE0F}");
+        assert!(by_shortcode("no_such_emoji").is_none());
+        assert!(by_shortcode("").is_none());
+    }
+
+    #[test]
+    fn autocomplete_triggers_after_colon_and_two_chars() {
+        let (start, hits) = autocomplete("hi :hea").unwrap();
+        assert_eq!(start, 3);
+        assert!(hits.iter().any(|e| e.ch == "\u{2764}\u{FE0F}"));
+        assert!(hits.len() <= 8);
+        assert_eq!(autocomplete(":thumbs_up").unwrap().0, 0);
+    }
+
+    #[test]
+    fn autocomplete_does_not_trigger_when_it_should_not() {
+        assert!(autocomplete("a:he").is_none(), "preceded by alphanumeric");
+        assert!(autocomplete("12:30").is_none());
+        assert!(autocomplete(":h").is_none(), "one letter");
+        assert!(autocomplete("hi :").is_none());
+        assert!(
+            autocomplete("hi :hea ").is_none(),
+            "space ends the shortcode"
+        );
+        assert!(autocomplete(":qzqzqz").is_none(), "no matches");
+    }
+
+    #[test]
+    fn autocomplete_start_is_a_byte_offset() {
+        let (start, _) = autocomplete("مرحبا :hea").unwrap();
+        assert_eq!(start, "مرحبا ".len());
+    }
+
+    #[test]
+    fn skin_tone_applies_only_to_capable_emoji() {
+        let thumbs = by_shortcode("thumbs_up").unwrap();
+        assert!(thumbs.skin_tones);
+        assert_eq!(with_skin_tone(thumbs, 0), "\u{1F44D}");
+        assert_eq!(with_skin_tone(thumbs, 1), "\u{1F44D}\u{1F3FB}");
+        assert_eq!(with_skin_tone(thumbs, 5), "\u{1F44D}\u{1F3FF}");
+        assert_eq!(with_skin_tone(thumbs, 6), "\u{1F44D}");
+        let heart = by_shortcode("heart").unwrap();
+        assert!(!heart.skin_tones);
+        assert_eq!(with_skin_tone(heart, 3), heart.ch);
+    }
+
+    #[test]
+    fn skin_tone_drops_variation_selector_and_keeps_zwj_tail() {
+        // U+261D U+FE0F -> U+261D U+1F3FD
+        assert_eq!(
+            with_skin_tone(named("index pointing up"), 3),
+            "\u{261D}\u{1F3FD}"
+        );
+        // man health worker: tone goes right after the base person.
+        assert_eq!(
+            with_skin_tone(named("man health worker"), 2),
+            "\u{1F468}\u{1F3FC}\u{200D}\u{2695}\u{FE0F}"
+        );
+    }
+}

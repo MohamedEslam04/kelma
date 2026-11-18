@@ -9,7 +9,7 @@ use crate::{Error, Result};
 #[cfg(test)]
 pub(crate) const MIGRATIONS_LEN: usize = MIGRATIONS.len();
 
-const MIGRATIONS: &[&str] = &[
+pub(crate) const MIGRATIONS: &[&str] = &[
     // v1: initial schema.
     //
     // No foreign key from messages to conversations on purpose: this is a
@@ -63,6 +63,34 @@ const MIGRATIONS: &[&str] = &[
          key   TEXT PRIMARY KEY NOT NULL,
          value TEXT NOT NULL
      );",
+    // v2: unsent drafts and the persistent send queue.
+    //
+    // Drafts get their own table rather than `draft:<conv>` kv entries: kv has
+    // no timestamp to sort the Drafts view by, and listing by key prefix would
+    // need LIKE escaping plus JSON in a crate that has no JSON dependency.
+    "CREATE TABLE drafts (
+         conversation_id TEXT PRIMARY KEY NOT NULL,
+         text            TEXT NOT NULL,
+         reply_to        TEXT,
+         updated_ms      INTEGER NOT NULL
+     );
+     CREATE INDEX idx_drafts_updated ON drafts(updated_ms);
+
+     CREATE TABLE outbox (
+         client_message_id TEXT PRIMARY KEY NOT NULL,
+         conversation_id   TEXT NOT NULL,
+         html              TEXT NOT NULL,
+         subject           TEXT,
+         reply_to          TEXT,
+         kind              TEXT NOT NULL,
+         payload_path      TEXT,
+         created_ms        INTEGER NOT NULL,
+         attempts          INTEGER NOT NULL,
+         state             TEXT NOT NULL,
+         last_error        TEXT
+     );
+     CREATE INDEX idx_outbox_state_created ON outbox(state, created_ms);
+     CREATE INDEX idx_outbox_conv ON outbox(conversation_id, created_ms);",
 ];
 
 pub(crate) fn run(conn: &mut Connection) -> Result<()> {

@@ -1,0 +1,64 @@
+import { Theme } from "theme.slint";
+
+export component LoginView inherits Rectangle {
+    in property <string> state; // checking | code | error
+    in property <string> user-code;
+    in property <string> verify-url;
+    in property <string> error;
+    callback copy-code();
+    callback open-url(string);
+    callback retry();
+    background: Theme.main;
+    VerticalLayout {
+        alignment: center;
+        spacing: 18px;
+        Image { source: @image-url("icons/logo.svg"); colorize: Theme.accent; width: 64px; height: 64px; x: (parent.width - 64px) / 2; }
+        Text { text: "kelma"; color: Theme.fg; font-size: 28px; font-weight: 700; horizontal-alignment: center; }
+        if root.state == "checking": Text { text: "Signing in…"; color: Theme.fg-muted; horizontal-alignment: center; }
+        if root.state == "code": VerticalLayout {
+            spacing: 12px;
+            Text { text: "Open this page and enter the code to sign in:"; color: Theme.fg-muted; horizontal-alignment: center; }
+            Text {
+                text: root.verify-url;
+                color: Theme.accent;
+                horizontal-alignment: center;
+                TouchArea { mouse-cursor: pointer; clicked => { root.open-url(root.verify-url); } }
+            }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
+                Rectangle {
+                    background: Theme.surface;
+                    border-radius: 6px;
+                    width: code-text.preferred-width + 40px;
+                    height: 56px;
+                    code-text := Text { text: root.user-code; color: Theme.fg; font-size: 28px; font-weight: 700; letter-spacing: 4px; }
+                }
+                Rectangle {
+                    width: 90px;
+                    height: 56px;
+                    border-radius: 6px;
+                    background: ct.has-hover ? Theme.accent : Theme.accent-strong;
+                    Text { text: "Copy"; color: #ffffff; font-weight: 600; }
+                    ct := TouchArea { mouse-cursor: pointer; clicked => { root.copy-code(); } }
+                }
+            }
+            Text { text: "Waiting for you to finish signing in…"; color: Theme.fg-subtle; font-size: 12px; horizontal-alignment: center; }
+        }
+        if root.state == "error": VerticalLayout {
+            spacing: 12px;
+            Text { text: root.error; color: Theme.danger; wrap: word-wrap; horizontal-alignment: center; }
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 120px;
+                    height: 36px;
+                    border-radius: 6px;
+                    background: Theme.accent-strong;
+                    Text { text: "Try again"; color: #ffffff; }
+                    TouchArea { mouse-cursor: pointer; clicked => { root.retry(); } }
+                }
+            }
+        }
+    }
+}

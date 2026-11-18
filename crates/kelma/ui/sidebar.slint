@@ -1,0 +1,190 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ChatRow, TeamRow } from "types.slint";
+import { Avatar, Icon, IconButton, Pill, SectionHeader } from "widgets.slint";
+
+component ChatItem inherits Rectangle {
+    in property <ChatRow> data;
+    in property <bool> selected;
+    callback clicked();
+    callback toggle-favorite();
+    height: 56px;
+    border-radius: 4px;
+    background: selected ? Theme.selected : (t.has-hover ? #262626 : transparent);
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 10px;
+        alignment: stretch;
+        Avatar {
+            initials: root.data.initials;
+            tone: root.data.color;
+            img: root.data.avatar;
+            has-img: root.data.has-avatar;
+            size: 32px;
+            y: (parent.height - 32px) / 2;
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: root.data.title;
+                    color: Theme.fg;
+                    font-size: 14px;
+                    font-weight: root.data.unread ? 700 : 400;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: root.data.rtl-title ? right : left;
+                }
+                Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; }
+            }
+            Text {
+                text: root.data.preview;
+                color: root.data.unread ? Theme.fg : Theme.fg-subtle;
+                font-weight: root.data.unread ? 600 : 400;
+                font-size: 12px;
+                overflow: elide;
+                horizontal-alignment: root.data.rtl-preview ? right : left;
+            }
+        }
+        if root.data.unread: Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: Theme.accent;
+            y: (parent.height - 8px) / 2;
+        }
+    }
+    t := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        if t.has-hover: IconButton {
+            x: parent.width - 30px;
+            y: 30px;
+            size: 22px;
+            icon: @image-url("icons/star.svg");
+            tint: root.data.favorite ? #ffd335 : Theme.fg-subtle;
+            clicked => { root.toggle-favorite(); }
+        }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    in property <string> view;
+    in-out property <string> filter: "all";
+    in property <[ChatRow]> chats-favorites;
+    in property <[ChatRow]> chats-main;
+    in property <[ChatRow]> chats-channels;
+    in property <[TeamRow]> teams;
+    in property <string> current-id;
+
+    callback select-chat(string);
+    callback select-channel(string, string);
+    callback toggle-team(int);
+    callback toggle-favorite(string);
+    callback set-filter(string);
+
+    property <bool> favorites-open: true;
+    property <bool> chats-open: true;
+    property <bool> channels-open: true;
+
+    width: 320px;
+    background: Theme.sidebar;
+    border-width: 0px;
+
+    VerticalLayout {
+        HorizontalLayout {
+            height: 56px;
+            padding-left: 16px;
+            padding-right: 12px;
+            Text { text: root.view == "chat" ? "Chat" : "Teams"; color: Theme.fg; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+        }
+        if root.view == "chat": HorizontalLayout {
+            padding-left: 12px;
+            padding-bottom: 8px;
+            spacing: 6px;
+            alignment: start;
+            Pill { label: "Unread"; active: root.filter == "unread"; clicked => { root.filter = root.filter == "unread" ? "all" : "unread"; root.set-filter(root.filter); } }
+            Pill { label: "Channels"; active: root.filter == "channels"; clicked => { root.filter = root.filter == "channels" ? "all" : "channels"; root.set-filter(root.filter); } }
+            Pill { label: "Chats"; active: root.filter == "chats"; clicked => { root.filter = root.filter == "chats" ? "all" : "chats"; root.set-filter(root.filter); } }
+        }
+        Rectangle { height: 1px; background: #2b2b2b; }
+
+        if root.view == "chat": ScrollView {
+            VerticalLayout {
+                padding: 6px;
+                spacing: 1px;
+                alignment: start;
+                SectionHeader { label: "Favorites"; expanded <=> root.favorites-open; }
+                if root.favorites-open: VerticalLayout { for c in root.chats-favorites: ChatItem {
+                    data: c;
+                    selected: c.id == root.current-id;
+                    clicked => { root.select-chat(c.id); }
+                    toggle-favorite => { root.toggle-favorite(c.id); }
+                } }
+                SectionHeader { label: "Chats"; expanded <=> root.chats-open; }
+                if root.chats-open: VerticalLayout { for c in root.chats-main: ChatItem {
+                    data: c;
+                    selected: c.id == root.current-id;
+                    clicked => { root.select-chat(c.id); }
+                    toggle-favorite => { root.toggle-favorite(c.id); }
+                } }
+                SectionHeader { label: "Teams and channels"; expanded <=> root.channels-open; }
+                if root.channels-open: VerticalLayout { for c in root.chats-channels: ChatItem {
+                    data: c;
+                    selected: c.id == root.current-id;
+                    clicked => { root.select-chat(c.id); }
+                    toggle-favorite => { root.toggle-favorite(c.id); }
+                } }
+            }
+        }
+
+        if root.view == "teams": ScrollView {
+            VerticalLayout {
+                padding: 6px;
+                spacing: 2px;
+                alignment: start;
+                for t[ti] in root.teams: VerticalLayout {
+                    Rectangle {
+                        height: 44px;
+                        border-radius: 4px;
+                        background: tt.has-hover ? #262626 : transparent;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            spacing: 10px;
+                            Icon { source: t.expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-right.svg"); width: 14px; height: 14px; y: 15px; }
+                            Rectangle {
+                                width: 28px; height: 28px; y: 8px; border-radius: 4px; background: t.color;
+                                Text { text: t.initials; color: #ffffff; font-size: 12px; font-weight: 700; }
+                            }
+                            Text { text: t.name; color: Theme.fg; font-size: 14px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                        }
+                        tt := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-team(ti); } }
+                    }
+                    if t.expanded: VerticalLayout {
+                        for ch in t.channels: Rectangle {
+                            height: 34px;
+                            border-radius: 4px;
+                            background: ch.id == root.current-id ? Theme.selected : (ct.has-hover ? #262626 : transparent);
+                            HorizontalLayout {
+                                padding-left: 50px;
+                                spacing: 6px;
+                                Text {
+                                    text: ch.name;
+                                    color: Theme.fg;
+                                    font-size: 13px;
+                                    font-weight: ch.unread ? 700 : 400;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                            ct := TouchArea { mouse-cursor: pointer; clicked => { root.select-channel(ch.id, t.name + " › " + ch.name); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

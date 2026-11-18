@@ -39,7 +39,7 @@ fn msg(id: &str, text: &str, mine: bool) -> Msg {
 }
 
 fn composer(app: &AppWindow) -> ElementHandle {
-    ElementHandle::find_by_element_id(app, "AppWindow::composer-input")
+    ElementHandle::find_by_element_id(app, "Composer::composer-input")
         .next()
         .expect("composer input")
 }
@@ -225,11 +225,11 @@ fn toolbar_emoji_picker_and_attach_buttons() {
 
     app.set_draft("hi ".into());
     assert_eq!(
-        ElementHandle::find_by_element_id(&app, "AppWindow::ea").count(),
+        ElementHandle::find_by_element_id(&app, "Composer::ea").count(),
         0
     );
     tb[0].mock_single_click(PointerEventButton::Left);
-    let emoji: Vec<_> = ElementHandle::find_by_element_id(&app, "AppWindow::ea").collect();
+    let emoji: Vec<_> = ElementHandle::find_by_element_id(&app, "Composer::ea").collect();
     assert_eq!(emoji.len(), 32, "picker shows 32 emoji");
     emoji[9].mock_single_click(PointerEventButton::Left);
     assert_eq!(app.get_draft(), "hi 👍");

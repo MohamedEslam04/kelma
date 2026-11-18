@@ -3,8 +3,11 @@
 //! The protocol facts come from purple-teams (GPL-3.0) and from observing the Teams web client.
 //! Every endpoint used here is internal and undocumented, so it can change without notice.
 
+pub mod actions;
+pub mod activity;
 pub mod ams;
 pub mod auth;
+pub mod broker;
 pub mod cards;
 pub mod chatsvc;
 pub mod client;

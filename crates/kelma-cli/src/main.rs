@@ -4,9 +4,12 @@
 //! kelma-cli login                 sign in with a device code
 //! kelma-cli chats [n]             list recent conversations
 //! kelma-cli teams                 list teams and channels
+//! kelma-cli activity [n]          list the newest Activity feed items
 //! kelma-cli read <conv> [n]       print the last n messages
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
+//! kelma-cli calendar [days]       count upcoming events per day and per show-as (read-only)
+//! kelma-cli audiences             mint a token for every audience (prints no tokens)
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
 //! ```
@@ -107,6 +110,26 @@ async fn main() -> Result<()> {
                 }
             }
             println!("({} chats in aggregator)", snap.chats.len());
+        }
+        Some("activity") => {
+            let n: u32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20);
+            let (client, _) = connect(&paths).await?;
+            let items = client.activity(n).await?;
+            for i in &items {
+                println!(
+                    "{} {:<28} {} {}\n    in: {}  id: {}",
+                    if i.is_read { " " } else { "*" },
+                    format!("{:?}", i.kind),
+                    fmt_time(i.timestamp_ms),
+                    i.actor_name,
+                    i.thread_topic,
+                    i.id
+                );
+                if !i.preview.is_empty() {
+                    println!("    {}", preview(&i.preview));
+                }
+            }
+            println!("({} items)", items.len());
         }
         Some("read") => {
             let conv = args.get(1).context("usage: read <conversation id> [n]")?;
@@ -235,6 +258,65 @@ async fn main() -> Result<()> {
                 .await?;
             println!("edited");
         }
+        Some("forward") => {
+            let (Some(src), Some(msg), Some(target)) = (args.get(1), args.get(2), args.get(3))
+            else {
+                bail!("usage: forward <source conv> <message id> <target conv> [note]")
+            };
+            let (client, cfg) = connect(&paths).await?;
+            let note = args.get(4).map(|t| render::text_to_teams_html(t));
+            let r = client
+                .forward(
+                    src,
+                    std::slice::from_ref(msg),
+                    std::slice::from_ref(target),
+                    note.as_deref(),
+                    &cfg.display_name.unwrap_or_default(),
+                )
+                .await?;
+            for f in r {
+                println!(
+                    "forwarded to {}: {} {:?}",
+                    f.thread_id, f.status, f.message_id
+                );
+            }
+        }
+        Some(
+            cmd @ ("save" | "unsave" | "pin" | "unpin" | "unread" | "clear-unread" | "mute"
+            | "unmute" | "hide" | "unhide"),
+        ) => {
+            let conv = args.get(1).context("usage: <action> <conv> [message id]")?;
+            let msg = args.get(2).cloned().unwrap_or_default();
+            let (client, _) = connect(&paths).await?;
+            match cmd {
+                "save" | "unsave" => client.set_saved(conv, &msg, &msg, cmd == "save").await?,
+                "pin" | "unpin" => client.set_pinned(conv, &msg, cmd == "pin").await?,
+                "unread" => client.mark_unread(conv, &msg, "").await?,
+                "clear-unread" => client.clear_unread_mark(conv).await?,
+                "mute" | "unmute" => client.set_muted(conv, cmd == "mute").await?,
+                _ => client.set_hidden(conv, cmd == "hide").await?,
+            }
+            println!("{cmd}: ok");
+        }
+        Some("saved") => {
+            let (client, _) = connect(&paths).await?;
+            for s in client.saved_messages().await? {
+                println!(
+                    "{} {} {}: {}",
+                    s.conversation_id, s.message_id, s.sender_name, s.preview
+                );
+            }
+        }
+        Some("pins") => {
+            let conv = args.get(1).context("usage: pins <chat id>")?;
+            let (client, _) = connect(&paths).await?;
+            for p in client.pinned(conv).await? {
+                println!(
+                    "{} folder={:?} at {}",
+                    p.message_id, p.folder_id, p.pinned_at
+                );
+            }
+        }
         Some("delete") => {
             let (Some(conv), Some(msg)) = (args.get(1), args.get(2)) else {
                 bail!("usage: delete <conv> <msg id>")
@@ -273,6 +355,23 @@ async fn main() -> Result<()> {
                 .await?;
             println!("image sent ({id})");
         }
+        Some("post") => {
+            let (Some(channel), Some(subject), Some(text)) =
+                (args.get(1), args.get(2), args.get(3))
+            else {
+                bail!("usage: post <channel id> <subject> <text>")
+            };
+            let (client, cfg) = connect(&paths).await?;
+            let cmid = client
+                .send_message(
+                    channel,
+                    &render::text_to_teams_html(text),
+                    &cfg.display_name.unwrap_or_default(),
+                    Some(subject),
+                )
+                .await?;
+            println!("posted (clientmessageid {cmid})");
+        }
         Some("send-file") => {
             let (Some(conv), Some(file)) = (args.get(1), args.get(2)) else {
                 bail!("usage: send-file <conv> <file>")
@@ -296,6 +395,66 @@ async fn main() -> Result<()> {
             let (client, _) = connect(&paths).await?;
             client.add_reaction(conv, msg, key).await?;
             println!("reacted");
+        }
+        Some("audiences") => {
+            // Mints a token for every audience through the auth broker. Prints no token values.
+            let (client, cfg) = connect(&paths).await?;
+            for aud in teams_proto::broker::Audience::FIXED {
+                match client.token_for(&aud).await {
+                    Ok(_) => println!("ok    {}", aud.resource()),
+                    Err(e) => println!("fail  {}: {e}", aud.resource()),
+                }
+            }
+            // SharePoint is per host: use the host of the user's own OneDrive.
+            let drive = client
+                .json_as(
+                    "drive",
+                    &teams_proto::broker::Audience::Graph,
+                    reqwest::Method::GET,
+                    "https://graph.microsoft.com/v1.0/me/drive?$select=webUrl",
+                    None,
+                )
+                .await?;
+            let host = drive["webUrl"]
+                .as_str()
+                .and_then(|u| url::Url::parse(u).ok())
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_default();
+            match teams_proto::broker::Audience::sharepoint(&host) {
+                Some(sp) => match client.token_for(&sp).await {
+                    Ok(_) => println!("ok    SharePoint (OneDrive host)"),
+                    Err(e) => println!("fail  SharePoint (OneDrive host): {e}"),
+                },
+                None => println!("skip  SharePoint: OneDrive host not found"),
+            }
+            session::persist(&cfg, &client).await?;
+        }
+        Some("calendar") => {
+            // Read-only: prints only counts (per UTC day and per show-as), never event details.
+            let days: u32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(7);
+            let (client, cfg) = connect(&paths).await?;
+            let today = calendar::Date::from_ms(teams_proto::time::now_ms());
+            let (start, end) =
+                calendar::week_range(today, calendar::View::Day(days), calendar::Weekday::Monday);
+            let events = calendar::Calendar::view(&client, start, end).await?;
+            let mut per_day = std::collections::BTreeMap::new();
+            let mut per_show_as = std::collections::BTreeMap::new();
+            for e in &events {
+                *per_day
+                    .entry(calendar::Date::from_ms(e.start_ms))
+                    .or_insert(0usize) += 1;
+                *per_show_as
+                    .entry(format!("{:?}", e.show_as))
+                    .or_insert(0usize) += 1;
+            }
+            println!("{} events from {today} for {days} day(s)", events.len());
+            for (day, n) in &per_day {
+                println!("  {day}  {n}");
+            }
+            for (show_as, n) in &per_show_as {
+                println!("  {show_as:<18} {n}");
+            }
+            session::persist(&cfg, &client).await?;
         }
         Some("tail") => {
             let (client, _) = connect(&paths).await?;
@@ -321,7 +480,26 @@ async fn main() -> Result<()> {
         }
         _ => {
             println!(
-                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|react <conv> <msg> <key>|tail>"
+                "usage: kelma-cli <command>\n\
+                   login\n\
+                   logout\n\
+                   chats [n]\n\
+                   teams\n\
+                   calendar [days]\n\
+                   activity [n]\n\
+                   read <conv> [n]\n\
+                   send <conv> <text>\n\
+                   send-image <conv> <file>\n\
+                   send-file <conv> <file>\n\
+                   post <channel> <subject> <text>\n\
+                   react <conv> <msg> <key>\n\
+                   forward <src> <msg> <target> [note]\n\
+                   save/unsave/pin/unpin/unread <conv> <msg>\n\
+                   mute/unmute/hide/unhide <conv>\n\
+                   saved\n\
+                   pins <chat>\n\
+                   audiences\n\
+                   tail"
             );
         }
     }

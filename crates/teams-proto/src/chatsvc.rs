@@ -222,8 +222,12 @@ impl Client {
         let body =
             json!({"consumptionhorizon": horizon_value(&message.id, message.compose_ms, &cmid)});
         self.json("mark_read", Method::PUT, &url, Some(&body))
-            .await
-            .map(|_| ())
+            .await?;
+        // A manual "Mark as unread" survives a new read horizon; clear it too.
+        if let Err(e) = self.clear_unread_mark(conversation_id).await {
+            tracing::debug!(%e, "clearing the unread bookmark failed");
+        }
+        Ok(())
     }
 
     /// Sends a typing indicator.

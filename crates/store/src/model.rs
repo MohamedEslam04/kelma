@@ -87,3 +87,85 @@ pub struct TeamRow {
     pub id: String,
     pub name: String,
 }
+
+/// An unsent message being composed in a conversation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Draft {
+    pub conversation_id: String,
+    pub text: String,
+    /// Message id being replied to, if any.
+    pub reply_to: Option<String>,
+    pub updated_ms: i64,
+}
+
+/// What an outbox item sends; stored as lowercase TEXT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutboxKind {
+    Text,
+    Image,
+    File,
+}
+
+impl OutboxKind {
+    pub(crate) fn as_db(self) -> &'static str {
+        match self {
+            OutboxKind::Text => "text",
+            OutboxKind::Image => "image",
+            OutboxKind::File => "file",
+        }
+    }
+
+    pub(crate) fn from_db(s: &str) -> Option<OutboxKind> {
+        Some(match s {
+            "text" => OutboxKind::Text,
+            "image" => OutboxKind::Image,
+            "file" => OutboxKind::File,
+            _ => return None,
+        })
+    }
+}
+
+/// Where an outbox item is in its life; stored as lowercase TEXT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutboxState {
+    Queued,
+    Sending,
+    Failed,
+}
+
+impl OutboxState {
+    pub(crate) fn as_db(self) -> &'static str {
+        match self {
+            OutboxState::Queued => "queued",
+            OutboxState::Sending => "sending",
+            OutboxState::Failed => "failed",
+        }
+    }
+
+    pub(crate) fn from_db(s: &str) -> Option<OutboxState> {
+        Some(match s {
+            "queued" => OutboxState::Queued,
+            "sending" => OutboxState::Sending,
+            "failed" => OutboxState::Failed,
+            _ => return None,
+        })
+    }
+}
+
+/// A message waiting to be sent, or that failed to send.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutboxItem {
+    pub client_message_id: String,
+    pub conversation_id: String,
+    pub html: String,
+    pub subject: Option<String>,
+    /// Message id being replied to, if any.
+    pub reply_to: Option<String>,
+    pub kind: OutboxKind,
+    /// Local file to upload for `Image` and `File` items.
+    pub payload_path: Option<String>,
+    pub created_ms: i64,
+    pub attempts: u32,
+    pub state: OutboxState,
+    pub last_error: Option<String>,
+}

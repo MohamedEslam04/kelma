@@ -675,6 +675,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
+name = "calendar"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "teams-proto",
+]
+
+[[package]]
 name = "calloop"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1385,6 +1394,10 @@ name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
+
+[[package]]
+name = "emoji"
+version = "0.0.0"
 
 [[package]]
 name = "encoding_rs"
@@ -3010,6 +3023,7 @@ name = "kelma-cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "calendar",
  "render",
  "reqwest",
  "serde_json",
@@ -3017,6 +3031,7 @@ dependencies = [
  "teams-proto",
  "tokio",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

@@ -549,3 +549,230 @@ fn open_rejects_newer_schema() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+// ---- drafts ------------------------------------------------------------
+
+#[test]
+fn draft_roundtrip() {
+    let s = Store::open_in_memory().unwrap();
+    assert_eq!(s.draft("c").unwrap(), None);
+    s.set_draft_at("c", "نص <b>hi</b>", Some("r1"), 10).unwrap();
+    assert_eq!(
+        s.draft("c").unwrap(),
+        Some(Draft {
+            conversation_id: "c".into(),
+            text: "نص <b>hi</b>".into(),
+            reply_to: Some("r1".into()),
+            updated_ms: 10,
+        })
+    );
+    // Overwrite keeps one row and replaces the reply target.
+    s.set_draft_at("c", "second", None, 20).unwrap();
+    let d = s.draft("c").unwrap().unwrap();
+    assert_eq!(
+        (d.text.as_str(), d.reply_to, d.updated_ms),
+        ("second", None, 20)
+    );
+    assert_eq!(s.drafts().unwrap().len(), 1);
+}
+
+#[test]
+fn set_draft_stamps_current_time() {
+    let s = Store::open_in_memory().unwrap();
+    s.set_draft("c", "x", None).unwrap();
+    assert!(s.draft("c").unwrap().unwrap().updated_ms > 1_600_000_000_000);
+}
+
+#[test]
+fn empty_draft_deletes() {
+    let s = Store::open_in_memory().unwrap();
+    s.set_draft_at("c", "x", None, 1).unwrap();
+    s.set_draft_at("c", "", Some("r"), 2).unwrap();
+    assert_eq!(s.draft("c").unwrap(), None);
+    assert!(s.drafts().unwrap().is_empty());
+    // Deleting a draft that does not exist is fine.
+    s.set_draft("nope", "", None).unwrap();
+}
+
+#[test]
+fn drafts_newest_first() {
+    let s = Store::open_in_memory().unwrap();
+    s.set_draft_at("a", "1", None, 10).unwrap();
+    s.set_draft_at("b", "2", None, 30).unwrap();
+    s.set_draft_at("c", "3", None, 20).unwrap();
+    s.set_draft_at("a", "1b", None, 40).unwrap();
+    let order: Vec<_> = s
+        .drafts()
+        .unwrap()
+        .into_iter()
+        .map(|d| d.conversation_id)
+        .collect();
+    assert_eq!(order, ["a", "b", "c"]);
+}
+
+// ---- outbox ------------------------------------------------------------
+
+fn item(id: &str, conv: &str, created: i64) -> OutboxItem {
+    OutboxItem {
+        client_message_id: id.into(),
+        conversation_id: conv.into(),
+        html: format!("<p>{id}</p>"),
+        subject: None,
+        reply_to: None,
+        kind: OutboxKind::Text,
+        payload_path: None,
+        created_ms: created,
+        attempts: 0,
+        state: OutboxState::Queued,
+        last_error: None,
+    }
+}
+
+fn outbox_ids(v: &[OutboxItem]) -> Vec<&str> {
+    v.iter().map(|i| i.client_message_id.as_str()).collect()
+}
+
+#[test]
+fn outbox_enqueue_roundtrips_all_fields_and_orders_due_oldest_first() {
+    let s = Store::open_in_memory().unwrap();
+    let mut file = item("f", "c1", 5);
+    file.kind = OutboxKind::File;
+    file.payload_path = Some("/tmp/a.pdf".into());
+    file.subject = Some("subj".into());
+    file.reply_to = Some("root".into());
+    s.enqueue(&item("late", "c1", 30)).unwrap();
+    s.enqueue(&file).unwrap();
+    s.enqueue(&item("mid", "c2", 10)).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(outbox_ids(&due), ["f", "mid", "late"]);
+    assert_eq!(due[0], file);
+}
+
+#[test]
+fn every_outbox_kind_roundtrips() {
+    let s = Store::open_in_memory().unwrap();
+    for (i, k) in [OutboxKind::Text, OutboxKind::Image, OutboxKind::File]
+        .into_iter()
+        .enumerate()
+    {
+        let mut it = item(&format!("k{i}"), "c", i as i64);
+        it.kind = k;
+        s.enqueue(&it).unwrap();
+        assert_eq!(s.outbox_for("c").unwrap()[i].kind, k);
+    }
+}
+
+#[test]
+fn outbox_enqueue_forces_fresh_state() {
+    let s = Store::open_in_memory().unwrap();
+    let mut i = item("a", "c", 1);
+    i.attempts = 7;
+    i.state = OutboxState::Failed;
+    i.last_error = Some("old".into());
+    s.enqueue(&i).unwrap();
+    let got = &s.outbox_for("c").unwrap()[0];
+    assert_eq!(got.state, OutboxState::Queued);
+    assert_eq!((got.attempts, got.last_error.as_deref()), (0, None));
+}
+
+#[test]
+fn outbox_sending_and_failure_leave_due() {
+    let s = Store::open_in_memory().unwrap();
+    s.enqueue(&item("a", "c", 1)).unwrap();
+    s.enqueue(&item("b", "c", 2)).unwrap();
+    s.enqueue(&item("c3", "c", 3)).unwrap();
+    s.mark_sending("a").unwrap();
+    s.mark_sending("b").unwrap();
+    s.mark_failed("b", "boom").unwrap();
+    assert_eq!(outbox_ids(&s.outbox_due().unwrap()), ["c3"]);
+
+    let all = s.outbox_for("c").unwrap();
+    assert_eq!(outbox_ids(&all), ["a", "b", "c3"]);
+    assert_eq!(all[0].state, OutboxState::Sending);
+    assert_eq!(all[1].state, OutboxState::Failed);
+    assert_eq!(all[1].attempts, 1);
+    assert_eq!(all[1].last_error.as_deref(), Some("boom"));
+}
+
+#[test]
+fn outbox_retry_requeues_failed_and_keeps_attempts() {
+    let s = Store::open_in_memory().unwrap();
+    s.enqueue(&item("a", "c", 1)).unwrap();
+    s.mark_failed("a", "e1").unwrap();
+    s.retry("a").unwrap();
+    assert_eq!(outbox_ids(&s.outbox_due().unwrap()), ["a"]);
+    s.mark_failed("a", "e2").unwrap();
+    let got = s.outbox_for("c").unwrap().remove(0);
+    assert_eq!(got.attempts, 2);
+    assert_eq!(got.last_error.as_deref(), Some("e2"));
+    // Retry only applies to failed rows.
+    s.retry("a").unwrap();
+    s.mark_sending("a").unwrap();
+    s.retry("a").unwrap();
+    assert_eq!(s.outbox_for("c").unwrap()[0].state, OutboxState::Sending);
+}
+
+#[test]
+fn outbox_remove_and_per_conversation_listing() {
+    let s = Store::open_in_memory().unwrap();
+    s.enqueue(&item("a", "c1", 1)).unwrap();
+    s.enqueue(&item("b", "c2", 2)).unwrap();
+    assert_eq!(outbox_ids(&s.outbox_for("c1").unwrap()), ["a"]);
+    s.remove("a").unwrap();
+    assert!(s.outbox_for("c1").unwrap().is_empty());
+    assert_eq!(outbox_ids(&s.outbox_due().unwrap()), ["b"]);
+    s.remove("a").unwrap();
+}
+
+#[test]
+fn outbox_survives_restart_and_sending_resets_to_queued() {
+    let dir = temp_db_dir("outbox");
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("cache.db");
+    {
+        let s = Store::open(&path).unwrap();
+        s.enqueue(&item("crashed", "c", 1)).unwrap();
+        s.enqueue(&item("failed", "c", 2)).unwrap();
+        s.enqueue(&item("queued", "c", 3)).unwrap();
+        s.mark_sending("crashed").unwrap();
+        s.mark_failed("failed", "net").unwrap();
+    }
+    {
+        let s = Store::open(&path).unwrap();
+        let due = s.outbox_due().unwrap();
+        assert_eq!(outbox_ids(&due), ["crashed", "queued"]);
+        let failed = &s.outbox_for("c").unwrap()[1];
+        assert_eq!(failed.state, OutboxState::Failed);
+        assert_eq!(failed.last_error.as_deref(), Some("net"));
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn migrates_from_previous_schema_version() {
+    let dir = temp_db_dir("migrate");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cache.db");
+    {
+        // A database exactly as the previous release left it (v1).
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(migrations::MIGRATIONS[0]).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute("INSERT INTO kv (key, value) VALUES ('epid', 'e')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO conversations VALUES ('c', 'group', 't', NULL, NULL, 1, '', 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    assert_eq!(s.get_kv("epid").unwrap().as_deref(), Some("e"));
+    assert!(s.conversation("c").unwrap().is_some());
+    s.set_draft("c", "x", None).unwrap();
+    s.enqueue(&item("a", "c", 1)).unwrap();
+    assert!(s.draft("c").unwrap().is_some());
+    assert_eq!(s.outbox_due().unwrap().len(), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
