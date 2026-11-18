@@ -25,6 +25,17 @@ pub enum Error {
 /// Result alias.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Where a chat opens ("When I open a chat, take me to" in Teams settings).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenChatAt {
+    /// The first unread message (at the "New messages" divider); the newest when all is read.
+    #[default]
+    FirstUnread,
+    /// Always the newest message.
+    Newest,
+}
+
 /// Non-secret settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
@@ -40,6 +51,29 @@ pub struct Config {
     /// Our display name once known.
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Where a chat opens. Missing in older config files.
+    #[serde(default)]
+    pub open_chat_at: OpenChatAt,
+    /// The calendar view last used (`workweek`, `week`, `month` or `day:N`).
+    #[serde(default)]
+    pub calendar_view: Option<String>,
+    /// The calendar time scale in minutes (15, 30 or 60).
+    #[serde(default)]
+    pub calendar_scale: Option<u32>,
+    /// Composer: Enter sends the message (default). When false, Enter starts a new line and
+    /// Ctrl+Enter sends.
+    #[serde(default = "default_true")]
+    pub enter_sends: bool,
+    /// Emoji skin tone: 0 for the default yellow, 1..=5 for light to dark.
+    #[serde(default)]
+    pub skin_tone: u8,
+    /// Recently used emoji, newest first.
+    #[serde(default)]
+    pub recent_emoji: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -50,6 +84,12 @@ impl Default for Config {
             epid: teams_proto::client::new_epid(),
             self_mri: None,
             display_name: None,
+            open_chat_at: OpenChatAt::default(),
+            calendar_view: None,
+            calendar_scale: None,
+            enter_sends: true,
+            skin_tone: 0,
+            recent_emoji: Vec::new(),
         }
     }
 }
@@ -176,5 +216,47 @@ mod tests {
         let raw = std::fs::read_to_string(dir.join("config/config.json")).unwrap();
         assert!(!raw.contains("refresh"), "config must not contain tokens");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn open_chat_at_defaults_for_old_config_files_and_roundtrips() {
+        let old = r#"{"account":"default","tenant":"organizations","epid":"e"}"#;
+        let c: Config = serde_json::from_str(old).unwrap();
+        assert_eq!(c.open_chat_at, OpenChatAt::FirstUnread);
+
+        let c: Config =
+            serde_json::from_str(&old.replace('}', r#","open_chat_at":"newest"}"#)).unwrap();
+        assert_eq!(c.open_chat_at, OpenChatAt::Newest);
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
+    }
+
+    #[test]
+    fn config_without_calendar_fields_still_loads() {
+        let old = r#"{"account":"default","tenant":"organizations","epid":"e"}"#;
+        let c: Config = serde_json::from_str(old).unwrap();
+        assert_eq!((c.calendar_view, c.calendar_scale), (None, None));
+        let c = Config {
+            calendar_view: Some("day:3".into()),
+            calendar_scale: Some(15),
+            ..c
+        };
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
+    }
+
+    #[test]
+    fn config_written_before_the_composer_settings_still_loads() {
+        let old = r#"{"account":"default","tenant":"organizations","epid":"e"}"#;
+        let c: Config = serde_json::from_str(old).unwrap();
+        assert!(c.enter_sends, "Enter sends by default");
+        assert_eq!(c.skin_tone, 0);
+        assert!(c.recent_emoji.is_empty());
+        let mut c = c;
+        c.enter_sends = false;
+        c.skin_tone = 3;
+        c.recent_emoji = vec!["👍".into()];
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
     }
 }

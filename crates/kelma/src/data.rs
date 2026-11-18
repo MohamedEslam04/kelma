@@ -19,6 +19,16 @@ pub struct ChatData {
     pub rtl_title: bool,
     pub rtl_preview: bool,
     pub favorite: bool,
+    /// `preview` is an unsent draft, not the last message.
+    pub draft: bool,
+}
+
+/// A chip above the composer.
+pub struct AttachmentData {
+    pub name: String,
+    pub detail: String,
+    pub is_image: bool,
+    pub thumb: Option<Pixels>,
 }
 
 #[derive(Clone)]
@@ -42,6 +52,8 @@ pub struct ReactData {
     pub emoji: String,
     pub count: i32,
     pub mine: bool,
+    /// Display names of who reacted, comma separated (the chip tooltip).
+    pub names: String,
 }
 
 #[derive(Clone)]
@@ -69,6 +81,34 @@ pub struct MsgData {
     pub reactions: Vec<ReactData>,
     pub reply_count: i32,
     pub pending: bool,
+    pub saved: bool,
+    pub selected: bool,
+    /// Could not be sent: the row offers Retry and Delete.
+    pub failed: bool,
+    /// The "New messages" divider is drawn above this row.
+    pub new_above: bool,
+}
+
+/// A forward target: an existing chat or channel.
+#[derive(Clone)]
+pub struct RecipientData {
+    pub id: String,
+    pub title: String,
+    pub initials: String,
+    pub color: u32,
+    pub picked: bool,
+}
+
+/// How a message list update moves the scroll position.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scroll {
+    /// Leave it where it is.
+    #[default]
+    Keep,
+    /// Follow the newest message.
+    Bottom,
+    /// Put the row at this index (the "New messages" divider) near the top.
+    Divider(usize),
 }
 
 #[derive(Clone)]
@@ -90,6 +130,37 @@ pub struct HeaderData {
     pub avatar: Option<Pixels>,
     pub is_channel: bool,
     pub thread_root: String,
+}
+
+/// One row of the Activity list.
+#[derive(Clone)]
+pub struct ActivityData {
+    pub id: String,
+    pub title: String,
+    pub initials: String,
+    pub color: u32,
+    pub avatar: Option<Pixels>,
+    pub badge: String,
+    pub unread: bool,
+    pub preview: String,
+    pub time: String,
+    pub location: String,
+    pub rtl_preview: bool,
+}
+
+/// The right-hand preview of the selected Activity item.
+#[derive(Clone, Default)]
+pub struct PreviewData {
+    /// Id of the Activity item the messages belong to.
+    pub id: String,
+    pub title: String,
+    pub location: String,
+    /// Channel posts get an inline reply box.
+    pub is_channel: bool,
+    pub loading: bool,
+    pub msgs: Vec<MsgData>,
+    /// Id of the source message to scroll to and highlight.
+    pub highlight: String,
 }
 
 /// Initials for an avatar placeholder ("Sara Hassan" → "SH", "مجموعة الإدارة" → "ما").

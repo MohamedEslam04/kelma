@@ -12,9 +12,19 @@ export struct ChatRow {
     rtl-title: bool,
     rtl-preview: bool,
     favorite: bool,
+    draft: bool, // preview is an unsent draft
 }
 
-export struct ReactionItem { key: string, emoji: string, count: int, mine: bool }
+export struct ReactionItem { key: string, emoji: string, count: int, mine: bool, names: string }
+export struct EmojiItem { key: string, emoji: string, name: string }
+export struct Recipient { id: string, title: string, initials: string, color: color, picked: bool }
+// One emoji of the composer's emoji panel and `:xx` autocomplete.
+export struct ComposerEmoji { ch: string, name: string }
+// Result of inserting text into the composer: the new text and where the cursor goes (byte offset).
+export struct Edited { text: string, cursor: int }
+
+// An attachment waiting in the composer (pasted image, dropped or picked file).
+export struct PendingAttachment { name: string, detail: string, is-image: bool, preview: image, has-preview: bool }
 export struct FileItem { name: string, url: string, ext: string }
 export struct ImageItem { url: string, img: image, loaded: bool, w: length, h: length }
 
@@ -43,7 +53,26 @@ export struct Msg {
     reactions: [ReactionItem],
     reply-count: int,
     pending: bool,
+    saved: bool,           // in the local saved list
+    selected: bool,        // ticked in multi-select mode
+    failed: bool,          // could not be sent: show Retry and Delete
+    new-above: bool,       // draw the "New messages" divider above this row
 }
 
 export struct ChannelRow { id: string, name: string, unread: bool }
 export struct TeamRow { id: string, name: string, initials: string, color: color, expanded: bool, channels: [ChannelRow] }
+
+export struct ActivityRow {
+    id: string,
+    title: string,
+    initials: string,
+    color: color,
+    avatar: image,
+    has-avatar: bool,
+    badge: string,      // "@", an emoji, a reply arrow, ...
+    unread: bool,
+    preview: string,
+    time: string,
+    location: string,   // "Team › channel" or "In chat with …"
+    rtl-preview: bool,
+}

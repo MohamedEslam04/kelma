@@ -1,12 +1,22 @@
 //! UI-thread side: turns view data into Slint models.
 
-use crate::data::{ChatData, HeaderData, MsgData, Pixels, TeamData};
-use crate::{AppWindow, ChannelRow, ChatRow, FileItem, ImageItem, Msg, ReactionItem, TeamRow};
+mod cal;
+
+use crate::data::{
+    AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
+};
+use crate::reactions;
+use crate::{
+    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, Msg,
+    PendingAttachment, ReactionItem, Recipient, TeamRow,
+};
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
+
+pub(crate) mod activity;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
@@ -43,6 +53,7 @@ fn chat_row(c: ChatData) -> ChatRow {
         rtl_title: c.rtl_title,
         rtl_preview: c.rtl_preview,
         favorite: c.favorite,
+        draft: c.draft,
     }
 }
 
@@ -105,12 +116,51 @@ fn msg(m: MsgData) -> Msg {
                     emoji: r.emoji.into(),
                     count: r.count,
                     mine: r.mine,
+                    names: r.names.into(),
                 })
                 .collect(),
         ),
         reply_count: m.reply_count,
         pending: m.pending,
+        saved: m.saved,
+        selected: m.selected,
+        failed: m.failed,
+        new_above: m.new_above,
     }
+}
+
+fn recipient(r: RecipientData) -> Recipient {
+    Recipient {
+        id: r.id.into(),
+        title: r.title.into(),
+        initials: r.initials.into(),
+        color: rgb(r.color),
+        picked: r.picked,
+    }
+}
+
+fn picker_model(query: &str) -> ModelRc<EmojiItem> {
+    model(
+        reactions::picker_items(query)
+            .into_iter()
+            .map(|i| EmojiItem {
+                key: i.key.into(),
+                emoji: i.emoji.into(),
+                name: i.name.into(),
+            })
+            .collect(),
+    )
+}
+
+/// Wires what the UI thread answers by itself, without the engine: the "More reactions" search.
+pub fn install_local(window: &AppWindow) {
+    window.set_picker_items(picker_model(""));
+    let weak = window.as_weak();
+    window.on_picker_search(move |q| {
+        if let Some(w) = weak.upgrade() {
+            w.set_picker_items(picker_model(&q));
+        }
+    });
 }
 
 /// Thread-safe handle the backend uses to update the window.
@@ -125,6 +175,11 @@ impl UiHandle {
     }
 
     fn run(&self, f: impl FnOnce(AppWindow) + Send + 'static) {
+        // Tests drive the window on their own thread without an event loop.
+        #[cfg(test)]
+        if let Some(w) = self.weak.upgrade() {
+            return f(w);
+        }
         let _ = self.weak.upgrade_in_event_loop(f);
     }
 
@@ -186,8 +241,50 @@ impl UiHandle {
         self.run(|w| w.set_focus_tick(w.get_focus_tick() + 1));
     }
 
+    /// The chips above the composer.
+    pub fn attachments(&self, chips: Vec<AttachmentData>) {
+        self.run(move |w| {
+            w.set_pending_attachments(model(
+                chips
+                    .into_iter()
+                    .map(|c| {
+                        let (preview, has_preview) = img(&c.thumb);
+                        PendingAttachment {
+                            name: c.name.into(),
+                            detail: c.detail.into(),
+                            is_image: c.is_image,
+                            preview,
+                            has_preview,
+                        }
+                    })
+                    .collect(),
+            ));
+        });
+    }
+
+    /// Replaces the composer text, with the cursor at its end.
     pub fn set_draft(&self, text: String) {
-        self.run(move |w| w.set_draft(text.into()));
+        self.run(move |w| {
+            w.set_draft(text.into());
+            w.set_cursor_tick(w.get_cursor_tick() + 1);
+        });
+    }
+
+    /// Saved composer preferences: Enter behavior, emoji skin tone and the recent emoji row.
+    pub fn prefs(&self, enter_sends: bool, skin_tone: u8, recent: Vec<String>) {
+        self.run(move |w| {
+            w.set_enter_sends(enter_sends);
+            w.set_skin_tone(skin_tone.into());
+            w.set_recent_emoji(model(
+                recent
+                    .into_iter()
+                    .map(|ch| ComposerEmoji {
+                        ch: ch.into(),
+                        name: SharedString::new(),
+                    })
+                    .collect(),
+            ));
+        });
     }
 
     pub fn clear_subject(&self) {
@@ -203,6 +300,31 @@ impl UiHandle {
             } else {
                 w.set_editing_id("1".into());
             }
+        });
+    }
+
+    /// Search results and picked recipients of the forward dialog.
+    pub fn forward_results(&self, results: Vec<RecipientData>, picked: Vec<RecipientData>) {
+        self.run(move |w| {
+            w.set_forward_results(model(results.into_iter().map(recipient).collect()));
+            w.set_forward_picked(model(picked.into_iter().map(recipient).collect()));
+        });
+    }
+
+    /// The message was forwarded: close the dialog and leave multi-select mode.
+    pub fn forward_done(&self) {
+        self.run(|w| {
+            w.set_forward_open(false);
+            w.set_select_mode(false);
+            w.set_select_count(0);
+        });
+    }
+
+    /// Multi-select mode and how many messages are ticked.
+    pub fn selection(&self, mode: bool, count: i32) {
+        self.run(move |w| {
+            w.set_select_mode(mode);
+            w.set_select_count(count);
         });
     }
 
@@ -257,7 +379,7 @@ impl UiHandle {
 
     /// Replaces the message list, updating rows in place when the ids are unchanged so the
     /// scroll position is kept.
-    pub fn messages(&self, msgs: Vec<MsgData>, scroll: bool) {
+    pub fn messages(&self, msgs: Vec<MsgData>, scroll: Scroll) {
         self.run(move |w| {
             MESSAGES.with(|cell| {
                 let mut cell = cell.borrow_mut();
@@ -279,16 +401,29 @@ impl UiHandle {
                     m.set_vec(msgs.into_iter().map(msg).collect::<Vec<_>>());
                 }
             });
-            if scroll {
-                // Two ticks: one now, one after layout settles with images.
-                w.set_scroll_tick(w.get_scroll_tick() + 1);
-                let weak = w.as_weak();
-                slint::Timer::single_shot(std::time::Duration::from_millis(150), move || {
-                    if let Some(w) = weak.upgrade() {
-                        w.set_scroll_tick(w.get_scroll_tick() + 1);
-                    }
-                });
+            match scroll {
+                Scroll::Keep => {}
+                // The list corrects its own estimate from the divider row's real position.
+                Scroll::Divider(i) => {
+                    w.set_divider_index(i as i32);
+                    w.set_divider_tick(w.get_divider_tick() + 1);
+                }
+                Scroll::Bottom => {
+                    // Two ticks: one now, one after layout settles with images.
+                    w.set_scroll_tick(w.get_scroll_tick() + 1);
+                    let weak = w.as_weak();
+                    slint::Timer::single_shot(std::time::Duration::from_millis(150), move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_scroll_tick(w.get_scroll_tick() + 1);
+                        }
+                    });
+                }
             }
         });
+    }
+
+    /// Count shown on the "Jump to newest" button.
+    pub fn new_count(&self, n: usize) {
+        self.run(move |w| w.set_new_count(n as i32));
     }
 }

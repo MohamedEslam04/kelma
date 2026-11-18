@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 pub use model::{
     ConvFilter, ConvKind, ConversationRow, Draft, MessageRow, OutboxItem, OutboxKind, OutboxState,
-    TeamRow, UserRow,
+    SavedMessage, TeamRow, UserRow,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -124,6 +124,10 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn unread_mark_key(conversation_id: &str) -> String {
+    format!("unread_mark:{conversation_id}")
+}
+
 fn limit_i64(limit: usize) -> i64 {
     i64::try_from(limit).unwrap_or(i64::MAX)
 }
@@ -198,7 +202,8 @@ impl Store {
         Ok(())
     }
 
-    /// Raises the read horizon to `max(old, horizon_ms)` and clears `unread`.
+    /// Raises the read horizon to `max(old, horizon_ms)`, clears `unread` and
+    /// any manual unread mark.
     pub fn mark_read(&self, id: &str, horizon_ms: i64) -> Result<()> {
         self.conn
             .prepare_cached(
@@ -206,7 +211,34 @@ impl Store {
                      read_horizon_ms = max(read_horizon_ms, ?2) WHERE id = ?1",
             )?
             .execute(params![id, horizon_ms])?;
+        self.conn
+            .prepare_cached("DELETE FROM kv WHERE key = ?1")?
+            .execute([unread_mark_key(id)])?;
         Ok(())
+    }
+
+    /// Manual "Mark as unread": sets `unread` and moves the read horizon back
+    /// to `horizon_ms` (the message before the first unread one). The mark is
+    /// remembered so a sync does not undo it; [`Store::mark_read`] clears it.
+    /// Does nothing for an unknown conversation.
+    pub fn mark_unread(&self, id: &str, horizon_ms: i64) -> Result<()> {
+        let changed = self
+            .conn
+            .prepare_cached(
+                "UPDATE conversations SET unread = 1, read_horizon_ms = ?2 WHERE id = ?1",
+            )?
+            .execute(params![id, horizon_ms])?;
+        if changed > 0 {
+            self.set_kv(&unread_mark_key(id), &horizon_ms.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// The horizon of a manual unread mark, if the conversation has one.
+    pub fn unread_mark(&self, id: &str) -> Result<Option<i64>> {
+        Ok(self
+            .get_kv(&unread_mark_key(id))?
+            .and_then(|v| v.parse().ok()))
     }
 
     /// Conversations ordered by `last_activity_ms` descending (id breaks ties).
@@ -388,6 +420,92 @@ impl Store {
             .prepare_cached(&format!("SELECT {MSG_COLS} FROM messages WHERE id = ?1"))?
             .query_row([id], msg_from_row)
             .optional()?)
+    }
+
+    /// Id of the top-level message right before the one composed at `compose_ms`
+    /// (what "Mark as unread" bookmarks), or `None` for the first message.
+    pub fn message_before(&self, conversation_id: &str, compose_ms: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT id FROM messages \
+                 WHERE conversation_id = ?1 AND parent_id IS NULL AND compose_ms < ?2 \
+                 ORDER BY compose_ms DESC, id DESC LIMIT 1",
+            )?
+            .query_row(params![conversation_id, compose_ms], |r| r.get(0))
+            .optional()?)
+    }
+
+    // ---- saved messages --------------------------------------------------
+
+    /// Saves a message, replacing the row when it is already saved.
+    pub fn save_message(&self, m: &SavedMessage) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO saved_messages \
+                     (conversation_id, message_id, root_id, sender_name, preview, saved_ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?
+            .execute(params![
+                m.conversation_id,
+                m.message_id,
+                m.root_id,
+                m.sender_name,
+                m.preview,
+                m.saved_ms
+            ])?;
+        Ok(())
+    }
+
+    pub fn unsave_message(&self, conversation_id: &str, message_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "DELETE FROM saved_messages WHERE conversation_id = ?1 AND message_id = ?2",
+            )?
+            .execute(params![conversation_id, message_id])?;
+        Ok(())
+    }
+
+    pub fn is_saved(&self, conversation_id: &str, message_id: &str) -> Result<bool> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT 1 FROM saved_messages WHERE conversation_id = ?1 AND message_id = ?2",
+            )?
+            .exists(params![conversation_id, message_id])?)
+    }
+
+    /// Ids of the saved messages of one conversation.
+    pub fn saved_ids(&self, conversation_id: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT message_id FROM saved_messages WHERE conversation_id = ?1 \
+             ORDER BY saved_ms DESC, message_id",
+        )?;
+        let out = stmt
+            .query_map([conversation_id], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
+    }
+
+    /// Every saved message, newest first (the Saved view).
+    pub fn saved_messages(&self) -> Result<Vec<SavedMessage>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT conversation_id, message_id, root_id, sender_name, preview, saved_ms \
+             FROM saved_messages ORDER BY saved_ms DESC, message_id",
+        )?;
+        let out = stmt
+            .query_map([], |r| {
+                Ok(SavedMessage {
+                    conversation_id: r.get(0)?,
+                    message_id: r.get(1)?,
+                    root_id: r.get(2)?,
+                    sender_name: r.get(3)?,
+                    preview: r.get(4)?,
+                    saved_ms: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
     }
 
     // ---- users ---------------------------------------------------------
@@ -611,6 +729,18 @@ impl Store {
             .prepare_cached(
                 "UPDATE outbox SET state = 'sending' \
                  WHERE client_message_id = ?1 AND state = 'queued'",
+            )?
+            .execute([client_message_id])?;
+        Ok(())
+    }
+
+    /// `Sending` back to `Queued` after a network error: the send did not fail, it never
+    /// happened, so the attempt is not counted. Other states are left alone.
+    pub fn requeue(&self, client_message_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE outbox SET state = 'queued' \
+                 WHERE client_message_id = ?1 AND state = 'sending'",
             )?
             .execute([client_message_id])?;
         Ok(())

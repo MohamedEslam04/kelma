@@ -1,0 +1,93 @@
+// The message "…" menu (also opened by right click), like Teams.
+import { Theme } from "theme.slint";
+import { Icon } from "widgets.slint";
+
+component MenuItem inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> danger: false;
+    in property <bool> indent: false;
+    in property <bool> chevron: false;
+    callback clicked();
+    height: 34px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    HorizontalLayout {
+        padding-left: root.indent ? 34px : 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        if !root.indent: Icon {
+            source: root.icon;
+            width: 16px;
+            height: 16px;
+            y: 9px;
+            tint: root.danger ? Theme.danger : Theme.fg-muted;
+        }
+        Text {
+            text: root.label;
+            color: root.danger ? Theme.danger : Theme.fg;
+            font-size: 13px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        if root.chevron: Icon {
+            source: @image-url("icons/chevron-right.svg");
+            width: 14px;
+            height: 14px;
+            y: 10px;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component MessageMenu inherits Rectangle {
+    in property <bool> mine;
+    in property <bool> saved;
+    // Pinning for everyone is a chat feature; channel posts use another endpoint.
+    in property <bool> can-pin: true;
+    callback reply();
+    callback forward-one();
+    callback forward-many();
+    callback copy-link();
+    callback toggle-save();
+    callback pin();
+    callback mark-unread();
+    callback edit();
+    callback delete();
+
+    // Whether the Forward entry shows its two choices.
+    property <bool> forward-open: false;
+
+    width: 240px;
+    height: items.preferred-height + 12px;
+    border-radius: 6px;
+    background: #2b2b2b;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: #00000090;
+
+    items := VerticalLayout {
+        padding: 6px;
+        spacing: 0px;
+        MenuItem { label: "Reply with quote"; icon: @image-url("icons/quote.svg"); clicked => { root.reply(); } }
+        MenuItem { label: "Forward"; icon: @image-url("icons/forward.svg"); chevron: true; clicked => { root.forward-open = !root.forward-open; } }
+        if root.forward-open: MenuItem { label: "This message"; indent: true; clicked => { root.forward-one(); } }
+        if root.forward-open: MenuItem { label: "Multiple messages"; indent: true; clicked => { root.forward-many(); } }
+        MenuItem { label: "Copy message link"; icon: @image-url("icons/link.svg"); clicked => { root.copy-link(); } }
+        if !root.mine: MenuItem {
+            label: root.saved ? "Unsave this message" : "Save this message";
+            icon: @image-url("icons/star.svg");
+            clicked => { root.toggle-save(); }
+        }
+        if root.can-pin: MenuItem { label: "Pin for everyone"; icon: @image-url("icons/pin.svg"); clicked => { root.pin(); } }
+        MenuItem { label: "Mark as unread"; icon: @image-url("icons/unread.svg"); clicked => { root.mark-unread(); } }
+        if root.mine: MenuItem { label: "Edit"; icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
+        if root.mine: MenuItem { label: "Delete"; icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }
+    }
+}

@@ -64,6 +64,8 @@ pub struct Event {
     pub is_recurring: bool,
     pub body_preview: String,
     pub attendees: Vec<Attendee>,
+    /// Minutes before the start the reminder fires; `None` when the event has no reminder.
+    pub reminder_minutes: Option<u32>,
 }
 
 /// One entry of a delta page.
@@ -132,8 +134,23 @@ fn parse_attendee(a: &Value) -> Attendee {
     }
 }
 
+/// Graph's default reminder when the event carries `isReminderOn` without a lead time.
+const DEFAULT_REMINDER_MINUTES: u32 = 15;
+
+fn reminder_minutes(v: &Value) -> Option<u32> {
+    if v.get("isReminderOn").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    Some(
+        v.get("reminderMinutesBeforeStart")
+            .and_then(Value::as_u64)
+            .and_then(|m| u32::try_from(m).ok())
+            .unwrap_or(DEFAULT_REMINDER_MINUTES),
+    )
+}
+
 /// Parses one Graph event. `None` when it has no id.
-fn parse_event(v: &Value) -> Option<Event> {
+pub(crate) fn parse_event(v: &Value) -> Option<Event> {
     let id = opt_str(v, "id")?;
     let start_ms = date_time_ms(v, "start").unwrap_or(0);
     let end_ms = date_time_ms(v, "end").unwrap_or(start_ms);
@@ -191,6 +208,7 @@ fn parse_event(v: &Value) -> Option<Event> {
             .and_then(Value::as_array)
             .map(|a| a.iter().map(parse_attendee).collect())
             .unwrap_or_default(),
+        reminder_minutes: reminder_minutes(v),
     })
 }
 
@@ -235,5 +253,32 @@ pub fn parse_delta_page(page: &Value) -> DeltaPage {
         changes,
         next_link: next_link(page),
         delta_link: delta_link(page),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn minutes(extra: Value) -> Option<u32> {
+        let mut v = json!({"id": "a"});
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        parse_events(&json!({ "value": [v] }))[0].reminder_minutes
+    }
+
+    #[test]
+    fn reminder_lead_time_defaults_to_15_and_off_means_none() {
+        assert_eq!(minutes(json!({})), Some(15));
+        assert_eq!(
+            minutes(json!({"isReminderOn": true, "reminderMinutesBeforeStart": 5})),
+            Some(5)
+        );
+        assert_eq!(
+            minutes(json!({"isReminderOn": false, "reminderMinutesBeforeStart": 15})),
+            None
+        );
     }
 }

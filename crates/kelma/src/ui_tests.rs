@@ -6,15 +6,40 @@ use std::rc::Rc;
 
 use i_slint_backend_testing::{self as testing, ElementHandle};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, LogicalSize, ModelRc, SharedString, VecModel};
+use slint::{
+    ComponentHandle, LogicalPosition, LogicalSize, Model, ModelRc, SharedString, VecModel,
+};
 
-use crate::{AppWindow, Msg};
+use crate::backend::{Cmd, Engine};
+use crate::ui::UiHandle;
+use crate::{AppWindow, Msg, ReactionItem, demo};
+use std::sync::Arc;
+use store::Store;
+use teams_proto::Client;
+
+mod activity;
 
 type Log = Rc<RefCell<Vec<String>>>;
 
-fn app_with_messages(msgs: Vec<Msg>) -> AppWindow {
-    testing::init_no_event_loop();
+/// The testing platform is per thread and can be set once; several windows may share it.
+fn init_platform() {
+    thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    if !DONE.replace(true) {
+        testing::init_no_event_loop();
+    }
+}
+
+/// A window with the composer's Rust side attached, like `main` builds it.
+fn new_window() -> AppWindow {
+    init_platform();
     let app = AppWindow::new().unwrap();
+    crate::ui::install_local(&app);
+    crate::composer::wire(&app);
+    app
+}
+
+fn app_with_messages(msgs: Vec<Msg>) -> AppWindow {
+    let app = new_window();
     app.window().set_size(LogicalSize::new(1200., 800.));
     app.set_login_state("ready".into());
     app.set_current_id("48:notes".into());
@@ -128,10 +153,18 @@ fn rows(app: &AppWindow) -> Vec<ElementHandle> {
     ElementHandle::find_by_element_type_name(app, "MessageRow").collect()
 }
 
-/// Action-bar buttons (reply, edit, delete) of the hovered row, left to right.
+fn label(e: &ElementHandle) -> String {
+    e.accessible_label().unwrap_or_default().to_string()
+}
+
+fn click(e: &ElementHandle) {
+    e.mock_single_click(PointerEventButton::Left);
+}
+
+/// Hover-bar buttons (the IconButtons in the band of the hovered row), left to right.
 fn bar_buttons(app: &AppWindow, row: &ElementHandle) -> Vec<ElementHandle> {
     let top = row.absolute_position().y;
-    let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "IconButton::touch")
+    let mut v: Vec<_> = ElementHandle::find_by_element_type_name(app, "IconButton")
         .filter(|b| {
             let y = b.absolute_position().y;
             y >= top && y < top + 32.
@@ -141,51 +174,491 @@ fn bar_buttons(app: &AppWindow, row: &ElementHandle) -> Vec<ElementHandle> {
     v
 }
 
-#[test]
-fn hover_shows_actions_and_they_fire_for_own_message() {
-    let app = app_with_messages(vec![msg("m1", "first", false), msg("m2", "mine", true)]);
+/// The four quick reactions of the hover bar, left to right.
+fn quick_reactions(app: &AppWindow) -> Vec<ElementHandle> {
+    let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "MessageRow::et").collect();
+    v.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
+    v
+}
+
+/// Labels of the open message menu, top to bottom.
+fn menu_labels(app: &AppWindow) -> Vec<String> {
+    menu_items(app).iter().map(label).collect()
+}
+
+fn menu_items(app: &AppWindow) -> Vec<ElementHandle> {
+    let mut v: Vec<_> = ElementHandle::find_by_element_type_name(app, "MenuItem").collect();
+    v.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    v
+}
+
+fn menu_item(app: &AppWindow, name: &str) -> ElementHandle {
+    menu_items(app)
+        .into_iter()
+        .find(|i| label(i) == name)
+        .unwrap_or_else(|| panic!("menu item {name:?} in {:?}", menu_labels(app)))
+}
+
+/// Hovers a row and presses "More actions" in its bar.
+fn open_menu(app: &AppWindow, row: &ElementHandle) {
+    hover(app, row);
+    let more = bar_buttons(app, row).pop().expect("bar buttons");
+    assert_eq!(label(&more), "More actions");
+    click(&more);
+    assert!(app.get_menu_open());
+}
+
+/// Records every callback the menu, picker, forward dialog and multi-select raise.
+fn record_actions(app: &AppWindow) -> Log {
     let log = Log::default();
-    {
-        let l = log.clone();
-        app.on_react(move |id, k| l.borrow_mut().push(format!("react {id} {k}")));
-        let l = log.clone();
-        app.on_reply(move |id| l.borrow_mut().push(format!("reply {id}")));
-        let l = log.clone();
-        app.on_edit(move |id| l.borrow_mut().push(format!("edit {id}")));
-        let l = log.clone();
-        app.on_delete(move |id| l.borrow_mut().push(format!("delete {id}")));
+    macro_rules! rec {
+        ($on:ident, $name:literal, ||) => {{
+            let l = log.clone();
+            app.$on(move || l.borrow_mut().push($name.to_string()));
+        }};
+        ($on:ident, $name:literal, |$($a:ident),*|) => {{
+            let l = log.clone();
+            app.$on(move |$($a),*| {
+                let args: Vec<String> = vec![$($a.to_string()),*];
+                l.borrow_mut().push(format!("{} {}", $name, args.join(" ")).trim().to_string());
+            });
+        }};
     }
+    rec!(on_react, "react", |id, k|);
+    rec!(on_reply, "reply", |id|);
+    rec!(on_edit, "edit", |id|);
+    rec!(on_delete, "delete", |id|);
+    rec!(on_copy_link, "copy-link", |id|);
+    rec!(on_toggle_save, "save", |id|);
+    rec!(on_pin, "pin", |id|);
+    rec!(on_mark_unread, "unread", |id|);
+    rec!(on_forward_begin, "forward-begin", |id|);
+    rec!(on_forward_begin_selected, "forward-begin-selected", ||);
+    rec!(on_forward_search, "forward-search", |q|);
+    rec!(on_forward_toggle, "forward-toggle", |id|);
+    rec!(on_forward_send, "forward-send", |note|);
+    rec!(on_forward_cancel, "forward-cancel", ||);
+    rec!(on_select_begin, "select-begin", |id|);
+    rec!(on_toggle_select, "select-toggle", |id|);
+    rec!(on_select_cancel, "select-cancel", ||);
+    log
+}
+
+#[test]
+fn hover_bar_order_for_own_message() {
+    let app = app_with_messages(vec![msg("m1", "first", false), msg("m2", "mine", true)]);
+    let log = record_actions(&app);
     let rows = rows(&app);
     assert_eq!(rows.len(), 2);
     let own = &rows[1];
 
-    assert_eq!(
-        ElementHandle::find_by_element_id(&app, "MessageRow::et").count(),
-        0,
+    assert!(
+        quick_reactions(&app).is_empty(),
         "no action bar before hover"
     );
     hover(&app, own);
-    let reacts: Vec<_> = ElementHandle::find_by_element_id(&app, "MessageRow::et").collect();
-    assert_eq!(reacts.len(), 6, "six quick reactions");
-    reacts[1].mock_single_click(PointerEventButton::Left);
 
-    let buttons = bar_buttons(&app, own);
-    assert_eq!(buttons.len(), 3, "reply, edit, delete on own message");
-    for b in &buttons {
-        b.mock_single_click(PointerEventButton::Left);
+    // 👍 ❤️ 😆 😮 first ...
+    let reacts = quick_reactions(&app);
+    assert_eq!(reacts.len(), 4, "four quick reactions");
+    for r in &reacts {
+        click(r);
     }
     assert_eq!(
         *log.borrow(),
-        vec!["react m2 heart", "reply m2", "edit m2", "delete m2"]
+        vec![
+            "react m2 like",
+            "react m2 heart",
+            "react m2 laugh",
+            "react m2 surprised"
+        ]
+    );
+
+    // ... then More reactions, Reply with quote, Edit, "…".
+    let buttons = bar_buttons(&app, own);
+    let labels: Vec<_> = buttons.iter().map(label).collect();
+    assert_eq!(
+        labels,
+        ["More reactions", "Reply with quote", "Edit", "More actions"]
+    );
+    let last_reaction_x = reacts.last().unwrap().absolute_position().x;
+    assert!(buttons[0].absolute_position().x > last_reaction_x);
+
+    log.borrow_mut().clear();
+    click(&buttons[1]);
+    click(&buttons[2]);
+    assert_eq!(*log.borrow(), vec!["reply m2", "edit m2"]);
+}
+
+#[test]
+fn others_messages_have_no_edit_in_the_bar() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    let row = &rows(&app)[0];
+    hover(&app, row);
+    let labels: Vec<_> = bar_buttons(&app, row).iter().map(label).collect();
+    assert_eq!(
+        labels,
+        ["More reactions", "Reply with quote", "More actions"]
     );
 }
 
 #[test]
-fn others_messages_only_offer_react_and_reply() {
+fn more_reactions_picker_lists_teams_keys_and_filters_by_search() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    let log = record_actions(&app);
+    let row = &rows(&app)[0];
+    hover(&app, row);
+    click(&bar_buttons(&app, row)[0]);
+    assert!(app.get_picker_open());
+    assert_eq!(app.get_picker_msg_id(), "m1");
+
+    let cells = || -> Vec<ElementHandle> {
+        ElementHandle::find_by_element_id(&app, "ReactionPicker::cell").collect()
+    };
+    let mut all = cells();
+    all.sort_by(|a, b| {
+        let (pa, pb) = (a.absolute_position(), b.absolute_position());
+        pa.y.total_cmp(&pb.y).then(pa.x.total_cmp(&pb.x))
+    });
+    assert!(all.len() >= 48, "a full grid, not an empty picker");
+    let first: Vec<_> = all.iter().take(6).map(label).collect();
+    assert_eq!(
+        first,
+        ["like", "heart", "laugh", "surprised", "sad", "angry"],
+        "Teams reactions come first"
+    );
+
+    let input = ElementHandle::find_by_element_id(&app, "ReactionPicker::input")
+        .next()
+        .expect("search input");
+    click(&input);
+    type_text(&app, "fire");
+    let found = cells();
+    assert!(!found.is_empty() && found.len() < all.len());
+    let fire = found.iter().find(|c| label(c) == "fire").expect("fire");
+    click(fire);
+
+    assert_eq!(*log.borrow(), vec!["react m1 1f525_fire"]);
+    assert!(!app.get_picker_open(), "picking closes the picker");
+}
+
+#[test]
+fn picker_finds_a_search_with_no_match() {
     let app = app_with_messages(vec![msg("m1", "theirs", false)]);
     let row = &rows(&app)[0];
     hover(&app, row);
-    assert_eq!(bar_buttons(&app, row).len(), 1, "reply only");
+    click(&bar_buttons(&app, row)[0]);
+    let input = ElementHandle::find_by_element_id(&app, "ReactionPicker::input")
+        .next()
+        .unwrap();
+    click(&input);
+    type_text(&app, "zzzzqqq");
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "ReactionPicker::cell").count(),
+        0
+    );
+}
+
+#[test]
+fn menu_for_others_message() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    open_menu(&app, &rows(&app)[0]);
+    assert_eq!(
+        menu_labels(&app),
+        [
+            "Reply with quote",
+            "Forward",
+            "Copy message link",
+            "Save this message",
+            "Pin for everyone",
+            "Mark as unread",
+        ]
+    );
+}
+
+#[test]
+fn menu_for_own_message_has_edit_and_delete_but_no_save() {
+    let app = app_with_messages(vec![msg("m1", "mine", true)]);
+    open_menu(&app, &rows(&app)[0]);
+    assert_eq!(
+        menu_labels(&app),
+        [
+            "Reply with quote",
+            "Forward",
+            "Copy message link",
+            "Pin for everyone",
+            "Mark as unread",
+            "Edit",
+            "Delete",
+        ]
+    );
+}
+
+#[test]
+fn menu_in_a_channel_has_no_pin_and_a_saved_message_offers_unsave() {
+    let app = app_with_messages(vec![Msg {
+        saved: true,
+        ..msg("m1", "theirs", false)
+    }]);
+    app.set_current_is_channel(true);
+    open_menu(&app, &rows(&app)[0]);
+    let labels = menu_labels(&app);
+    assert!(
+        !labels.contains(&"Pin for everyone".to_string()),
+        "{labels:?}"
+    );
+    assert!(
+        labels.contains(&"Unsave this message".to_string()),
+        "{labels:?}"
+    );
+}
+
+#[test]
+fn right_click_opens_the_same_menu() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false), msg("m2", "mine", true)]);
+    rows(&app)[0].mock_single_click(PointerEventButton::Right);
+    assert!(app.get_menu_open());
+    assert_eq!(app.get_menu_msg().id, "m1");
+    let others = menu_labels(&app);
+    app.set_menu_open(false);
+
+    open_menu(&app, &rows(&app)[0]);
+    assert_eq!(menu_labels(&app), others, "bar and right click agree");
+}
+
+#[test]
+fn menu_actions_fire_with_the_message_id_and_close_the_menu() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false), msg("m2", "mine", true)]);
+    let log = record_actions(&app);
+    let (theirs, mine) = {
+        let r = rows(&app);
+        (r[0].clone(), r[1].clone())
+    };
+    for (row, item) in [
+        (&theirs, "Reply with quote"),
+        (&theirs, "Copy message link"),
+        (&theirs, "Save this message"),
+        (&theirs, "Pin for everyone"),
+        (&theirs, "Mark as unread"),
+        (&mine, "Edit"),
+        (&mine, "Delete"),
+    ] {
+        open_menu(&app, row);
+        click(&menu_item(&app, item));
+        assert!(!app.get_menu_open(), "{item} closes the menu");
+    }
+    assert_eq!(
+        *log.borrow(),
+        vec![
+            "reply m1",
+            "copy-link m1",
+            "save m1",
+            "pin m1",
+            "unread m1",
+            "edit m2",
+            "delete m2"
+        ]
+    );
+}
+
+fn recipient(id: &str, title: &str, picked: bool) -> crate::Recipient {
+    crate::Recipient {
+        id: id.into(),
+        title: title.into(),
+        initials: "XX".into(),
+        picked,
+        ..Default::default()
+    }
+}
+
+fn recipients(v: Vec<crate::Recipient>) -> ModelRc<crate::Recipient> {
+    ModelRc::new(VecModel::from(v))
+}
+
+fn result_rows(app: &AppWindow) -> Vec<ElementHandle> {
+    ElementHandle::find_by_element_id(app, "ForwardDialog::hit").collect()
+}
+
+#[test]
+fn forward_dialog_flow() {
+    let app = app_with_messages(vec![msg("m1", "hello there", false)]);
+    let log = record_actions(&app);
+    open_menu(&app, &rows(&app)[0]);
+
+    // Forward has two choices: this message, or several.
+    click(&menu_item(&app, "Forward"));
+    assert_eq!(
+        menu_labels(&app)
+            .iter()
+            .filter(|l| *l == "This message" || *l == "Multiple messages")
+            .count(),
+        2
+    );
+    click(&menu_item(&app, "This message"));
+    assert!(app.get_forward_open());
+    assert!(!app.get_menu_open());
+    assert_eq!(*log.borrow(), vec!["forward-begin m1"]);
+    assert_eq!(app.get_forward_count(), 1);
+    assert_eq!(app.get_forward_preview_author(), "Me");
+    assert_eq!(app.get_forward_preview_text(), "hello there");
+
+    // The engine answers with the chats to pick from.
+    app.set_forward_results(recipients(vec![
+        recipient("c1", "Sara Hassan", false),
+        recipient("c2", "Project room", false),
+    ]));
+
+    // Typing in "Add recipients" searches.
+    let search = ElementHandle::find_by_element_id(&app, "ForwardDialog::recipient-input")
+        .next()
+        .expect("recipient input");
+    click(&search);
+    type_text(&app, "sa");
+    assert_eq!(log.borrow().last().unwrap(), "forward-search sa");
+
+    // Forward stays disabled until someone is picked.
+    let send = ElementHandle::find_by_element_id(&app, "ForwardDialog::send-touch")
+        .next()
+        .unwrap();
+    click(&send);
+    assert!(
+        !log.borrow().iter().any(|l| l.starts_with("forward-send")),
+        "nothing picked, nothing sent"
+    );
+
+    let rows = result_rows(&app);
+    assert_eq!(rows.len(), 2);
+    click(&rows[0]);
+    assert_eq!(log.borrow().last().unwrap(), "forward-toggle c1");
+    app.set_forward_picked(recipients(vec![recipient("c1", "Sara Hassan", true)]));
+    app.set_forward_results(recipients(vec![
+        recipient("c1", "Sara Hassan", true),
+        recipient("c2", "Project room", false),
+    ]));
+    assert_eq!(result_rows(&app).len(), 2, "rows survive a refresh");
+
+    let note = ElementHandle::find_by_element_id(&app, "ForwardDialog::note")
+        .next()
+        .expect("optional message");
+    click(&note);
+    type_text(&app, "FYI");
+    click(&send);
+    assert_eq!(log.borrow().last().unwrap(), "forward-send FYI");
+
+    // Cancel closes and tells the engine.
+    let cancel = ElementHandle::find_by_element_id(&app, "ForwardDialog::cancel-touch")
+        .next()
+        .unwrap();
+    click(&cancel);
+    assert!(!app.get_forward_open());
+    assert_eq!(log.borrow().last().unwrap(), "forward-cancel");
+}
+
+fn checkboxes(app: &AppWindow) -> Vec<ElementHandle> {
+    let mut v: Vec<_> = ElementHandle::find_by_accessible_label(app, "Select message").collect();
+    v.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    v
+}
+
+#[test]
+fn multi_select_ticks_messages_and_forwards_them() {
+    let app = app_with_messages(vec![
+        msg("m1", "one", false),
+        msg("m2", "two", false),
+        msg("m3", "three", true),
+    ]);
+    let log = record_actions(&app);
+    assert!(
+        checkboxes(&app).is_empty(),
+        "no checkboxes outside the mode"
+    );
+
+    open_menu(&app, &rows(&app)[1]);
+    click(&menu_item(&app, "Forward"));
+    click(&menu_item(&app, "Multiple messages"));
+    assert!(app.get_select_mode());
+    assert_eq!(*log.borrow(), vec!["select-begin m2"]);
+    assert_eq!(checkboxes(&app).len(), 3, "a checkbox per message");
+
+    // No hover bar while selecting.
+    hover(&app, &rows(&app)[0]);
+    assert!(quick_reactions(&app).is_empty());
+
+    // The engine owns the ticks; the row only reports the click.
+    click(&rows(&app)[0]);
+    click(&rows(&app)[2]);
+    assert_eq!(log.borrow()[1..], ["select-toggle m1", "select-toggle m3"]);
+
+    // The engine pushes the new state back.
+    let model = app.get_messages();
+    for i in 0..model.row_count() {
+        let mut m = model.row_data(i).unwrap();
+        m.selected = i != 1;
+        model.set_row_data(i, m);
+    }
+    app.set_select_count(2);
+    let ticked: Vec<_> = checkboxes(&app)
+        .iter()
+        .map(|c| c.accessible_checked().unwrap())
+        .collect();
+    assert_eq!(ticked, [true, false, true]);
+
+    let forward = ElementHandle::find_by_element_id(&app, "SelectBar::forward-touch")
+        .next()
+        .expect("select bar");
+    click(&forward);
+    assert_eq!(log.borrow().last().unwrap(), "forward-begin-selected");
+    assert!(app.get_forward_open());
+    assert_eq!(app.get_forward_count(), 2);
+
+    // Leaving the mode.
+    app.set_forward_open(false);
+    let cancel = ElementHandle::find_by_element_id(&app, "SelectBar::cancel-touch")
+        .next()
+        .unwrap();
+    click(&cancel);
+    assert!(!app.get_select_mode());
+    assert_eq!(log.borrow().last().unwrap(), "select-cancel");
+    assert!(checkboxes(&app).is_empty());
+}
+
+#[test]
+fn select_bar_forward_is_disabled_without_ticks() {
+    let app = app_with_messages(vec![msg("m1", "one", false)]);
+    let log = record_actions(&app);
+    app.set_select_mode(true);
+    app.set_select_count(0);
+    let forward = ElementHandle::find_by_element_id(&app, "SelectBar::forward-touch")
+        .next()
+        .unwrap();
+    click(&forward);
+    assert!(!app.get_forward_open());
+    assert!(log.borrow().is_empty());
+}
+
+#[test]
+fn reaction_chip_tooltip_lists_who_reacted() {
+    let mut m = msg("m1", "react to me", false);
+    m.reactions = ModelRc::new(VecModel::from(vec![ReactionItem {
+        key: "like".into(),
+        emoji: "👍".into(),
+        count: 2,
+        mine: true,
+        names: "Sara Hassan, You".into(),
+    }]));
+    let app = app_with_messages(vec![m]);
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "ReactionChip::tip").count(),
+        0
+    );
+    let chip = ElementHandle::find_by_element_type_name(&app, "ReactionChip")
+        .next()
+        .expect("reaction chip");
+    hover(&app, &chip);
+    let tip = ElementHandle::find_by_element_id(&app, "ReactionChip::tip")
+        .next()
+        .expect("tooltip while hovering");
+    assert_eq!(label(&tip), "Sara Hassan, You");
 }
 
 #[test]
@@ -221,18 +694,7 @@ fn toolbar_emoji_picker_and_attach_buttons() {
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 4, "emoji, image, file, send");
-
-    app.set_draft("hi ".into());
-    assert_eq!(
-        ElementHandle::find_by_element_id(&app, "Composer::ea").count(),
-        0
-    );
-    tb[0].mock_single_click(PointerEventButton::Left);
-    let emoji: Vec<_> = ElementHandle::find_by_element_id(&app, "Composer::ea").collect();
-    assert_eq!(emoji.len(), 32, "picker shows 32 emoji");
-    emoji[9].mock_single_click(PointerEventButton::Left);
-    assert_eq!(app.get_draft(), "hi 👍");
+    assert_eq!(tb.len(), 5, "emoji, image, file, more, send");
 
     tb[1].mock_single_click(PointerEventButton::Left);
     tb[2].mock_single_click(PointerEventButton::Left);
@@ -311,4 +773,932 @@ fn arabic_cursor_selection_copy_paste() {
     key(&app, Key::Shift, false);
     type_text(&app, "there");
     assert_eq!(app.get_draft(), "hi there");
+}
+
+// ---- unread handling (plans/chat.md 5.6) ---------------------------------
+
+fn find_label(app: &AppWindow, text: &str) -> Vec<ElementHandle> {
+    ElementHandle::find_by_accessible_label(app, text).collect()
+}
+
+#[test]
+fn new_messages_divider_sits_above_the_first_unread_row() {
+    let mut unread = msg("m2", "first unread", false);
+    unread.new_above = true;
+    let app = app_with_messages(vec![
+        msg("m1", "read", false),
+        unread,
+        msg("m3", "later", false),
+    ]);
+    let divider = find_label(&app, "New messages");
+    assert_eq!(divider.len(), 1, "exactly one divider");
+    let rows = rows(&app);
+    let y = divider[0].absolute_position().y;
+    assert!(y > rows[0].absolute_position().y, "below the read row");
+    assert!(
+        y < rows[1].absolute_position().y + 20.,
+        "inside the unread row"
+    );
+    assert!(y < rows[2].absolute_position().y, "above the later row");
+}
+
+#[test]
+fn no_divider_when_nothing_is_marked() {
+    let app = app_with_messages(vec![msg("m1", "a", false), msg("m2", "b", false)]);
+    assert!(find_label(&app, "New messages").is_empty());
+}
+
+#[test]
+fn jump_button_shows_when_scrolled_up_with_the_count_and_scrolls_down() {
+    let app = app_with_messages(vec![msg("m1", "a", false), msg("m2", "b", false)]);
+    let jumps = Rc::new(RefCell::new(0));
+    let j = jumps.clone();
+    app.on_jump_to_newest(move || *j.borrow_mut() += 1);
+
+    assert!(
+        find_label(&app, "↓ Jump to newest").is_empty(),
+        "hidden at the bottom"
+    );
+
+    app.set_at_bottom(false);
+    let button = find_label(&app, "↓ Jump to newest");
+    assert_eq!(button.len(), 1, "shown when scrolled up");
+
+    app.set_new_count(3);
+    let button = find_label(&app, "↓ Jump to newest · 3");
+    assert_eq!(button.len(), 1, "count of new messages");
+
+    let ticks = app.get_scroll_tick();
+    button[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*jumps.borrow(), 1);
+    assert_eq!(
+        app.get_scroll_tick(),
+        ticks + 1,
+        "asks the list to scroll down"
+    );
+}
+
+#[test]
+fn shift_escape_marks_everything_read_and_plain_escape_does_not() {
+    let app = app_with_messages(vec![]);
+    let fired = Rc::new(RefCell::new(0));
+    let f = fired.clone();
+    app.on_mark_all_read(move || *f.borrow_mut() += 1);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+    assert_eq!(*fired.borrow(), 0);
+
+    key(&app, Key::Shift, true);
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+    key(&app, Key::Shift, false);
+    assert_eq!(*fired.borrow(), 1);
+}
+
+fn chat_row(id: &str, title: &str) -> crate::ChatRow {
+    crate::ChatRow {
+        id: id.into(),
+        title: title.into(),
+        section: "chats".into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn chat_list_menus_fire_mark_unread_and_mark_all_read() {
+    let app = app_with_messages(vec![]);
+    app.set_chats_main(ModelRc::new(VecModel::from(vec![
+        chat_row("c1", "Sara"),
+        chat_row("c2", "Omar"),
+    ])));
+    let log = Log::default();
+    {
+        let l = log.clone();
+        app.on_mark_chat_unread(move |id| l.borrow_mut().push(format!("unread {id}")));
+        let l = log.clone();
+        app.on_mark_all_read(move || l.borrow_mut().push("all".into()));
+    }
+
+    // Right click on the second chat opens its menu.
+    let item = find_label(&app, "Omar");
+    assert_eq!(item.len(), 1);
+    let p = item[0].absolute_position();
+    let s = item[0].size();
+    let at = LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.);
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    let entry = find_label(&app, "Mark as unread");
+    assert_eq!(entry.len(), 1, "menu open");
+    entry[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), vec!["unread c2"]);
+
+    // The "…" button of the list offers Mark all as read.
+    let more = ElementHandle::find_by_element_id(&app, "IconButton::touch")
+        .find(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
+        .expect("list menu button");
+    more.mock_single_click(PointerEventButton::Left);
+    let all = find_label(&app, "Mark all as read");
+    assert_eq!(all.len(), 1);
+    all[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), vec!["unread c2", "all"]);
+}
+
+#[test]
+fn opening_at_the_divider_puts_it_near_the_top_of_a_long_list() {
+    let msgs: Vec<Msg> = (0..160)
+        .map(|i| {
+            let text = if i % 3 == 0 {
+                "a much longer message that wraps over several lines because it has a great deal to say about nothing in particular ".repeat(3)
+            } else {
+                "short".to_string()
+            };
+            let mut m = msg(&format!("m{i}"), &text, false);
+            m.new_above = i == 110;
+            m
+        })
+        .collect();
+    let app = app_with_messages(msgs);
+    app.set_divider_index(110);
+    app.set_divider_tick(app.get_divider_tick() + 1);
+    // Let the list lay out the rows around the new position and correct itself.
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    let divider = find_label(&app, "New messages");
+    assert_eq!(divider.len(), 1, "the divider row is on screen");
+    let y = divider[0].absolute_position().y;
+    // The list starts below the 48px top bar and the 60px conversation header.
+    assert!((108. ..108. + 120.).contains(&y), "divider at y={y}");
+}
+
+// ---- failed sends (plans/chat.md 5.8) -----------------------------------
+
+fn outgoing(id: &str, text: &str, pending: bool, failed: bool) -> Msg {
+    Msg {
+        pending,
+        failed,
+        ..msg(id, text, true)
+    }
+}
+
+#[test]
+fn failed_row_offers_retry_and_delete_and_they_fire() {
+    let app = app_with_messages(vec![
+        msg("m1", "sent earlier", true),
+        outgoing("pending-77", "did not go", false, true),
+    ]);
+    let log = Log::default();
+    {
+        let l = log.clone();
+        app.on_retry_send(move |id| l.borrow_mut().push(format!("retry {id}")));
+        let l = log.clone();
+        app.on_discard_send(move |id| l.borrow_mut().push(format!("discard {id}")));
+        let l = log.clone();
+        app.on_delete(move |id| l.borrow_mut().push(format!("server-delete {id}")));
+    }
+    assert_eq!(
+        find_label(&app, "Failed to send").len(),
+        1,
+        "only the failed row says so"
+    );
+    let retry = find_label(&app, "Retry");
+    let delete = find_label(&app, "Delete");
+    assert_eq!((retry.len(), delete.len()), (1, 1));
+    retry[0].mock_single_click(PointerEventButton::Left);
+    delete[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        *log.borrow(),
+        vec!["retry pending-77", "discard pending-77"],
+        "the failed row's Delete discards locally, it never deletes on the server"
+    );
+}
+
+#[test]
+fn pending_row_has_no_failure_actions_and_no_hover_bar() {
+    let app = app_with_messages(vec![outgoing("pending-1", "sending", true, false)]);
+    assert!(find_label(&app, "Failed to send").is_empty());
+    assert!(find_label(&app, "Retry").is_empty());
+    let row = &rows(&app)[0];
+    hover(&app, row);
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "MessageRow::et").count(),
+        0,
+        "no reactions on a message that is not sent yet"
+    );
+}
+
+fn ctrl_enter(app: &AppWindow) {
+    key(app, Key::Control, true);
+    enter(app);
+    key(app, Key::Control, false);
+}
+
+#[test]
+fn start_a_new_line_mode_sends_on_ctrl_enter() {
+    let app = app_with_messages(vec![]);
+    let sent = record_send(&app);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    assert!(app.get_enter_sends(), "Enter sends by default");
+
+    app.set_enter_sends(false);
+    type_text(&app, "one");
+    enter(&app);
+    type_text(&app, "two");
+    assert!(
+        sent.borrow().is_empty(),
+        "Enter does not send in new-line mode"
+    );
+    assert_eq!(app.get_draft(), "one\ntwo");
+
+    ctrl_enter(&app);
+    assert_eq!(*sent.borrow(), vec!["one\ntwo".to_string()]);
+    assert_eq!(app.get_draft(), "");
+
+    app.set_enter_sends(true);
+    type_text(&app, "x");
+    enter(&app);
+    assert_eq!(
+        sent.borrow().len(),
+        2,
+        "Enter sends again once switched back"
+    );
+}
+
+#[test]
+fn composer_more_menu_switches_the_enter_behavior() {
+    let app = app_with_messages(vec![]);
+    let log = Log::default();
+    {
+        let l = log.clone();
+        app.on_set_enter_sends(move |on| l.borrow_mut().push(format!("enter-sends {on}")));
+    }
+    let more = &toolbar(&app)[3];
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "Composer::enter-opt").count(),
+        0
+    );
+    more.mock_single_click(PointerEventButton::Left);
+    let opts: Vec<_> = ElementHandle::find_by_element_id(&app, "Composer::enter-opt").collect();
+    assert_eq!(opts.len(), 2, "send the message, start a new line");
+
+    opts[1].mock_single_click(PointerEventButton::Left);
+    assert!(!app.get_enter_sends());
+    assert_eq!(*log.borrow(), vec!["enter-sends false"]);
+}
+
+/// The real engine behind the real window, driven synchronously: every callback runs its command to
+/// completion on a current-thread runtime and then renders what the engine marked dirty.
+struct Harness {
+    app: AppWindow,
+    engine: Arc<Engine>,
+    rt: Rc<tokio::runtime::Runtime>,
+}
+
+const NOTES: &str = "48:notes";
+const BACKEND: &str = "19:backend@thread.v2";
+
+impl Harness {
+    fn new() -> Self {
+        let store = Store::open_in_memory().unwrap();
+        demo::seed(&store, teams_proto::time::now_ms()).unwrap();
+        Self::with_store(store)
+    }
+
+    fn with_store(store: Store) -> Self {
+        let app = new_window();
+        app.window().set_size(LogicalSize::new(1200., 800.));
+        app.set_login_state("ready".into());
+        app.show().unwrap();
+        let rt = Rc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        let engine = Engine::new(
+            Client::offline("test").unwrap(),
+            store,
+            session::Config::default(),
+            UiHandle::new(app.as_weak()),
+            demo::ME.into(),
+            "Me".into(),
+        );
+        // No network, so errors are not shown.
+        engine
+            .offline
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let h = Harness { app, engine, rt };
+        let run = h.runner();
+        h.app.on_select_chat({
+            let run = run.clone();
+            move |id| run(Cmd::SelectChat(id.into()))
+        });
+        h.app.on_set_filter({
+            let run = run.clone();
+            move |f| run(Cmd::SetFilter(f.into()))
+        });
+        h.app.on_reply({
+            let run = run.clone();
+            move |id| run(Cmd::Reply(id.into()))
+        });
+        h.app.on_draft_edited({
+            let run = run.clone();
+            move |t| run(Cmd::DraftEdited(t.into()))
+        });
+        h
+    }
+
+    fn runner(&self) -> Rc<dyn Fn(Cmd)> {
+        let (engine, rt) = (self.engine.clone(), self.rt.clone());
+        Rc::new(move |cmd| {
+            rt.block_on(async {
+                engine.clone().handle(cmd).await;
+                engine.render_dirty();
+            });
+        })
+    }
+
+    fn select(&self, id: &str) {
+        self.runner()(Cmd::SelectChat(id.into()));
+    }
+
+    fn type_in_composer(&self, text: &str) {
+        composer(&self.app).mock_single_click(PointerEventButton::Left);
+        type_text(&self.app, text);
+    }
+
+    /// Every chat list row: favorites, chats, then channels.
+    fn chats(&self) -> Vec<crate::ChatRow> {
+        let a = &self.app;
+        let mut rows: Vec<_> = a.get_chats_favorites().iter().collect();
+        rows.extend(a.get_chats_main().iter());
+        rows.extend(a.get_chats_channels().iter());
+        rows
+    }
+}
+
+#[test]
+fn draft_survives_switching_chats() {
+    let h = Harness::new();
+    h.select(NOTES);
+    h.type_in_composer("remember the milk");
+
+    h.select(BACKEND);
+    assert_eq!(h.app.get_draft(), "", "another chat starts empty");
+    h.type_in_composer("review please");
+
+    h.select(NOTES);
+    assert_eq!(h.app.get_draft(), "remember the milk");
+    h.select(BACKEND);
+    assert_eq!(h.app.get_draft(), "review please");
+}
+
+#[test]
+fn draft_is_saved_after_a_pause_and_cleared_by_sending() {
+    let h = Harness::new();
+    h.select(NOTES);
+    h.type_in_composer("half a thought");
+    assert!(
+        h.engine.stored_draft(NOTES).is_none(),
+        "typing alone does not hit the database"
+    );
+    h.rt.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(700)).await });
+    assert_eq!(h.engine.stored_draft(NOTES).unwrap().text, "half a thought");
+
+    h.runner()(Cmd::Send("half a thought".into(), String::new()));
+    assert!(
+        h.engine.stored_draft(NOTES).is_none(),
+        "sent text is no longer a draft"
+    );
+}
+
+#[test]
+fn draft_and_reply_target_survive_a_restart() {
+    let db = std::env::temp_dir().join(format!("kelma-drafts-{}.sqlite", std::process::id()));
+    let _ = std::fs::remove_file(&db);
+    let seed = |db: &std::path::Path| {
+        let store = Store::open(db).unwrap();
+        demo::seed(&store, teams_proto::time::now_ms()).unwrap();
+        store
+    };
+    let target = {
+        let h = Harness::with_store(seed(&db));
+        h.select(BACKEND);
+        let target = h.engine.latest_message_id(BACKEND).expect("demo message");
+        h.runner()(Cmd::Reply(target.clone()));
+        h.type_in_composer("on it");
+        h.select(NOTES); // closing the app flushes the same way
+        target
+    };
+
+    let h = Harness::with_store(Store::open(&db).unwrap());
+    h.select(BACKEND);
+    assert_eq!(h.app.get_draft(), "on it");
+    assert!(!h.app.get_reply_preview().is_empty(), "reply bar is back");
+    assert_eq!(h.engine.reply_target_id().as_deref(), Some(target.as_str()));
+    let _ = std::fs::remove_file(&db);
+}
+
+#[test]
+fn chat_list_marks_drafts_and_has_a_drafts_view() {
+    let h = Harness::new();
+    h.select(NOTES);
+    h.type_in_composer("unsent");
+    h.select(BACKEND);
+
+    let notes = h.chats().into_iter().find(|c| c.id == NOTES).unwrap();
+    assert!(notes.draft);
+    assert_eq!(notes.preview, "unsent");
+    let backend = h.chats().into_iter().find(|c| c.id == BACKEND).unwrap();
+    assert!(
+        !backend.draft,
+        "chats without a draft keep their last message"
+    );
+
+    h.runner()(Cmd::SetFilter("drafts".into()));
+    let ids: Vec<_> = h.chats().into_iter().map(|c| c.id.to_string()).collect();
+    assert_eq!(ids, vec![NOTES.to_string()]);
+}
+
+fn left(app: &AppWindow, times: usize) {
+    for _ in 0..times {
+        key(app, Key::LeftArrow, true);
+        key(app, Key::LeftArrow, false);
+    }
+}
+
+fn ids(app: &AppWindow, id: &str) -> Vec<ElementHandle> {
+    ElementHandle::find_by_element_id(app, id).collect()
+}
+
+fn open_emoji_panel(app: &AppWindow) {
+    toolbar(app)[0].mock_single_click(PointerEventButton::Left);
+}
+
+fn emoji_in_category(app: &AppWindow, tab: i32) -> usize {
+    use crate::EmojiApi;
+    app.global::<EmojiApi>()
+        .invoke_list(tab, "".into(), 0)
+        .row_count()
+}
+
+/// Number of `:xx` suggestions the engine-free helper offers for the text before the cursor.
+fn suggestions(text_before_cursor: &str) -> Vec<&'static emoji::Emoji> {
+    emoji::autocomplete(text_before_cursor)
+        .map(|(_, hits)| hits)
+        .unwrap_or_default()
+}
+
+#[test]
+fn emoji_panel_has_tabs_and_lists_a_category() {
+    let app = app_with_messages(vec![]);
+    open_emoji_panel(&app);
+    assert_eq!(
+        ids(&app, "Composer::emoji-tab-area").len(),
+        9,
+        "one tab per category"
+    );
+    assert!(emoji_in_category(&app, 0) > 100);
+    // Only the rows in view exist, so just check there is a grid.
+    let shown = ids(&app, "EmojiGrid::cell").len();
+    assert!(
+        (18..=emoji_in_category(&app, 0)).contains(&shown),
+        "{shown}"
+    );
+
+    // The last tab is flags: its first cell inserts the first flag.
+    ids(&app, "Composer::emoji-tab-area")[8].mock_single_click(PointerEventButton::Left);
+    ids(&app, "EmojiGrid::cell")[0].mock_single_click(PointerEventButton::Left);
+    let flag = emoji::all()
+        .iter()
+        .find(|e| e.category == emoji::Category::Flags)
+        .unwrap();
+    assert_eq!(app.get_draft(), flag.ch);
+}
+
+#[test]
+fn emoji_search_then_pick_inserts_at_the_cursor() {
+    let app = app_with_messages(vec![]);
+    let used = Log::default();
+    {
+        let l = used.clone();
+        app.on_emoji_used(move |e| l.borrow_mut().push(e.to_string()));
+    }
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, "hello world");
+    left(&app, 5);
+
+    open_emoji_panel(&app);
+    let search = ids(&app, "Composer::emoji-search");
+    assert_eq!(search.len(), 1);
+    search[0].mock_single_click(PointerEventButton::Left);
+    type_text(&app, "heart");
+    let cells = ids(&app, "EmojiGrid::cell");
+    assert_eq!(cells.len(), emoji::search("heart", 120).len());
+    assert_eq!(
+        ids(&app, "Composer::emoji-tab-area").len(),
+        0,
+        "tabs give way to results"
+    );
+
+    cells[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        app.get_draft(),
+        "hello ❤\u{fe0f}world",
+        "the heart lands at the cursor, not the end"
+    );
+    assert_eq!(*used.borrow(), vec!["❤\u{fe0f}"]);
+    type_text(&app, "!");
+    assert_eq!(
+        app.get_draft(),
+        "hello ❤\u{fe0f}!world",
+        "typing goes on after the emoji"
+    );
+}
+
+#[test]
+fn colon_autocomplete_offers_emoji_and_tab_inserts_the_first() {
+    let app = app_with_messages(vec![]);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, "at 12:30 and :h");
+    assert_eq!(
+        ids(&app, "Composer::sug-area").len(),
+        0,
+        "needs two letters after the colon"
+    );
+    type_text(&app, "ea");
+    assert_eq!(
+        ids(&app, "Composer::sug-area").len(),
+        suggestions("at 12:30 and :hea").len()
+    );
+    assert!(!ids(&app, "Composer::sug-area").is_empty());
+
+    key(&app, Key::Tab, true);
+    key(&app, Key::Tab, false);
+    assert_eq!(app.get_draft(), "at 12:30 and ❤\u{fe0f}");
+    assert_eq!(ids(&app, "Composer::sug-area").len(), 0);
+}
+
+#[test]
+fn autocomplete_replaces_the_word_before_the_cursor_and_enter_does_not_send() {
+    let app = app_with_messages(vec![]);
+    let sent = record_send(&app);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, "see :heart and more");
+    left(&app, " and more".len());
+    assert!(!ids(&app, "Composer::sug-area").is_empty());
+
+    enter(&app);
+    assert!(
+        sent.borrow().is_empty(),
+        "Enter picks the emoji while the popup is open"
+    );
+    assert_eq!(app.get_draft(), "see ❤\u{fe0f} and more");
+    type_text(&app, "X");
+    assert_eq!(app.get_draft(), "see ❤\u{fe0f}X and more");
+}
+
+#[test]
+fn autocomplete_arrows_click_and_escape() {
+    let app = app_with_messages(vec![]);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, ":sm");
+    assert!(!ids(&app, "Composer::sug-area").is_empty());
+
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+    assert_eq!(
+        ids(&app, "Composer::sug-area").len(),
+        0,
+        "Escape closes the popup"
+    );
+    type_text(&app, "i");
+    assert!(
+        !ids(&app, "Composer::sug-area").is_empty(),
+        "more typing brings it back"
+    );
+
+    // Arrow down moves the highlight; Enter then takes the second hit.
+    key(&app, Key::DownArrow, true);
+    key(&app, Key::DownArrow, false);
+    enter(&app);
+    assert_eq!(app.get_draft(), suggestions(":smi")[1].ch);
+
+    // Clicking a suggestion works too.
+    app.set_draft("".into());
+    type_text(&app, " :smile");
+    ids(&app, "Composer::sug-area")[2].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        app.get_draft(),
+        format!(" {}", suggestions(" :smile")[2].ch)
+    );
+}
+
+#[test]
+fn skin_tone_choice_applies_to_the_panel_and_is_reported() {
+    let app = app_with_messages(vec![]);
+    let log = Log::default();
+    {
+        let l = log.clone();
+        app.on_skin_tone_changed(move |t| l.borrow_mut().push(format!("tone {t}")));
+    }
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    open_emoji_panel(&app);
+    let tones = ids(&app, "Composer::tone");
+    assert_eq!(tones.len(), 6, "default plus five tones");
+    tones[2].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), vec!["tone 2"]);
+    assert_eq!(app.get_skin_tone(), 2);
+
+    ids(&app, "Composer::emoji-search")[0].mock_single_click(PointerEventButton::Left);
+    type_text(&app, "thumbs up");
+    ids(&app, "EmojiGrid::cell")[0].mock_single_click(PointerEventButton::Left);
+    let thumbs = emoji::by_shortcode("thumbs_up").unwrap();
+    assert_eq!(app.get_draft(), emoji::with_skin_tone(thumbs, 2));
+    assert!(app.get_draft().contains('\u{1F3FC}'));
+}
+
+#[test]
+fn recent_emoji_get_their_own_row_above_the_category() {
+    use crate::ComposerEmoji;
+    let app = app_with_messages(vec![]);
+    let used = Log::default();
+    {
+        let l = used.clone();
+        app.on_emoji_used(move |e| l.borrow_mut().push(e.to_string()));
+    }
+    app.set_recent_emoji(ModelRc::new(VecModel::from(vec![
+        ComposerEmoji {
+            ch: "🎉".into(),
+            name: "".into(),
+        },
+        ComposerEmoji {
+            ch: "🔥".into(),
+            name: "".into(),
+        },
+    ])));
+    open_emoji_panel(&app);
+    ids(&app, "EmojiGrid::cell")[1].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*used.borrow(), vec!["🔥"], "recent row comes first");
+    assert_eq!(app.get_draft(), "🔥");
+
+    open_emoji_panel(&app);
+    ids(&app, "Composer::emoji-search")[0].mock_single_click(PointerEventButton::Left);
+    type_text(&app, "party");
+    ids(&app, "EmojiGrid::cell")[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        used.borrow()[1],
+        emoji::search("party", 1)[0].ch,
+        "no recent row while searching"
+    );
+}
+
+#[test]
+fn recent_emoji_and_skin_tone_are_remembered_by_the_engine() {
+    let h = Harness::new();
+    let run = h.runner();
+    run(Cmd::EmojiUsed("😀".into()));
+    run(Cmd::EmojiUsed("🎉".into()));
+    run(Cmd::EmojiUsed("😀".into()));
+    let recent = |h: &Harness| -> Vec<String> {
+        h.app
+            .get_recent_emoji()
+            .iter()
+            .map(|e| e.ch.to_string())
+            .collect()
+    };
+    assert_eq!(recent(&h), vec!["😀", "🎉"], "newest first, no duplicates");
+    for i in 0..30 {
+        run(Cmd::EmojiUsed(format!("e{i}")));
+    }
+    assert_eq!(recent(&h).len(), 16, "the row is capped");
+
+    run(Cmd::SetSkinTone(4));
+    assert_eq!(h.app.get_skin_tone(), 4);
+    assert_eq!(h.engine.config().skin_tone, 4);
+    assert_eq!(h.engine.config().recent_emoji.len(), 16);
+}
+
+#[test]
+fn restored_draft_has_the_cursor_at_the_end() {
+    let h = Harness::new();
+    h.select(NOTES);
+    h.type_in_composer("remember");
+    h.select(BACKEND);
+    h.type_in_composer("x");
+    h.select(NOTES);
+    type_text(&h.app, " it");
+    assert_eq!(h.app.get_draft(), "remember it");
+}
+
+fn chips(app: &AppWindow) -> Vec<String> {
+    app.get_pending_attachments()
+        .iter()
+        .map(|a| a.name.to_string())
+        .collect()
+}
+
+/// A PNG and a text file in a scratch directory.
+fn sample_files(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("kelma-attach-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = dir.join("shot.png");
+    image::RgbaImage::from_pixel(64, 32, image::Rgba([200, 30, 30, 255]))
+        .save(&png)
+        .unwrap();
+    let txt = dir.join("notes.txt");
+    std::fs::write(&txt, "hello").unwrap();
+    (png, txt)
+}
+
+#[test]
+fn chip_row_has_a_remove_button_per_attachment() {
+    use crate::PendingAttachment;
+    let app = app_with_messages(vec![]);
+    let removed = Log::default();
+    {
+        let l = removed.clone();
+        app.on_remove_attachment(move |i| l.borrow_mut().push(format!("remove {i}")));
+    }
+    assert_eq!(
+        ids(&app, "Composer::chip").len(),
+        0,
+        "no row without attachments"
+    );
+
+    app.set_pending_attachments(ModelRc::new(VecModel::from(vec![
+        PendingAttachment {
+            name: "screenshot.png".into(),
+            detail: "412 KB".into(),
+            is_image: true,
+            ..Default::default()
+        },
+        PendingAttachment {
+            name: "report.pdf".into(),
+            detail: "1.2 MB".into(),
+            ..Default::default()
+        },
+    ])));
+    assert_eq!(ids(&app, "Composer::chip").len(), 2);
+    let xs = ids(&app, "Composer::chip-x");
+    assert_eq!(xs.len(), 2, "each chip has an X");
+    xs[1].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*removed.borrow(), vec!["remove 1"]);
+}
+
+#[test]
+fn attachments_alone_can_be_sent_with_enter_and_the_button() {
+    use crate::PendingAttachment;
+    let app = app_with_messages(vec![]);
+    let sent = record_send(&app);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    enter(&app);
+    assert!(sent.borrow().is_empty(), "nothing to send");
+
+    app.set_pending_attachments(ModelRc::new(VecModel::from(vec![PendingAttachment {
+        name: "a.png".into(),
+        ..Default::default()
+    }])));
+    enter(&app);
+    assert_eq!(
+        *sent.borrow(),
+        vec![String::new()],
+        "an empty text still sends the chips"
+    );
+}
+
+#[test]
+fn ctrl_v_asks_for_the_clipboard_image_and_still_pastes_text() {
+    let app = app_with_messages(vec![]);
+    let asked = Rc::new(RefCell::new(0));
+    {
+        let a = asked.clone();
+        app.on_paste_image(move || *a.borrow_mut() += 1);
+    }
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, "x");
+    combo(&app, Key::Control, 'a');
+    combo(&app, Key::Control, 'c');
+    combo(&app, Key::Control, 'v');
+    assert_eq!(*asked.borrow(), 1);
+    assert_eq!(app.get_draft(), "x", "the text paste still happens");
+    type_text(&app, "v");
+    assert_eq!(*asked.borrow(), 1, "a plain v is not a paste");
+}
+
+#[test]
+fn files_become_chips_per_chat_and_each_can_be_removed() {
+    let h = Harness::new();
+    h.select(NOTES);
+    let (png, txt) = sample_files("chips");
+    let run = h.runner();
+    run(Cmd::AddFile(png));
+    run(Cmd::AddFile(txt));
+    assert_eq!(chips(&h.app), vec!["shot.png", "notes.txt"]);
+    let model = h.app.get_pending_attachments();
+    let first = model.row_data(0).unwrap();
+    assert!(
+        first.is_image && first.has_preview,
+        "images get a thumbnail"
+    );
+    let second = model.row_data(1).unwrap();
+    assert!(!second.is_image && !second.has_preview);
+    assert_eq!(second.detail, "5 B");
+    assert_eq!(ids(&h.app, "Composer::chip").len(), 2);
+
+    h.select(BACKEND);
+    assert!(chips(&h.app).is_empty(), "attachments belong to their chat");
+    h.select(NOTES);
+    assert_eq!(chips(&h.app).len(), 2);
+
+    h.app.on_remove_attachment({
+        let run = run.clone();
+        move |i| run(Cmd::RemoveAttachment(i as usize))
+    });
+    ids(&h.app, "Composer::chip-x")[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(chips(&h.app), vec!["notes.txt"]);
+}
+
+/// The plain text of every message row of the open chat, oldest first.
+fn message_texts(app: &AppWindow) -> Vec<String> {
+    app.get_messages()
+        .iter()
+        .map(|m| m.plain.to_string())
+        .collect()
+}
+
+/// Sending moves the chips into the outbox (copied to the cache), so a send that is accepted
+/// leaves no chip behind even offline: the rows wait as pending (or failed) messages.
+/// Sending only fails when a chip cannot be queued at all (here: its file cannot be copied).
+#[test]
+fn a_failed_upload_keeps_the_chips_and_the_text() {
+    let h = Harness::new();
+    h.select(NOTES);
+    let (png, _) = sample_files("fail");
+    let run = h.runner();
+    run(Cmd::AddFile(png));
+    // A name no file system accepts: this chip cannot be copied into the outbox.
+    h.rt.block_on(
+        h.engine
+            .add_attachment("bad\0name.txt".into(), vec![1, 2, 3]),
+    )
+    .unwrap();
+    assert_eq!(chips(&h.app), vec!["shot.png", "bad\0name.txt"]);
+    run(Cmd::Send("with a picture".into(), String::new()));
+    assert_eq!(
+        chips(&h.app),
+        vec!["bad\0name.txt"],
+        "the chip that could not be queued stays; the one before it went to the outbox"
+    );
+    assert_eq!(h.app.get_draft(), "with a picture");
+    assert!(
+        message_texts(&h.app).iter().all(|t| t != "with a picture"),
+        "the text was not sent"
+    );
+    discard_pending(&h, &run);
+}
+
+#[test]
+fn chips_and_text_go_through_the_outbox_in_order() {
+    let h = Harness::new();
+    h.select(NOTES);
+    let (png, txt) = sample_files("outbox");
+    let run = h.runner();
+    run(Cmd::AddFile(png));
+    run(Cmd::AddFile(txt));
+    run(Cmd::Send("caption".into(), String::new()));
+    assert!(chips(&h.app).is_empty(), "queued chips are gone");
+    assert_eq!(h.app.get_draft(), "", "the sent text left the composer");
+    let texts = message_texts(&h.app);
+    let tail: Vec<_> = texts.iter().rev().take(3).rev().cloned().collect();
+    assert_eq!(
+        tail,
+        vec!["🖼 shot.png", "📎 notes.txt", "caption"],
+        "image, file card, then the text, as outbox rows"
+    );
+    discard_pending(&h, &run);
+}
+
+/// Removes the outbox rows a test queued (and with them the payload files in the cache).
+fn discard_pending(h: &Harness, run: &Rc<dyn Fn(Cmd)>) {
+    let ids: Vec<String> = h
+        .app
+        .get_messages()
+        .iter()
+        .filter(|m| m.id.starts_with("pending-"))
+        .map(|m| m.id.to_string())
+        .collect();
+    for id in ids {
+        run(Cmd::DiscardSend(id));
+    }
 }

@@ -34,7 +34,7 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 |---|---|---|
 | Conversations | `GET /v1/users/ME/conversations?view=msnp24Equivalent&pageSize=200&startTime=1&targetType=…` | ✅ |
 | History | `GET /v1/users/ME/conversations/{id}/messages?view=msnp24Equivalent\|supportsMessageProperties&pageSize=N&startTime=1[&endTime=ms]` | ✅ |
-| Send | `POST …/{id}/messages` `{clientmessageid, content, messagetype:"RichText/Html", contenttype:"text", imdisplayname[, properties.subject]}` | ✅ (self notes) |
+| Send | `POST …/{id}/messages` `{clientmessageid, content, messagetype:"RichText/Html", contenttype:"text", imdisplayname[, properties.subject]}` | ✅ (self notes). Sending the same `clientmessageid` twice posts two messages (checked live in `48:notes`), so a retry must first look for the echo |
 | Edit | `PUT …/{id}/messages/{msgId}` `{content, messagetype, contenttype, imdisplayname}` | ✅ (self notes) |
 | Delete | `DELETE …/{id}/messages/{msgId}?behavior=softDelete` | ✅ (self notes) |
 | React | `PUT …/{id}/messages/{msgId}/properties?name=emotions` `{"emotions":{"key":"like","value":<ms>}}` | ✅ (self notes) |
@@ -140,6 +140,98 @@ messages were deleted afterwards.
 | Mark as unread | `PUT …/properties?name=consumptionHorizonBookmark` `"<prevId>;<nowMs>;<cmid>"`. `mark_read` now also writes `"0;<nowMs>;0"`, because a read horizon alone does not clear the bookmark | ✅ 200 |
 | Mute | `PUT …/properties?name=alerts` `{"alerts":"false"}` (`"true"` unmutes) | unit-tested |
 | Hide | `PUT …/properties?name=unpinnedTime` `{unpinnedTime:<ms>}` then `historyHiddenTime` `"<ms>"`; unhide `{unpinnedTime:null}`. A hidden chat comes back with its next message | unit-tested |
+
+## OneDrive (`crates/onedrive`) ✅ 2026-11-18
+
+All calls go through the auth broker. Graph calls use the Graph bearer (`Files.ReadWrite.All`,
+`Sites.ReadWrite.All`). The recycle bin uses the bearer for the user's own `<tenant>-my.sharepoint.com`
+host. The bearer is only attached to the audience's own host, and pre-authenticated URLs (upload
+sessions, copy monitors, download redirects) get no token. `kelma-cli drive …` runs the read-only
+calls, and `kelma-cli drive selftest` runs every write below inside one throwaway folder and purges
+it afterwards.
+
+**O0 finding.** The plan assumed `/me/drive/recent`, `/me/drive/sharedWithMe` and `/me/insights/used`
+return nothing. On 2026-11-18 they all answered with data (recent 140 items, shared 500, insights
+2 per page), so Home and Shared use them and fall back to Search only when they are empty or fail.
+The internal endpoints that the Teams web OneDrive app calls were **not captured** (no browser
+capture was run), and none is needed. If Microsoft retires the Graph endpoints, capture the web app
+and swap them in `browse::recent` and `browse::shared_with_me`.
+
+Browse (Graph):
+
+| Call | Use | Status |
+|---|---|---|
+| `GET /me/drive?$select=id,name,webUrl,driveType` | the user's drive | ✅ |
+| `GET /me/drive/root?$select=sharepointIds` | site URL and host of the `-my` site (`siteUrl`) | ✅ |
+| `GET /me/drive/root/children?$expand=thumbnails&$top=200`, `GET /drives/{d}/items/{i}/children` | My files and folders; `@odata.nextLink` pages | ✅ |
+| `GET /me/drive/root:/<path>` and `…:/children` | open a path (for example `Recordings`; 404 when it does not exist) | ✅ |
+| `GET /me/drive/following` | Favorites | ✅ (0 items; one appeared after `follow`) |
+| `GET /me/followedSites` | Libraries | ❌ 403 `accessDenied` for this token |
+| `GET /me/joinedTeams?$select=id`, `GET /groups/{id}/sites/root`, `GET /groups/{id}/drive` | fallback for Libraries and Quick access: the teams' sites and Documents libraries | ✅ |
+| `GET /sites/{id}/drives` | libraries of a site | ✅ |
+| `GET /me/drive/recent` | Home / Recent | ✅ 140 items (no `$top`: it answers the whole list) |
+| `GET /me/drive/sharedWithMe` | Shared with you | ✅ 500 items, no paging link |
+| `POST /search/query` `{requests:[{entityTypes:["driveItem","listItem"], query:{queryString}, from, size, sortProperties?}]}` | search; `sortProperties:[{name:"lastModifiedDateTime",isDescending:true}]` is the recent fallback; `* AND NOT path:"<my site url>"` is the shared fallback | ✅ search and sorted search; the exclusion query is accepted (200, 50 hits) but its result was not compared with the real list |
+| `GET …/thumbnails` | small, medium and large URLs; `$expand=thumbnails` on listings gives them in one call | ✅ |
+| `GET /me/insights/used` | not used | ✅ answers |
+
+A search hit is a `driveItem` (with `parentReference.driveId` and `id`) or a `listItem` whose file
+name is in `fields.fileLeafRef` and whose drive item is in `driveItem.id`. Remote items (shared
+entries, shortcuts) carry the target in `remoteItem`; kelma points `DriveItem.id` and `drive_id`
+at the target and keeps the stub in `DriveItem.stub`. Delete or rename the stub, never the target.
+
+Act (Graph):
+
+| Call | Use | Status |
+|---|---|---|
+| `POST …/children` `{name, folder:{}, "@microsoft.graph.conflictBehavior":"rename"}` | new folder | ✅ |
+| `PUT …/<parent>:/<name>:/content?@microsoft.graph.conflictBehavior=rename` | upload up to 4 MB | ✅ |
+| `POST …/<parent>:/<name>:/createUploadSession`, `PUT` chunks to `uploadUrl` | larger files (shared with chat files, `teams_proto::files::upload_chunks`) | ✅ 4.5 MB; two chunks verified earlier |
+| `PATCH …/items/{id}` `{name}` | rename | ✅ |
+| `PATCH …/items/{id}` `{parentReference:{id}, name?}` | move inside a drive | ✅ |
+| `POST …/items/{id}/copy` `{parentReference:{driveId,id}, name?}` | copy: 202 with a `Location` monitor URL. Poll it with no token and no redirects until `status: completed` + `resourceId` (or a 303 whose `Location` ends in the item id) | ✅ |
+| `DELETE …/items/{id}` | delete (goes to the recycle bin) | ✅ |
+| `GET …/items/{id}/content` | download; answers 302 to a pre-authenticated URL | ✅ byte-identical round trip |
+| folder download | the client walks `children` and builds a zip (`zip` crate) | ✅ |
+| `POST …/items/{id}/follow`, `…/unfollow` | Favorites | ✅ (the list shows the change after a delay) |
+| `POST …/children` `{name, remoteItem:{id, parentReference:{driveId}}}` | add a shortcut | ❌ 400 `invalidRequest` in 5 body variants (id plus drive id, with `folder`, `sharepointIds`, both, the whole remote item) against a folder shared with the user. Not usable until a working body is captured |
+| `GET …/items/{id}/versions`, `POST …/versions/{id}/restoreVersion` | version history | ✅ list, 🧪 restore (a new file has one version) |
+| `POST …/items/{id}/preview` `{}` | embeddable `getUrl` | ✅ for docx, xlsx, pptx |
+| `GET …/content?format=pdf` | server-side PDF, used to prove the blank Word and PowerPoint files are valid | ✅ |
+| `GET …/workbook/worksheets` | proves the blank Excel file opens (an empty sheet gives HTTP 406 for `format=pdf`) | ✅ |
+
+Blank documents (`onedrive::package`) are generated in code: Word (3 parts), Excel (5 parts) and
+PowerPoint (11 parts: presentation, master, layout, slide, theme and their relationships). Word and PowerPoint convert to
+PDF on the server, Excel opens in the workbook API, and all three preview. Markdown and Text are
+empty files.
+
+Share (Graph):
+
+| Call | Use | Status |
+|---|---|---|
+| `POST …/invite` `{recipients:[{email}\|{objectId}], message, requireSignIn, sendInvitation, roles:["read"\|"write"]}` | share with people | 🧪 (a live call would share a file) |
+| `POST …/createLink` `{type:"view"\|"edit"\|"blocksDownload", scope:"anonymous"\|"organization"\|"users", expirationDateTime?}` | link; blocking download is the type `blocksDownload`, valid for view links only | 🧪 |
+| `GET …/permissions` | who has access | ✅ |
+| `PATCH …/permissions/{id}` `{roles:[…]}`, `DELETE …/permissions/{id}` | change or remove access | 🧪 |
+
+Recycle bin (SharePoint REST on `<tenant>-my.sharepoint.com`, `Accept: application/json;odata=nometadata`):
+
+| Call | Use | Status |
+|---|---|---|
+| `GET <siteUrl>/_api/web/RecycleBin?$top=500` | list: `Id`, `LeafName`, `DirName`, `Size`, `DeletedDate`, `DeletedByName`, `ItemType` (5 = folder) | ✅ |
+| `POST <siteUrl>/_api/web/RecycleBin('<Id>')/restore` | restore to the original place | ✅ |
+| `POST <siteUrl>/_api/web/RecycleBin('<Id>')/deleteObject` | delete for good | ✅ |
+
+Deleting a folder puts one folder entry (and, depending on timing, its children) in the bin.
+
+Around files: meeting recordings are the children of `Recordings` in My files (✅ 3 items). Sync is
+a text (`onedrive::sync_help`) that points at the `onedrive` client and `rclone`.
+
+Pitfalls found live:
+- A `reqwest` error message contains the request URL, and upload session and monitor URLs carry a
+  temporary `tempauth` token. kelma strips the URL from those errors.
+- Uploads and the recycle bin call sometimes ran past the client's 60 s timeout during the live runs.
+  Retrying worked.
 
 ## Real-time (trouter) ✅
 

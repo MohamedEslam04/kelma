@@ -3,6 +3,7 @@
 
 use serde_json::json;
 use store::{ConvKind, ConversationRow, MessageRow, Store, TeamRow, UserRow};
+use teams_proto::activity::{ActivityItem, ActivityKind};
 
 pub const ME: &str = "8:orgid:00000000-0000-0000-0000-000000000001";
 
@@ -309,4 +310,214 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
         json!({"s":"All-hands"}),
     )?;
     Ok(())
+}
+
+/// Invented events for the demo calendar, as a Graph `calendarView` page. `week_start_ms` is local
+/// Monday 00:00 this week; one event starts three minutes after `now_ms` so the Join banner shows.
+pub fn calendar_events(week_start_ms: i64, now_ms: i64) -> serde_json::Value {
+    let min = 60_000;
+    let day = 24 * 60 * min;
+    let at = |d: i64, h: i64, m: i64| week_start_ms + d * day + (h * 60 + m) * min;
+    let join = "https://teams.microsoft.com/l/meetup-join/demo";
+    let mut n = 0;
+    let mut ev = |subject: &str, from: i64, to: i64, extra: serde_json::Value| {
+        n += 1;
+        let t = |ms| json!({"dateTime": calendar::format_iso_ms(ms), "timeZone": "UTC"});
+        let mut v = json!({"id": format!("demo-{n}"), "subject": subject,
+            "start": t(from), "end": t(to),
+            "organizer": {"emailAddress": {"name": "Sara Hassan", "address": "sara@example.com"}}});
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    };
+    let online = json!({"isOnlineMeeting": true, "onlineMeeting": {"joinUrl": join}});
+    let mut items = Vec::new();
+    for d in 0..5 {
+        let mut extra = online.as_object().unwrap().clone();
+        extra.insert("type".into(), "occurrence".into());
+        items.push(ev("Team standup", at(d, 9, 30), at(d, 9, 45), extra.into()));
+    }
+    let mut design = online.as_object().unwrap().clone();
+    design.insert(
+        "organizer".into(),
+        json!({"emailAddress": {"name": "Ahmed Ali", "address": "ahmed@example.com"}}),
+    );
+    items.push(ev(
+        "Design review",
+        at(1, 10, 0),
+        at(1, 11, 0),
+        design.into(),
+    ));
+    items.push(ev(
+        "1:1 with Omar",
+        at(1, 10, 30),
+        at(1, 11, 30),
+        json!({"organizer": {"emailAddress": {"name": "Omar Khaled", "address": "omar@example.com"}}}),
+    ));
+    items.push(ev(
+        "Vendor call",
+        at(1, 10, 45),
+        at(1, 11, 15),
+        json!({"showAs": "tentative", "location": {"displayName": "Phone"}}),
+    ));
+    items.push(ev(
+        "Sprint review",
+        at(2, 11, 0),
+        at(2, 12, 0),
+        json!({"showAs": "tentative", "categories": ["Green category"]}),
+    ));
+    items.push(ev(
+        "Lunch with Mona",
+        at(2, 12, 30),
+        at(2, 13, 30),
+        json!({"showAs": "free", "location": {"displayName": "Cafe"}}),
+    ));
+    items.push(ev(
+        "Quarterly planning",
+        at(2, 14, 0),
+        at(2, 15, 0),
+        json!({"responseStatus": {"response": "declined"}}),
+    ));
+    items.push(ev(
+        "Interview: backend engineer",
+        at(0, 16, 0),
+        at(0, 17, 0),
+        json!({"sensitivity": "private", "categories": ["Purple category"]}),
+    ));
+    items.push(ev(
+        "Product conference",
+        at(0, 0, 0),
+        at(2, 0, 0),
+        json!({"isAllDay": true, "categories": ["Blue category"]}),
+    ));
+    items.push(ev(
+        "Working from home",
+        at(3, 0, 0),
+        at(4, 0, 0),
+        json!({"isAllDay": true, "showAs": "workingElsewhere"}),
+    ));
+    items.push(ev(
+        "Annual leave",
+        at(4, 0, 0),
+        at(5, 0, 0),
+        json!({"isAllDay": true, "showAs": "oof"}),
+    ));
+    let soon = now_ms / min * min + 3 * min;
+    items.push(ev("Customer sync", soon, soon + 30 * min, online));
+    json!({ "value": items })
+}
+
+/// Invented Activity feed over the seeded conversations, newest first. `now` is Unix ms.
+pub fn activity(st: &Store, now: i64) -> Vec<ActivityItem> {
+    let backend = "19:backend@thread.v2";
+    let channel = "19:team1@thread.tacv2";
+    let min = 60_000;
+    let nth = |conv: &str, n: usize| {
+        st.messages_before(conv, None, 100)
+            .ok()
+            .and_then(|v| v.get(n).map(|m| m.id.clone()))
+            .unwrap_or_default()
+    };
+    let root = nth(channel, 0);
+    let reply = st
+        .thread_replies(&root, 10)
+        .ok()
+        .and_then(|v| v.first().map(|m| m.id.clone()))
+        .unwrap_or_default();
+    let item = |n: u8,
+                kind: ActivityKind,
+                who: (&str, u8),
+                thread: &str,
+                msg: String,
+                chain: String,
+                preview: &str,
+                ago: i64,
+                read: bool| ActivityItem {
+        id: (now - ago).to_string(),
+        kind,
+        source_thread_id: thread.into(),
+        source_message_id: msg,
+        source_reply_chain_id: chain,
+        actor_mri: user(who.1),
+        actor_name: who.0.into(),
+        thread_topic: String::new(),
+        preview: preview.into(),
+        timestamp_ms: now - ago + i64::from(n),
+        is_read: read,
+    };
+    let review = nth(backend, 7);
+    let redis = nth(backend, 3);
+    let token = nth(backend, 4);
+    let all_hands = nth(channel, 1);
+    vec![
+        item(
+            1,
+            ActivityKind::Mention,
+            ("Sara Hassan", 3),
+            backend,
+            review.clone(),
+            review,
+            "@Mohamed can you review the retry change?",
+            4 * min,
+            false,
+        ),
+        item(
+            2,
+            ActivityKind::Reaction {
+                emoji_key: "heart".into(),
+            },
+            ("Omar Khaled", 4),
+            backend,
+            token.clone(),
+            token,
+            "الـ API بترجع 500 لما الـ token يخلص",
+            20 * min,
+            false,
+        ),
+        item(
+            3,
+            ActivityKind::ChannelNewMessage,
+            ("Youssef Samir", 6),
+            channel,
+            all_hands.clone(),
+            all_hands,
+            "All-hands: Reminder: all-hands on Thursday at 3 PM.",
+            30 * min,
+            false,
+        ),
+        item(
+            4,
+            ActivityKind::Reply,
+            ("Ahmed Ali", 2),
+            channel,
+            reply,
+            root.clone(),
+            "مبروك يا جماعة 🎉",
+            100 * min,
+            true,
+        ),
+        item(
+            5,
+            ActivityKind::TagMention,
+            ("Mona Adel", 5),
+            channel,
+            root.clone(),
+            root,
+            "Release 2.4: @Backend thanks everyone for the hard work",
+            2 * 60 * min,
+            true,
+        ),
+        item(
+            6,
+            ActivityKind::EveryoneMention,
+            ("Omar Khaled", 4),
+            backend,
+            redis.clone(),
+            redis,
+            "@Everyone can you check the Redis memory graph?",
+            24 * 60 * min,
+            true,
+        ),
+    ]
 }

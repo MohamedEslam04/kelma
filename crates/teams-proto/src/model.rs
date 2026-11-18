@@ -40,6 +40,8 @@ pub struct Message {
     pub files: Vec<FileRef>,
     /// Channel post subject line, if any.
     pub subject: Option<String>,
+    /// People, channels, teams and tags this message mentions.
+    pub mentions: Vec<crate::mentions::Mention>,
 }
 
 impl Message {
@@ -215,6 +217,7 @@ pub fn message_from_json(v: &Value, fallback_conversation: &str) -> Option<Messa
             .and_then(|p| str_field(p, "subject"))
             .filter(|s| !s.is_empty())
             .map(str::to_owned),
+        mentions: crate::mentions::parse_mentions(props),
     })
 }
 
@@ -239,6 +242,9 @@ pub struct Conversation {
     /// Consumption horizon timestamp (ms) — messages up to here are read.
     pub read_horizon_ms: i64,
     pub last_activity_ms: i64,
+    /// Set when the user chose "Mark as unread" (here or in another Teams client): messages
+    /// after this message id (an arrival time in ms) count as unread.
+    pub unread_bookmark: Option<i64>,
 }
 
 /// Classifies a conversation from its id and thread properties.
@@ -284,6 +290,7 @@ pub fn conversation_from_json(v: &Value) -> Option<Conversation> {
         .and_then(|h| h.split(';').nth(1))
         .and_then(|t| t.parse().ok())
         .unwrap_or(0);
+    let unread_bookmark = unread_bookmark_of(v);
     let last_activity_ms = last_message
         .as_ref()
         .map(|m| m.compose_ms)
@@ -299,7 +306,18 @@ pub fn conversation_from_json(v: &Value) -> Option<Conversation> {
         last_message,
         read_horizon_ms: horizon,
         last_activity_ms,
+        unread_bookmark,
     })
+}
+
+/// Parses `properties.consumptionHorizonBookmark` (`"<prevId>;<nowMs>;<cmid>"`). `"0;…"` means
+/// no manual unread mark.
+fn unread_bookmark_of(v: &Value) -> Option<i64> {
+    v.pointer("/properties/consumptionHorizonBookmark")
+        .and_then(Value::as_str)
+        .and_then(|b| b.split(';').next())
+        .and_then(|id| id.parse::<i64>().ok())
+        .filter(|id| *id > 0)
 }
 
 /// Real-time events delivered over trouter.
@@ -544,5 +562,20 @@ mod tests {
                 availability: "Available".into()
             }]
         );
+    }
+
+    #[test]
+    fn reads_the_manual_unread_bookmark() {
+        let c = |b: &str| {
+            conversation_from_json(&serde_json::json!({
+                "id": "19:a@thread.v2",
+                "properties": {"consumptionhorizon": "5;100;5", "consumptionHorizonBookmark": b}
+            }))
+            .unwrap()
+        };
+        assert_eq!(c("1795;1800;77").unread_bookmark, Some(1795));
+        assert_eq!(c("0;1800;0").unread_bookmark, None);
+        let none = conversation_from_json(&serde_json::json!({"id": "19:b@thread.v2"})).unwrap();
+        assert_eq!(none.unread_bookmark, None);
     }
 }

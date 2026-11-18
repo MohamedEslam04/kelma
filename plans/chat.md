@@ -33,7 +33,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
 ## Phase 5: everyday messaging
 
 ### 5.1 Paste and drag-drop
-- [ ] Impact 5, effort 2. Seen: composer (Ctrl+V, drop zone).
+- [x] Impact 5, effort 2. Seen: composer (Ctrl+V, drop zone).
   - **What.**
     - Ctrl+V with an image on the clipboard attaches it as an inline image, with a preview chip above the composer before sending.
     - Dropping files on the chat attaches them: images inline, other files as file cards.
@@ -49,7 +49,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - A UI test covers the chip row and removing an item.
 
 ### 5.2 Hover bar like Teams
-- [ ] Impact 5, effort 2. Seen: message hover.
+- [x] Impact 5, effort 2. Seen: message hover.
   - **What.**
     - The bar reads 👍 ❤️ 😆 😮, then "More reactions", "Reply with quote" (❝), Edit (own messages only), "…".
     - More reactions opens a searchable picker with every Teams reaction key.
@@ -63,7 +63,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - The tooltip lists names.
 
 ### 5.3 Message "…" menu
-- [ ] Impact 5, effort 3. Seen: message menu, own and others' messages.
+- [x] Impact 5, effort 3. Seen: message menu, own and others' messages.
   - **What.** One menu, like Teams:
     - Reply with quote
     - Forward, with Forward options: this message or multiple messages
@@ -102,7 +102,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - Unit tests cover each construct.
 
 ### 5.5 Emoji like Teams
-- [ ] Impact 4, effort 2. Seen: emoji panel.
+- [x] Impact 4, effort 2. Seen: emoji panel.
   - **What.**
     - The panel has an Emoji tab with categories, recent emoji and search ("Find something fun").
     - Typing `:name:` autocompletes, for example `:heart:` or `:like:`. A popup appears after `:` plus two letters.
@@ -114,7 +114,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Done when.** UI tests cover search, `:heart` autocomplete and inserting at the cursor.
 
 ### 5.6 Unread handling
-- [ ] Impact 4, effort 2. Seen: settings › Chats ("When I open a chat, take me to"), chat menu, shortcuts.
+- [x] Impact 4, effort 2. Seen: settings › Chats ("When I open a chat, take me to"), chat menu, shortcuts.
   - **What.**
     - A "New messages" divider sits at the read marker.
     - On opening a chat, jump to the last read message or the newest one (a setting).
@@ -125,9 +125,10 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - The read marker comes from the conversation `consumptionhorizon`, which the store already reads.
     - Mark all as read PUTs the horizon on every unread conversation, throttled.
   - **Done when.** A UI test covers the divider position and the jump button; the live check marks all read and Teams web agrees.
+  - **Status.** Built and unit/UI tested. The setting is `open_chat_at` in `config.json` (`first_unread`, the default, or `newest`); there is no settings page for it yet (9.x). A manual "Mark as unread" is remembered locally (`kv unread_mark:<conv>`) because the conversations list does not return the bookmark. Not run live: Mark all as read (it changes the real read state of every chat), so "Teams web agrees" is still open.
 
 ### 5.7 Drafts
-- [ ] Impact 4, effort 2. Seen: quick view "Drafts".
+- [x] Impact 4, effort 2. Seen: quick view "Drafts".
   - **What.**
     - Each chat keeps its unsent text (and reply target) when you switch chats or restart.
     - The chat list shows "Draft:" in the preview.
@@ -138,7 +139,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Done when.** A UI test types, switches chat and comes back, and the draft is still there.
 
 ### 5.8 Failed sends and offline queue
-- [ ] Impact 4, effort 2.
+- [x] Impact 4, effort 2.
   - **What.**
     - Optimistic messages that fail show "Failed to send · Retry · Delete".
     - While disconnected, sends wait in a queue and go out when the connection comes back.
@@ -146,6 +147,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - Add a `pending` state on the row (it exists), a failure state, and a retry command.
     - The queue lives in the store so it survives a restart.
   - **Done when.** Freezing the network (as in the reconnect test) and sending queues the message, and it goes out on reconnect.
+  - **Status.** Every new message (text, image, file) goes through the store's outbox; files are copied to `<cache>/outbox/<id>/` and removed once sent. A network error keeps the item queued (flushed in order on Connected, Resync, startup and every 30 s); a refusal shows "Failed to send · Retry · Delete". Teams does not deduplicate a repeated `clientmessageid`, so flushes after a restart or a lost answer read the newest history first and drop items whose echo is already there. Checked live in `48:notes` (`cargo test -p kelma live_outbox -- --ignored`); the offline path is covered by unit and engine tests, not by freezing the real network.
 
 ### 5.9 Keyboard shortcuts like Teams
 - [ ] Impact 4, effort 2. Seen: the Ctrl+. dialog.
@@ -177,7 +179,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Done when.** A UI test covers each shortcut's effect.
 
 ### 5.10 Enter behavior setting
-- [ ] Impact 2, effort 1. Seen: settings › Chats ("When writing a message, press Enter to").
+- [x] Impact 2, effort 1. Seen: settings › Chats ("When writing a message, press Enter to").
   - **What.** "Send the message" (default), or "Start a new line", where Ctrl+Enter sends.
   - **Done when.** A UI test covers both modes.
 

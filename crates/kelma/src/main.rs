@@ -1,16 +1,18 @@
 //! kelma: a lightweight native Microsoft Teams chat client (unofficial).
 
 mod backend;
+mod composer;
 mod data;
 mod demo;
 mod markdown;
+mod reactions;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
 
 slint::include_modules!();
 
-use backend::{Cmd, Engine};
+use backend::{ActivityCmd, Cmd, Engine};
 use slint::ComponentHandle;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,7 +32,7 @@ async fn app_main(
             tokio::spawn(engine.clone().handle(Cmd::SelectChat(id)));
         }
         while let Some(cmd) = cmds.recv().await {
-            tokio::spawn(engine.clone().handle(cmd));
+            engine.dispatch(cmd);
         }
         return;
     }
@@ -72,7 +74,7 @@ async fn app_main(
         });
     }
     while let Some(cmd) = cmds.recv().await {
-        tokio::spawn(engine.clone().handle(cmd));
+        engine.dispatch(cmd);
     }
 }
 
@@ -80,15 +82,19 @@ fn demo_engine(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
     let store = store::Store::open_in_memory()?;
     demo::seed(&store, teams_proto::time::now_ms())?;
     let client = Client::offline("demo")?;
+    let now = teams_proto::time::now_ms();
+    let activity = demo::activity(&store, now);
     ui.ready("ME".into());
-    Ok(Engine::new(
+    let engine = Engine::new(
         client,
         store,
         session::Config::default(),
         ui.clone(),
         demo::ME.into(),
         "Mohamed Eslam".into(),
-    ))
+    );
+    engine.seed_activity(activity);
+    Ok(engine)
 }
 
 async fn sign_in(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
@@ -204,6 +210,7 @@ fn main() -> anyhow::Result<()> {
     let _ = slint::set_xdg_app_id("kelma");
 
     let window = AppWindow::new()?;
+    composer::wire(&window);
     if let Ok(view) = std::env::var("KELMA_VIEW") {
         window.set_view(view.into());
     }
@@ -247,6 +254,58 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_close_thread, || Cmd::CloseThread);
     cmd!(on_attach_image, || Cmd::AttachImage);
     cmd!(on_attach_file, || Cmd::AttachFile);
+    cmd!(on_copy_link, |id| Cmd::CopyLink(id.into()));
+    cmd!(on_toggle_save, |id| Cmd::ToggleSave(id.into()));
+    cmd!(on_pin, |id| Cmd::Pin(id.into()));
+    cmd!(on_mark_unread, |id| Cmd::MarkUnread(id.into()));
+    cmd!(on_forward_begin, |id| Cmd::ForwardBegin(Some(id.into())));
+    cmd!(on_forward_begin_selected, || Cmd::ForwardBegin(None));
+    cmd!(on_forward_search, |q| Cmd::ForwardSearch(q.into()));
+    cmd!(on_forward_toggle, |id| Cmd::ForwardToggle(id.into()));
+    cmd!(on_forward_send, |note| Cmd::ForwardSend(note.into()));
+    cmd!(on_forward_cancel, || Cmd::ForwardCancel);
+    cmd!(on_select_begin, |id| Cmd::SelectBegin(id.into()));
+    cmd!(on_toggle_select, |id| Cmd::ToggleSelect(id.into()));
+    cmd!(on_select_cancel, || Cmd::SelectCancel);
+    cmd!(on_at_bottom_changed, |b| Cmd::AtBottom(b));
+    cmd!(on_retry_send, |id| Cmd::RetrySend(id.into()));
+    cmd!(on_discard_send, |id| Cmd::DiscardSend(id.into()));
+    cmd!(on_mark_chat_unread, |id| Cmd::MarkChatUnread(id.into()));
+    cmd!(on_mark_all_read, || Cmd::MarkAllRead);
+    ui::install_local(&window);
+    cmd!(on_activity_refresh, || Cmd::Activity(ActivityCmd::Refresh));
+    cmd!(on_activity_select, |id| Cmd::Activity(ActivityCmd::Select(
+        id.into()
+    )));
+    cmd!(on_activity_set_filter, |f| Cmd::Activity(
+        ActivityCmd::SetFilter(f.into())
+    ));
+    cmd!(on_activity_search, |q| Cmd::Activity(ActivityCmd::Search(
+        q.into()
+    )));
+    cmd!(on_activity_mark, |id, read| Cmd::Activity(
+        ActivityCmd::MarkRead(id.into(), read)
+    ));
+    cmd!(on_activity_mark_all, || Cmd::Activity(
+        ActivityCmd::MarkAllRead
+    ));
+    cmd!(on_activity_go_to, || Cmd::Activity(ActivityCmd::GoTo));
+    cmd!(on_activity_reply, |t| Cmd::Activity(ActivityCmd::Reply(
+        t.into()
+    )));
+    cmd!(on_activity_settings, || Cmd::Activity(
+        ActivityCmd::Settings
+    ));
+    cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
+    cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
+    cmd!(on_emoji_used, |e| Cmd::EmojiUsed(e.into()));
+    cmd!(on_paste_image, || Cmd::PasteImage);
+    cmd!(on_remove_attachment, |i| Cmd::RemoveAttachment(
+        i.max(0) as usize
+    ));
+    cmd!(on_skin_tone_changed, |t| Cmd::SetSkinTone(
+        t.clamp(0, 5) as u8
+    ));
     {
         let tx = tx.clone();
         let weak = window.as_weak();
@@ -256,6 +315,14 @@ fn main() -> anyhow::Result<()> {
                 .map(|w| w.get_post_subject().to_string())
                 .unwrap_or_default();
             let _ = tx.send(Cmd::Send(text.into(), subject));
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<CalStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::CalCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Calendar(c));
+            }
         });
     }
     {
@@ -274,6 +341,19 @@ fn main() -> anyhow::Result<()> {
             {
                 let _ = cb.set_text(w.get_user_code().to_string());
             }
+        });
+    }
+
+    // Files dropped on the window become attachments. winit reports one event per file. Wayland has
+    // no drop events in winit 0.30, so this only fires on X11, Windows and macOS.
+    {
+        use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
+        let tx = tx.clone();
+        window.window().on_winit_window_event(move |_, event| {
+            if let WindowEvent::DroppedFile(path) = event {
+                let _ = tx.send(Cmd::AddFile(path.clone()));
+            }
+            EventResult::Propagate
         });
     }
 
@@ -304,6 +384,9 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     rt.spawn(app_main(ui, rx, focus));
     window.run()?;
+    // Give the engine a moment to write a draft typed just before closing.
+    let _ = tx.send(Cmd::Flush);
+    std::thread::sleep(std::time::Duration::from_millis(100));
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
     Ok(())
 }

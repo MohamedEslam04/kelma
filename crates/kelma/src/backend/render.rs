@@ -1,37 +1,37 @@
 //! The render loop: rebuilds the visible view data from the store and pushes it to the UI.
 
 use super::Engine;
+use super::outbox::{PENDING_PREFIX, row_from_outbox};
+use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
-    ChatData, FileData, HeaderData, ImgData, MsgData, Pixels, ReactData, TeamData, color_for,
-    initials,
+    ChatData, FileData, HeaderData, ImgData, MsgData, Pixels, ReactData, Scroll, TeamData,
+    color_for, initials,
 };
 use crate::markdown::{reaction_emoji, render_blocks};
 use chrono::{Local, TimeZone};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use store::{ConvFilter, ConvKind, MessageRow, UserRow};
+use store::{ConvFilter, ConvKind, MessageRow, OutboxState, UserRow};
+
+/// Per-row marks `build_msgs` needs from the chat view (the Activity preview passes none).
+#[derive(Default)]
+pub(super) struct MsgMarks<'a> {
+    pub saved: Option<&'a HashSet<String>>,
+    pub selected: &'a [String],
+    pub failed: Option<&'a HashSet<String>>,
+    /// Index (among the non-control rows) where the unread divider sits.
+    pub divider: Option<usize>,
+}
 
 impl Engine {
     pub(super) async fn render_loop(self: Arc<Self>) {
         let mut last_typing = String::new();
         loop {
             tokio::time::sleep(Duration::from_millis(120)).await;
-            let d = std::mem::take(&mut *self.dirty.lock().unwrap());
-            if d.chats {
-                self.render_chats();
-            }
-            if d.teams {
-                self.render_teams();
-            }
-            if d.header {
-                self.render_header();
-            }
-            if d.messages {
-                self.render_messages(d.scroll);
-            }
+            self.render_dirty();
             let typing = {
                 let mut v = self.view.lock().unwrap();
                 let now = Instant::now();
@@ -49,7 +49,27 @@ impl Engine {
         }
     }
 
-    fn avatar(self: &Arc<Self>, mri: &str) -> Option<Pixels> {
+    /// Rebuilds the parts of the UI that changed since the last call.
+    pub(crate) fn render_dirty(self: &Arc<Self>) {
+        let d = std::mem::take(&mut *self.dirty.lock().unwrap());
+        if d.chats {
+            self.render_chats();
+        }
+        if d.teams {
+            self.render_teams();
+        }
+        if d.header {
+            self.render_header();
+        }
+        if d.messages {
+            self.render_messages(d.scroll);
+        }
+        if d.activity || d.chats || d.messages {
+            self.render_activity(d.activity || d.chats, d.activity || d.messages);
+        }
+    }
+
+    pub(super) fn avatar(self: &Arc<Self>, mri: &str) -> Option<Pixels> {
         if mri.is_empty() || mri.starts_with("28:") {
             return None;
         }
@@ -151,11 +171,25 @@ impl Engine {
     }
 
     fn render_chats(self: &Arc<Self>) {
-        let (filter, search, current) = {
+        let (filter, search, current, keep_unread) = {
             let v = self.view.lock().unwrap();
-            (v.filter.clone(), v.search.clone(), v.current.clone())
+            (
+                v.filter.clone(),
+                v.search.clone(),
+                v.current.clone(),
+                v.keep_unread.clone(),
+            )
         };
-        let rows = {
+        let drafts: HashMap<String, String> = self
+            .store
+            .lock()
+            .unwrap()
+            .drafts()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| (d.conversation_id, d.text))
+            .collect();
+        let mut rows = {
             let st = self.store.lock().unwrap();
             if search.trim().is_empty() {
                 let f = match filter.as_str() {
@@ -170,6 +204,9 @@ impl Engine {
                     .unwrap_or_default()
             }
         };
+        if filter == "drafts" {
+            rows.retain(|r| drafts.contains_key(&r.id));
+        }
         let mut fav = vec![];
         let mut main = vec![];
         let mut chans = vec![];
@@ -186,15 +223,20 @@ impl Engine {
                 (ConvKind::Channel, Some(t)) => format!("{} › {}", t, r.title),
                 _ => r.title.clone(),
             };
+            let draft = drafts.get(&r.id);
+            let preview_text = draft.unwrap_or(&r.last_preview);
             let data = ChatData {
+                draft: draft.is_some(),
                 initials: initials(&r.title),
                 color: color_for(&r.id),
                 avatar: avatar_mri.and_then(|m| self.avatar(&m)),
                 rtl_title: render::base_direction(&title) == render::Dir::Rtl,
-                rtl_preview: render::base_direction(&r.last_preview) == render::Dir::Rtl,
-                preview: r.last_preview.chars().take(120).collect(),
+                rtl_preview: render::base_direction(preview_text) == render::Dir::Rtl,
+                preview: preview_text.replace('\n', " ").chars().take(120).collect(),
                 time: chat_time(r.last_activity_ms),
-                unread: r.unread && current.as_deref() != Some(r.id.as_str()),
+                unread: r.unread
+                    && (current.as_deref() != Some(r.id.as_str())
+                        || keep_unread.as_deref() == Some(r.id.as_str())),
                 favorite: r.favorite,
                 section: if r.favorite {
                     "favorites"
@@ -289,26 +331,39 @@ impl Engine {
     }
 
     fn render_messages(self: &Arc<Self>, scroll: bool) {
-        let (cur, thread, limit, pending) = {
+        let (cur, thread, limit, pending, selected) = {
             let v = self.view.lock().unwrap();
             (
                 v.current.clone(),
                 v.thread_root.clone(),
                 v.limit,
                 v.pending.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>(),
+                v.selected.clone(),
             )
         };
         let Some(conv) = cur else {
-            self.ui.messages(vec![], false);
+            self.ui.messages(vec![], Scroll::Keep);
             return;
         };
-        let (rows, is_channel, reply_counts) = {
+        let (rows, is_channel, reply_counts, marker, failed, saved) = {
             let st = self.store.lock().unwrap();
-            let is_channel = st
-                .conversation(&conv)
-                .ok()
-                .flatten()
+            let saved: HashSet<String> = st
+                .saved_ids(&conv)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            let conv_row = st.conversation(&conv).ok().flatten();
+            let is_channel = conv_row
+                .as_ref()
                 .is_some_and(|c| c.kind == ConvKind::Channel);
+            // The divider stays where the chat was opened; a chat that turned unread while it
+            // was open (window not focused) starts its divider at the stored horizon.
+            let marker = self.view.lock().unwrap().unread_marker.or_else(|| {
+                conv_row
+                    .as_ref()
+                    .filter(|c| c.unread)
+                    .map(|c| c.read_horizon_ms)
+            });
             let mut rows = match &thread {
                 Some(root) => {
                     let mut r: Vec<MessageRow> =
@@ -318,11 +373,25 @@ impl Engine {
                 }
                 None => st.messages_before(&conv, None, limit).unwrap_or_default(),
             };
+            // Sent messages still waiting for their echo, then the outbox (queued, sending,
+            // failed), oldest first.
             rows.extend(
                 pending
                     .into_iter()
                     .filter(|p| p.conversation_id == conv && p.parent_id == thread),
             );
+            let target = match &thread {
+                Some(root) => format!("{conv};messageid={root}"),
+                None => conv.clone(),
+            };
+            let mut failed: HashSet<String> = HashSet::new();
+            for item in st.outbox_for(&target).unwrap_or_default() {
+                let row = row_from_outbox(&item, &self.me, &self.my_name);
+                if item.state == OutboxState::Failed {
+                    failed.insert(row.id.clone());
+                }
+                rows.push(row);
+            }
             let counts: HashMap<String, usize> = if is_channel && thread.is_none() {
                 rows.iter()
                     .map(|r| (r.id.clone(), st.reply_count(&r.id).unwrap_or(0)))
@@ -330,14 +399,84 @@ impl Engine {
             } else {
                 HashMap::new()
             };
-            (rows, is_channel, counts)
+            (rows, is_channel, counts, marker, failed, saved)
         };
-        let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
-        let mut prev: Option<&MessageRow> = None;
-        for r in rows
+        let visible: Vec<&MessageRow> = rows
             .iter()
             .filter(|r| !r.message_type.starts_with("Control/"))
-        {
+            .collect();
+        let info: Vec<(i64, bool)> = visible
+            .iter()
+            .map(|r| {
+                (
+                    r.compose_ms,
+                    r.sender_mri != self.me && system_text(r).is_none(),
+                )
+            })
+            .collect();
+        let divider = if thread.is_none() {
+            divider_index(&info, marker)
+        } else {
+            None
+        };
+        let out = self.build_msgs(
+            &rows,
+            is_channel,
+            &thread,
+            &reply_counts,
+            &MsgMarks {
+                saved: Some(&saved),
+                selected: &selected,
+                failed: Some(&failed),
+                divider,
+            },
+        );
+        let mode = {
+            let mut v = self.view.lock().unwrap();
+            let mode = if !scroll {
+                Scroll::Keep
+            } else if let Some(i) =
+                divider.filter(|_| v.opening && open_at_divider(v.open_at, divider))
+            {
+                Scroll::Divider(i)
+            } else if v.at_bottom || v.opening {
+                Scroll::Bottom
+            } else {
+                Scroll::Keep
+            };
+            if scroll && v.loaded {
+                v.opening = false;
+            }
+            if let Scroll::Divider(i) = mode {
+                v.new_count = unread_after(&info, i);
+                self.ui.new_count(v.new_count);
+            }
+            mode
+        };
+        self.ui.messages(out, mode);
+    }
+
+    /// Turns stored messages into view data (shared by the chat view and the Activity preview).
+    pub(super) fn build_msgs(
+        self: &Arc<Self>,
+        rows: &[MessageRow],
+        is_channel: bool,
+        thread: &Option<String>,
+        reply_counts: &HashMap<String, usize>,
+        marks: &MsgMarks,
+    ) -> Vec<MsgData> {
+        let none = HashSet::new();
+        let saved = marks.saved.unwrap_or(&none);
+        let selected = marks.selected;
+        let failed = marks.failed.unwrap_or(&none);
+        let divider = marks.divider;
+        let visible: Vec<&MessageRow> = rows
+            .iter()
+            .filter(|r| !r.message_type.starts_with("Control/"))
+            .collect();
+        let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
+        let mut prev: Option<&MessageRow> = None;
+        for (i, r) in visible.iter().copied().enumerate() {
             let system = system_text(r);
             let props: Value =
                 serde_json::from_str(&r.reactions_json).unwrap_or_else(|_| json!({}));
@@ -345,6 +484,7 @@ impl Engine {
             let mine = r.sender_mri == self.me;
             let new_day = prev.is_none_or(|p| !same_day(p.compose_ms, r.compose_ms));
             let show_header = new_day
+                || divider == Some(i)
                 || prev.is_none_or(|p| {
                     p.sender_mri != r.sender_mri
                         || r.compose_ms - p.compose_ms > 5 * 60_000
@@ -362,6 +502,7 @@ impl Engine {
                                 emoji: reaction_emoji(&key),
                                 count: users.len() as i32,
                                 mine: users.iter().any(|u| u == self.me.as_str()),
+                                names: self.reactor_names(users),
                                 key,
                             })
                         })
@@ -464,10 +605,14 @@ impl Engine {
                 } else {
                     -1
                 },
-                pending: r.id.starts_with("pending-"),
+                pending: r.id.starts_with(PENDING_PREFIX) && !failed.contains(&r.id),
+                saved: saved.contains(&r.id),
+                selected: selected.contains(&r.id),
+                failed: failed.contains(&r.id),
+                new_above: divider == Some(i),
             });
             prev = Some(r);
         }
-        self.ui.messages(out, scroll);
+        out
     }
 }

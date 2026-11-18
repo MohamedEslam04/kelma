@@ -1,6 +1,7 @@
 //! Live (Trouter) events: incoming messages, typing, desktop notifications.
 
 use super::Engine;
+use super::unread::follow_new_message;
 use super::util::*;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -29,7 +30,11 @@ impl Engine {
         while let Some(ev) = rx.recv().await {
             match ev {
                 TrouterEvent::Connected => {
+                    self.connected.store(true, Ordering::Relaxed);
                     self.ui.connected(true);
+                    // Anything sent while offline goes out now, in order.
+                    let e = self.clone();
+                    tokio::spawn(async move { e.flush_outbox(true).await });
                     if was_disconnected {
                         // Catch up on anything missed while offline.
                         let e = self.clone();
@@ -42,11 +47,13 @@ impl Engine {
                 TrouterEvent::Resync => {
                     let e = self.clone();
                     tokio::spawn(async move {
+                        e.flush_outbox(true).await;
                         let _ = e.sync().await;
                     });
                 }
                 TrouterEvent::Disconnected(_) => {
                     was_disconnected = true;
+                    self.connected.store(false, Ordering::Relaxed);
                     self.ui.connected(false);
                 }
                 TrouterEvent::Event(ev) => self.on_event(*ev),
@@ -99,23 +106,40 @@ impl Engine {
     }
 
     fn on_message(self: &Arc<Self>, m: Message) {
+        if m.conversation_id == "48:notifications" {
+            // The Activity feed: reload it instead of storing the notification as a chat message.
+            self.on_activity_event();
+            return;
+        }
         if m.message_type.starts_with("Control/") {
             return;
         }
         let mine = m.sender_mri == self.me;
-        let (is_current, focused) = {
+        let mut outbox_echo = None;
+        let (is_current, focused, follow) = {
             let mut v = self.view.lock().unwrap();
             // Our own echo replaces the optimistic copy.
             if let Some(cmid) = &m.client_message_id {
                 v.pending.retain(|(c, _)| c != cmid);
+                if mine {
+                    outbox_echo = Some(cmid.clone());
+                }
             }
             v.typing.remove(&m.conversation_id);
+            let follow = follow_new_message(v.at_bottom, mine);
+            if follow {
+                v.at_bottom = true;
+            }
             (
                 v.current.as_deref() == Some(m.conversation_id.as_str()),
                 self.focused.load(Ordering::Relaxed),
+                follow,
             )
         };
-        let known = {
+        if let Some(cmid) = outbox_echo {
+            let _ = self.store.lock().unwrap().remove(&cmid);
+        }
+        let (known, counted) = {
             let st = self.store.lock().unwrap();
             let existed = st.message(&m.id).ok().flatten().is_some();
             let _ = st.upsert_message(&row_from_message(&m, None));
@@ -129,10 +153,15 @@ impl Engine {
                     unread,
                 );
             }
+            let counted =
+                is_current && !follow && !existed && m.parent_id.is_none() && m.is_chat_content();
             if should_notify(existed, mine, m.is_chat_content(), is_current, focused) {
                 self.notify(&st, &m);
             }
-            st.conversation(&m.conversation_id).ok().flatten().is_some()
+            (
+                st.conversation(&m.conversation_id).ok().flatten().is_some(),
+                counted,
+            )
         };
         if is_current && focused && !mine {
             let e = self.clone();
@@ -147,11 +176,20 @@ impl Engine {
                 let _ = e.sync().await;
             });
         }
+        if counted {
+            // Scrolled up: leave the list alone and count the message on the jump button.
+            let n = {
+                let mut v = self.view.lock().unwrap();
+                v.new_count += 1;
+                v.new_count
+            };
+            self.ui.new_count(n);
+        }
         self.mark(|d| {
             d.chats = true;
             if is_current {
                 d.messages = true;
-                d.scroll = true;
+                d.scroll |= follow;
             }
         });
     }

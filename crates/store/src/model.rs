@@ -88,6 +88,18 @@ pub struct TeamRow {
     pub name: String,
 }
 
+/// A message saved with "Save this message", kept locally (see migration v3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedMessage {
+    pub conversation_id: String,
+    pub message_id: String,
+    /// Thread root for channel replies; equals `message_id` elsewhere.
+    pub root_id: String,
+    pub sender_name: String,
+    pub preview: String,
+    pub saved_ms: i64,
+}
+
 /// An unsent message being composed in a conversation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Draft {
@@ -159,7 +171,8 @@ pub struct OutboxItem {
     pub conversation_id: String,
     pub html: String,
     pub subject: Option<String>,
-    /// Message id being replied to, if any.
+    /// For a quote reply, the `qtdMsgs` property naming the quoted message (the quote block
+    /// itself is in `html`); `None` for a plain message.
     pub reply_to: Option<String>,
     pub kind: OutboxKind,
     /// Local file to upload for `Image` and `File` items.
