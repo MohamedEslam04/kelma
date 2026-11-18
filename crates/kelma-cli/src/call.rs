@@ -15,7 +15,15 @@
 //!     --relay <host> TURN gateway to start from (default: chosen from the authz region)
 //!     --relay-only   use relayed (TURN) candidates only, to prove the relay path
 //!     --dump <dir>   write every SDP exchanged to this directory (keep it out of the repo)
+//!     --mute-at <s>        mute us <s> seconds after the join (stop sending the mic, publish
+//!                          isMuted); repeatable, like the three below
+//!     --unmute-at <s>      unmute us <s> seconds after the join
+//!     --hand-at <s>        raise our hand <s> seconds after the join
+//!     --lower-hand-at <s>  lower our hand <s> seconds after the join
 //! ```
+//!
+//! `join` prints the roster (count, display names, role, mute and hand flags) whenever it
+//! changes. Names go to the terminal only, never to a file.
 //!
 //! Live tests may only join meetings the user hosts on their own personal account; see the
 //! project's live-test rules.
@@ -29,7 +37,8 @@ use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::{MediaOptions, MediaSession, MediaState};
 use calling::ngc_trouter::{NgcEvent, NgcTrouter};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
-use calling::signaling::{CallSession, NgcClient};
+use calling::signaling::roster::roster_snapshot;
+use calling::signaling::{CallSession, Controls, NgcClient, Roster};
 use calling::{Links, Modality, SdpBlob};
 use serde_json::Value;
 use std::time::Duration;
@@ -219,6 +228,44 @@ fn find_blob(v: &Value) -> Option<SdpBlob> {
     }
 }
 
+/// An in-meeting control `join` can run on a schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Control {
+    Mute,
+    Unmute,
+    RaiseHand,
+    LowerHand,
+}
+
+const CONTROL_FLAGS: [(&str, Control); 4] = [
+    ("--mute-at", Control::Mute),
+    ("--unmute-at", Control::Unmute),
+    ("--hand-at", Control::RaiseHand),
+    ("--lower-hand-at", Control::LowerHand),
+];
+
+/// Every `--<control>-at <seconds>` in `args`, earliest first.
+fn scheduled_controls(args: &[String]) -> Result<Vec<(Duration, Control)>> {
+    let mut out = Vec::new();
+    for (i, a) in args.iter().enumerate() {
+        let Some((flag, control)) = CONTROL_FLAGS.iter().find(|(f, _)| f == a) else {
+            continue;
+        };
+        let secs: f64 = args
+            .get(i + 1)
+            .and_then(|v| v.parse().ok())
+            .filter(|s: &f64| s.is_finite() && *s >= 0.0)
+            .with_context(|| format!("{flag} needs a number of seconds"))?;
+        out.push((Duration::from_secs_f64(secs), *control));
+    }
+    out.sort_by_key(|(at, _)| *at);
+    Ok(out)
+}
+
+fn print_roster(roster: &Roster, own_mri: &str) {
+    println!("roster: {}", roster.summary(own_mri));
+}
+
 fn dump(dir: Option<&str>, name: &str, sdp: &str) {
     if let Some(d) = dir {
         let n = std::time::SystemTime::now()
@@ -235,6 +282,7 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(30);
     let out = opt(args, "--out").unwrap_or("kelma-call.wav").to_owned();
+    let mut schedule = scheduled_controls(args)?;
     let target = match opt(args, "--link") {
         Some(link) => meeting_from_join_url(link).context("not a meeting link")?,
         None => {
@@ -289,6 +337,14 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
         .await
         .context("join")?;
     println!("joined: controller {}", host(&conv.controller));
+    let joined_at = tokio::time::Instant::now();
+    let mut controls = Controls::default();
+    let mut roster = Roster::default();
+    if let Some(snapshot) = roster_snapshot(&conv.raw)
+        && roster.apply_snapshot(snapshot)
+    {
+        print_roster(&roster, &s.me.mri);
+    }
     let mut links: Links = conv.links.clone();
     let mut answered = false;
     if let Some(ans) = find_blob(&conv.raw) {
@@ -323,8 +379,15 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     let (sender_tx, sender_rx) = tokio::sync::watch::channel(media.audio_sender());
     let sent = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let sent_count = sent.clone();
+    // While muted the microphone's packets are dropped here: muting is also local, not only the
+    // state the service shows.
+    let mic_muted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let send_muted = mic_muted.clone();
     let send_task = tokio::spawn(async move {
         while let Some(p) = encoded.recv().await {
+            if send_muted.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
+            }
             let sender = sender_rx.borrow().clone();
             if sender.send(p).await.is_ok() {
                 sent_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -362,8 +425,34 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     tokio::pin!(deadline);
     let mut ended = false;
     loop {
+        let next_control = joined_at + schedule.first().map(|(at, _)| *at).unwrap_or_default();
         tokio::select! {
             _ = &mut deadline => break,
+            _ = tokio::time::sleep_until(next_control), if !schedule.is_empty() => {
+                let (_, control) = schedule.remove(0);
+                let controller = conv.controller.as_str();
+                let result = match control {
+                    Control::Mute | Control::Unmute => {
+                        let muted = control == Control::Mute;
+                        mic_muted.store(muted, std::sync::atomic::Ordering::Relaxed);
+                        ngc.set_muted(&s, &links, controller, &mut controls, muted).await
+                    }
+                    Control::RaiseHand => ngc
+                        .raise_hand(&s, &links, controller, &mut controls)
+                        .await
+                        .map(|r| println!("hand raised (queue #{})", r.rank.map_or("?".into(), |n| n.to_string()))),
+                    Control::LowerHand => {
+                        let own = roster.hand_of(&s.me.mri).map(|h| h.state_id.clone());
+                        ngc.lower_hand(&s, &links, controller, &mut controls, own.as_deref())
+                            .await
+                            .map(|lowered| if !lowered { println!("no raised hand to lower") })
+                    }
+                };
+                match result {
+                    Ok(()) => println!("control {control:?}: ok"),
+                    Err(e) => println!("control {control:?} failed: {e}"),
+                }
+            }
             st = state_rx.recv() => match st {
                 Some(st) => {
                     println!("media: {st:?}");
@@ -447,7 +536,14 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                                     dump(dump_dir, "our-reanswer", &ans);
                                     if let Some(url) = l.get("mediaAnswer") {
                                         match ngc.send_media_answer(&s, url, &modalities, &SdpBlob::ngc(ans)).await {
-                                            Ok(()) => println!("renegotiation answered"),
+                                            Ok(()) => {
+                                                println!("renegotiation answered");
+                                                // Teams ignored the first state update after admission
+                                                // (mautrix-teams), so publish the mute state again.
+                                                if let Err(e) = ngc.repeat_muted(&s, &links, &conv.controller, &mut controls).await {
+                                                    println!("mute state not repeated: {e}");
+                                                }
+                                            }
                                             Err(e) => println!("renegotiation answer refused: {e}"),
                                         }
                                     }
@@ -463,8 +559,20 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                         }
                         CallEvent::Progress { status } => println!("progress: {status}"),
                         CallEvent::MediaAcknowledgement { .. } => println!("media acknowledged"),
-                        CallEvent::RosterUpdate(_) => println!("roster update"),
-                        CallEvent::ConversationUpdate(_) => println!("conversation update"),
+                        CallEvent::RosterUpdate(delta) => {
+                            if roster.apply(&delta) {
+                                print_roster(&roster, &s.me.mri);
+                            }
+                        }
+                        CallEvent::ConversationUpdate(body) => {
+                            let keys: Vec<&str> = body.as_object().map(|m| m.keys().map(String::as_str).collect()).unwrap_or_default();
+                            println!("conversation update: {}", keys.join(","));
+                            if let Some(snapshot) = roster_snapshot(&body)
+                                && roster.apply_snapshot(snapshot)
+                            {
+                                print_roster(&roster, &s.me.mri);
+                            }
+                        }
                         CallEvent::Other { scope, event, .. } => println!("callback {scope}/{event}"),
                     },
                     NgcPush::Invitation(_) => println!("(ignored an incoming call invitation)"),
@@ -518,6 +626,52 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn scheduled_controls_are_read_from_every_flag_earliest_first() {
+        let got = scheduled_controls(&args(&[
+            "--secs",
+            "90",
+            "--hand-at",
+            "40",
+            "--mute-at",
+            "20",
+            "--unmute-at",
+            "30.5",
+            "--mute-at",
+            "50",
+            "--lower-hand-at",
+            "45",
+        ]))
+        .unwrap();
+        assert_eq!(
+            got,
+            vec![
+                (Duration::from_secs(20), Control::Mute),
+                (Duration::from_secs_f64(30.5), Control::Unmute),
+                (Duration::from_secs(40), Control::RaiseHand),
+                (Duration::from_secs(45), Control::LowerHand),
+                (Duration::from_secs(50), Control::Mute),
+            ]
+        );
+        assert!(
+            scheduled_controls(&args(&["--secs", "30"]))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_control_flag_without_seconds_is_an_error() {
+        assert!(scheduled_controls(&args(&["--mute-at"])).is_err());
+        assert!(scheduled_controls(&args(&["--hand-at", "soon"])).is_err());
+        assert!(scheduled_controls(&args(&["--unmute-at", "-1"])).is_err());
+    }
+
     use calling::history::{CallDirection, CallOutcome, CallRecord};
 
     #[test]
