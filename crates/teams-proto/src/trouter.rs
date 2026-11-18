@@ -21,6 +21,8 @@ use tokio_tungstenite::tungstenite::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrouterEvent {
     Connected,
+    /// The server dropped events; refetch recent history.
+    Resync,
     Disconnected(String),
     Event(Box<Event>),
 }
@@ -351,6 +353,7 @@ async fn connect_once(client: &Client, tx: &mpsc::UnboundedSender<TrouterEvent>)
     };
     let mut ping = tokio::time::interval(Duration::from_secs(30));
     ping.tick().await;
+    let mut last_loss_register: Option<tokio::time::Instant> = None;
     let reregister = tokio::time::sleep(Duration::from_secs(86400 - 600));
     tokio::pin!(reregister);
     loop {
@@ -384,11 +387,14 @@ async fn connect_once(client: &Client, tx: &mpsc::UnboundedSender<TrouterEvent>)
                         }
                     }
                     Some(Frame::Event(data)) if data.contains("trouter.message_loss") => {
-                        // The server dropped events: re-register so delivery resumes, and tell the app
-                        // to resync history.
-                        let wait = register_or_retry(client, &alloc.surl).await.unwrap_or(Duration::from_secs(86400 - 600));
-                        reregister.as_mut().reset(tokio::time::Instant::now() + wait);
-                        if tx.send(TrouterEvent::Connected).is_err() { return Ok(()); }
+                        // The server dropped events. Re-register at most once a minute (more trips
+                        // the registrar's throttling) and ask the app to catch up.
+                        if last_loss_register.is_none_or(|t: tokio::time::Instant| t.elapsed() > Duration::from_secs(60)) {
+                            last_loss_register = Some(tokio::time::Instant::now());
+                            let wait = register_or_retry(client, &alloc.surl).await.unwrap_or(Duration::from_secs(86400 - 600));
+                            reregister.as_mut().reset(tokio::time::Instant::now() + wait);
+                            if tx.send(TrouterEvent::Resync).is_err() { return Ok(()); }
+                        }
                     }
                     Some(Frame::Disconnect) => return Ok(()),
                     _ => {}

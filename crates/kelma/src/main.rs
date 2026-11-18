@@ -56,8 +56,18 @@ async fn app_main(
     });
     engine.start();
     // Development aid: open a conversation on startup.
-    if let Ok(id) = std::env::var("KELMA_OPEN") {
-        tokio::spawn(engine.clone().handle(Cmd::SelectChat(id)));
+    if let Ok(target) = std::env::var("KELMA_OPEN") {
+        let e = engine.clone();
+        tokio::spawn(async move {
+            let (conv, root) = match target.split_once(";messageid=") {
+                Some((c, r)) => (c.to_string(), Some(r.to_string())),
+                None => (target, None),
+            };
+            e.clone().handle(Cmd::SelectChat(conv)).await;
+            if let Some(r) = root {
+                e.handle(Cmd::OpenThread(r)).await;
+            }
+        });
     }
     while let Some(cmd) = cmds.recv().await {
         tokio::spawn(engine.clone().handle(cmd));
@@ -192,14 +202,25 @@ fn main() -> anyhow::Result<()> {
     let _ = slint::set_xdg_app_id("kelma");
 
     let window = AppWindow::new()?;
+    if let Ok(view) = std::env::var("KELMA_VIEW") {
+        window.set_view(view.into());
+    }
     let ui = UiHandle::new(window.as_weak());
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Cmd>();
     let focus = Arc::new(AtomicBool::new(true));
 
     macro_rules! cmd {
+        ($cb:ident, || $e:expr) => {{
+            let tx = tx.clone();
+            window.$cb(move || {
+                let _ = tx.send($e);
+            });
+        }};
         ($cb:ident, |$($a:ident),*| $e:expr) => {{
             let tx = tx.clone();
-            window.$cb(move |$($a),*| { let _ = tx.send($e); });
+            window.$cb(move |$($a),*| {
+                let _ = tx.send($e);
+            });
         }};
     }
     cmd!(on_retry_login, || Cmd::RetryLogin);

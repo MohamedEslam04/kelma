@@ -59,7 +59,7 @@ struct View {
     pending: Vec<(String, MessageRow)>,
     typing: HashMap<String, (String, Instant)>,
     last_typing_sent: Option<Instant>,
-    expanded_teams: HashSet<String>,
+    collapsed_teams: HashSet<String>,
     teams_order: Vec<String>,
 }
 
@@ -85,6 +85,8 @@ pub struct Engine {
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     pub focused: Arc<AtomicBool>,
+    /// Demo mode: no network, so network errors are not shown.
+    pub offline: AtomicBool,
 }
 
 const PAGE: usize = 60;
@@ -263,6 +265,7 @@ impl Engine {
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             focused: Arc::new(AtomicBool::new(true)),
+            offline: AtomicBool::new(false),
         })
     }
 
@@ -272,6 +275,7 @@ impl Engine {
 
     /// Starts only the render loop (demo mode: no network).
     pub fn start_offline(self: &Arc<Self>) {
+        self.offline.store(true, Ordering::Relaxed);
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
     }
@@ -494,6 +498,12 @@ impl Engine {
                     }
                     was_disconnected = false;
                 }
+                TrouterEvent::Resync => {
+                    let e = self.clone();
+                    tokio::spawn(async move {
+                        let _ = e.sync().await;
+                    });
+                }
                 TrouterEvent::Disconnected(_) => {
                     was_disconnected = true;
                     self.ui.connected(false);
@@ -636,7 +646,9 @@ impl Engine {
     pub async fn handle(self: Arc<Self>, cmd: Cmd) {
         if let Err(err) = self.clone().handle_inner(cmd).await {
             tracing::warn!(%err, "command failed");
-            self.ui.banner(format!("{err}"));
+            if !self.offline.load(Ordering::Relaxed) {
+                self.ui.banner(format!("{err}"));
+            }
         }
     }
 
@@ -648,9 +660,9 @@ impl Engine {
             Cmd::ToggleTeam(i) => {
                 let mut v = self.view.lock().unwrap();
                 if let Some(id) = v.teams_order.get(i).cloned()
-                    && !v.expanded_teams.remove(&id)
+                    && !v.collapsed_teams.remove(&id)
                 {
-                    v.expanded_teams.insert(id);
+                    v.collapsed_teams.insert(id);
                 }
                 drop(v);
                 self.mark(|d| d.teams = true);
@@ -1319,13 +1331,15 @@ impl Engine {
     }
 
     fn render_teams(self: &Arc<Self>) {
-        let (order, expanded) = {
+        let (order, collapsed) = {
             let v = self.view.lock().unwrap();
-            (v.teams_order.clone(), v.expanded_teams.clone())
+            (v.teams_order.clone(), v.collapsed_teams.clone())
         };
         let st = self.store.lock().unwrap();
         let mut teams = st.teams().unwrap_or_default();
         teams.sort_by_key(|t| order.iter().position(|o| o == &t.id).unwrap_or(usize::MAX));
+        // ToggleTeam(index) refers to this order.
+        self.view.lock().unwrap().teams_order = teams.iter().map(|t| t.id.clone()).collect();
         let data: Vec<TeamData> = teams
             .into_iter()
             .map(|t| {
@@ -1334,7 +1348,7 @@ impl Engine {
                 TeamData {
                     initials: initials(&t.name),
                     color: color_for(&t.id),
-                    expanded: expanded.contains(&t.id),
+                    expanded: !collapsed.contains(&t.id),
                     channels: channels
                         .into_iter()
                         .map(|c| (c.id, c.title, c.unread))

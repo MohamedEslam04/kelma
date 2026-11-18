@@ -193,6 +193,86 @@ async fn main() -> Result<()> {
                 .await?;
             println!("sent (clientmessageid {cmid})");
         }
+        Some("reply") => {
+            let (Some(conv), Some(msg), Some(text)) = (args.get(1), args.get(2), args.get(3))
+            else {
+                bail!("usage: reply <conv> <msg id> <text>")
+            };
+            let (client, cfg) = connect(&paths).await?;
+            let page = client.messages(conv, None, 50).await?;
+            let orig = page
+                .messages
+                .iter()
+                .find(|m| &m.id == msg)
+                .context("message not in the last 50")?;
+            let preview = render::plain_text(&render::parse_teams_html(&orig.content));
+            let html = render::reply_html(
+                &orig.id,
+                &orig.sender_mri,
+                &orig.sender_name,
+                orig.compose_ms,
+                &preview,
+                text,
+            );
+            client
+                .send_message(conv, &html, &cfg.display_name.unwrap_or_default(), None)
+                .await?;
+            println!("replied");
+        }
+        Some("edit") => {
+            let (Some(conv), Some(msg), Some(text)) = (args.get(1), args.get(2), args.get(3))
+            else {
+                bail!("usage: edit <conv> <msg id> <text>")
+            };
+            let (client, cfg) = connect(&paths).await?;
+            client
+                .edit_message(
+                    conv,
+                    msg,
+                    &render::text_to_teams_html(text),
+                    &cfg.display_name.unwrap_or_default(),
+                )
+                .await?;
+            println!("edited");
+        }
+        Some("delete") => {
+            let (Some(conv), Some(msg)) = (args.get(1), args.get(2)) else {
+                bail!("usage: delete <conv> <msg id>")
+            };
+            let (client, _) = connect(&paths).await?;
+            client.delete_message(conv, msg).await?;
+            println!("deleted");
+        }
+        Some("unreact") => {
+            let (Some(conv), Some(msg), Some(key)) = (args.get(1), args.get(2), args.get(3)) else {
+                bail!("usage: unreact <conv> <msg id> <key>")
+            };
+            let (client, _) = connect(&paths).await?;
+            client.remove_reaction(conv, msg, key).await?;
+            println!("unreacted");
+        }
+        Some("send-image") => {
+            let (Some(conv), Some(file)) = (args.get(1), args.get(2)) else {
+                bail!("usage: send-image <conv> <file>")
+            };
+            let (client, cfg) = connect(&paths).await?;
+            let data = std::fs::read(file)?;
+            let name = std::path::Path::new(file)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("image.png")
+                .to_string();
+            let id = client.upload_image(conv, &name, data).await?;
+            client
+                .send_message(
+                    conv,
+                    &teams_proto::ams::image_html(&id, 320, 200),
+                    &cfg.display_name.unwrap_or_default(),
+                    None,
+                )
+                .await?;
+            println!("image sent ({id})");
+        }
         Some("react") => {
             let (Some(conv), Some(msg), Some(key)) = (args.get(1), args.get(2), args.get(3)) else {
                 bail!("usage: react <conversation id> <message id> <key>")
@@ -209,6 +289,7 @@ async fn main() -> Result<()> {
                 tokio::select! {
                     ev = rx.recv() => match ev {
                         Some(TrouterEvent::Connected) => println!("-- connected"),
+                        Some(TrouterEvent::Resync) => println!("-- resync"),
                         Some(TrouterEvent::Disconnected(r)) => println!("-- disconnected: {r}"),
                         Some(TrouterEvent::Event(ev)) => match *ev {
                             Event::NewMessage(m) if m.is_chat_content() => println!("[{}] {} in {}: {}", fmt_time(m.compose_ms), m.sender_name, m.conversation_id, preview(&m.content)),

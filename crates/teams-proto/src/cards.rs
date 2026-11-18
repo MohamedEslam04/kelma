@@ -208,14 +208,13 @@ fn walk(v: &Value, out: &mut String) {
                             if let (Some(t), Some(u)) = (
                                 b.get("title").and_then(Value::as_str),
                                 b.get("value").and_then(Value::as_str),
-                            ) {
-                                if u.starts_with("http") {
-                                    out.push_str(&format!(
-                                        "<p><a href=\"{}\">{}</a></p>",
-                                        esc(u),
-                                        esc(t)
-                                    ));
-                                }
+                            ) && u.starts_with("http")
+                            {
+                                out.push_str(&format!(
+                                    "<p><a href=\"{}\">{}</a></p>",
+                                    esc(u),
+                                    esc(t)
+                                ));
                             }
                         }
                     }
