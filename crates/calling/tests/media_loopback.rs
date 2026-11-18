@@ -10,6 +10,7 @@ use tokio::time::timeout;
 fn local() -> MediaOptions {
     MediaOptions {
         udp_addrs: vec!["127.0.0.1:0".into()],
+        ..Default::default()
     }
 }
 

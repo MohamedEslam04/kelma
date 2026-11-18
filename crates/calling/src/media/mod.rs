@@ -35,8 +35,8 @@ use webrtc::media_stream::track_local::static_sample::TrackLocalStaticSample;
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
-    RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState,
-    RTCSessionDescription, SettingEngineBuilder,
+    RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCIceTransportPolicy,
+    RTCPeerConnectionState, RTCSessionDescription, SettingEngineBuilder,
 };
 use webrtc::rtp_transceiver::RtpSender;
 
@@ -52,18 +52,22 @@ const GATHER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Incoming packets buffered for the audio module: 5 s of 20 ms frames.
 const AUDIO_QUEUE: usize = 250;
 
-/// Where the peer binds its UDP sockets.
+/// Where the peer binds its UDP sockets, and which candidates it may use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaOptions {
     /// Local UDP addresses; a wildcard (`0.0.0.0:0`, `[::]:0`) means one socket per interface,
     /// loopback and link-local excluded. Tests bind `127.0.0.1:0`.
     pub udp_addrs: Vec<String>,
+    /// Gather and use relayed (TURN) candidates only (ICE transport policy `relay`), to prove
+    /// the relay path. Building the session fails when no TURN server is given.
+    pub relay_only: bool,
 }
 
 impl Default for MediaOptions {
     fn default() -> Self {
         Self {
             udp_addrs: vec!["0.0.0.0:0".to_owned()],
+            relay_only: false,
         }
     }
 }
@@ -139,6 +143,11 @@ impl MediaSession {
             .map_err(media_err("interceptors"))?;
         let configuration = RTCConfigurationBuilder::new()
             .with_ice_servers(ice_servers.into_iter().map(ice_server).collect())
+            .with_ice_transport_policy(if options.relay_only {
+                RTCIceTransportPolicy::Relay
+            } else {
+                RTCIceTransportPolicy::All
+            })
             .build();
         let settings = SettingEngineBuilder::new()
             // Teams cannot resolve `.local` names, and reads a fingerprint per section.

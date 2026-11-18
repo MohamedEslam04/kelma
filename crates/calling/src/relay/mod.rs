@@ -1,14 +1,20 @@
-//! TURN credentials from `trap/tokens`.
+//! TURN credentials from `trap/tokens`, and the relay they are good for.
 //!
 //! `GET https://teams.microsoft.com/trap/tokens` with `api-version: 2`, `X-MS-Migration: True` and
 //! the IC3 bearer answers `{tokens:[{realm, username, password}], expires}` (rusty-teams
 //! `crates/calling/src/relay.rs`, MIT; teams-lite `NATIVE-CALLING.md` §2.6). The TURN hosts are
-//! not in the answer: rusty-teams uses `gateway-<geo>.az.relay.teams.cloud.microsoft` on udp 3478
-//! and tcp/tls 443.
+//! not in the answer: the web client reads them from a `relayConfig` (`Relay.Turn.fqdns`, ports)
+//! that kelma has not found yet, and rusty-teams uses `gateway-<geo>.az.relay.teams.cloud.microsoft`
+//! on udp 3478 and tcp/tls 443. Those gateways answer Allocate with `300 Try Alternate`, which
+//! webrtc-rs does not follow, so [`resolve_ice_servers`] follows it first ([`allocate`]) and names
+//! the relay that allocates by its address.
+
+pub mod allocate;
 
 use crate::error::{Error, Result};
 use crate::types::IceServer;
 use serde::Deserialize;
+use std::net::SocketAddr;
 use std::time::Duration;
 use teams_proto::Client;
 use teams_proto::broker::Audience;
@@ -17,6 +23,8 @@ pub const TOKENS_URL: &str = "https://teams.microsoft.com/trap/tokens";
 /// The relay rusty-teams defaults to (EU geo). Other geos are expected at
 /// `gateway-<geo>.az.relay.teams.cloud.microsoft`.
 pub const DEFAULT_RELAY_HOST: &str = "gateway-eu.az.relay.teams.cloud.microsoft";
+/// The relay gateways' TURN port over UDP.
+pub const RELAY_UDP_PORT: u16 = 3478;
 
 /// One set of TURN long-term credentials.
 #[derive(Clone, Deserialize)]
@@ -121,4 +129,90 @@ pub async fn fetch_ice_servers(
 ) -> Result<(Vec<IceServer>, Duration)> {
     let grant = fetch_grant(client).await?;
     Ok((ice_servers(&grant, relay_host), grant.expires_in))
+}
+
+fn gateway(geo: &str) -> String {
+    format!("gateway-{geo}.az.relay.teams.cloud.microsoft")
+}
+
+/// The relay gateways to try for an authz `region`, best first: the region's geo when one is
+/// known, then the `world` gateway, then [`DEFAULT_RELAY_HOST`]. The geos are the gateway names
+/// that resolve in DNS (`eu`, `us`, `in`, `world`); the region-to-geo map is a guess, which is
+/// why every list ends in the gateways that serve anyone.
+pub fn relay_hosts(region: &str) -> Vec<String> {
+    let geo = match region.to_ascii_lowercase().as_str() {
+        "amer" | "noam" | "us" | "ca" | "latam" | "br" => Some("us"),
+        "emea" | "eu" | "europe" | "uk" | "fr" | "de" | "ch" | "no" | "se" => Some("eu"),
+        "in" => Some("in"),
+        _ => None,
+    };
+    let mut hosts: Vec<String> = geo.into_iter().map(gateway).collect();
+    for fallback in [gateway("world"), DEFAULT_RELAY_HOST.to_owned()] {
+        if !hosts.contains(&fallback) {
+            hosts.push(fallback);
+        }
+    }
+    hosts
+}
+
+/// One ICE server per credential set naming the relay at `relay` (an address [`allocate::find_relay`]
+/// returned) over UDP, the only TURN transport webrtc-rs 0.21.1 speaks.
+pub fn resolved_ice_servers(grant: &RelayGrant, relay: SocketAddr) -> Vec<IceServer> {
+    grant
+        .credentials
+        .iter()
+        .map(|c| IceServer {
+            urls: vec![format!("turn:{relay}?transport=udp")],
+            username: Some(c.username.clone()),
+            credential: Some(c.password.clone()),
+        })
+        .collect()
+}
+
+/// The relay `host` leads to: its first address of each family is probed (IPv4 first).
+async fn probe_host(host: &str, credentials: &RelayCredentials) -> Result<SocketAddr> {
+    let mut addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, RELAY_UDP_PORT))
+        .await
+        .map_err(|e| Error::Protocol(format!("resolve {host}: {e}")))?
+        .collect();
+    addrs.sort_by_key(|a| a.is_ipv6());
+    addrs.dedup_by_key(|a| a.is_ipv6());
+    let mut last = Error::Protocol(format!("{host} has no address"));
+    for addr in addrs {
+        match allocate::find_relay(addr, credentials).await {
+            Ok(relay) => return Ok(relay),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+/// Fetches TURN credentials and finds the relay that allocates with them, starting from
+/// `relay_host` when given, else from [`relay_hosts`] for the authz `region`. When no gateway
+/// leads to a relay, the ICE servers name the first gateway as before (webrtc-rs will log the
+/// `300 Try Alternate`), so a call still connects wherever host candidates do.
+pub async fn resolve_ice_servers(
+    client: &Client,
+    region: &str,
+    relay_host: Option<&str>,
+) -> Result<(Vec<IceServer>, Duration)> {
+    let grant = fetch_grant(client).await?;
+    let hosts = match relay_host {
+        Some(h) => vec![h.to_owned()],
+        None => relay_hosts(region),
+    };
+    let credentials = grant
+        .credentials
+        .first()
+        .ok_or_else(|| Error::Protocol("relay grant holds no credentials".into()))?;
+    for host in &hosts {
+        match probe_host(host, credentials).await {
+            Ok(relay) => {
+                tracing::info!(%host, %relay, "TURN relay found");
+                return Ok((resolved_ice_servers(&grant, relay), grant.expires_in));
+            }
+            Err(e) => tracing::warn!(%host, "no TURN relay: {e}"),
+        }
+    }
+    Ok((ice_servers(&grant, &hosts[0]), grant.expires_in))
 }

@@ -12,6 +12,7 @@ const FULL_REOFFER: &str = include_str!("fixtures/media/teams_meeting_full_reoff
 fn local() -> MediaOptions {
     MediaOptions {
         udp_addrs: vec!["127.0.0.1:0".into()],
+        ..Default::default()
     }
 }
 
