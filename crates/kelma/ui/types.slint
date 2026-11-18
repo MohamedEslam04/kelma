@@ -1,0 +1,49 @@
+export struct ChatRow {
+    id: string,
+    title: string,
+    preview: string,
+    time: string,
+    unread: bool,
+    initials: string,
+    color: color,
+    avatar: image,
+    has-avatar: bool,
+    section: string, // "favorites" | "chats" | "channels"
+    rtl-title: bool,
+    rtl-preview: bool,
+    favorite: bool,
+}
+
+export struct ReactionItem { key: string, emoji: string, count: int, mine: bool }
+export struct FileItem { name: string, url: string, ext: string }
+export struct ImageItem { url: string, img: image, loaded: bool, w: length, h: length }
+
+export struct Msg {
+    id: string,
+    sender: string,
+    initials: string,
+    color: color,
+    avatar: image,
+    has-avatar: bool,
+    mine: bool,
+    time: string,
+    day: string,           // non-empty: draw a date separator above
+    show-header: bool,     // first message of a run from the same sender
+    edited: bool,
+    deleted: bool,
+    system: bool,          // member added, call ended, ...
+    subject: string,
+    quote-author: string,
+    quote-text: string,
+    body: styled-text,
+    plain: string,
+    rtl: bool,
+    images: [ImageItem],
+    files: [FileItem],
+    reactions: [ReactionItem],
+    reply-count: int,
+    pending: bool,
+}
+
+export struct ChannelRow { id: string, name: string, unread: bool }
+export struct TeamRow { id: string, name: string, initials: string, color: color, expanded: bool, channels: [ChannelRow] }
