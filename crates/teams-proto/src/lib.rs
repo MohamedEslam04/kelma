@@ -4,6 +4,7 @@
 //! Every endpoint used here is internal and undocumented, so it can change without notice.
 
 pub mod actions;
+pub mod activity;
 pub mod ams;
 pub mod auth;
 pub mod broker;

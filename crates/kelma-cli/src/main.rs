@@ -4,6 +4,7 @@
 //! kelma-cli login                 sign in with a device code
 //! kelma-cli chats [n]             list recent conversations
 //! kelma-cli teams                 list teams and channels
+//! kelma-cli activity [n]          list the newest Activity feed items
 //! kelma-cli read <conv> [n]       print the last n messages
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
@@ -108,6 +109,26 @@ async fn main() -> Result<()> {
                 }
             }
             println!("({} chats in aggregator)", snap.chats.len());
+        }
+        Some("activity") => {
+            let n: u32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20);
+            let (client, _) = connect(&paths).await?;
+            let items = client.activity(n).await?;
+            for i in &items {
+                println!(
+                    "{} {:<28} {} {}\n    in: {}  id: {}",
+                    if i.is_read { " " } else { "*" },
+                    format!("{:?}", i.kind),
+                    fmt_time(i.timestamp_ms),
+                    i.actor_name,
+                    i.thread_topic,
+                    i.id
+                );
+                if !i.preview.is_empty() {
+                    println!("    {}", preview(&i.preview));
+                }
+            }
+            println!("({} items)", items.len());
         }
         Some("read") => {
             let conv = args.get(1).context("usage: read <conversation id> [n]")?;
@@ -431,7 +452,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             println!(
-                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|forward <src> <msg> <target> [note]|save/unsave/pin/unpin/unread <conv> <msg>|mute/unmute/hide/unhide <conv>|saved|pins <chat>|audiences|tail>"
+                "usage: kelma-cli <login|logout|chats [n]|teams|activity [n]|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|forward <src> <msg> <target> [note]|save/unsave/pin/unpin/unread <conv> <msg>|mute/unmute/hide/unhide <conv>|saved|pins <chat>|audiences|tail>"
             );
         }
     }
