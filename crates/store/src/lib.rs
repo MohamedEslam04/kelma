@@ -11,7 +11,10 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-pub use model::{ConvFilter, ConvKind, ConversationRow, MessageRow, TeamRow, UserRow};
+pub use model::{
+    ConvFilter, ConvKind, ConversationRow, Draft, MessageRow, OutboxItem, OutboxKind, OutboxState,
+    TeamRow, UserRow,
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -21,6 +24,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("unknown conversation kind in database: {0:?}")]
     UnknownKind(String),
+    #[error("unknown outbox kind or state in database: {0:?}")]
+    UnknownOutbox(String),
     #[error("database schema version {found} is newer than supported version {supported}")]
     SchemaTooNew { found: i64, supported: i64 },
 }
@@ -81,6 +86,44 @@ fn user_from_row(r: &Row<'_>) -> rusqlite::Result<UserRow> {
     })
 }
 
+const OUTBOX_COLS: &str = "client_message_id, conversation_id, html, subject, reply_to, kind, \
+                           payload_path, created_ms, attempts, state, last_error";
+
+fn draft_from_row(r: &Row<'_>) -> rusqlite::Result<Draft> {
+    Ok(Draft {
+        conversation_id: r.get(0)?,
+        text: r.get(1)?,
+        reply_to: r.get(2)?,
+        updated_ms: r.get(3)?,
+    })
+}
+
+fn outbox_from_row(r: &Row<'_>) -> Result<OutboxItem> {
+    let kind: String = r.get(5)?;
+    let state: String = r.get(9)?;
+    Ok(OutboxItem {
+        client_message_id: r.get(0)?,
+        conversation_id: r.get(1)?,
+        html: r.get(2)?,
+        subject: r.get(3)?,
+        reply_to: r.get(4)?,
+        kind: OutboxKind::from_db(&kind).ok_or(Error::UnknownOutbox(kind))?,
+        payload_path: r.get(6)?,
+        created_ms: r.get(7)?,
+        attempts: r.get(8)?,
+        state: OutboxState::from_db(&state).ok_or(Error::UnknownOutbox(state))?,
+        last_error: r.get(10)?,
+    })
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
+}
+
 fn limit_i64(limit: usize) -> i64 {
     i64::try_from(limit).unwrap_or(i64::MAX)
 }
@@ -108,6 +151,11 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", true)?;
         let mut store = Store { conn };
         migrations::run(&mut store.conn)?;
+        // A row still `sending` means the app died mid-send; send it again.
+        store.conn.execute(
+            "UPDATE outbox SET state = 'queued' WHERE state = 'sending'",
+            [],
+        )?;
         Ok(store)
     }
 
@@ -436,6 +484,166 @@ impl Store {
             out.push(conv_from_row(r)?);
         }
         Ok(out)
+    }
+
+    // ---- drafts --------------------------------------------------------
+
+    /// Saves the unsent text (and reply target) of a conversation. Empty
+    /// text deletes the draft.
+    pub fn set_draft(
+        &self,
+        conversation_id: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        self.set_draft_at(conversation_id, text, reply_to, now_ms())
+    }
+
+    fn set_draft_at(
+        &self,
+        conversation_id: &str,
+        text: &str,
+        reply_to: Option<&str>,
+        updated_ms: i64,
+    ) -> Result<()> {
+        if text.is_empty() {
+            self.conn
+                .prepare_cached("DELETE FROM drafts WHERE conversation_id = ?1")?
+                .execute([conversation_id])?;
+        } else {
+            self.conn
+                .prepare_cached(
+                    "INSERT INTO drafts (conversation_id, text, reply_to, updated_ms) \
+                     VALUES (?1, ?2, ?3, ?4) \
+                     ON CONFLICT(conversation_id) DO UPDATE SET \
+                         text = excluded.text, reply_to = excluded.reply_to, \
+                         updated_ms = excluded.updated_ms",
+                )?
+                .execute(params![conversation_id, text, reply_to, updated_ms])?;
+        }
+        Ok(())
+    }
+
+    pub fn draft(&self, conversation_id: &str) -> Result<Option<Draft>> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT conversation_id, text, reply_to, updated_ms FROM drafts \
+                 WHERE conversation_id = ?1",
+            )?
+            .query_row([conversation_id], draft_from_row)
+            .optional()?)
+    }
+
+    /// All drafts, most recently edited first.
+    pub fn drafts(&self) -> Result<Vec<Draft>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT conversation_id, text, reply_to, updated_ms FROM drafts \
+             ORDER BY updated_ms DESC, conversation_id",
+        )?;
+        let out = stmt
+            .query_map([], draft_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
+    }
+
+    // ---- outbox --------------------------------------------------------
+
+    /// Queues a message for sending. Whatever state, attempts and error the
+    /// item carries, it is stored as freshly `Queued` with no attempts.
+    pub fn enqueue(&self, item: &OutboxItem) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO outbox (client_message_id, conversation_id, html, subject, \
+                     reply_to, kind, payload_path, created_ms, attempts, state, last_error) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, NULL)",
+            )?
+            .execute(params![
+                item.client_message_id,
+                item.conversation_id,
+                item.html,
+                item.subject,
+                item.reply_to,
+                item.kind.as_db(),
+                item.payload_path,
+                item.created_ms,
+                OutboxState::Queued.as_db()
+            ])?;
+        Ok(())
+    }
+
+    /// Items waiting to be sent (`Queued`), oldest first.
+    pub fn outbox_due(&self) -> Result<Vec<OutboxItem>> {
+        self.query_outbox(
+            &format!(
+                "SELECT {OUTBOX_COLS} FROM outbox WHERE state = 'queued' \
+                 ORDER BY created_ms, client_message_id"
+            ),
+            [],
+        )
+    }
+
+    /// Every queued, sending and failed item of a conversation, oldest
+    /// first, for rendering their rows.
+    pub fn outbox_for(&self, conversation_id: &str) -> Result<Vec<OutboxItem>> {
+        self.query_outbox(
+            &format!(
+                "SELECT {OUTBOX_COLS} FROM outbox WHERE conversation_id = ?1 \
+                 ORDER BY created_ms, client_message_id"
+            ),
+            [conversation_id],
+        )
+    }
+
+    fn query_outbox(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<OutboxItem>> {
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let mut rows = stmt.query(params)?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push(outbox_from_row(r)?);
+        }
+        Ok(out)
+    }
+
+    /// `Queued` to `Sending`. Other states are left alone.
+    pub fn mark_sending(&self, client_message_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE outbox SET state = 'sending' \
+                 WHERE client_message_id = ?1 AND state = 'queued'",
+            )?
+            .execute([client_message_id])?;
+        Ok(())
+    }
+
+    /// Marks an item `Failed`, counts the attempt and records why.
+    pub fn mark_failed(&self, client_message_id: &str, error: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE outbox SET state = 'failed', attempts = attempts + 1, last_error = ?2 \
+                 WHERE client_message_id = ?1",
+            )?
+            .execute(params![client_message_id, error])?;
+        Ok(())
+    }
+
+    /// `Failed` back to `Queued`; the attempt count and last error are kept.
+    pub fn retry(&self, client_message_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE outbox SET state = 'queued' \
+                 WHERE client_message_id = ?1 AND state = 'failed'",
+            )?
+            .execute([client_message_id])?;
+        Ok(())
+    }
+
+    /// Drops an item: it was sent, or the user deleted it.
+    pub fn remove(&self, client_message_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached("DELETE FROM outbox WHERE client_message_id = ?1")?
+            .execute([client_message_id])?;
+        Ok(())
     }
 
     // ---- kv ------------------------------------------------------------
