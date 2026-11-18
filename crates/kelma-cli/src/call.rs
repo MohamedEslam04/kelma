@@ -9,7 +9,8 @@
 //!     --speaker      play what arrives (default: write it to --out)
 //!     --out <wav>    where received audio goes (default: kelma-call.wav)
 //!     --secs <n>     stay this long, then leave (default: 30)
-//!     --relay <host> TURN host (default: the relay crate's)
+//!     --relay <host> TURN gateway to start from (default: chosen from the authz region)
+//!     --relay-only   use relayed (TURN) candidates only, to prove the relay path
 //!     --dump <dir>   write every SDP exchanged to this directory (keep it out of the repo)
 //! ```
 //!
@@ -21,7 +22,7 @@ use calling::audio::{
     Capture, Paced, Playback, ToneSource, WavSink, spawn_capture_encoder, spawn_decoder_playback,
 };
 use calling::invitation::{CallEvent, NgcPush, classify};
-use calling::media::{MediaSession, MediaState};
+use calling::media::{MediaOptions, MediaSession, MediaState};
 use calling::ngc_trouter::{NgcEvent, NgcTrouter};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::{CallSession, NgcClient};
@@ -72,11 +73,16 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
                 ep.partition,
                 ep.ring
             );
-            match calling::relay::fetch_grant(client).await {
-                Ok(g) => println!(
-                    "TURN: {} credential(s), expire in {:?}",
-                    g.credentials.len(),
-                    g.expires_in
+            match calling::relay::resolve_ice_servers(client, &ep.region, opt(args, "--relay"))
+                .await
+            {
+                Ok((ice, expires)) => println!(
+                    "TURN: {} ({} credential(s), expire in {expires:?})",
+                    ice.first()
+                        .and_then(|s| s.urls.first())
+                        .map(String::as_str)
+                        .unwrap_or("-"),
+                    ice.len(),
                 ),
                 Err(e) => println!("TURN: failed: {e}"),
             }
@@ -190,15 +196,23 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
         .context("calling trouter did not register")?;
     println!("calling trouter registered");
 
-    let relay = opt(args, "--relay").unwrap_or(calling::relay::DEFAULT_RELAY_HOST);
-    let ice = match calling::relay::fetch_ice_servers(client, relay).await {
+    let region = ngc.endpoints().region.clone();
+    let ice = match calling::relay::resolve_ice_servers(client, &region, opt(args, "--relay")).await
+    {
         Ok((ice, _)) => ice,
         Err(e) => {
             println!("TURN unavailable ({e}); host candidates only");
             vec![]
         }
     };
-    let (mut media, events) = MediaSession::new(ice.clone()).await?;
+    if let Some(url) = ice.first().and_then(|s| s.urls.first()) {
+        println!("TURN: {url}");
+    }
+    let media_opts = MediaOptions {
+        relay_only: args.iter().any(|a| a == "--relay-only"),
+        ..MediaOptions::default()
+    };
+    let (mut media, events) = MediaSession::with_options(ice.clone(), media_opts.clone()).await?;
     let mut state_rx = events.state;
     let offer = media.create_offer().await?;
     dump(dump_dir, "our-offer", &offer);
@@ -336,7 +350,7 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                                     // A re-offer that restarts ICE (new mids/ufrags after the lobby)
                                     // is answered by a fresh peer connection.
                                     println!("existing session refused the re-offer ({e}); answering on a new session");
-                                    match MediaSession::new(ice.clone()).await {
+                                    match MediaSession::with_options(ice.clone(), media_opts.clone()).await {
                                         Ok((fresh, ev)) => match fresh.accept_offer(&sdp).await {
                                             Ok(ans) => {
                                                 let old = std::mem::replace(&mut media, fresh);
