@@ -5,6 +5,7 @@ mod composer;
 mod data;
 mod demo;
 mod markdown;
+mod mention;
 mod reactions;
 mod ui;
 #[cfg(test)]
@@ -322,6 +323,14 @@ fn main() -> anyhow::Result<()> {
         window.global::<CalStore>().on_command(move |name, arg| {
             if let Some(c) = backend::CalCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Calendar(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<PeopleStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::PeopleCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::People(c));
             }
         });
     }
