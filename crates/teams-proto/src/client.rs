@@ -2,7 +2,7 @@
 //! with the right headers for each backend.
 
 use crate::auth::{self, DeviceCode, SkypeToken};
-use crate::client_info::{RESOURCE_CSA, RESOURCE_PRESENCE, RESOURCE_SPACES};
+use crate::client_info::{RESOURCE_CSA, RESOURCE_GRAPH, RESOURCE_PRESENCE, RESOURCE_SPACES};
 use crate::error::{Error, Result};
 use crate::http::{Tokens, headers_for};
 use reqwest::Method;
@@ -157,11 +157,16 @@ impl Client {
         let presence = auth::refresh(&self.http, &self.tenant, &rt, RESOURCE_PRESENCE)
             .await
             .ok();
+        // Graph is optional too: only file upload needs it.
+        let graph = auth::refresh(&self.http, &self.tenant, &rt, RESOURCE_GRAPH)
+            .await
+            .ok();
         let sky: SkypeToken = auth::skypetoken(&self.http, &spaces.access_token).await?;
         let min_s = [
             Some(spaces.expires_in_s),
             Some(csa.expires_in_s),
             presence.as_ref().map(|p| p.expires_in_s),
+            graph.as_ref().map(|g| g.expires_in_s),
             Some(sky.expires_in_s),
         ]
         .into_iter()
@@ -175,8 +180,9 @@ impl Client {
             spaces: Some(spaces.access_token),
             csa: Some(csa.access_token),
             presence: presence.map(|p| p.access_token),
+            graph: graph.map(|g| g.access_token),
         };
-        st.expires_at = Instant::now() + Duration::from_secs(min_s);
+        st.expires_at = SystemTime::now() + Duration::from_secs(min_s);
         st.chat_service = sky.chat_service;
         st.middle_tier = sky.middle_tier;
         st.region = sky.region;

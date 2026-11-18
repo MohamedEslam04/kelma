@@ -36,6 +36,7 @@ Teams-like layout and uses a fraction of that memory: see [Memory](#memory).
   - react, edit, delete
   - paste emoji
   - upload images
+  - send files: uploaded to your OneDrive and shared with the chat, as Teams does (chats only, not channels)
   - typing indicator
 - **Live:** real-time updates over Teams' push channel (new messages, edits, reactions, typing),
   automatic reconnect and catch-up, and desktop notifications when the window is not focused.

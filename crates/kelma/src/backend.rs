@@ -809,11 +809,7 @@ impl Engine {
                 });
             }
             Cmd::AttachImage => self.attach_image().await?,
-            Cmd::AttachFile => {
-                self.ui.banner(
-                    "Sending files is not supported yet: share a OneDrive link instead.".into(),
-                );
-            }
+            Cmd::AttachFile => self.attach_file().await?,
         }
         Ok(())
     }
@@ -1136,6 +1132,24 @@ impl Engine {
         let html = teams_proto::ams::image_html(&id, w, h);
         self.client
             .send_message(&target, &html, &self.my_name, None)
+            .await?;
+        self.ui.banner(String::new());
+        Ok(())
+    }
+
+    /// Picks a file, uploads it to OneDrive, shares it with the chat and posts it.
+    async fn attach_file(self: &Arc<Self>) -> anyhow::Result<()> {
+        let Some(target) = self.current_target() else {
+            return Ok(());
+        };
+        let Some(file) = rfd::AsyncFileDialog::new().pick_file().await else {
+            return Ok(());
+        };
+        let name = file.file_name();
+        self.ui.banner(format!("Uploading {name}…"));
+        let data = file.read().await;
+        self.client
+            .send_file(&target, &name, data, &self.my_name)
             .await?;
         self.ui.banner(String::new());
         Ok(())

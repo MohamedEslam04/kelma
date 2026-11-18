@@ -129,6 +129,23 @@ impl Client {
         Ok(cmid)
     }
 
+    /// Sends a message carrying an uploaded file (`files` is a [`crate::files::files_property`] value).
+    pub async fn send_file_message(
+        &self,
+        conversation_id: &str,
+        html: &str,
+        display_name: &str,
+        files: &str,
+    ) -> Result<String> {
+        let cmid = now_ms().to_string();
+        let url = format!("{}/messages", self.conv_url(conversation_id).await);
+        let mut body = send_body(html, display_name, &cmid, None);
+        body["properties"] = json!({ "files": files });
+        self.json("send_file", Method::POST, &url, Some(&body))
+            .await?;
+        Ok(cmid)
+    }
+
     /// Replaces the content of one of our messages.
     pub async fn edit_message(
         &self,

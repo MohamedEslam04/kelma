@@ -273,6 +273,22 @@ async fn main() -> Result<()> {
                 .await?;
             println!("image sent ({id})");
         }
+        Some("send-file") => {
+            let (Some(conv), Some(file)) = (args.get(1), args.get(2)) else {
+                bail!("usage: send-file <conv> <file>")
+            };
+            let (client, cfg) = connect(&paths).await?;
+            let data = std::fs::read(file)?;
+            let name = std::path::Path::new(file)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file")
+                .to_string();
+            let f = client
+                .send_file(conv, &name, data, &cfg.display_name.unwrap_or_default())
+                .await?;
+            println!("file sent ({}, drive item {})", f.name, f.drive_item_id);
+        }
         Some("react") => {
             let (Some(conv), Some(msg), Some(key)) = (args.get(1), args.get(2), args.get(3)) else {
                 bail!("usage: react <conversation id> <message id> <key>")
@@ -305,7 +321,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             println!(
-                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|react <conv> <msg> <key>|tail>"
+                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|react <conv> <msg> <key>|tail>"
             );
         }
     }

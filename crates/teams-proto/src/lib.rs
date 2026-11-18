@@ -11,6 +11,7 @@ pub mod client;
 pub mod client_info;
 pub mod csa;
 pub mod error;
+pub mod files;
 pub mod http;
 pub mod model;
 pub mod mt;
