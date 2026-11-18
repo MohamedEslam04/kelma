@@ -1009,28 +1009,28 @@ export component OneDriveView inherits Rectangle {
                         min-width: 80px;
                         accessible-role: button;
                         accessible-label: "Sort by Name";
-                        Text { text: "Name" + (DriveStore.sort == "name" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: "Name" + (DriveStore.sort == "name" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "name"); } }
                     }
                     if DriveStore.col-modified: Rectangle {
                         width: DriveLook.col-modified;
                         accessible-role: button;
                         accessible-label: "Sort by Modified";
-                        Text { text: (DriveStore.section == "bin" ? "Deleted" : "Modified") + (DriveStore.sort == "modified" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: (DriveStore.section == "bin" ? "Deleted" : "Modified") + (DriveStore.sort == "modified" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "modified"); } }
                     }
                     if DriveStore.col-modified-by: Rectangle {
                         width: DriveLook.col-modified-by;
                         accessible-role: button;
                         accessible-label: "Sort by Modified by";
-                        Text { text: (DriveStore.section == "bin" ? "Deleted by" : "Modified by") + (DriveStore.sort == "modified-by" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: (DriveStore.section == "bin" ? "Deleted by" : "Modified by") + (DriveStore.sort == "modified-by" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "modified-by"); } }
                     }
                     if DriveStore.col-size: Rectangle {
                         width: DriveLook.col-size;
                         accessible-role: button;
                         accessible-label: "Sort by Size";
-                        Text { text: "Size" + (DriveStore.sort == "size" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: "Size" + (DriveStore.sort == "size" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "size"); } }
                     }
                     if DriveStore.col-location: Text { text: "Location"; color: Theme.fg-muted; font-size: 12px; font-weight: 600; width: DriveLook.col-location; vertical-alignment: center; horizontal-alignment: left; }
