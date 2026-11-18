@@ -9,6 +9,7 @@
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
 //! kelma-cli calendar [days]       count upcoming events per day and per show-as (read-only)
+//! kelma-cli calendar <check>      live checks of the calendar data layer (calendars, rooms, mailbox, schedule, ...)
 //! kelma-cli audiences             mint a token for every audience (prints no tokens)
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
@@ -40,6 +41,258 @@ async fn connect(paths: &Paths) -> Result<(Client, session::Config)> {
     let client = Client::resume(sess).await?;
     session::persist(&cfg, &client).await?;
     Ok((client, cfg))
+}
+
+/// `kelma-cli calendar <check>`: the calendar data layer against the live service. Prints
+/// counts and key names only, never titles, people or addresses. `write-check` and
+/// `calendar-check` are the only writes: a private appointment (and a calendar) made and
+/// removed again.
+async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
+    use calendar as cal;
+    let now = teams_proto::time::now_ms();
+    let day = 86_400_000;
+    match args.first().map(String::as_str) {
+        Some("calendars") => {
+            let list = cal::calendars(client).await?;
+            let groups = cal::calendar_groups(client).await?;
+            println!(
+                "{} calendars ({} default, {} editable, {} with a hex color), {} groups",
+                list.len(),
+                list.iter().filter(|c| c.is_default).count(),
+                list.iter().filter(|c| c.can_edit).count(),
+                list.iter().filter(|c| c.hex_color.is_some()).count(),
+                groups.len()
+            );
+            if let Some(g) = groups.first() {
+                let n = cal::calendars_in_group(client, &g.id).await?.len();
+                println!("first group holds {n} calendars");
+            }
+            if let Some(c) = list.iter().find(|c| c.is_default) {
+                let perms = cal::calendar_permissions(client, &c.id).await?;
+                println!("default calendar has {} permission entries", perms.len());
+            }
+        }
+        Some("rooms") => {
+            let lists = cal::room_lists(client).await?;
+            println!("{} room lists", lists.len());
+            println!(
+                "{} rooms in the tenant",
+                cal::rooms(client, "").await?.len()
+            );
+            if let Some(l) = lists.first() {
+                let rooms = cal::rooms(client, &l.email).await?;
+                println!(
+                    "first list: {} rooms, {} with capacity, {} with a building",
+                    rooms.len(),
+                    rooms.iter().filter(|r| r.capacity.is_some()).count(),
+                    rooms.iter().filter(|r| r.building.is_some()).count()
+                );
+            }
+        }
+        Some("mailbox") => {
+            let s = cal::mailbox_settings(client).await?;
+            println!(
+                "time zone set: {}, work days: {}, work hours {:02}:{:02}-{:02}:{:02}, date format set: {}, time format set: {}",
+                !s.time_zone.is_empty(),
+                s.working_hours.days.len(),
+                s.working_hours.start_min / 60,
+                s.working_hours.start_min % 60,
+                s.working_hours.end_min / 60,
+                s.working_hours.end_min % 60,
+                !s.date_format.is_empty(),
+                !s.time_format.is_empty()
+            );
+        }
+        Some("categories") => {
+            let c = cal::categories(client).await?;
+            println!(
+                "{} categories, {} with a color",
+                c.len(),
+                c.iter().filter(|c| c.color_preset.is_some()).count()
+            );
+        }
+        Some("schedule") => {
+            let me = client
+                .json_as(
+                    "me",
+                    &teams_proto::broker::Audience::Graph,
+                    reqwest::Method::GET,
+                    "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+                    None,
+                )
+                .await?;
+            let email = me["mail"]
+                .as_str()
+                .or(me["userPrincipalName"].as_str())
+                .context("no mail address on /me")?
+                .to_string();
+            let start = now - now.rem_euclid(day);
+            let schedules =
+                cal::get_schedule(client, std::slice::from_ref(&email), start, start + day, 30)
+                    .await?;
+            for s in &schedules {
+                println!(
+                    "my schedule today: {} slots, {} busy, {} items, error: {}",
+                    s.availability.len(),
+                    s.availability
+                        .iter()
+                        .filter(|a| **a == cal::Availability::Busy)
+                        .count(),
+                    s.items.len(),
+                    s.error.is_some()
+                );
+            }
+            match cal::person_view(client, &email, start, start + day, 30).await? {
+                cal::PersonView::Events(e) => {
+                    println!("my calendar via /users/{{upn}}: {} events", e.len())
+                }
+                cal::PersonView::FreeBusyOnly(_) => {
+                    println!("my calendar via /users/{{upn}}: free/busy fallback")
+                }
+            }
+            let found = cal::find_meeting_times(
+                client,
+                &cal::FindTimes {
+                    required: vec![cal::Person::new("", &email)],
+                    optional: vec![],
+                    duration_minutes: 30,
+                    window_start_ms: start + 2 * day,
+                    window_end_ms: start + 3 * day,
+                    max_candidates: 5,
+                    min_attendee_percentage: 100,
+                    work_hours_only: true,
+                },
+            )
+            .await?;
+            println!(
+                "find meeting times (only me, in 2 days): {} suggestions, empty reason set: {}",
+                found.suggestions.len(),
+                found.empty_reason.is_some()
+            );
+        }
+        Some("probe-outlook") => {
+            // GET only, prints the status and the top-level key names, never values.
+            let path = args
+                .get(1)
+                .context("probe-outlook <path under https://outlook.office.com/>")?;
+            let url = format!(
+                "https://outlook.office.com/{}",
+                path.trim_start_matches('/')
+            );
+            let (status, text) = client
+                .request_as(
+                    &teams_proto::broker::Audience::Outlook,
+                    reqwest::Method::GET,
+                    &url,
+                    None,
+                    &[],
+                )
+                .await?;
+            let keys: Vec<String> = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v.as_object().map(|o| o.keys().cloned().collect()))
+                .unwrap_or_default();
+            let code = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v["error"]["code"].as_str().map(String::from));
+            println!(
+                "HTTP {status}, {} bytes, keys {keys:?}, error code {code:?}",
+                text.len()
+            );
+        }
+        Some("worklocation") => {
+            let w = cal::work_location(client).await?;
+            println!("work location: {w:?}");
+        }
+        Some("detail") => {
+            let events = cal::Calendar::view(client, now, now + 7 * day).await?;
+            let Some(e) = events.iter().find(|e| !e.attendees.is_empty()) else {
+                println!("no upcoming event with attendees to read");
+                return Ok(());
+            };
+            let d = cal::event_detail(client, &e.id).await?;
+            println!(
+                "detail: body {} bytes, {} attachments, counts {:?}, conference id set: {}, thread id from join url: {}",
+                d.body.len(),
+                d.attachments.len(),
+                d.counts,
+                d.dial_in.conference_id.is_some(),
+                e.join_url
+                    .as_deref()
+                    .and_then(cal::meeting_chat_thread_id)
+                    .is_some()
+            );
+            if let Some(master) = &e.series_master_id {
+                let inst = cal::instances(client, master, now, now + 30 * day).await?;
+                println!("series has {} occurrences in 30 days", inst.len());
+            }
+        }
+        Some("ics") => {
+            let events = cal::Calendar::view(client, now, now + 7 * day).await?;
+            let ics = cal::to_ics(&events, now);
+            println!(
+                "{} events exported to {} bytes of .ics ({} VEVENT)",
+                events.len(),
+                ics.len(),
+                ics.matches("BEGIN:VEVENT").count()
+            );
+        }
+        Some("write-check") => {
+            let start = now + 30 * day;
+            let start = start - start.rem_euclid(day) + 12 * 3_600_000;
+            let wall = |ms: i64| cal::format_iso_ms(ms)[..19].to_string();
+            let new = cal::NewEvent {
+                subject: "kelma test".into(),
+                start: wall(start),
+                end: wall(start + 1_800_000),
+                is_teams_meeting: false,
+                sensitivity: cal::Sensitivity::Private,
+                ..cal::NewEvent::default()
+            };
+            let created = cal::create_event(client, &new).await?;
+            println!(
+                "created: subject ok {}, private {}, attendees {}, online {}",
+                created.subject == "kelma test",
+                created.sensitivity_private,
+                created.attendees.len(),
+                created.is_online_meeting
+            );
+            let mut changed = new.clone();
+            changed.subject = "kelma test (updated)".into();
+            let outcome = cal::update_event(client, &created.id, &changed).await;
+            match &outcome {
+                Ok(u) => println!(
+                    "updated: subject changed {}",
+                    u.subject == "kelma test (updated)"
+                ),
+                Err(e) => println!("update failed: {e}"),
+            }
+            cal::delete_event(client, &created.id).await?;
+            println!("deleted");
+            let left = cal::Calendar::view(client, start - day, start + day)
+                .await?
+                .iter()
+                .filter(|e| e.subject.starts_with("kelma test"))
+                .count();
+            println!("cleanup proof: {left} events named 'kelma test*' left in the window");
+            outcome?;
+        }
+        Some("calendar-check") => {
+            let made = cal::create_calendar(client, "kelma-test", "lightBlue").await?;
+            println!("created calendar, color {}", made.color);
+            cal::delete_calendar(client, &made.id).await?;
+            let left = cal::calendars(client)
+                .await?
+                .iter()
+                .filter(|c| c.name == "kelma-test")
+                .count();
+            println!("cleanup proof: {left} calendars named 'kelma-test' left");
+        }
+        other => bail!(
+            "unknown calendar check {other:?}; try calendars, rooms, mailbox, schedule, worklocation, detail, ics, write-check, calendar-check"
+        ),
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -429,6 +682,11 @@ async fn main() -> Result<()> {
             }
             session::persist(&cfg, &client).await?;
         }
+        Some("calendar") if args.get(1).is_some_and(|a| a.parse::<u32>().is_err()) => {
+            let (client, cfg) = connect(&paths).await?;
+            calendar_check(&client, &args[1..]).await?;
+            session::persist(&cfg, &client).await?;
+        }
         Some("calendar") => {
             // Read-only: prints only counts (per UTC day and per show-as), never event details.
             let days: u32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(7);
@@ -486,6 +744,7 @@ async fn main() -> Result<()> {
                    chats [n]\n\
                    teams\n\
                    calendar [days]\n\
+                   calendar calendars|rooms|mailbox|schedule|worklocation|detail|ics\n\
                    activity [n]\n\
                    read <conv> [n]\n\
                    send <conv> <text>\n\
