@@ -49,7 +49,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - A UI test covers the chip row and removing an item.
 
 ### 5.2 Hover bar like Teams
-- [ ] Impact 5, effort 2. Seen: message hover.
+- [x] Impact 5, effort 2. Seen: message hover.
   - **What.**
     - The bar reads 👍 ❤️ 😆 😮, then "More reactions", "Reply with quote" (❝), Edit (own messages only), "…".
     - More reactions opens a searchable picker with every Teams reaction key.
@@ -63,7 +63,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - The tooltip lists names.
 
 ### 5.3 Message "…" menu
-- [ ] Impact 5, effort 3. Seen: message menu, own and others' messages.
+- [x] Impact 5, effort 3. Seen: message menu, own and others' messages.
   - **What.** One menu, like Teams:
     - Reply with quote
     - Forward, with Forward options: this message or multiple messages
