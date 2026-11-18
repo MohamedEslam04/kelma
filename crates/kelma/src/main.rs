@@ -30,7 +30,7 @@ async fn app_main(
             tokio::spawn(engine.clone().handle(Cmd::SelectChat(id)));
         }
         while let Some(cmd) = cmds.recv().await {
-            tokio::spawn(engine.clone().handle(cmd));
+            engine.dispatch(cmd);
         }
         return;
     }
@@ -72,7 +72,7 @@ async fn app_main(
         });
     }
     while let Some(cmd) = cmds.recv().await {
-        tokio::spawn(engine.clone().handle(cmd));
+        engine.dispatch(cmd);
     }
 }
 
@@ -248,6 +248,7 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_attach_image, || Cmd::AttachImage);
     cmd!(on_attach_file, || Cmd::AttachFile);
     cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
+    cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
     {
         let tx = tx.clone();
         let weak = window.as_weak();
@@ -305,6 +306,9 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     rt.spawn(app_main(ui, rx, focus));
     window.run()?;
+    // Give the engine a moment to write a draft typed just before closing.
+    let _ = tx.send(Cmd::Flush);
+    std::thread::sleep(std::time::Duration::from_millis(100));
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
     Ok(())
 }

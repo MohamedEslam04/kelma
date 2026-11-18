@@ -185,6 +185,7 @@ impl Engine {
         id: String,
         title: Option<String>,
     ) -> anyhow::Result<()> {
+        self.flush_draft();
         {
             let mut v = self.view.lock().unwrap();
             if v.current.as_deref() == Some(id.as_str()) && v.thread_root.is_none() {
@@ -197,7 +198,7 @@ impl Engine {
             v.reply_to = None;
             v.editing = None;
         }
-        self.ui.reply_bar(String::new(), String::new(), false);
+        self.restore_draft(&id);
         self.mark(|d| {
             d.header = true;
             d.messages = true;

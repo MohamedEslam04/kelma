@@ -66,6 +66,7 @@ export component AppWindow inherits Window {
     callback search(string);
     callback send(string);
     callback typing-tick();
+    callback draft-edited(string);
     callback load-older();
     callback react(string, string);
     callback reply(string);
@@ -322,6 +323,7 @@ export component AppWindow inherits Window {
                         set-enter-sends(on) => { root.set-enter-sends(on); }
                         send(text) => { root.send(text); }
                         typing-tick => { root.typing-tick(); }
+                        draft-edited(text) => { root.draft-edited(text); }
                         cancel-reply => { root.cancel-reply(); }
                         attach-image => { root.attach-image(); }
                         attach-file => { root.attach-file(); }

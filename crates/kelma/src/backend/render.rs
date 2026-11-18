@@ -19,19 +19,7 @@ impl Engine {
         let mut last_typing = String::new();
         loop {
             tokio::time::sleep(Duration::from_millis(120)).await;
-            let d = std::mem::take(&mut *self.dirty.lock().unwrap());
-            if d.chats {
-                self.render_chats();
-            }
-            if d.teams {
-                self.render_teams();
-            }
-            if d.header {
-                self.render_header();
-            }
-            if d.messages {
-                self.render_messages(d.scroll);
-            }
+            self.render_dirty();
             let typing = {
                 let mut v = self.view.lock().unwrap();
                 let now = Instant::now();
@@ -46,6 +34,23 @@ impl Engine {
                 self.ui.typing(typing.clone());
                 last_typing = typing;
             }
+        }
+    }
+
+    /// Rebuilds the parts of the UI that changed since the last call.
+    pub(crate) fn render_dirty(self: &Arc<Self>) {
+        let d = std::mem::take(&mut *self.dirty.lock().unwrap());
+        if d.chats {
+            self.render_chats();
+        }
+        if d.teams {
+            self.render_teams();
+        }
+        if d.header {
+            self.render_header();
+        }
+        if d.messages {
+            self.render_messages(d.scroll);
         }
     }
 
@@ -155,7 +160,16 @@ impl Engine {
             let v = self.view.lock().unwrap();
             (v.filter.clone(), v.search.clone(), v.current.clone())
         };
-        let rows = {
+        let drafts: HashMap<String, String> = self
+            .store
+            .lock()
+            .unwrap()
+            .drafts()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| (d.conversation_id, d.text))
+            .collect();
+        let mut rows = {
             let st = self.store.lock().unwrap();
             if search.trim().is_empty() {
                 let f = match filter.as_str() {
@@ -170,6 +184,9 @@ impl Engine {
                     .unwrap_or_default()
             }
         };
+        if filter == "drafts" {
+            rows.retain(|r| drafts.contains_key(&r.id));
+        }
         let mut fav = vec![];
         let mut main = vec![];
         let mut chans = vec![];
@@ -186,13 +203,16 @@ impl Engine {
                 (ConvKind::Channel, Some(t)) => format!("{} › {}", t, r.title),
                 _ => r.title.clone(),
             };
+            let draft = drafts.get(&r.id);
+            let preview_text = draft.unwrap_or(&r.last_preview);
             let data = ChatData {
+                draft: draft.is_some(),
                 initials: initials(&r.title),
                 color: color_for(&r.id),
                 avatar: avatar_mri.and_then(|m| self.avatar(&m)),
                 rtl_title: render::base_direction(&title) == render::Dir::Rtl,
-                rtl_preview: render::base_direction(&r.last_preview) == render::Dir::Rtl,
-                preview: r.last_preview.chars().take(120).collect(),
+                rtl_preview: render::base_direction(preview_text) == render::Dir::Rtl,
+                preview: preview_text.replace('\n', " ").chars().take(120).collect(),
                 time: chat_time(r.last_activity_ms),
                 unread: r.unread && current.as_deref() != Some(r.id.as_str()),
                 favorite: r.favorite,

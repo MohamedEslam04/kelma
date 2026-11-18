@@ -31,6 +31,9 @@ impl Engine {
             return Ok(());
         };
         if let Some(id) = editing {
+            // The composer shows the draft that was there before the edit again.
+            let draft = self.view.lock().unwrap().draft_text.clone();
+            self.ui.set_draft(draft);
             let html = render::text_to_teams_html(&text);
             self.client
                 .edit_message(&target, &id, &html, &self.my_name)
@@ -63,6 +66,7 @@ impl Engine {
             }
             None => render::text_to_teams_html(&text),
         };
+        self.clear_draft(&current);
         let pending_id = format!("pending-{}", now_ms());
         let thread_root = self.view.lock().unwrap().thread_root.clone();
         let row = MessageRow {
@@ -128,7 +132,9 @@ impl Engine {
                     .unwrap()
                     .pending
                     .retain(|(id, _)| id != &pending_id);
-                self.ui.set_draft(text);
+                self.ui.set_draft(text.clone());
+                self.view.lock().unwrap().draft_text = text;
+                self.schedule_draft_save();
                 self.mark(|d| d.messages = true);
                 return Err(err.into());
             }

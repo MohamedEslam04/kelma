@@ -19,6 +19,8 @@ pub struct ChatData {
     pub rtl_title: bool,
     pub rtl_preview: bool,
     pub favorite: bool,
+    /// `preview` is an unsent draft, not the last message.
+    pub draft: bool,
 }
 
 #[derive(Clone)]

@@ -40,13 +40,17 @@ component ChatItem inherits Rectangle {
                 }
                 Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; }
             }
-            Text {
-                text: root.data.preview;
-                color: root.data.unread ? Theme.fg : Theme.fg-subtle;
-                font-weight: root.data.unread ? 600 : 400;
-                font-size: 12px;
-                overflow: elide;
-                horizontal-alignment: root.data.rtl-preview ? right : left;
+            HorizontalLayout {
+                spacing: 4px;
+                if root.data.draft: Text { text: "Draft:"; color: #e97a5f; font-size: 12px; horizontal-stretch: 0; }
+                Text {
+                    text: root.data.preview;
+                    color: root.data.unread ? Theme.fg : Theme.fg-subtle;
+                    font-weight: root.data.unread ? 600 : 400;
+                    font-size: 12px;
+                    overflow: elide;
+                    horizontal-alignment: root.data.rtl-preview ? right : left;
+                }
             }
         }
         if root.data.unread: Rectangle {
@@ -109,6 +113,7 @@ export component Sidebar inherits Rectangle {
             Pill { label: "Unread"; active: root.filter == "unread"; clicked => { root.filter = root.filter == "unread" ? "all" : "unread"; root.set-filter(root.filter); } }
             Pill { label: "Channels"; active: root.filter == "channels"; clicked => { root.filter = root.filter == "channels" ? "all" : "channels"; root.set-filter(root.filter); } }
             Pill { label: "Chats"; active: root.filter == "chats"; clicked => { root.filter = root.filter == "chats" ? "all" : "chats"; root.set-filter(root.filter); } }
+            Pill { label: "Drafts"; active: root.filter == "drafts"; clicked => { root.filter = root.filter == "drafts" ? "all" : "drafts"; root.set-filter(root.filter); } }
         }
         Rectangle { height: 1px; background: #2b2b2b; }
 

@@ -43,6 +43,7 @@ fn chat_row(c: ChatData) -> ChatRow {
         rtl_title: c.rtl_title,
         rtl_preview: c.rtl_preview,
         favorite: c.favorite,
+        draft: c.draft,
     }
 }
 
@@ -125,6 +126,11 @@ impl UiHandle {
     }
 
     fn run(&self, f: impl FnOnce(AppWindow) + Send + 'static) {
+        // Tests drive the window on their own thread without an event loop.
+        #[cfg(test)]
+        if let Some(w) = self.weak.upgrade() {
+            return f(w);
+        }
         let _ = self.weak.upgrade_in_event_loop(f);
     }
 

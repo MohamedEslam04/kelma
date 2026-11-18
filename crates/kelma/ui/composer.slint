@@ -16,6 +16,7 @@ export component Composer inherits Rectangle {
     callback send(string);
     callback set-enter-sends(bool);
     callback typing-tick();
+    callback draft-edited(string);
     callback cancel-reply();
     callback attach-image();
     callback attach-file();
@@ -94,7 +95,10 @@ export component Composer inherits Rectangle {
                             font-size: 14px;
                             single-line: false;
                             wrap: word-wrap;
-                            edited => { root.typing-tick(); }
+                            edited => {
+                                root.typing-tick();
+                                root.draft-edited(self.text);
+                            }
                         }
                     }
                     if composer-input.text == "": Text {

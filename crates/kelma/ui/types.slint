@@ -12,6 +12,7 @@ export struct ChatRow {
     rtl-title: bool,
     rtl-preview: bool,
     favorite: bool,
+    draft: bool, // preview is an unsent draft
 }
 
 export struct ReactionItem { key: string, emoji: string, count: int, mine: bool }

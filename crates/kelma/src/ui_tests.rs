@@ -6,14 +6,29 @@ use std::rc::Rc;
 
 use i_slint_backend_testing::{self as testing, ElementHandle};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, LogicalSize, ModelRc, SharedString, VecModel};
+use slint::{
+    ComponentHandle, LogicalPosition, LogicalSize, Model, ModelRc, SharedString, VecModel,
+};
 
-use crate::{AppWindow, Msg};
+use crate::backend::{Cmd, Engine};
+use crate::ui::UiHandle;
+use crate::{AppWindow, Msg, demo};
+use std::sync::Arc;
+use store::Store;
+use teams_proto::Client;
 
 type Log = Rc<RefCell<Vec<String>>>;
 
+/// The testing platform is per thread and can be set once; several windows may share it.
+fn init_platform() {
+    thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    if !DONE.replace(true) {
+        testing::init_no_event_loop();
+    }
+}
+
 fn app_with_messages(msgs: Vec<Msg>) -> AppWindow {
-    testing::init_no_event_loop();
+    init_platform();
     let app = AppWindow::new().unwrap();
     app.window().set_size(LogicalSize::new(1200., 800.));
     app.set_login_state("ready".into());
@@ -370,4 +385,179 @@ fn composer_more_menu_switches_the_enter_behavior() {
     opts[1].mock_single_click(PointerEventButton::Left);
     assert!(!app.get_enter_sends());
     assert_eq!(*log.borrow(), vec!["enter-sends false"]);
+}
+
+/// The real engine behind the real window, driven synchronously: every callback runs its command to
+/// completion on a current-thread runtime and then renders what the engine marked dirty.
+struct Harness {
+    app: AppWindow,
+    engine: Arc<Engine>,
+    rt: Rc<tokio::runtime::Runtime>,
+}
+
+const NOTES: &str = "48:notes";
+const BACKEND: &str = "19:backend@thread.v2";
+
+impl Harness {
+    fn new() -> Self {
+        let store = Store::open_in_memory().unwrap();
+        demo::seed(&store, teams_proto::time::now_ms()).unwrap();
+        Self::with_store(store)
+    }
+
+    fn with_store(store: Store) -> Self {
+        init_platform();
+        let app = AppWindow::new().unwrap();
+        app.window().set_size(LogicalSize::new(1200., 800.));
+        app.set_login_state("ready".into());
+        app.show().unwrap();
+        let rt = Rc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        let engine = Engine::new(
+            Client::offline("test").unwrap(),
+            store,
+            session::Config::default(),
+            UiHandle::new(app.as_weak()),
+            demo::ME.into(),
+            "Me".into(),
+        );
+        // No network, so errors are not shown.
+        engine
+            .offline
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let h = Harness { app, engine, rt };
+        let run = h.runner();
+        h.app.on_select_chat({
+            let run = run.clone();
+            move |id| run(Cmd::SelectChat(id.into()))
+        });
+        h.app.on_set_filter({
+            let run = run.clone();
+            move |f| run(Cmd::SetFilter(f.into()))
+        });
+        h.app.on_reply({
+            let run = run.clone();
+            move |id| run(Cmd::Reply(id.into()))
+        });
+        h.app.on_draft_edited({
+            let run = run.clone();
+            move |t| run(Cmd::DraftEdited(t.into()))
+        });
+        h
+    }
+
+    fn runner(&self) -> Rc<dyn Fn(Cmd)> {
+        let (engine, rt) = (self.engine.clone(), self.rt.clone());
+        Rc::new(move |cmd| {
+            rt.block_on(async {
+                engine.clone().handle(cmd).await;
+                engine.render_dirty();
+            });
+        })
+    }
+
+    fn select(&self, id: &str) {
+        self.runner()(Cmd::SelectChat(id.into()));
+    }
+
+    fn type_in_composer(&self, text: &str) {
+        composer(&self.app).mock_single_click(PointerEventButton::Left);
+        type_text(&self.app, text);
+    }
+
+    /// Every chat list row: favorites, chats, then channels.
+    fn chats(&self) -> Vec<crate::ChatRow> {
+        let a = &self.app;
+        let mut rows: Vec<_> = a.get_chats_favorites().iter().collect();
+        rows.extend(a.get_chats_main().iter());
+        rows.extend(a.get_chats_channels().iter());
+        rows
+    }
+}
+
+#[test]
+fn draft_survives_switching_chats() {
+    let h = Harness::new();
+    h.select(NOTES);
+    h.type_in_composer("remember the milk");
+
+    h.select(BACKEND);
+    assert_eq!(h.app.get_draft(), "", "another chat starts empty");
+    h.type_in_composer("review please");
+
+    h.select(NOTES);
+    assert_eq!(h.app.get_draft(), "remember the milk");
+    h.select(BACKEND);
+    assert_eq!(h.app.get_draft(), "review please");
+}
+
+#[test]
+fn draft_is_saved_after_a_pause_and_cleared_by_sending() {
+    let h = Harness::new();
+    h.select(NOTES);
+    h.type_in_composer("half a thought");
+    assert!(
+        h.engine.stored_draft(NOTES).is_none(),
+        "typing alone does not hit the database"
+    );
+    h.rt.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(700)).await });
+    assert_eq!(h.engine.stored_draft(NOTES).unwrap().text, "half a thought");
+
+    h.runner()(Cmd::Send("half a thought".into(), String::new()));
+    assert!(
+        h.engine.stored_draft(NOTES).is_none(),
+        "sent text is no longer a draft"
+    );
+}
+
+#[test]
+fn draft_and_reply_target_survive_a_restart() {
+    let db = std::env::temp_dir().join(format!("kelma-drafts-{}.sqlite", std::process::id()));
+    let _ = std::fs::remove_file(&db);
+    let seed = |db: &std::path::Path| {
+        let store = Store::open(db).unwrap();
+        demo::seed(&store, teams_proto::time::now_ms()).unwrap();
+        store
+    };
+    let target = {
+        let h = Harness::with_store(seed(&db));
+        h.select(BACKEND);
+        let target = h.engine.latest_message_id(BACKEND).expect("demo message");
+        h.runner()(Cmd::Reply(target.clone()));
+        h.type_in_composer("on it");
+        h.select(NOTES); // closing the app flushes the same way
+        target
+    };
+
+    let h = Harness::with_store(Store::open(&db).unwrap());
+    h.select(BACKEND);
+    assert_eq!(h.app.get_draft(), "on it");
+    assert!(!h.app.get_reply_preview().is_empty(), "reply bar is back");
+    assert_eq!(h.engine.reply_target_id().as_deref(), Some(target.as_str()));
+    let _ = std::fs::remove_file(&db);
+}
+
+#[test]
+fn chat_list_marks_drafts_and_has_a_drafts_view() {
+    let h = Harness::new();
+    h.select(NOTES);
+    h.type_in_composer("unsent");
+    h.select(BACKEND);
+
+    let notes = h.chats().into_iter().find(|c| c.id == NOTES).unwrap();
+    assert!(notes.draft);
+    assert_eq!(notes.preview, "unsent");
+    let backend = h.chats().into_iter().find(|c| c.id == BACKEND).unwrap();
+    assert!(
+        !backend.draft,
+        "chats without a draft keep their last message"
+    );
+
+    h.runner()(Cmd::SetFilter("drafts".into()));
+    let ids: Vec<_> = h.chats().into_iter().map(|c| c.id.to_string()).collect();
+    assert_eq!(ids, vec![NOTES.to_string()]);
 }

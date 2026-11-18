@@ -6,6 +6,7 @@
 
 use crate::data::Pixels;
 use crate::ui::UiHandle;
+use drafts::reply_preview;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,6 +14,7 @@ use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
 use teams_proto::Client;
 
+mod drafts;
 mod live;
 mod render;
 mod send;
@@ -43,6 +45,10 @@ pub enum Cmd {
     AttachImage,
     AttachFile,
     SetEnterSends(bool),
+    /// The composer text changed.
+    DraftEdited(String),
+    /// The window is closing: write what is pending.
+    Flush,
 }
 
 #[derive(Default)]
@@ -60,6 +66,11 @@ struct View {
     last_typing_sent: Option<Instant>,
     collapsed_teams: HashSet<String>,
     teams_order: Vec<String>,
+    /// Latest composer text of the current chat as the engine knows it.
+    draft_text: String,
+    /// `draft_text` (or the reply target) changed since it was last written to the store.
+    draft_dirty: bool,
+    draft_gen: u64,
 }
 
 #[derive(Default)]
@@ -162,6 +173,18 @@ impl Engine {
         });
     }
 
+    /// Runs a command in the background. Quick local ones run inline, so they stay ordered with the
+    /// command that follows them (a draft edit must land before the chat switch that flushes it).
+    pub fn dispatch(self: &Arc<Self>, cmd: Cmd) {
+        match cmd {
+            Cmd::DraftEdited(text) => self.draft_edited(text),
+            Cmd::Flush => self.flush_draft(),
+            cmd => {
+                tokio::spawn(self.clone().handle(cmd));
+            }
+        }
+    }
+
     pub async fn handle(self: Arc<Self>, cmd: Cmd) {
         if let Err(err) = self.clone().handle_inner(cmd).await {
             tracing::warn!(%err, "command failed");
@@ -223,15 +246,13 @@ impl Engine {
             Cmd::Reply(id) => {
                 let row = self.store.lock().unwrap().message(&id)?;
                 if let Some(r) = row {
-                    let preview: String =
-                        ::render::plain_text(&::render::parse_teams_html(&r.content_html))
-                            .chars()
-                            .take(120)
-                            .collect();
-                    self.ui.reply_bar(r.sender_name.clone(), preview, false);
+                    self.ui
+                        .reply_bar(r.sender_name.clone(), reply_preview(&r), false);
                     let mut v = self.view.lock().unwrap();
                     v.editing = None;
                     v.reply_to = Some(r);
+                    drop(v);
+                    self.schedule_draft_save();
                 }
                 self.ui.focus();
             }
@@ -252,10 +273,12 @@ impl Engine {
                 let mut v = self.view.lock().unwrap();
                 v.reply_to = None;
                 if v.editing.take().is_some() {
-                    self.ui.set_draft(String::new());
+                    // Back to the draft that was in the composer before the edit.
+                    self.ui.set_draft(v.draft_text.clone());
                 }
                 drop(v);
                 self.ui.reply_bar(String::new(), String::new(), false);
+                self.schedule_draft_save();
             }
             Cmd::Delete(id) => {
                 let conv = self.current_target();
@@ -316,6 +339,8 @@ impl Engine {
             }
             Cmd::AttachImage => self.attach_image().await?,
             Cmd::AttachFile => self.attach_file().await?,
+            Cmd::DraftEdited(text) => self.draft_edited(text),
+            Cmd::Flush => self.flush_draft(),
             Cmd::SetEnterSends(on) => {
                 self.cfg.lock().unwrap().enter_sends = on;
                 self.save_cfg();
