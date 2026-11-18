@@ -55,6 +55,17 @@ git clone https://github.com/MohamedEslam04/kelma && cd kelma
 ./packaging/install.sh      # builds and installs to ~/.local (binary, .desktop file, icon)
 ```
 
+### Packages
+
+| Format | Where | Notes |
+|---|---|---|
+| Flatpak | `packaging/flatpak/` | sandboxed: network, Wayland/X11, PipeWire, notifications and the Secret Service only |
+| Arch (AUR) | `packaging/aur/PKGBUILD` | the `-git` package, built from the latest commit: `makepkg -si` |
+| RPM (Fedora) | `packaging/rpm/kelma.spec` | builds offline from vendored crates |
+
+Each folder says how to build the package. None of them is published to a repository yet, and
+updates come from your package manager (kelma has no built-in update check).
+
 Start **kelma** from your launcher. On first start it shows a code: open the link, enter the code
 and sign in with your work account.
 
@@ -66,6 +77,21 @@ and sign in with your work account.
 | `KELMA_LOG=kelma=info,teams_proto=info` | Logging to stderr. Tokens are never logged |
 | `KELMA_DEMO=1` | Offline demo with sample data: no account, no network |
 | `KELMA_HOME=<dir>` | Keep config, cache and data under `<dir>` |
+
+### Report a problem
+
+kelma collects no telemetry and never uploads anything. If something breaks, write a local
+bundle and attach it to an issue yourself after reading it:
+
+```sh
+kelma --report-problem              # also in the launcher's right-click menu
+kelma-cli diag --log kelma.log      # optionally include a log: KELMA_LOG=kelma=debug kelma 2> kelma.log
+```
+
+The `.tar.gz` goes to your Downloads folder (`--out PATH` changes that). It holds the kelma
+version, OS and desktop facts, the non-secret config and the logs you pass in. Tokens, cookies,
+e-mail addresses, MRIs, conversation ids, GUIDs (tenant ids included), tenant domains and
+user names are replaced by placeholders. The keyring and the message cache are never read.
 
 ## Memory
 
