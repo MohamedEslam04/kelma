@@ -14,7 +14,7 @@ const BASE: &str = "https://graph.microsoft.com/v1.0/me/calendarView";
 
 /// Fields the views and the peek need. Attendees and the body preview are small enough to
 /// carry along so the full view needs no second request.
-const SELECT: &str = "id,iCalUId,seriesMasterId,subject,start,end,isAllDay,showAs,responseStatus,\
+pub(crate) const SELECT: &str = "id,iCalUId,seriesMasterId,subject,start,end,isAllDay,showAs,responseStatus,\
 isCancelled,sensitivity,categories,organizer,location,isOnlineMeeting,onlineMeeting,webLink,\
 type,bodyPreview,attendees";
 
