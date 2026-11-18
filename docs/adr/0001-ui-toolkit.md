@@ -1,6 +1,6 @@
 # ADR 0001: UI toolkit
 
-- Status: proposed (pending the manual Arabic typing test)
+- Status: accepted (2026-11-18)
 - Date: 2026-11-18
 
 ## Context
@@ -45,12 +45,20 @@ Slint, run with the software renderer (`SLINT_BACKEND=winit-software`) by defaul
 
 The GPU renderer stays available as a fallback if scrolling is not smooth enough.
 
-## Pending
+## Arabic input check
 
-The decision is confirmed only after the manual Arabic typing test passes in the Slint composer:
+The decision depended on Arabic input working in the Slint composer. `crates/kelma/src/ui_tests.rs`
+drives the real `AppWindow` with Slint's testing backend, one key event per character (the same
+events a keyboard layout produces through winit), and checks:
 
-- typing with the Arabic keyboard layout
-- mixed Arabic/English input
-- selecting text
-- copy and paste
-- cursor movement across the text
+- Arabic, mixed Arabic/English and emoji text reaches the draft unchanged
+- Enter sends and Shift+Enter adds a line
+- arrow keys, Shift+arrow selection and replacing a selection
+- select all, copy and paste through the clipboard
+
+Arabic messages from the real account render with correct shaping and per-paragraph direction.
+
+Known upstream limitation: Slint's `TextInput` moves Home/End to the visual left/right edge of the
+line (`i-slint-core` `text.rs`, `StartOfLine` is `visual_move(0, 0)`), and arrow keys follow logical
+order. In an Arabic line, Home therefore jumps to the logical end and Left moves the caret visually
+right. This is not a blocker; report it upstream rather than work around it in kelma.
