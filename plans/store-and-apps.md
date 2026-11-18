@@ -73,9 +73,12 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
 | Viva Learning, Viva Insights, Updates, Events, Help, Clipchamp, Avatars, Power BI, People, Linear and third-party apps | W / B | Web host when the tab URL works with the shim, otherwise the browser. |
 
 - [ ] **S3.1 Planner and Tasks**, native. Impact 4, effort 4.
+  - Data layer done 2026-11-19, no screen yet (`teams_proto::planner`, `kelma-cli tasks`): To Do lists live (200, 1 list); Planner endpoints 200 but 0 plans and 0 tasks on this tenant, so those parsers rest on synthetic fixtures. The `tasks.office.com` token has no usable path (404/503 after 3 attempts); Graph is used instead.
 - [ ] **S3.2 Viva Engage / Communities**, native feed. Impact 3, effort 4.
 - [ ] **S3.3 Workflows**, native list and run. Impact 3, effort 3.
+  - Data layer done 2026-11-19, no screen yet (`teams_proto::workflows`, `kelma-cli flows`): environments, 4 flows and their run history read live (200). Read only by design: kelma has no turn on/off or run call yet.
 - [ ] **S3.4 OneNote read and Lists**, native. Impact 2, effort 3.
+  - Data layer done 2026-11-19, no screen yet (`teams_proto::onenote`, `teams_proto::lists`, `kelma-cli onenote|lists`): Lists read live (2 team sites, a library's columns and items). OneNote notebooks read live (2), but both are empty, so section, page and page-content parsing is only unit-tested.
 - [ ] **S3.5 Web host with a TeamsJS shim** for every W app, verified one by one against the table above. Impact 4, effort 4.
 - [ ] **S3.6 Bots and message extensions:**
   - bots chat like people (28: participants, already handled by chat)
