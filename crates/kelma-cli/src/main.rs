@@ -15,9 +15,12 @@
 //! kelma-cli presence [mri...]     presence of the given people, default yourself
 //! kelma-cli card [mri]            profile card of a person, default yourself
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
+//! kelma-cli drive <ls [path]|search q|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir name|rm id|selftest>
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
 //! ```
+
+mod drive;
 
 use anyhow::{Context, Result, bail};
 use session::Paths;
@@ -725,6 +728,12 @@ async fn main() -> Result<()> {
                 client.read_receipts_enabled().await?
             );
         }
+        Some("drive") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = drive::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("audiences") => {
             // Mints a token for every audience through the auth broker. Prints no token values.
             let (client, cfg) = connect(&paths).await?;
@@ -838,6 +847,7 @@ async fn main() -> Result<()> {
                    presence [mri..]\n\
                    card [mri]\n\
                    horizons <conv>\n\
+                   drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest|purge>\n\
                    tail"
             );
         }

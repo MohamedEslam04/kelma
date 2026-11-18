@@ -12,9 +12,9 @@ use crate::http::headers_for;
 /// Folder Teams uses for files sent in chats.
 pub const CHAT_FILES_FOLDER: &str = "Microsoft Teams Chat Files";
 /// Files up to this size go in one PUT; larger ones use an upload session.
-const SIMPLE_UPLOAD_MAX: usize = 4 * 1024 * 1024;
+pub const SIMPLE_UPLOAD_MAX: usize = 4 * 1024 * 1024;
 /// Upload session chunk size; must be a multiple of 320 KiB.
-const CHUNK: usize = 16 * 320 * 1024;
+pub const CHUNK: usize = 16 * 320 * 1024;
 
 /// A file stored in OneDrive and ready to be referenced from a message.
 #[derive(Debug, Clone, PartialEq)]
@@ -126,7 +126,12 @@ pub fn files_property(f: &UploadedFile) -> String {
 
 impl Client {
     /// Sends raw bytes with Graph credentials (none for pre-authenticated session URLs).
-    async fn put_bytes(&self, url: &str, data: Vec<u8>, range: Option<String>) -> Result<Value> {
+    pub async fn put_bytes(
+        &self,
+        url: &str,
+        data: Vec<u8>,
+        range: Option<String>,
+    ) -> Result<Value> {
         self.ensure_fresh().await?;
         let parsed =
             url::Url::parse(url).map_err(|e| Error::Protocol(format!("bad url {url}: {e}")))?;
@@ -142,13 +147,30 @@ impl Client {
             .header("Content-Type", "application/octet-stream")
             .body(data)
             .send()
-            .await?;
+            .await
+            // Upload session URLs carry a temporary access token: keep them out of error text.
+            .map_err(|e| Error::Http(e.without_url()))?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         if !(200..300).contains(&status) {
             return Err(Error::status("file_upload", status, &text));
         }
         Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
+    /// Sends `data` to a pre-authenticated upload session URL in [`CHUNK`]-sized pieces and
+    /// returns the stored item (the response to the last chunk).
+    pub async fn upload_chunks(&self, upload_url: &str, data: &[u8]) -> Result<Value> {
+        let total = data.len();
+        let mut last = Value::Null;
+        for (i, chunk) in data.chunks(CHUNK).enumerate() {
+            let start = i * CHUNK;
+            let range = format!("bytes {start}-{}/{total}", start + chunk.len() - 1);
+            last = self
+                .put_bytes(upload_url, chunk.to_vec(), Some(range))
+                .await?;
+        }
+        Ok(last)
     }
 
     /// Uploads `data` as `name` to the chat files folder and returns the stored item.
@@ -175,16 +197,7 @@ impl Client {
                 .and_then(Value::as_str)
                 .ok_or_else(|| Error::Protocol("upload session has no uploadUrl".into()))?
                 .to_string();
-            let total = data.len();
-            let mut last = Value::Null;
-            for (i, chunk) in data.chunks(CHUNK).enumerate() {
-                let start = i * CHUNK;
-                let range = format!("bytes {start}-{}/{total}", start + chunk.len() - 1);
-                last = self
-                    .put_bytes(&upload_url, chunk.to_vec(), Some(range))
-                    .await?;
-            }
-            last
+            self.upload_chunks(&upload_url, &data).await?
         };
         let id = item
             .get("id")
