@@ -259,4 +259,49 @@ mod tests {
         let peak = peak.load(Ordering::SeqCst);
         assert!((2..=5).contains(&peak), "peak concurrency {peak}");
     }
+
+    /// Live check against the real account (the user asked for it): marks every unread
+    /// conversation read and checks a fresh sync agrees.
+    /// `cargo test -p kelma live_mark_all_read -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "live: marks every unread conversation of the signed-in user as read"]
+    async fn live_mark_all_read() {
+        let paths = session::Paths::new().unwrap();
+        let cfg = paths.load_config().unwrap();
+        let sess = session::stored_session(&cfg).unwrap().expect("signed in");
+        let client = teams_proto::Client::resume(sess).await.unwrap();
+        session::persist(&cfg, &client).await.unwrap();
+        let me = cfg.self_mri.clone().expect("self mri in config");
+        i_slint_backend_testing::init_no_event_loop();
+        let window = crate::AppWindow::new().unwrap();
+        let fresh = |client: teams_proto::Client, cfg: session::Config| {
+            let ui = crate::ui::UiHandle::new(slint::ComponentHandle::as_weak(&window));
+            Engine::new(
+                client,
+                store::Store::open_in_memory().unwrap(),
+                cfg,
+                ui,
+                me.clone(),
+                "kelma live test".into(),
+            )
+        };
+        let count = |e: &Arc<Engine>| {
+            e.store
+                .lock()
+                .unwrap()
+                .conversations(ConvFilter::Unread, 1000)
+                .unwrap()
+                .len()
+        };
+        let e = fresh(client.clone(), cfg.clone());
+        e.sync().await.unwrap();
+        let before = count(&e);
+        e.mark_all_read().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let e2 = fresh(client.clone(), cfg.clone());
+        e2.sync().await.unwrap();
+        let after = count(&e2);
+        println!("unread before: {before}, after a fresh sync: {after}");
+        assert_eq!(after, 0);
+    }
 }

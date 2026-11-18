@@ -111,6 +111,8 @@ impl Engine {
                 let preview = last.map(|m| preview_of(m, &self.me)).unwrap_or_default();
                 // A manual "Mark as unread" is kept here; the server horizon does not know it.
                 let manual = st.unread_mark(&c.id)?;
+                // "Mark as unread" from another Teams client arrives as the server bookmark.
+                let manual = manual.or(c.unread_bookmark);
                 let unread = manual.is_some()
                     || last.is_some_and(|m| {
                         m.sender_mri != self.me && m.compose_ms > c.read_horizon_ms
