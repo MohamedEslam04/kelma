@@ -81,14 +81,18 @@ fn refresh_due(expires_at: SystemTime, now: SystemTime) -> bool {
     expires_at <= now + REFRESH_MARGIN
 }
 
-/// True when `url` is an https URL on the host of `aud`.
+/// True when `url` is an https URL on the host of `aud`. Loki also runs per region, as
+/// `nam.loki.delve.office.com`, and takes the same token.
 fn audience_owns(aud: &Audience, url: &Url) -> bool {
     let Ok(res) = Url::parse(&aud.resource()) else {
         return false;
     };
+    let (Some(host), Some(want)) = (url.host_str(), res.host_str()) else {
+        return false;
+    };
+    let (host, want) = (host.to_ascii_lowercase(), want.to_ascii_lowercase());
     url.scheme() == "https"
-        && url.host_str().map(str::to_ascii_lowercase)
-            == res.host_str().map(str::to_ascii_lowercase)
+        && (host == want || (*aud == Audience::Loki && host.ends_with(&format!(".{want}"))))
 }
 
 impl Client {
@@ -379,6 +383,19 @@ impl Client {
         body: Option<&Value>,
         extra: &[(&str, &str)],
     ) -> Result<(u16, String)> {
+        let (status, text, _) = self.request_location(method, url, body, extra).await?;
+        Ok((status, text))
+    }
+
+    /// [`Client::request`] that also returns the `Location` response header, which is where the
+    /// chat service reports the id of a thread it just created.
+    pub async fn request_location(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&Value>,
+        extra: &[(&str, &str)],
+    ) -> Result<(u16, String, Option<String>)> {
         self.ensure_fresh().await?;
         for attempt in 0..2 {
             let parsed =
@@ -405,7 +422,12 @@ impl Client {
                 self.refresh_all().await?;
                 continue;
             }
-            return Ok((status, resp.text().await?));
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            return Ok((status, resp.text().await?, location));
         }
         unreachable!("loop returns on second attempt")
     }
@@ -487,6 +509,23 @@ mod tests {
         assert!(!audience_owns(
             &Audience::Outlook,
             &u("https://graph.microsoft.com/")
+        ));
+        // Loki is regional, and only its own domain counts.
+        assert!(audience_owns(
+            &Audience::Loki,
+            &u("https://nam.loki.delve.office.com/api/v2/person")
+        ));
+        assert!(!audience_owns(
+            &Audience::Loki,
+            &u("https://nam.loki.delve.office.com.evil.com/")
+        ));
+        assert!(!audience_owns(
+            &Audience::Loki,
+            &u("https://evilloki.delve.office.com/")
+        ));
+        assert!(!audience_owns(
+            &Audience::Graph,
+            &u("https://nam.graph.microsoft.com/")
         ));
         let sp = Audience::sharepoint("contoso-my.sharepoint.com").unwrap();
         assert!(audience_owns(

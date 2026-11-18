@@ -10,6 +10,10 @@
 //! kelma-cli react <conv> <msg> <key>
 //! kelma-cli calendar [days]       count upcoming events per day and per show-as (read-only)
 //! kelma-cli audiences             mint a token for every audience (prints no tokens)
+//! kelma-cli people <query>        search people (prints the count first)
+//! kelma-cli presence [mri...]     presence of the given people, default yourself
+//! kelma-cli card [mri]            profile card of a person, default yourself
+//! kelma-cli horizons <conv>       who has read up to which message in a chat
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
 //! ```
@@ -31,6 +35,13 @@ fn preview(html: &str) -> String {
         format!("{}…", one.chars().take(80).collect::<String>())
     } else {
         one
+    }
+}
+
+async fn self_mri(client: &Client, cfg: &session::Config) -> Result<String> {
+    match &cfg.self_mri {
+        Some(m) => Ok(m.clone()),
+        None => Ok(client.self_mri().await?),
     }
 }
 
@@ -401,6 +412,66 @@ async fn main() -> Result<()> {
             client.add_reaction(conv, msg, key).await?;
             println!("reacted");
         }
+        Some("people") => {
+            let q = args.get(1).context("usage: people <query>")?;
+            let (client, cfg) = connect(&paths).await?;
+            let me = self_mri(&client, &cfg).await?;
+            let found = client.search_people(&me, q).await?;
+            println!("{} result(s)", found.len());
+            for p in &found {
+                println!(
+                    "{}  {}  {}  {}",
+                    p.mri,
+                    p.display_name,
+                    p.email.as_deref().unwrap_or("-"),
+                    p.job_title.as_deref().unwrap_or("-")
+                );
+            }
+        }
+        Some("presence") => {
+            let (client, cfg) = connect(&paths).await?;
+            let mut mris: Vec<String> = args[1..].to_vec();
+            if mris.is_empty() {
+                mris.push(self_mri(&client, &cfg).await?);
+            }
+            let found = client.get_presence(&mris).await?;
+            println!("{} presence record(s)", found.len());
+            for p in &found {
+                println!(
+                    "{} {} / {}{}{}",
+                    p.mri,
+                    p.availability,
+                    p.activity,
+                    if p.ooo { " ooo" } else { "" },
+                    p.note
+                        .as_ref()
+                        .map(|n| format!(" note={:?}", n.text))
+                        .unwrap_or_default()
+                );
+            }
+        }
+        Some("card") => {
+            let (client, cfg) = connect(&paths).await?;
+            let mri = match args.get(1) {
+                Some(m) => m.clone(),
+                None => self_mri(&client, &cfg).await?,
+            };
+            let c = client.profile_card(&mri).await?;
+            println!("{c:#?}");
+        }
+        Some("horizons") => {
+            let conv = args.get(1).context("usage: horizons <conv>")?;
+            let (client, _) = connect(&paths).await?;
+            let hs = client.consumption_horizons(conv).await?;
+            println!("{} horizon(s)", hs.len());
+            for h in &hs {
+                println!("{} read up to {} at {}", h.mri, h.last_read_id, h.read_ms);
+            }
+            println!(
+                "read receipts enabled: {}",
+                client.read_receipts_enabled().await?
+            );
+        }
         Some("audiences") => {
             // Mints a token for every audience through the auth broker. Prints no token values.
             let (client, cfg) = connect(&paths).await?;
@@ -504,6 +575,10 @@ async fn main() -> Result<()> {
                    saved\n\
                    pins <chat>\n\
                    audiences\n\
+                   people <q>\n\
+                   presence [mri..]\n\
+                   card [mri]\n\
+                   horizons <conv>\n\
                    tail"
             );
         }

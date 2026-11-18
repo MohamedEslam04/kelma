@@ -40,6 +40,8 @@ pub struct Message {
     pub files: Vec<FileRef>,
     /// Channel post subject line, if any.
     pub subject: Option<String>,
+    /// People, channels, teams and tags this message mentions.
+    pub mentions: Vec<crate::mentions::Mention>,
 }
 
 impl Message {
@@ -215,6 +217,7 @@ pub fn message_from_json(v: &Value, fallback_conversation: &str) -> Option<Messa
             .and_then(|p| str_field(p, "subject"))
             .filter(|s| !s.is_empty())
             .map(str::to_owned),
+        mentions: crate::mentions::parse_mentions(props),
     })
 }
 

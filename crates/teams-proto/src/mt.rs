@@ -11,6 +11,8 @@ pub struct Profile {
     pub mri: String,
     pub display_name: String,
     pub email: Option<String>,
+    pub job_title: Option<String>,
+    pub department: Option<String>,
 }
 
 /// Parses a `fetchShortProfile` response.
@@ -42,10 +44,18 @@ pub fn parse_profiles(v: &Value) -> Vec<Profile> {
                         .or_else(|| p.get("userPrincipalName"))
                         .and_then(Value::as_str)
                         .map(str::to_owned);
+                    let opt = |k: &str| {
+                        p.get(k)
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_owned)
+                    };
                     Some(Profile {
                         mri,
                         display_name,
                         email,
+                        job_title: opt("jobTitle"),
+                        department: opt("department"),
                     })
                 })
                 .collect()
@@ -93,13 +103,16 @@ mod tests {
     #[test]
     fn parses_profiles() {
         let p = parse_profiles(&json!({"value": [
-            {"mri": "8:orgid:a", "displayName": "Sara Hassan", "email": "sara@x.com"},
+            {"mri": "8:orgid:a", "displayName": "Sara Hassan", "email": "sara@x.com", "jobTitle": "Engineer", "department": ""},
             {"mri": "8:orgid:b", "displayName": "", "givenName": "Omar", "surname": "Khaled"},
             {"mri": "8:orgid:c"},
             {"displayName": "no mri"}
         ]}));
         assert_eq!(p.len(), 3);
         assert_eq!(p[0].email.as_deref(), Some("sara@x.com"));
+        assert_eq!(p[0].job_title.as_deref(), Some("Engineer"));
+        assert_eq!(p[0].department, None);
+        assert_eq!(p[1].job_title, None);
         assert_eq!(p[1].display_name, "Omar Khaled");
         assert_eq!(p[2].display_name, "8:orgid:c");
     }
