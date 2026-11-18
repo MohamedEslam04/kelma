@@ -81,14 +81,18 @@ fn refresh_due(expires_at: SystemTime, now: SystemTime) -> bool {
     expires_at <= now + REFRESH_MARGIN
 }
 
-/// True when `url` is an https URL on the host of `aud`.
+/// True when `url` is an https URL on the host of `aud`. Loki also runs per region, as
+/// `nam.loki.delve.office.com`, and takes the same token.
 fn audience_owns(aud: &Audience, url: &Url) -> bool {
     let Ok(res) = Url::parse(&aud.resource()) else {
         return false;
     };
+    let (Some(host), Some(want)) = (url.host_str(), res.host_str()) else {
+        return false;
+    };
+    let (host, want) = (host.to_ascii_lowercase(), want.to_ascii_lowercase());
     url.scheme() == "https"
-        && url.host_str().map(str::to_ascii_lowercase)
-            == res.host_str().map(str::to_ascii_lowercase)
+        && (host == want || (*aud == Audience::Loki && host.ends_with(&format!(".{want}"))))
 }
 
 impl Client {
@@ -505,6 +509,23 @@ mod tests {
         assert!(!audience_owns(
             &Audience::Outlook,
             &u("https://graph.microsoft.com/")
+        ));
+        // Loki is regional, and only its own domain counts.
+        assert!(audience_owns(
+            &Audience::Loki,
+            &u("https://nam.loki.delve.office.com/api/v2/person")
+        ));
+        assert!(!audience_owns(
+            &Audience::Loki,
+            &u("https://nam.loki.delve.office.com.evil.com/")
+        ));
+        assert!(!audience_owns(
+            &Audience::Loki,
+            &u("https://evilloki.delve.office.com/")
+        ));
+        assert!(!audience_owns(
+            &Audience::Graph,
+            &u("https://nam.graph.microsoft.com/")
         ));
         let sp = Audience::sharepoint("contoso-my.sharepoint.com").unwrap();
         assert!(audience_owns(
