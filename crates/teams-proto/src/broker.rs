@@ -42,11 +42,14 @@ pub enum Audience {
     Loki,
     /// `teams.microsoft.com` itself (region and authorization APIs).
     Teams,
+    /// `templates.teams.microsoft.com`: the provisioning service behind private channels and
+    /// channel members. Its token goes to `teams.microsoft.com/fabric/…`, not to its own host.
+    Templates,
 }
 
 impl Audience {
     /// Every fixed audience (SharePoint is per host and not listed).
-    pub const FIXED: [Audience; 14] = [
+    pub const FIXED: [Audience; 15] = [
         Audience::Spaces,
         Audience::Csa,
         Audience::Presence,
@@ -61,6 +64,7 @@ impl Audience {
         Audience::Ic3,
         Audience::Loki,
         Audience::Teams,
+        Audience::Templates,
     ];
 
     /// Resource URL used in the token request scope.
@@ -81,6 +85,7 @@ impl Audience {
             Audience::Ic3 => "https://ic3.teams.office.com".into(),
             Audience::Loki => "https://loki.delve.office.com".into(),
             Audience::Teams => "https://teams.microsoft.com".into(),
+            Audience::Templates => "https://templates.teams.microsoft.com".into(),
         }
     }
 
