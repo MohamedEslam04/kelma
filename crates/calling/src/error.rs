@@ -5,7 +5,11 @@ pub enum Error {
     #[error(transparent)]
     Proto(#[from] teams_proto::Error),
     #[error("{op}: HTTP {status}: {body}")]
-    Status { op: &'static str, status: u16, body: String },
+    Status {
+        op: &'static str,
+        status: u16,
+        body: String,
+    },
     #[error("protocol: {0}")]
     Protocol(String),
     #[error("media: {0}")]

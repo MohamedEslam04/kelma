@@ -17,12 +17,12 @@
 //! project's live-test rules.
 
 use anyhow::{Context, Result, bail};
-use calling::ngc_trouter::{NgcEvent, NgcTrouter};
 use calling::audio::{
     Capture, Paced, Playback, ToneSource, WavSink, spawn_capture_encoder, spawn_decoder_playback,
 };
 use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::{MediaSession, MediaState};
+use calling::ngc_trouter::{NgcEvent, NgcTrouter};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::{CallSession, NgcClient};
 use calling::{Links, Modality, SdpBlob};
@@ -162,7 +162,9 @@ fn dump(dir: Option<&str>, name: &str, sdp: &str) {
 
 async fn join(client: &Client, args: &[String]) -> Result<()> {
     let dump_dir = opt(args, "--dump");
-    let secs: u64 = opt(args, "--secs").and_then(|s| s.parse().ok()).unwrap_or(30);
+    let secs: u64 = opt(args, "--secs")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
     let out = opt(args, "--out").unwrap_or("kelma-call.wav").to_owned();
     let target = match opt(args, "--link") {
         Some(link) => meeting_from_join_url(link).context("not a meeting link")?,
@@ -406,7 +408,10 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
         f.abort();
     }
     let sent = sent.load(std::sync::atomic::Ordering::Relaxed);
-    if tokio::time::timeout(Duration::from_secs(5), playback).await.is_err() {
+    if tokio::time::timeout(Duration::from_secs(5), playback)
+        .await
+        .is_err()
+    {
         println!("playback did not finish in 5 s");
     }
     println!(
