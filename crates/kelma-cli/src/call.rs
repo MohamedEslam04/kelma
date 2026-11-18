@@ -196,7 +196,8 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
             vec![]
         }
     };
-    let (media, mut events) = MediaSession::new(ice).await?;
+    let (mut media, events) = MediaSession::new(ice.clone()).await?;
+    let mut state_rx = events.state;
     let offer = media.create_offer().await?;
     dump(dump_dir, "our-offer", &offer);
     println!("offer ready ({} bytes)", offer.len());
@@ -229,11 +230,14 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     } else {
         spawn_capture_encoder(Paced::new(ToneSource::endless(440.0)))
     };
-    let sender = media.audio_sender();
+    // The media session can be replaced mid-call (the service restarts ICE when the lobby
+    // admits us), so the sender follows a watch and every session's audio feeds one forwarder.
+    let (sender_tx, sender_rx) = tokio::sync::watch::channel(media.audio_sender());
     let sent = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let sent_count = sent.clone();
     let send_task = tokio::spawn(async move {
         while let Some(p) = encoded.recv().await {
+            let sender = sender_rx.borrow().clone();
             if sender.send(p).await.is_ok() {
                 sent_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
@@ -241,16 +245,20 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     });
     let (fwd_tx, fwd_rx) = tokio::sync::mpsc::channel(256);
     let received = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let rx_count = received.clone();
-    let mut incoming = events.audio;
-    let forward_task = tokio::spawn(async move {
-        while let Some(p) = incoming.recv().await {
-            rx_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if fwd_tx.send(p).await.is_err() {
-                break;
+    let rx_total = received.clone();
+    // Owns the only sender of the playback queue: dropping it (and the forwarders) ends playback.
+    let forward = move |mut incoming: tokio::sync::mpsc::Receiver<calling::OpusPacket>| {
+        let (fwd_tx, rx_count) = (fwd_tx.clone(), rx_total.clone());
+        tokio::spawn(async move {
+            while let Some(p) = incoming.recv().await {
+                rx_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if fwd_tx.send(p).await.is_err() {
+                    break;
+                }
             }
-        }
-    });
+        })
+    };
+    let mut forwarders = vec![forward(events.audio)];
     let playback = if args.iter().any(|a| a == "--speaker") {
         spawn_decoder_playback(fwd_rx, Playback::start(None)?)
     } else {
@@ -264,7 +272,7 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     loop {
         tokio::select! {
             _ = &mut deadline => break,
-            st = events.state.recv() => match st {
+            st = state_rx.recv() => match st {
                 Some(st) => {
                     println!("media: {st:?}");
                     if matches!(st, MediaState::Failed | MediaState::Closed) { break; }
@@ -320,7 +328,29 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                             println!("renegotiation offered");
                             let sdp = offer.decode().unwrap_or_else(|e| { println!("undecodable SDP: {e}"); String::new() });
                             dump(dump_dir, "service-reoffer", &sdp);
-                            match media.accept_offer(&sdp).await {
+                            let answer = match media.accept_offer(&sdp).await {
+                                Ok(ans) => Ok(ans),
+                                Err(e) => {
+                                    // A re-offer that restarts ICE (new mids/ufrags after the lobby)
+                                    // is answered by a fresh peer connection.
+                                    println!("existing session refused the re-offer ({e}); answering on a new session");
+                                    match MediaSession::new(ice.clone()).await {
+                                        Ok((fresh, ev)) => match fresh.accept_offer(&sdp).await {
+                                            Ok(ans) => {
+                                                let old = std::mem::replace(&mut media, fresh);
+                                                let _ = old.close().await;
+                                                let _ = sender_tx.send(media.audio_sender());
+                                                state_rx = ev.state;
+                                                forwarders.push(forward(ev.audio));
+                                                Ok(ans)
+                                            }
+                                            Err(e) => Err(e),
+                                        },
+                                        Err(e) => Err(e),
+                                    }
+                                }
+                            };
+                            match answer {
                                 Ok(ans) => {
                                     dump(dump_dir, "our-reanswer", &ans);
                                     if let Some(url) = l.get("mediaAnswer") {
@@ -370,8 +400,11 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     drop(media);
     // The tone source never ends: stop the sender, then let the playback drain and finish.
     send_task.abort();
-    // Dropping the forwarder closes the playback's input, so the WAV is finalised.
-    forward_task.abort();
+    // Dropping the forwarders closes the playback's input, so the WAV is finalised.
+    drop(forward);
+    for f in forwarders {
+        f.abort();
+    }
     let sent = sent.load(std::sync::atomic::Ordering::Relaxed);
     if tokio::time::timeout(Duration::from_secs(5), playback).await.is_err() {
         println!("playback did not finish in 5 s");
