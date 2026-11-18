@@ -50,6 +50,21 @@ struct State {
     cache: TokenCache,
 }
 
+/// Request body for [`Client::request_raw_as`].
+pub enum RawBody<'a> {
+    None,
+    Json(&'a Value),
+    /// A content type and the bytes to send.
+    Bytes(&'a str, Vec<u8>),
+}
+
+/// Response of [`Client::request_raw_as`].
+pub struct RawResponse {
+    pub status: u16,
+    pub headers: reqwest::header::HeaderMap,
+    pub body: Vec<u8>,
+}
+
 /// Authenticated Teams client. Cheap to clone.
 #[derive(Clone)]
 pub struct Client {
@@ -281,6 +296,21 @@ impl Client {
         body: Option<&Value>,
         extra: &[(&str, &str)],
     ) -> Result<(u16, String)> {
+        let body = body.map_or(RawBody::None, RawBody::Json);
+        let r = self.request_raw_as(aud, method, url, body, extra).await?;
+        Ok((r.status, String::from_utf8_lossy(&r.body).into_owned()))
+    }
+
+    /// [`Client::request_as`] with a raw body and a raw response (status, headers, bytes), for
+    /// file content and for calls whose answer is a header (`Location` of an async monitor).
+    pub async fn request_raw_as(
+        &self,
+        aud: &Audience,
+        method: Method,
+        url: &str,
+        body: RawBody<'_>,
+        extra: &[(&str, &str)],
+    ) -> Result<RawResponse> {
         let parsed = Url::parse(url).map_err(|e| Error::Protocol(format!("bad url {url}: {e}")))?;
         if !audience_owns(aud, &parsed) {
             return Err(Error::Protocol(format!(
@@ -298,12 +328,15 @@ impl Client {
             for (k, v) in extra {
                 req = req.header(*k, *v);
             }
-            req = match body {
-                Some(b) => req.json(b),
-                None if method == Method::POST || method == Method::PUT => {
+            req = match &body {
+                RawBody::Json(b) => req.json(*b),
+                RawBody::Bytes(content_type, data) => {
+                    req.header("Content-Type", *content_type).body(data.clone())
+                }
+                RawBody::None if method == Method::POST || method == Method::PUT => {
                     req.header("Content-Length", "0")
                 }
-                None => req,
+                RawBody::None => req,
             };
             let resp = req.send().await?;
             let status = resp.status().as_u16();
@@ -312,7 +345,12 @@ impl Client {
                 self.state.lock().await.cache.invalidate(aud);
                 continue;
             }
-            return Ok((status, resp.text().await?));
+            let headers = resp.headers().clone();
+            return Ok(RawResponse {
+                status,
+                headers,
+                body: resp.bytes().await?.to_vec(),
+            });
         }
         unreachable!("loop returns on second attempt")
     }
