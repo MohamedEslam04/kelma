@@ -186,7 +186,7 @@ impl Client {
         st.chat_service = sky.chat_service;
         st.middle_tier = sky.middle_tier;
         st.region = sky.region;
-        tracing::info!(chat_service = %st.chat_service, region = ?st.region, "tokens refreshed");
+        tracing::info!(chat_service = %st.chat_service, region = ?st.region, ttl_s = min_s, "tokens refreshed");
         Ok(())
     }
 
