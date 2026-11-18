@@ -89,11 +89,24 @@ impl Engine {
             d.scroll = true;
         });
         let subj = (!subject.is_empty()).then_some(subject.as_str());
-        match self
-            .client
-            .send_message(&target, &html, &self.my_name, subj)
-            .await
-        {
+        let sent = match &reply {
+            Some(r) => {
+                let qtd = teams_proto::chatsvc::quoted_messages_property(
+                    &r.id,
+                    &r.sender_mri,
+                    r.compose_ms,
+                );
+                self.client
+                    .send_quote_reply(&target, &html, &self.my_name, &qtd)
+                    .await
+            }
+            None => {
+                self.client
+                    .send_message(&target, &html, &self.my_name, subj)
+                    .await
+            }
+        };
+        match sent {
             Ok(cmid) => {
                 let mut v = self.view.lock().unwrap();
                 if let Some(p) = v.pending.iter_mut().find(|(id, _)| id == &pending_id) {

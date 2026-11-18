@@ -38,6 +38,16 @@ pub fn send_body(
     b
 }
 
+/// `properties.qtdMsgs` of a "Reply with quote" message. It is a JSON *string* naming the quoted
+/// message, which lets Teams link the quote block to its original.
+pub fn quoted_messages_property(message_id: &str, sender_mri: &str, time_ms: i64) -> String {
+    let id: Value = message_id
+        .parse::<i64>()
+        .map(Value::from)
+        .unwrap_or_else(|_| Value::from(message_id));
+    json!([{ "messageId": id, "sender": sender_mri, "time": time_ms }]).to_string()
+}
+
 /// Value for the consumption horizon property.
 pub fn horizon_value(message_id: &str, compose_ms: i64, client_message_id: &str) -> String {
     format!("{message_id};{compose_ms};{client_message_id}")
@@ -126,6 +136,24 @@ impl Client {
             Some(&send_body(html, display_name, &cmid, subject)),
         )
         .await?;
+        Ok(cmid)
+    }
+
+    /// Sends a "reply with quote": `html` holds the quote block and the reply, and `qtd_msgs` is
+    /// [`quoted_messages_property`].
+    pub async fn send_quote_reply(
+        &self,
+        conversation_id: &str,
+        html: &str,
+        display_name: &str,
+        qtd_msgs: &str,
+    ) -> Result<String> {
+        let cmid = now_ms().to_string();
+        let url = format!("{}/messages", self.conv_url(conversation_id).await);
+        let mut body = send_body(html, display_name, &cmid, None);
+        body["properties"] = json!({ "qtdMsgs": qtd_msgs });
+        self.json("send_quote_reply", Method::POST, &url, Some(&body))
+            .await?;
         Ok(cmid)
     }
 
@@ -309,6 +337,18 @@ mod tests {
         assert!(b.get("properties").is_none());
         let b = send_body("<p>hi</p>", "Me", "42", Some("Release notes"));
         assert_eq!(b["properties"]["subject"], "Release notes");
+    }
+
+    #[test]
+    fn quoted_message_property_is_a_json_string() {
+        let v = quoted_messages_property("1731234567890", "8:orgid:abc", 1731234567890);
+        let parsed: Value = serde_json::from_str(&v).unwrap();
+        assert_eq!(
+            parsed,
+            json!([{"messageId": 1731234567890_i64, "sender": "8:orgid:abc", "time": 1731234567890_i64}])
+        );
+        let odd = quoted_messages_property("abc", "8:x", 1);
+        assert!(odd.contains(r#""messageId":"abc""#));
     }
 
     #[test]
