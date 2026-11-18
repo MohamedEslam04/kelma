@@ -40,6 +40,12 @@ pub struct Config {
     /// Our display name once known.
     #[serde(default)]
     pub display_name: Option<String>,
+    /// The calendar view last used (`workweek`, `week`, `month` or `day:N`).
+    #[serde(default)]
+    pub calendar_view: Option<String>,
+    /// The calendar time scale in minutes (15, 30 or 60).
+    #[serde(default)]
+    pub calendar_scale: Option<u32>,
 }
 
 impl Default for Config {
@@ -50,6 +56,8 @@ impl Default for Config {
             epid: teams_proto::client::new_epid(),
             self_mri: None,
             display_name: None,
+            calendar_view: None,
+            calendar_scale: None,
         }
     }
 }
@@ -176,5 +184,19 @@ mod tests {
         let raw = std::fs::read_to_string(dir.join("config/config.json")).unwrap();
         assert!(!raw.contains("refresh"), "config must not contain tokens");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn config_without_calendar_fields_still_loads() {
+        let old = r#"{"account":"default","tenant":"organizations","epid":"e"}"#;
+        let c: Config = serde_json::from_str(old).unwrap();
+        assert_eq!((c.calendar_view, c.calendar_scale), (None, None));
+        let c = Config {
+            calendar_view: Some("day:3".into()),
+            calendar_scale: Some(15),
+            ..c
+        };
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
     }
 }
