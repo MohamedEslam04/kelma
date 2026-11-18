@@ -1,10 +1,11 @@
 //! The render loop: rebuilds the visible view data from the store and pushes it to the UI.
 
 use super::Engine;
+use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
-    ChatData, FileData, HeaderData, ImgData, MsgData, Pixels, ReactData, TeamData, color_for,
-    initials,
+    ChatData, FileData, HeaderData, ImgData, MsgData, Pixels, ReactData, Scroll, TeamData,
+    color_for, initials,
 };
 use crate::markdown::{reaction_emoji, render_blocks};
 use chrono::{Local, TimeZone};
@@ -299,16 +300,23 @@ impl Engine {
             )
         };
         let Some(conv) = cur else {
-            self.ui.messages(vec![], false);
+            self.ui.messages(vec![], Scroll::Keep);
             return;
         };
-        let (rows, is_channel, reply_counts) = {
+        let (rows, is_channel, reply_counts, marker) = {
             let st = self.store.lock().unwrap();
-            let is_channel = st
-                .conversation(&conv)
-                .ok()
-                .flatten()
+            let conv_row = st.conversation(&conv).ok().flatten();
+            let is_channel = conv_row
+                .as_ref()
                 .is_some_and(|c| c.kind == ConvKind::Channel);
+            // The divider stays where the chat was opened; a chat that turned unread while it
+            // was open (window not focused) starts its divider at the stored horizon.
+            let marker = self.view.lock().unwrap().unread_marker.or_else(|| {
+                conv_row
+                    .as_ref()
+                    .filter(|c| c.unread)
+                    .map(|c| c.read_horizon_ms)
+            });
             let mut rows = match &thread {
                 Some(root) => {
                     let mut r: Vec<MessageRow> =
@@ -330,14 +338,29 @@ impl Engine {
             } else {
                 HashMap::new()
             };
-            (rows, is_channel, counts)
+            (rows, is_channel, counts, marker)
+        };
+        let visible: Vec<&MessageRow> = rows
+            .iter()
+            .filter(|r| !r.message_type.starts_with("Control/"))
+            .collect();
+        let info: Vec<(i64, bool)> = visible
+            .iter()
+            .map(|r| {
+                (
+                    r.compose_ms,
+                    r.sender_mri != self.me && system_text(r).is_none(),
+                )
+            })
+            .collect();
+        let divider = if thread.is_none() {
+            divider_index(&info, marker)
+        } else {
+            None
         };
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
-        for r in rows
-            .iter()
-            .filter(|r| !r.message_type.starts_with("Control/"))
-        {
+        for (i, r) in visible.iter().copied().enumerate() {
             let system = system_text(r);
             let props: Value =
                 serde_json::from_str(&r.reactions_json).unwrap_or_else(|_| json!({}));
@@ -345,6 +368,7 @@ impl Engine {
             let mine = r.sender_mri == self.me;
             let new_day = prev.is_none_or(|p| !same_day(p.compose_ms, r.compose_ms));
             let show_header = new_day
+                || divider == Some(i)
                 || prev.is_none_or(|p| {
                     p.sender_mri != r.sender_mri
                         || r.compose_ms - p.compose_ms > 5 * 60_000
@@ -465,9 +489,32 @@ impl Engine {
                     -1
                 },
                 pending: r.id.starts_with("pending-"),
+                new_above: divider == Some(i),
             });
             prev = Some(r);
         }
-        self.ui.messages(out, scroll);
+        let mode = {
+            let mut v = self.view.lock().unwrap();
+            let mode = if !scroll {
+                Scroll::Keep
+            } else if let Some(i) =
+                divider.filter(|_| v.opening && open_at_divider(v.open_at, divider))
+            {
+                Scroll::Divider(i)
+            } else if v.at_bottom || v.opening {
+                Scroll::Bottom
+            } else {
+                Scroll::Keep
+            };
+            if scroll && v.loaded {
+                v.opening = false;
+            }
+            if let Scroll::Divider(i) = mode {
+                v.new_count = unread_after(&info, i);
+                self.ui.new_count(v.new_count);
+            }
+            mode
+        };
+        self.ui.messages(out, mode);
     }
 }

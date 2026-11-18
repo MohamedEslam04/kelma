@@ -188,6 +188,35 @@ fn mark_read_is_monotonic_and_clears_unread() {
 }
 
 #[test]
+fn mark_unread_lowers_the_horizon_and_survives_until_read() {
+    let s = Store::open_in_memory().unwrap();
+    let mut c = conv("c", ConvKind::Group, "t", 1);
+    c.read_horizon_ms = 500;
+    s.upsert_conversation(&c).unwrap();
+    assert_eq!(s.unread_mark("c").unwrap(), None);
+
+    s.mark_unread("c", 300).unwrap();
+    let got = s.conversation("c").unwrap().unwrap();
+    assert!(got.unread);
+    assert_eq!(
+        got.read_horizon_ms, 300,
+        "horizon moves back to before the message"
+    );
+    assert_eq!(s.unread_mark("c").unwrap(), Some(300));
+
+    // Reading clears the mark.
+    s.mark_read("c", 600).unwrap();
+    assert_eq!(s.unread_mark("c").unwrap(), None);
+    let got = s.conversation("c").unwrap().unwrap();
+    assert!(!got.unread);
+    assert_eq!(got.read_horizon_ms, 600);
+
+    // Unknown conversation: no row to change, and no mark left behind.
+    s.mark_unread("missing", 1).unwrap();
+    assert_eq!(s.unread_mark("missing").unwrap(), None);
+}
+
+#[test]
 fn touch_conversation_only_moves_forward() {
     let s = Store::open_in_memory().unwrap();
     s.upsert_conversation(&conv("c", ConvKind::Group, "t", 100))

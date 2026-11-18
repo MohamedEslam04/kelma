@@ -312,3 +312,169 @@ fn arabic_cursor_selection_copy_paste() {
     type_text(&app, "there");
     assert_eq!(app.get_draft(), "hi there");
 }
+
+// ---- unread handling (plans/chat.md 5.6) ---------------------------------
+
+fn label(app: &AppWindow, text: &str) -> Vec<ElementHandle> {
+    ElementHandle::find_by_accessible_label(app, text).collect()
+}
+
+#[test]
+fn new_messages_divider_sits_above_the_first_unread_row() {
+    let mut unread = msg("m2", "first unread", false);
+    unread.new_above = true;
+    let app = app_with_messages(vec![
+        msg("m1", "read", false),
+        unread,
+        msg("m3", "later", false),
+    ]);
+    let divider = label(&app, "New messages");
+    assert_eq!(divider.len(), 1, "exactly one divider");
+    let rows = rows(&app);
+    let y = divider[0].absolute_position().y;
+    assert!(y > rows[0].absolute_position().y, "below the read row");
+    assert!(
+        y < rows[1].absolute_position().y + 20.,
+        "inside the unread row"
+    );
+    assert!(y < rows[2].absolute_position().y, "above the later row");
+}
+
+#[test]
+fn no_divider_when_nothing_is_marked() {
+    let app = app_with_messages(vec![msg("m1", "a", false), msg("m2", "b", false)]);
+    assert!(label(&app, "New messages").is_empty());
+}
+
+#[test]
+fn jump_button_shows_when_scrolled_up_with_the_count_and_scrolls_down() {
+    let app = app_with_messages(vec![msg("m1", "a", false), msg("m2", "b", false)]);
+    let jumps = Rc::new(RefCell::new(0));
+    let j = jumps.clone();
+    app.on_jump_to_newest(move || *j.borrow_mut() += 1);
+
+    assert!(
+        label(&app, "↓ Jump to newest").is_empty(),
+        "hidden at the bottom"
+    );
+
+    app.set_at_bottom(false);
+    let button = label(&app, "↓ Jump to newest");
+    assert_eq!(button.len(), 1, "shown when scrolled up");
+
+    app.set_new_count(3);
+    let button = label(&app, "↓ Jump to newest · 3");
+    assert_eq!(button.len(), 1, "count of new messages");
+
+    let ticks = app.get_scroll_tick();
+    button[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*jumps.borrow(), 1);
+    assert_eq!(
+        app.get_scroll_tick(),
+        ticks + 1,
+        "asks the list to scroll down"
+    );
+}
+
+#[test]
+fn shift_escape_marks_everything_read_and_plain_escape_does_not() {
+    let app = app_with_messages(vec![]);
+    let fired = Rc::new(RefCell::new(0));
+    let f = fired.clone();
+    app.on_mark_all_read(move || *f.borrow_mut() += 1);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+    assert_eq!(*fired.borrow(), 0);
+
+    key(&app, Key::Shift, true);
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+    key(&app, Key::Shift, false);
+    assert_eq!(*fired.borrow(), 1);
+}
+
+fn chat_row(id: &str, title: &str) -> crate::ChatRow {
+    crate::ChatRow {
+        id: id.into(),
+        title: title.into(),
+        section: "chats".into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn chat_list_menus_fire_mark_unread_and_mark_all_read() {
+    let app = app_with_messages(vec![]);
+    app.set_chats_main(ModelRc::new(VecModel::from(vec![
+        chat_row("c1", "Sara"),
+        chat_row("c2", "Omar"),
+    ])));
+    let log = Log::default();
+    {
+        let l = log.clone();
+        app.on_mark_unread(move |id| l.borrow_mut().push(format!("unread {id}")));
+        let l = log.clone();
+        app.on_mark_all_read(move || l.borrow_mut().push("all".into()));
+    }
+
+    // Right click on the second chat opens its menu.
+    let item = label(&app, "Omar");
+    assert_eq!(item.len(), 1);
+    let p = item[0].absolute_position();
+    let s = item[0].size();
+    let at = LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.);
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    let entry = label(&app, "Mark as unread");
+    assert_eq!(entry.len(), 1, "menu open");
+    entry[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), vec!["unread c2"]);
+
+    // The "…" button of the list offers Mark all as read.
+    let more = ElementHandle::find_by_element_id(&app, "IconButton::touch")
+        .find(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
+        .expect("list menu button");
+    more.mock_single_click(PointerEventButton::Left);
+    let all = label(&app, "Mark all as read");
+    assert_eq!(all.len(), 1);
+    all[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), vec!["unread c2", "all"]);
+}
+
+#[test]
+fn opening_at_the_divider_puts_it_near_the_top_of_a_long_list() {
+    let msgs: Vec<Msg> = (0..160)
+        .map(|i| {
+            let text = if i % 3 == 0 {
+                "a much longer message that wraps over several lines because it has a great deal to say about nothing in particular ".repeat(3)
+            } else {
+                "short".to_string()
+            };
+            let mut m = msg(&format!("m{i}"), &text, false);
+            m.new_above = i == 110;
+            m
+        })
+        .collect();
+    let app = app_with_messages(msgs);
+    app.set_divider_index(110);
+    app.set_divider_tick(app.get_divider_tick() + 1);
+    // Let the list lay out the rows around the new position and correct itself.
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    let divider = label(&app, "New messages");
+    assert_eq!(divider.len(), 1, "the divider row is on screen");
+    let y = divider[0].absolute_position().y;
+    // The list starts below the 48px top bar and the 60px conversation header.
+    assert!((108. ..108. + 120.).contains(&y), "divider at y={y}");
+}

@@ -114,7 +114,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Done when.** UI tests cover search, `:heart` autocomplete and inserting at the cursor.
 
 ### 5.6 Unread handling
-- [ ] Impact 4, effort 2. Seen: settings › Chats ("When I open a chat, take me to"), chat menu, shortcuts.
+- [x] Impact 4, effort 2. Seen: settings › Chats ("When I open a chat, take me to"), chat menu, shortcuts.
   - **What.**
     - A "New messages" divider sits at the read marker.
     - On opening a chat, jump to the last read message or the newest one (a setting).
@@ -125,6 +125,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - The read marker comes from the conversation `consumptionhorizon`, which the store already reads.
     - Mark all as read PUTs the horizon on every unread conversation, throttled.
   - **Done when.** A UI test covers the divider position and the jump button; the live check marks all read and Teams web agrees.
+  - **Status.** Built and unit/UI tested. The setting is `open_chat_at` in `config.json` (`first_unread`, the default, or `newest`); there is no settings page for it yet (9.x). A manual "Mark as unread" is remembered locally (`kv unread_mark:<conv>`) because the conversations list does not return the bookmark. Not run live: Mark all as read (it changes the real read state of every chat), so "Teams web agrees" is still open.
 
 ### 5.7 Drafts
 - [ ] Impact 4, effort 2. Seen: quick view "Drafts".

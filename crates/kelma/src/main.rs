@@ -247,6 +247,9 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_close_thread, || Cmd::CloseThread);
     cmd!(on_attach_image, || Cmd::AttachImage);
     cmd!(on_attach_file, || Cmd::AttachFile);
+    cmd!(on_at_bottom_changed, |b| Cmd::AtBottom(b));
+    cmd!(on_mark_unread, |id| Cmd::MarkUnread(id.into()));
+    cmd!(on_mark_all_read, || Cmd::MarkAllRead);
     {
         let tx = tx.clone();
         let weak = window.as_weak();

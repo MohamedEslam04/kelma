@@ -109,8 +109,12 @@ impl Engine {
                     .as_ref()
                     .filter(|m| m.is_chat_content() || m.message_type.starts_with("RichText"));
                 let preview = last.map(|m| preview_of(m, &self.me)).unwrap_or_default();
-                let unread = last
-                    .is_some_and(|m| m.sender_mri != self.me && m.compose_ms > c.read_horizon_ms);
+                // A manual "Mark as unread" is kept here; the server horizon does not know it.
+                let manual = st.unread_mark(&c.id)?;
+                let unread = manual.is_some()
+                    || last.is_some_and(|m| {
+                        m.sender_mri != self.me && m.compose_ms > c.read_horizon_ms
+                    });
                 let existing = st.conversation(&c.id)?;
                 st.upsert_conversation(&ConversationRow {
                     id: c.id.clone(),
@@ -123,7 +127,7 @@ impl Engine {
                     last_preview: preview,
                     unread,
                     favorite: false,
-                    read_horizon_ms: c.read_horizon_ms,
+                    read_horizon_ms: manual.unwrap_or(c.read_horizon_ms),
                 })?;
             }
             // Channels that had no recent activity still belong in the Teams view.
@@ -185,6 +189,15 @@ impl Engine {
         id: String,
         title: Option<String>,
     ) -> anyhow::Result<()> {
+        // The read horizon before this open moves it: the "New messages" divider goes there.
+        let marker = self
+            .store
+            .lock()
+            .unwrap()
+            .conversation(&id)?
+            .filter(|c| c.unread)
+            .map(|c| c.read_horizon_ms);
+        let open_at = self.cfg.lock().unwrap().open_chat_at;
         {
             let mut v = self.view.lock().unwrap();
             if v.current.as_deref() == Some(id.as_str()) && v.thread_root.is_none() {
@@ -196,7 +209,14 @@ impl Engine {
             v.limit = PAGE;
             v.reply_to = None;
             v.editing = None;
+            v.unread_marker = marker;
+            v.open_at = open_at;
+            v.opening = true;
+            v.loaded = false;
+            v.at_bottom = true;
+            v.new_count = 0;
         }
+        self.ui.new_count(0);
         self.ui.reply_bar(String::new(), String::new(), false);
         self.mark(|d| {
             d.header = true;
@@ -210,6 +230,7 @@ impl Engine {
             self.store.lock().unwrap().mark_read(&id, last.compose_ms)?;
             let _ = self.client.mark_read(&id, last).await;
         }
+        self.view.lock().unwrap().loaded = true;
         self.mark(|d| {
             d.messages = true;
             d.scroll = true;

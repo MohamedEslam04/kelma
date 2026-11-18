@@ -69,6 +69,20 @@ pub struct MsgData {
     pub reactions: Vec<ReactData>,
     pub reply_count: i32,
     pub pending: bool,
+    /// The "New messages" divider is drawn above this row.
+    pub new_above: bool,
+}
+
+/// How a message list update moves the scroll position.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scroll {
+    /// Leave it where it is.
+    #[default]
+    Keep,
+    /// Follow the newest message.
+    Bottom,
+    /// Put the row at this index (the "New messages" divider) near the top.
+    Divider(usize),
 }
 
 #[derive(Clone)]

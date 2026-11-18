@@ -43,6 +43,7 @@ export struct Msg {
     reactions: [ReactionItem],
     reply-count: int,
     pending: bool,
+    new-above: bool,       // draw the "New messages" divider above this row
 }
 
 export struct ChannelRow { id: string, name: string, unread: bool }

@@ -17,6 +17,7 @@ mod live;
 mod render;
 mod send;
 mod sync;
+mod unread;
 mod util;
 
 /// Commands sent by the UI.
@@ -42,6 +43,10 @@ pub enum Cmd {
     CloseThread,
     AttachImage,
     AttachFile,
+    /// The list reports whether it sits at the newest message.
+    AtBottom(bool),
+    MarkUnread(String),
+    MarkAllRead,
 }
 
 #[derive(Default)]
@@ -59,6 +64,19 @@ struct View {
     last_typing_sent: Option<Instant>,
     collapsed_teams: HashSet<String>,
     teams_order: Vec<String>,
+    /// Read horizon when the open chat was opened, kept so the "New messages" divider stays
+    /// where it was while the chat is read.
+    unread_marker: Option<i64>,
+    /// Where the open chat opens (from the config when it was opened).
+    open_at: session::OpenChatAt,
+    /// True from opening a chat until its first full render, which may scroll to the divider.
+    opening: bool,
+    /// Set once the newest page of the opened chat is in the store.
+    loaded: bool,
+    /// The list is at (or about to follow) the newest message.
+    at_bottom: bool,
+    /// New messages that arrived while scrolled up; shown on the jump button.
+    new_count: usize,
 }
 
 #[derive(Default)]
@@ -108,6 +126,7 @@ impl Engine {
             view: Mutex::new(View {
                 filter: "all".into(),
                 limit: PAGE,
+                at_bottom: true,
                 ..Default::default()
             }),
             dirty: Mutex::new(Dirty {
@@ -277,6 +296,7 @@ impl Engine {
                     let mut v = self.view.lock().unwrap();
                     v.thread_root = Some(root.clone());
                     v.limit = PAGE;
+                    v.at_bottom = true;
                 }
                 self.mark(|d| {
                     d.header = true;
@@ -304,7 +324,11 @@ impl Engine {
                 }
             }
             Cmd::CloseThread => {
-                self.view.lock().unwrap().thread_root = None;
+                {
+                    let mut v = self.view.lock().unwrap();
+                    v.thread_root = None;
+                    v.at_bottom = true;
+                }
                 self.mark(|d| {
                     d.header = true;
                     d.messages = true;
@@ -313,6 +337,17 @@ impl Engine {
             }
             Cmd::AttachImage => self.attach_image().await?,
             Cmd::AttachFile => self.attach_file().await?,
+            Cmd::AtBottom(at_bottom) => {
+                let mut v = self.view.lock().unwrap();
+                v.at_bottom = at_bottom;
+                if at_bottom && v.new_count > 0 {
+                    v.new_count = 0;
+                    drop(v);
+                    self.ui.new_count(0);
+                }
+            }
+            Cmd::MarkUnread(id) => self.mark_unread(&id).await?,
+            Cmd::MarkAllRead => self.mark_all_read().await?,
         }
         Ok(())
     }

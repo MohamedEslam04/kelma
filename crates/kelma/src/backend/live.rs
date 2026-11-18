@@ -1,6 +1,7 @@
 //! Live (Trouter) events: incoming messages, typing, desktop notifications.
 
 use super::Engine;
+use super::unread::follow_new_message;
 use super::util::*;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -103,19 +104,24 @@ impl Engine {
             return;
         }
         let mine = m.sender_mri == self.me;
-        let (is_current, focused) = {
+        let (is_current, focused, follow) = {
             let mut v = self.view.lock().unwrap();
             // Our own echo replaces the optimistic copy.
             if let Some(cmid) = &m.client_message_id {
                 v.pending.retain(|(c, _)| c != cmid);
             }
             v.typing.remove(&m.conversation_id);
+            let follow = follow_new_message(v.at_bottom, mine);
+            if follow {
+                v.at_bottom = true;
+            }
             (
                 v.current.as_deref() == Some(m.conversation_id.as_str()),
                 self.focused.load(Ordering::Relaxed),
+                follow,
             )
         };
-        let known = {
+        let (known, counted) = {
             let st = self.store.lock().unwrap();
             let existed = st.message(&m.id).ok().flatten().is_some();
             let _ = st.upsert_message(&row_from_message(&m, None));
@@ -129,10 +135,15 @@ impl Engine {
                     unread,
                 );
             }
+            let counted =
+                is_current && !follow && !existed && m.parent_id.is_none() && m.is_chat_content();
             if should_notify(existed, mine, m.is_chat_content(), is_current, focused) {
                 self.notify(&st, &m);
             }
-            st.conversation(&m.conversation_id).ok().flatten().is_some()
+            (
+                st.conversation(&m.conversation_id).ok().flatten().is_some(),
+                counted,
+            )
         };
         if is_current && focused && !mine {
             let e = self.clone();
@@ -147,11 +158,20 @@ impl Engine {
                 let _ = e.sync().await;
             });
         }
+        if counted {
+            // Scrolled up: leave the list alone and count the message on the jump button.
+            let n = {
+                let mut v = self.view.lock().unwrap();
+                v.new_count += 1;
+                v.new_count
+            };
+            self.ui.new_count(n);
+        }
         self.mark(|d| {
             d.chats = true;
             if is_current {
                 d.messages = true;
-                d.scroll = true;
+                d.scroll |= follow;
             }
         });
     }

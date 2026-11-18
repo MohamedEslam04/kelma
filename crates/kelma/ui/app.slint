@@ -53,6 +53,12 @@ export component AppWindow inherits Window {
     in-out property <string> editing-id;
     in-out property <string> draft;
     in-out property <string> post-subject;
+    // The message list sits at the newest message. Set by the list itself; Rust is told.
+    in-out property <bool> at-bottom: true;
+    // New messages that arrived while scrolled up (the jump button shows the count).
+    in property <int> new-count;
+    // Row of the "New messages" divider to scroll to when a chat opens there.
+    in property <int> divider-index: -1;
 
     // --- callbacks to Rust ---
     callback retry-login();
@@ -77,10 +83,15 @@ export component AppWindow inherits Window {
     callback attach-image();
     callback attach-file();
     callback dismiss-banner();
+    callback at-bottom-changed(bool);
+    callback mark-unread(string);
+    callback mark-all-read();
+    callback jump-to-newest();
 
     // Rust bumps these counters to request a scroll to the bottom / composer focus.
     in-out property <int> scroll-tick;
     in-out property <int> focus-tick;
+    in-out property <int> divider-tick;
 
 
     if root.login-state != "ready": LoginView {
@@ -93,7 +104,16 @@ export component AppWindow inherits Window {
         retry => { root.retry-login(); }
     }
 
-    if root.login-state == "ready": VerticalLayout {
+    if root.login-state == "ready": FocusScope {
+        // Shift+Esc marks every chat read, wherever the focus is.
+        capture-key-pressed(event) => {
+            if (event.text == Key.Escape && event.modifiers.shift) {
+                root.mark-all-read();
+                return accept;
+            }
+            reject
+        }
+        VerticalLayout {
         // Top bar with search
         Rectangle {
             height: 48px;
@@ -184,6 +204,8 @@ export component AppWindow inherits Window {
                 chats-channels: root.chats-channels;
                 teams: root.teams;
                 current-id: root.current-id;
+                mark-unread(id) => { root.mark-unread(id); }
+                mark-all-read => { root.mark-all-read(); }
                 select-chat(id) => { root.select-chat(id); }
                 select-channel(id, title) => { root.select-channel(id, title); }
                 toggle-team(i) => { root.toggle-team(i); }
@@ -259,11 +281,23 @@ export component AppWindow inherits Window {
                         vertical-stretch: 1;
                         msg-list := ListView {
                             property <int> tick: root.scroll-tick;
+                            property <int> d-tick: root.divider-tick;
                             // Stay pinned to the newest message while content grows (images loading).
                             property <bool> pinned: true;
+                            // After a jump to the divider its real position corrects the estimate
+                            // (rows that are not on screen only have an estimated height).
+                            property <bool> aligning: false;
+                            changed pinned => {
+                                root.at-bottom = self.pinned;
+                                root.at-bottom-changed(self.pinned);
+                            }
                             changed tick => {
                                 self.pinned = true;
                                 self.content-y = min(0px, self.visible-height - self.content-height);
+                            }
+                            changed d-tick => {
+                                self.aligning = true;
+                                self.content-y = min(0px, 24px - self.content-height * root.divider-index / max(1, root.messages.length));
                             }
                             changed content-height => {
                                 if self.pinned {
@@ -272,7 +306,7 @@ export component AppWindow inherits Window {
                             }
                             changed content-y => {
                                 self.pinned = self.content-y <= self.visible-height - self.content-height + 80px;
-                                if self.content-y > -40px && self.content-height > self.visible-height + 40px && !self.pinned && root.messages.length > 0 && !root.loading-older {
+                                if self.content-y > -40px && self.content-height > self.visible-height + 40px && !self.pinned && root.messages.length > 0 && !root.loading-older && !self.aligning {
                                     root.load-older();
                                 }
                             }
@@ -280,6 +314,11 @@ export component AppWindow inherits Window {
                                     m: m;
                                     max-bubble: min(720px, msg-list.width * 0.75);
                                     in-channel: root.current-is-channel && root.thread-root == "";
+                                    changed y => {
+                                        if msg-list.aligning && m.new-above {
+                                            msg-list.content-y = min(0px, 24px - self.y);
+                                        }
+                                    }
                                     react(k) => { root.react(m.id, k); }
                                     reply => { root.reply(m.id); }
                                     edit => { root.edit(m.id); }
@@ -288,6 +327,37 @@ export component AppWindow inherits Window {
                                     open-thread => { root.open-thread(m.id); }
                                     open-image(u) => { root.open-url(u); }
                                 }
+                        }
+                        Timer {
+                            interval: 700ms;
+                            running: msg-list.aligning;
+                            triggered => { msg-list.aligning = false; }
+                        }
+                        if !root.at-bottom && root.messages.length > 0: Rectangle {
+                            z: 5;
+                            x: (parent.width - self.width) / 2;
+                            y: parent.height - self.height - 12px;
+                            width: jump-text.preferred-width + 28px;
+                            height: 32px;
+                            border-radius: 16px;
+                            background: jump-touch.has-hover ? Theme.accent-strong : Theme.accent;
+                            drop-shadow-blur: 8px;
+                            drop-shadow-color: #00000080;
+                            jump-text := Text {
+                                text: root.new-count > 0 ? "↓ Jump to newest · " + root.new-count : "↓ Jump to newest";
+                                color: #ffffff;
+                                font-size: 12px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            jump-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.scroll-tick += 1;
+                                    root.jump-to-newest();
+                                }
+                            }
                         }
                         if root.loading-older: Rectangle {
                             y: 8px;
@@ -325,5 +395,6 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
     }
 }

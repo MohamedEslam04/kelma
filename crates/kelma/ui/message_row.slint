@@ -31,6 +31,15 @@ export component MessageRow inherits TouchArea {
             Rectangle { height: 1px; background: Theme.border; y: (parent.height - 1px) / 2; }
         }
 
+        if root.m.new-above: HorizontalLayout {
+            padding-top: 4px;
+            padding-bottom: 4px;
+            spacing: 10px;
+            Rectangle { height: 1px; background: Theme.accent; y: (parent.height - 1px) / 2; }
+            Text { text: "New messages"; color: Theme.accent; font-size: 12px; font-weight: 600; horizontal-stretch: 0; }
+            Rectangle { height: 1px; background: Theme.accent; y: (parent.height - 1px) / 2; }
+        }
+
         if root.m.system: Text {
             text: root.m.plain;
             color: Theme.fg-subtle;
