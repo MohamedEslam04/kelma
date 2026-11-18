@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=kelma
+GenericName=Teams chat client
+Comment=Lightweight native client for Microsoft Teams chat (unofficial)
+Exec=kelma
+Icon=kelma
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=teams;chat;microsoft;messaging;
+StartupWMClass=kelma
