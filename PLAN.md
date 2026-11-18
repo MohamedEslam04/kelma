@@ -33,7 +33,7 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
 - [x] Reactions add and remove — verified live in 48:notes
 - [x] Quoted replies, parse and send — verified live in 48:notes
 - [x] Edit and delete own messages — verified live in 48:notes
-- [ ] Channel posts: list, reply, new post — BLOCKED: listing posts and threads verified live; posting into a real channel needs the user's OK because colleagues would see the test post
+- [x] Channel posts: list, reply, new post — verified live 2026-11-18 in a private test channel the user chose (with their OK): a new post with a subject and a thread reply, both deleted afterwards
 - [x] Images: AMS upload, plus download with a disk cache — verified live (upload, send, download)
 - [x] Files: SharePoint/OneDrive file cards with "open in browser". Upload, or `BLOCKED` with the fallback from the spec. — upload via Graph (`Files.ReadWrite.All`) to `Microsoft Teams Chat Files`, then share with members and send `properties.files`. Verified live in 48:notes: small and 5.5 MB chunked uploads, sizes matched. Channels are not supported and say so
 
@@ -68,7 +68,7 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
   - Enter sends, Shift+Enter adds a newline
   - sends the typing indicator
 - [x] Teams view: teams, then channels, then posts with replies; new post — verified with the real account, including the thread view
-- [ ] Desktop notifications when the window is unfocused; mark-read when a chat is viewed — BLOCKED: needs an incoming message from someone else while kelma is unfocused
+- [x] Desktop notifications when the window is unfocused; mark-read when a chat is viewed — verified live 2026-11-18: a colleague's message made kelma call D-Bus `Notify` (seen with dbus-monitor, matching the log line); the read marker equals the newest message after opening a chat
 - [x] Screenshots of kelma next to the Teams reference in `docs/screenshots/` — demo-mode screenshots only: real-account screenshots and the Teams reference contain colleagues' data and are not committed
 
 ### Phase 4: hardening

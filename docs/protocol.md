@@ -43,7 +43,7 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 | Typing | `POST …/{id}/messages` `{messagetype:"Control/Typing", contenttype:"Application/Message", content:""}` | ⚠️ |
 | Self | `GET /v1/users/ME/properties` → `skypeName` (`orgid:<guid>`) | ✅ |
 
-### Channels ✅ read / ⚠️ post
+### Channels ✅
 
 - The channel id is `19:…@thread.tacv2`. History returns root posts and replies mixed together.
   Each message's `conversationLink` ends with `;messageid=<rootId>`, and a root's
@@ -52,7 +52,7 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 - Posting a reply: `POST …/conversations/{channel};messageid={root}/messages`.
 - Posting a new post: `POST …/conversations/{channel}/messages`, with `properties.subject` for the
   title.
-- Posting into a real channel was not tested, because a test post is visible to colleagues.
+- Posting verified 2026-11-18 in a test channel: a new post with `properties.subject` (stored as `subject`, `rootMessageId` equal to its own id) and a reply in its thread.
 
 ### Message content
 
