@@ -7,6 +7,7 @@ const P2P_OFFER: &str = include_str!("fixtures/media/teams_p2p_offer.sdp");
 const WEB_OFFER: &str = include_str!("fixtures/media/teams_web_offer.sdp");
 const MEETING_ANSWER: &str = include_str!("fixtures/media/teams_meeting_answer.sdp");
 const MEETING_REOFFER: &str = include_str!("fixtures/media/teams_meeting_reoffer.sdp");
+const FULL_REOFFER: &str = include_str!("fixtures/media/teams_meeting_full_reoffer.sdp");
 
 fn local() -> MediaOptions {
     MediaOptions {
@@ -113,5 +114,50 @@ async fn answers_repeated_service_renegotiations_with_stubs() {
         assert!(answer.contains("a=mid:4\r\na=label:data\r\n"), "{answer}");
         assert!(answer.contains("a=candidate:"), "{answer}");
     }
+    session.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn answers_the_full_meeting_offer_on_a_fresh_session() {
+    let (session, _events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    let answer = session.accept_offer(FULL_REOFFER).await.unwrap();
+    let l = section_lines(&answer);
+    let m: Vec<&str> = l.iter().copied().filter(|x| x.starts_with("m=")).collect();
+    assert_eq!(m.len(), 13, "{answer}");
+    assert!(
+        m[0].starts_with("m=audio ") && m[0].ends_with(" RTP/SAVP 111"),
+        "{answer}"
+    );
+    assert!(!m[0].starts_with("m=audio 0 "));
+    assert!(m[1..12].iter().all(|x| *x == "m=video 0 RTP/SAVP 34"));
+    assert_eq!(m[12], "m=x-data 0 RTP/SAVP 34");
+    let mids: Vec<&str> = l.iter().filter_map(|x| x.strip_prefix("a=mid:")).collect();
+    assert_eq!(
+        mids,
+        [
+            "1", "2", "5", "6", "7", "8", "9", "10", "11", "12", "13", "3", "4"
+        ]
+    );
+    assert!(l.contains(&"a=group:BUNDLE 1"), "{answer}");
+    assert!(l.iter().any(|x| x.starts_with("a=candidate:")));
+    session.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn tells_a_restarting_offer_from_a_renegotiation() {
+    let (session, _events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    // Nothing negotiated yet: any offer is a first offer, not a restart.
+    assert!(!session.offer_restarts(FULL_REOFFER).await);
+    session.create_offer().await.unwrap();
+    session.set_answer(MEETING_ANSWER).await.unwrap();
+    // Same audio mid and ufrag: answer on this session.
+    assert!(!session.offer_restarts(MEETING_REOFFER).await);
+    // Audio mid 0 -> 1 and a new ufrag: a new session.
+    assert!(session.offer_restarts(FULL_REOFFER).await);
+    assert!(
+        session
+            .offer_restarts(&MEETING_REOFFER.replace("ice-ufrag:tEsT", "ice-ufrag:nEwU"))
+            .await
+    );
     session.close().await.unwrap();
 }

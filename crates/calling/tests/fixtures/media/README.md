@@ -19,3 +19,7 @@ credentials, SDES keys, fingerprints and TURN ids are dummies.
   on the transport of `teams_meeting_answer.sdp`: audio, a `sendonly` screen-sharing video line
   (mid 3) and an `m=x-data` line (mid 4, `a=x-data-protocol:sctp`). Shape from rusty-teams (MIT)
   `teams_answer.sdp` and teams-lite `NATIVE-CALLING.md` §10 (facts only), values invented.
+- `teams_meeting_full_reoffer.sdp`: the full offer the media servers send once a lobby participant
+  is admitted, in effect a new session: `RTP/AVP` with a fingerprint, the audio mid moves to `1`, and
+  each kind has its own ICE credentials (audio, the ten `main-video` lines 2 and 5-13, sharing at
+  mid 3 on port 3481, `x-data` at mid 4). Shape from a live kelma run, every value invented.
