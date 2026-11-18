@@ -69,6 +69,8 @@ pub struct MsgData {
     pub reactions: Vec<ReactData>,
     pub reply_count: i32,
     pub pending: bool,
+    /// Could not be sent: the row offers Retry and Delete.
+    pub failed: bool,
     /// The "New messages" divider is drawn above this row.
     pub new_above: bool,
 }

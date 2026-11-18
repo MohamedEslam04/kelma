@@ -13,6 +13,8 @@ export component MessageRow inherits TouchArea {
     callback open-url(string);
     callback open-thread();
     callback open-image(string);
+    callback retry-send();
+    callback discard-send();
     height: content.preferred-height;
 
     content := VerticalLayout {
@@ -69,6 +71,8 @@ export component MessageRow inherits TouchArea {
                 border-radius: Theme.radius;
                 background: root.m.mine ? Theme.bubble-mine : Theme.bubble-other;
                 opacity: root.m.pending ? 0.6 : 1.0;
+                border-width: root.m.failed ? 1px : 0px;
+                border-color: Theme.danger;
 
                 VerticalLayout {
                     padding-left: 14px;
@@ -145,6 +149,24 @@ export component MessageRow inherits TouchArea {
                         }
                     }
 
+                    if root.m.failed: HorizontalLayout {
+                        spacing: 6px;
+                        alignment: root.m.mine ? end : start;
+                        Text { text: "Failed to send"; color: Theme.danger; font-size: 12px; vertical-alignment: center; }
+                        Text { text: "·"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                        Rectangle {
+                            width: retry-text.preferred-width;
+                            retry-text := Text { text: "Retry"; color: Theme.accent; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.retry-send(); } }
+                        }
+                        Text { text: "·"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                        Rectangle {
+                            width: discard-text.preferred-width;
+                            discard-text := Text { text: "Delete"; color: Theme.accent; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.discard-send(); } }
+                        }
+                    }
+
                     if root.in-channel && root.m.reply-count >= 0: Rectangle {
                         height: 22px;
                         HorizontalLayout {
@@ -164,7 +186,7 @@ export component MessageRow inherits TouchArea {
         }
     }
 
-    if root.has-hover && !root.m.system && !root.m.deleted: Rectangle {
+    if root.has-hover && !root.m.system && !root.m.deleted && !root.m.pending && !root.m.failed: Rectangle {
         x: root.m.mine ? parent.width - self.width - 28px : 70px;
         y: 0px;
         height: 32px;

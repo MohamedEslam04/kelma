@@ -1,6 +1,7 @@
 //! The render loop: rebuilds the visible view data from the store and pushes it to the UI.
 
 use super::Engine;
+use super::outbox::{PENDING_PREFIX, row_from_outbox};
 use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
@@ -10,10 +11,10 @@ use crate::data::{
 use crate::markdown::{reaction_emoji, render_blocks};
 use chrono::{Local, TimeZone};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use store::{ConvFilter, ConvKind, MessageRow, UserRow};
+use store::{ConvFilter, ConvKind, MessageRow, OutboxState, UserRow};
 
 impl Engine {
     pub(super) async fn render_loop(self: Arc<Self>) {
@@ -303,7 +304,7 @@ impl Engine {
             self.ui.messages(vec![], Scroll::Keep);
             return;
         };
-        let (rows, is_channel, reply_counts, marker) = {
+        let (rows, is_channel, reply_counts, marker, failed) = {
             let st = self.store.lock().unwrap();
             let conv_row = st.conversation(&conv).ok().flatten();
             let is_channel = conv_row
@@ -326,11 +327,25 @@ impl Engine {
                 }
                 None => st.messages_before(&conv, None, limit).unwrap_or_default(),
             };
+            // Sent messages still waiting for their echo, then the outbox (queued, sending,
+            // failed), oldest first.
             rows.extend(
                 pending
                     .into_iter()
                     .filter(|p| p.conversation_id == conv && p.parent_id == thread),
             );
+            let target = match &thread {
+                Some(root) => format!("{conv};messageid={root}"),
+                None => conv.clone(),
+            };
+            let mut failed: HashSet<String> = HashSet::new();
+            for item in st.outbox_for(&target).unwrap_or_default() {
+                let row = row_from_outbox(&item, &self.me, &self.my_name);
+                if item.state == OutboxState::Failed {
+                    failed.insert(row.id.clone());
+                }
+                rows.push(row);
+            }
             let counts: HashMap<String, usize> = if is_channel && thread.is_none() {
                 rows.iter()
                     .map(|r| (r.id.clone(), st.reply_count(&r.id).unwrap_or(0)))
@@ -338,7 +353,7 @@ impl Engine {
             } else {
                 HashMap::new()
             };
-            (rows, is_channel, counts, marker)
+            (rows, is_channel, counts, marker, failed)
         };
         let visible: Vec<&MessageRow> = rows
             .iter()
@@ -488,7 +503,8 @@ impl Engine {
                 } else {
                     -1
                 },
-                pending: r.id.starts_with("pending-"),
+                pending: r.id.starts_with(PENDING_PREFIX) && !failed.contains(&r.id),
+                failed: failed.contains(&r.id),
                 new_above: divider == Some(i),
             });
             prev = Some(r);

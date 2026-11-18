@@ -43,6 +43,7 @@ export struct Msg {
     reactions: [ReactionItem],
     reply-count: int,
     pending: bool,
+    failed: bool,          // could not be sent: show Retry and Delete
     new-above: bool,       // draw the "New messages" divider above this row
 }
 

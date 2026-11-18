@@ -742,6 +742,28 @@ fn outbox_retry_requeues_failed_and_keeps_attempts() {
 }
 
 #[test]
+fn outbox_requeue_returns_a_sending_item_without_counting_an_attempt() {
+    let s = Store::open_in_memory().unwrap();
+    s.enqueue(&item("a", "c", 1)).unwrap();
+    s.enqueue(&item("b", "c", 2)).unwrap();
+    s.mark_sending("a").unwrap();
+    assert_eq!(outbox_ids(&s.outbox_due().unwrap()), ["b"]);
+
+    s.requeue("a").unwrap();
+    assert_eq!(
+        outbox_ids(&s.outbox_due().unwrap()),
+        ["a", "b"],
+        "keeps its place"
+    );
+    assert_eq!(s.outbox_for("c").unwrap()[0].attempts, 0);
+
+    // Failed items stay failed: only Retry brings them back.
+    s.mark_failed("b", "boom").unwrap();
+    s.requeue("b").unwrap();
+    assert_eq!(s.outbox_for("c").unwrap()[1].state, OutboxState::Failed);
+}
+
+#[test]
 fn outbox_remove_and_per_conversation_listing() {
     let s = Store::open_in_memory().unwrap();
     s.enqueue(&item("a", "c1", 1)).unwrap();

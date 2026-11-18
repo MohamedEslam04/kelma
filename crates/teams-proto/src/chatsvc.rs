@@ -118,15 +118,30 @@ impl Client {
         subject: Option<&str>,
     ) -> Result<String> {
         let cmid = now_ms().to_string();
+        self.send_message_as(conversation_id, html, display_name, subject, &cmid)
+            .await?;
+        Ok(cmid)
+    }
+
+    /// Like [`Client::send_message`] with a caller-chosen client message id. Sending the same id
+    /// again (a retry after a lost response) does not post a second message.
+    pub async fn send_message_as(
+        &self,
+        conversation_id: &str,
+        html: &str,
+        display_name: &str,
+        subject: Option<&str>,
+        client_message_id: &str,
+    ) -> Result<()> {
         let url = format!("{}/messages", self.conv_url(conversation_id).await);
         self.json(
             "send",
             Method::POST,
             &url,
-            Some(&send_body(html, display_name, &cmid, subject)),
+            Some(&send_body(html, display_name, client_message_id, subject)),
         )
-        .await?;
-        Ok(cmid)
+        .await
+        .map(|_| ())
     }
 
     /// Sends a message carrying an uploaded file (`files` is a [`crate::files::files_property`] value).
@@ -138,12 +153,26 @@ impl Client {
         files: &str,
     ) -> Result<String> {
         let cmid = now_ms().to_string();
-        let url = format!("{}/messages", self.conv_url(conversation_id).await);
-        let mut body = send_body(html, display_name, &cmid, None);
-        body["properties"] = json!({ "files": files });
-        self.json("send_file", Method::POST, &url, Some(&body))
+        self.send_file_message_as(conversation_id, html, display_name, files, &cmid)
             .await?;
         Ok(cmid)
+    }
+
+    /// Like [`Client::send_file_message`] with a caller-chosen client message id.
+    pub async fn send_file_message_as(
+        &self,
+        conversation_id: &str,
+        html: &str,
+        display_name: &str,
+        files: &str,
+        client_message_id: &str,
+    ) -> Result<()> {
+        let url = format!("{}/messages", self.conv_url(conversation_id).await);
+        let mut body = send_body(html, display_name, client_message_id, None);
+        body["properties"] = json!({ "files": files });
+        self.json("send_file", Method::POST, &url, Some(&body))
+            .await
+            .map(|_| ())
     }
 
     /// Replaces the content of one of our messages.

@@ -110,6 +110,7 @@ fn msg(m: MsgData) -> Msg {
         ),
         reply_count: m.reply_count,
         pending: m.pending,
+        failed: m.failed,
         new_above: m.new_above,
     }
 }

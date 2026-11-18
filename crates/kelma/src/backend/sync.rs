@@ -181,6 +181,13 @@ impl Engine {
                 continue;
             }
             let _ = st.upsert_message(&row_from_message(m, parent));
+            if m.sender_mri == self.me
+                && let Some(cmid) = &m.client_message_id
+            {
+                // History shows a message we sent: it no longer waits in the outbox.
+                let _ = st.remove(cmid);
+                self.view.lock().unwrap().pending.retain(|(c, _)| c != cmid);
+            }
         }
     }
 

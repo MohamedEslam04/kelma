@@ -478,3 +478,59 @@ fn opening_at_the_divider_puts_it_near_the_top_of_a_long_list() {
     // The list starts below the 48px top bar and the 60px conversation header.
     assert!((108. ..108. + 120.).contains(&y), "divider at y={y}");
 }
+
+// ---- failed sends (plans/chat.md 5.8) -----------------------------------
+
+fn outgoing(id: &str, text: &str, pending: bool, failed: bool) -> Msg {
+    Msg {
+        pending,
+        failed,
+        ..msg(id, text, true)
+    }
+}
+
+#[test]
+fn failed_row_offers_retry_and_delete_and_they_fire() {
+    let app = app_with_messages(vec![
+        msg("m1", "sent earlier", true),
+        outgoing("pending-77", "did not go", false, true),
+    ]);
+    let log = Log::default();
+    {
+        let l = log.clone();
+        app.on_retry_send(move |id| l.borrow_mut().push(format!("retry {id}")));
+        let l = log.clone();
+        app.on_discard_send(move |id| l.borrow_mut().push(format!("discard {id}")));
+        let l = log.clone();
+        app.on_delete(move |id| l.borrow_mut().push(format!("server-delete {id}")));
+    }
+    assert_eq!(
+        label(&app, "Failed to send").len(),
+        1,
+        "only the failed row says so"
+    );
+    let retry = label(&app, "Retry");
+    let delete = label(&app, "Delete");
+    assert_eq!((retry.len(), delete.len()), (1, 1));
+    retry[0].mock_single_click(PointerEventButton::Left);
+    delete[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        *log.borrow(),
+        vec!["retry pending-77", "discard pending-77"],
+        "the failed row's Delete discards locally, it never deletes on the server"
+    );
+}
+
+#[test]
+fn pending_row_has_no_failure_actions_and_no_hover_bar() {
+    let app = app_with_messages(vec![outgoing("pending-1", "sending", true, false)]);
+    assert!(label(&app, "Failed to send").is_empty());
+    assert!(label(&app, "Retry").is_empty());
+    let row = &rows(&app)[0];
+    hover(&app, row);
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "MessageRow::et").count(),
+        0,
+        "no reactions on a message that is not sent yet"
+    );
+}

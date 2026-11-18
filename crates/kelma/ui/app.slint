@@ -87,6 +87,8 @@ export component AppWindow inherits Window {
     callback mark-unread(string);
     callback mark-all-read();
     callback jump-to-newest();
+    callback retry-send(string);
+    callback discard-send(string);
 
     // Rust bumps these counters to request a scroll to the bottom / composer focus.
     in-out property <int> scroll-tick;
@@ -323,6 +325,8 @@ export component AppWindow inherits Window {
                                     reply => { root.reply(m.id); }
                                     edit => { root.edit(m.id); }
                                     delete => { root.delete(m.id); }
+                                    retry-send => { root.retry-send(m.id); }
+                                    discard-send => { root.discard-send(m.id); }
                                     open-url(u) => { root.open-url(u); }
                                     open-thread => { root.open-thread(m.id); }
                                     open-image(u) => { root.open-url(u); }

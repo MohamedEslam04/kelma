@@ -648,6 +648,18 @@ impl Store {
         Ok(())
     }
 
+    /// `Sending` back to `Queued` after a network error: the send did not fail, it never
+    /// happened, so the attempt is not counted. Other states are left alone.
+    pub fn requeue(&self, client_message_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE outbox SET state = 'queued' \
+                 WHERE client_message_id = ?1 AND state = 'sending'",
+            )?
+            .execute([client_message_id])?;
+        Ok(())
+    }
+
     /// Marks an item `Failed`, counts the attempt and records why.
     pub fn mark_failed(&self, client_message_id: &str, error: &str) -> Result<()> {
         self.conn

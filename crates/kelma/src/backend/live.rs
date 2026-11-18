@@ -30,7 +30,11 @@ impl Engine {
         while let Some(ev) = rx.recv().await {
             match ev {
                 TrouterEvent::Connected => {
+                    self.connected.store(true, Ordering::Relaxed);
                     self.ui.connected(true);
+                    // Anything sent while offline goes out now, in order.
+                    let e = self.clone();
+                    tokio::spawn(async move { e.flush_outbox(true).await });
                     if was_disconnected {
                         // Catch up on anything missed while offline.
                         let e = self.clone();
@@ -43,11 +47,13 @@ impl Engine {
                 TrouterEvent::Resync => {
                     let e = self.clone();
                     tokio::spawn(async move {
+                        e.flush_outbox(true).await;
                         let _ = e.sync().await;
                     });
                 }
                 TrouterEvent::Disconnected(_) => {
                     was_disconnected = true;
+                    self.connected.store(false, Ordering::Relaxed);
                     self.ui.connected(false);
                 }
                 TrouterEvent::Event(ev) => self.on_event(*ev),
@@ -104,11 +110,15 @@ impl Engine {
             return;
         }
         let mine = m.sender_mri == self.me;
+        let mut outbox_echo = None;
         let (is_current, focused, follow) = {
             let mut v = self.view.lock().unwrap();
             // Our own echo replaces the optimistic copy.
             if let Some(cmid) = &m.client_message_id {
                 v.pending.retain(|(c, _)| c != cmid);
+                if mine {
+                    outbox_echo = Some(cmid.clone());
+                }
             }
             v.typing.remove(&m.conversation_id);
             let follow = follow_new_message(v.at_bottom, mine);
@@ -121,6 +131,9 @@ impl Engine {
                 follow,
             )
         };
+        if let Some(cmid) = outbox_echo {
+            let _ = self.store.lock().unwrap().remove(&cmid);
+        }
         let (known, counted) = {
             let st = self.store.lock().unwrap();
             let existed = st.message(&m.id).ok().flatten().is_some();

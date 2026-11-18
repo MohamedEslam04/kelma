@@ -7,13 +7,14 @@
 use crate::data::Pixels;
 use crate::ui::UiHandle;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
 use teams_proto::Client;
 
 mod live;
+mod outbox;
 mod render;
 mod send;
 mod sync;
@@ -45,6 +46,10 @@ pub enum Cmd {
     AttachFile,
     /// The list reports whether it sits at the newest message.
     AtBottom(bool),
+    /// Failed row: send it again (the row id).
+    RetrySend(String),
+    /// Failed row: forget it (the row id).
+    DiscardSend(String),
     MarkUnread(String),
     MarkAllRead,
 }
@@ -59,6 +64,7 @@ struct View {
     limit: usize,
     reply_to: Option<MessageRow>,
     editing: Option<String>,
+    /// Sent messages (client message id, optimistic row) waiting for their echo.
     pending: Vec<(String, MessageRow)>,
     typing: HashMap<String, (String, Instant)>,
     last_typing_sent: Option<Instant>,
@@ -103,6 +109,14 @@ pub struct Engine {
     pub focused: Arc<AtomicBool>,
     /// Demo mode: no network, so network errors are not shown.
     pub offline: AtomicBool,
+    /// The live connection is up; while it is not, the outbox waits.
+    connected: AtomicBool,
+    /// One outbox flush at a time keeps messages in order.
+    flush_lock: tokio::sync::Mutex<()>,
+    /// A delayed outbox retry is already scheduled.
+    retry_pending: AtomicBool,
+    /// Last client message id handed out.
+    last_cmid: AtomicI64,
 }
 
 const PAGE: usize = 60;
@@ -138,6 +152,10 @@ impl Engine {
             images: Mutex::new(HashMap::new()),
             focused: Arc::new(AtomicBool::new(true)),
             offline: AtomicBool::new(false),
+            connected: AtomicBool::new(true),
+            flush_lock: tokio::sync::Mutex::new(()),
+            retry_pending: AtomicBool::new(false),
+            last_cmid: AtomicI64::new(0),
         })
     }
 
@@ -171,6 +189,8 @@ impl Engine {
         });
         let e = self.clone();
         tokio::spawn(async move {
+            // Messages left in the outbox by the last run go out first.
+            e.flush_outbox(true).await;
             if let Err(err) = e.sync().await {
                 tracing::error!(%err, "initial sync failed");
                 e.ui.banner(format!("Sync failed: {err}"));
@@ -346,6 +366,8 @@ impl Engine {
                     self.ui.new_count(0);
                 }
             }
+            Cmd::RetrySend(id) => self.retry_send(&id).await?,
+            Cmd::DiscardSend(id) => self.discard_send(&id)?,
             Cmd::MarkUnread(id) => self.mark_unread(&id).await?,
             Cmd::MarkAllRead => self.mark_all_read().await?,
         }

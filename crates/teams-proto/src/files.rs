@@ -233,6 +233,20 @@ impl Client {
         data: Vec<u8>,
         display_name: &str,
     ) -> Result<UploadedFile> {
+        let cmid = crate::time::now_ms().to_string();
+        self.send_file_as(conversation_id, name, data, display_name, &cmid)
+            .await
+    }
+
+    /// Like [`Client::send_file`] with a caller-chosen client message id.
+    pub async fn send_file_as(
+        &self,
+        conversation_id: &str,
+        name: &str,
+        data: Vec<u8>,
+        display_name: &str,
+        client_message_id: &str,
+    ) -> Result<UploadedFile> {
         let conv = conversation_id
             .split(";messageid=")
             .next()
@@ -249,8 +263,14 @@ impl Client {
             let others: Vec<String> = members.into_iter().filter(|m| *m != me).collect();
             self.share_file_with(&file, &others).await?;
         }
-        self.send_file_message(conversation_id, "", display_name, &files_property(&file))
-            .await?;
+        self.send_file_message_as(
+            conversation_id,
+            "",
+            display_name,
+            &files_property(&file),
+            client_message_id,
+        )
+        .await?;
         Ok(file)
     }
 }

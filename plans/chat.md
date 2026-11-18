@@ -139,7 +139,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Done when.** A UI test types, switches chat and comes back, and the draft is still there.
 
 ### 5.8 Failed sends and offline queue
-- [ ] Impact 4, effort 2.
+- [x] Impact 4, effort 2.
   - **What.**
     - Optimistic messages that fail show "Failed to send · Retry · Delete".
     - While disconnected, sends wait in a queue and go out when the connection comes back.
@@ -147,6 +147,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - Add a `pending` state on the row (it exists), a failure state, and a retry command.
     - The queue lives in the store so it survives a restart.
   - **Done when.** Freezing the network (as in the reconnect test) and sending queues the message, and it goes out on reconnect.
+  - **Status.** Every new message (text, image, file) goes through the store's outbox; files are copied to `<cache>/outbox/<id>/` and removed once sent. A network error keeps the item queued (flushed in order on Connected, Resync, startup and every 30 s); a refusal shows "Failed to send · Retry · Delete". Teams does not deduplicate a repeated `clientmessageid`, so flushes after a restart or a lost answer read the newest history first and drop items whose echo is already there. Checked live in `48:notes` (`cargo test -p kelma live_outbox -- --ignored`); the offline path is covered by unit and engine tests, not by freezing the real network.
 
 ### 5.9 Keyboard shortcuts like Teams
 - [ ] Impact 4, effort 2. Seen: the Ctrl+. dialog.
