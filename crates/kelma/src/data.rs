@@ -94,7 +94,10 @@ pub struct HeaderData {
 
 /// Initials for an avatar placeholder ("Sara Hassan" → "SH", "مجموعة الإدارة" → "ما").
 pub fn initials(name: &str) -> String {
-    let words: Vec<&str> = name.split_whitespace().filter(|w| w.chars().next().is_some_and(char::is_alphanumeric)).collect();
+    let words: Vec<&str> = name
+        .split_whitespace()
+        .filter(|w| w.chars().next().is_some_and(char::is_alphanumeric))
+        .collect();
     match words.as_slice() {
         [] => "?".into(),
         [one] => one.chars().take(2).collect::<String>().to_uppercase(),
@@ -108,8 +111,12 @@ pub fn initials(name: &str) -> String {
 
 /// Stable placeholder color for an id.
 pub fn color_for(id: &str) -> u32 {
-    const PALETTE: [u32; 8] = [0x5b5fc7, 0xc4314b, 0x0f7b5f, 0xca5010, 0x8764b8, 0x038387, 0x986f0b, 0x4f6bed];
-    let h = id.bytes().fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+    const PALETTE: [u32; 8] = [
+        0x5b5fc7, 0xc4314b, 0x0f7b5f, 0xca5010, 0x8764b8, 0x038387, 0x986f0b, 0x4f6bed,
+    ];
+    let h = id
+        .bytes()
+        .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
     PALETTE[(h % PALETTE.len() as u32) as usize]
 }
 

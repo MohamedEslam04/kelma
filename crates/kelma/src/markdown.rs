@@ -18,7 +18,10 @@ pub struct Rendered {
 pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
-        if matches!(c, '\\' | '*' | '_' | '`' | '[' | ']' | '(' | ')' | '#' | '<' | '>' | '~' | '|' | '!') {
+        if matches!(
+            c,
+            '\\' | '*' | '_' | '`' | '[' | ']' | '(' | ')' | '#' | '<' | '>' | '~' | '|' | '!'
+        ) {
             out.push('\\');
         }
         out.push(c);
@@ -27,7 +30,9 @@ pub fn escape(text: &str) -> String {
 }
 
 fn link_target(url: &str) -> String {
-    url.replace(' ', "%20").replace('(', "%28").replace(')', "%29")
+    url.replace(' ', "%20")
+        .replace('(', "%28")
+        .replace(')', "%29")
 }
 
 fn spans_md(spans: &[Span]) -> String {
@@ -49,7 +54,11 @@ fn spans_md(spans: &[Span]) -> String {
             let lead = line.len() - line.trim_start().len();
             let trail = line.len() - line.trim_end().len();
             let core = line.trim();
-            let mut t = if s.style.code { format!("`{}`", core.replace('`', "'")) } else { escape(core) };
+            let mut t = if s.style.code {
+                format!("`{}`", core.replace('`', "'"))
+            } else {
+                escape(core)
+            };
             if s.mention.is_some() || s.style.bold {
                 t = format!("**{t}**");
             }
@@ -82,7 +91,9 @@ pub fn render_blocks(rt: &RichText) -> Rendered {
     let mut first_dir: Option<Dir> = None;
     for b in &rt.blocks {
         match b {
-            Block::Quote { author, preview, .. } if r.quote_text.is_empty() && md.is_empty() => {
+            Block::Quote {
+                author, preview, ..
+            } if r.quote_text.is_empty() && md.is_empty() => {
                 r.quote_author = author.clone().unwrap_or_default();
                 r.quote_text = preview.clone();
             }
@@ -98,7 +109,11 @@ pub fn render_blocks(rt: &RichText) -> Rendered {
             Block::List { ordered, items } => {
                 let mut lines = vec![];
                 for (i, it) in items.iter().enumerate() {
-                    let bullet = if *ordered { format!("{}.", i + 1) } else { "-".to_string() };
+                    let bullet = if *ordered {
+                        format!("{}.", i + 1)
+                    } else {
+                        "-".to_string()
+                    };
                     lines.push(format!("{bullet} {}", spans_md(it)));
                     plain.push(spans_plain(it));
                 }
@@ -108,13 +123,22 @@ pub fn render_blocks(rt: &RichText) -> Rendered {
                 md.push(lines.join("\n"));
             }
             Block::Code { text } => {
-                md.push(text.lines().map(|l| format!("`{}`", l.replace('`', "'"))).collect::<Vec<_>>().join("\\\n"));
+                md.push(
+                    text.lines()
+                        .map(|l| format!("`{}`", l.replace('`', "'")))
+                        .collect::<Vec<_>>()
+                        .join("\\\n"),
+                );
                 plain.push(text.clone());
             }
             Block::Image { url, width, height } => r.images.push((url.clone(), *width, *height)),
         }
     }
-    r.markdown = md.into_iter().filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
+    r.markdown = md
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     r.plain = plain.join("\n").trim().to_string();
     r.rtl = first_dir == Some(Dir::Rtl);
     r
@@ -131,8 +155,13 @@ pub fn reaction_emoji(key: &str) -> String {
         "angry" => "😡".into(),
         _ => {
             let code = key.split('_').next().unwrap_or_default();
-            let parsed: Option<String> = code.split('-').map(|h| u32::from_str_radix(h, 16).ok().and_then(char::from_u32)).collect();
-            parsed.filter(|s| !s.is_empty() && code.len() >= 4).unwrap_or_else(|| key.to_string())
+            let parsed: Option<String> = code
+                .split('-')
+                .map(|h| u32::from_str_radix(h, 16).ok().and_then(char::from_u32))
+                .collect();
+            parsed
+                .filter(|s| !s.is_empty() && code.len() >= 4)
+                .unwrap_or_else(|| key.to_string())
         }
     }
 }
@@ -148,7 +177,10 @@ mod tests {
     #[test]
     fn styles_become_markdown() {
         let x = r("<p>Hello <b>bold</b> and <i>it</i> <a href=\"https://x.com/a b\">link</a></p>");
-        assert_eq!(x.markdown, "Hello **bold** and *it* [link](https://x.com/a%20b)");
+        assert_eq!(
+            x.markdown,
+            "Hello **bold** and *it* [link](https://x.com/a%20b)"
+        );
         assert_eq!(x.plain, "Hello bold and it link");
         assert!(!x.rtl);
     }
@@ -177,14 +209,25 @@ mod tests {
 
     #[test]
     fn mentions_are_bold_and_lists_kept() {
-        let x = r(r#"<p>hi <span itemscope itemtype="http://schema.skype.com/Mention" itemid="0">Ahmed</span></p><ul><li>one</li><li>two</li></ul>"#);
+        let x = r(
+            r#"<p>hi <span itemscope itemtype="http://schema.skype.com/Mention" itemid="0">Ahmed</span></p><ul><li>one</li><li>two</li></ul>"#,
+        );
         assert_eq!(x.markdown, "hi **Ahmed**\n\n- one\n- two");
     }
 
     #[test]
     fn images_are_separate() {
-        let x = r(r#"<p><img itemtype="http://schema.skype.com/AMSImage" src="https://eu-api.asm.skype.com/v1/objects/0-a/views/imgo" width="250" height="141"></p>"#);
-        assert_eq!(x.images, vec![("https://eu-api.asm.skype.com/v1/objects/0-a/views/imgo".into(), Some(250), Some(141))]);
+        let x = r(
+            r#"<p><img itemtype="http://schema.skype.com/AMSImage" src="https://eu-api.asm.skype.com/v1/objects/0-a/views/imgo" width="250" height="141"></p>"#,
+        );
+        assert_eq!(
+            x.images,
+            vec![(
+                "https://eu-api.asm.skype.com/v1/objects/0-a/views/imgo".into(),
+                Some(250),
+                Some(141)
+            )]
+        );
         assert_eq!(x.markdown, "");
     }
 

@@ -5,6 +5,7 @@
 
 pub mod ams;
 pub mod auth;
+pub mod cards;
 pub mod chatsvc;
 pub mod client;
 pub mod client_info;

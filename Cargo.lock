@@ -3010,6 +3010,8 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "render",
+ "reqwest",
+ "serde_json",
  "session",
  "teams-proto",
  "tokio",

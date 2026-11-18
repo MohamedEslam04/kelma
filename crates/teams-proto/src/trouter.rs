@@ -207,6 +207,37 @@ async fn allocate(client: &Client) -> Result<Allocation> {
     })
 }
 
+/// Parses `retryAfter` (`"00:02:52.0065811"`) from a throttling response.
+pub fn retry_after(body: &str) -> Option<Duration> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let s = v.get("retryAfter")?.as_str()?;
+    let mut parts = s.split(':');
+    let h: f64 = parts.next()?.parse().ok()?;
+    let m: f64 = parts.next()?.parse().ok()?;
+    let sec: f64 = parts.next()?.parse().ok()?;
+    Some(Duration::from_secs_f64(h * 3600.0 + m * 60.0 + sec))
+}
+
+/// Registers, returning how long to wait before retrying when it fails (never fatal: the socket
+/// stays open and registration is retried).
+async fn register_or_retry(client: &Client, surl: &str) -> Option<Duration> {
+    match register(client, surl).await {
+        Ok(()) => None,
+        Err(Error::Status {
+            status: 429, body, ..
+        }) => {
+            let wait =
+                retry_after(&body).unwrap_or(Duration::from_secs(120)) + Duration::from_secs(2);
+            tracing::warn!(?wait, "trouter registration throttled");
+            Some(wait)
+        }
+        Err(e) => {
+            tracing::warn!(%e, "trouter registration failed");
+            Some(Duration::from_secs(60))
+        }
+    }
+}
+
 async fn register(client: &Client, surl: &str) -> Result<()> {
     let regs = [
         (
@@ -320,8 +351,8 @@ async fn connect_once(client: &Client, tx: &mpsc::UnboundedSender<TrouterEvent>)
     };
     let mut ping = tokio::time::interval(Duration::from_secs(30));
     ping.tick().await;
-    let mut reregister = tokio::time::interval(Duration::from_secs(86400 - 600));
-    reregister.tick().await;
+    let reregister = tokio::time::sleep(Duration::from_secs(86400 - 600));
+    tokio::pin!(reregister);
     loop {
         tokio::select! {
             msg = stream.next() => {
@@ -340,7 +371,8 @@ async fn connect_once(client: &Client, tx: &mpsc::UnboundedSender<TrouterEvent>)
                         sink.send(WsMessage::text(format!("5:::{auth}"))).await.map_err(|e| Error::Ws(Box::new(e)))?;
                         let activity = json!({"name": "user.activity", "args": [{"state": "active", "cv": activity_cv()}]});
                         sink.send(WsMessage::text(next(activity))).await.map_err(|e| Error::Ws(Box::new(e)))?;
-                        register(client, &alloc.surl).await?;
+                        let wait = register_or_retry(client, &alloc.surl).await.unwrap_or(Duration::from_secs(86400 - 600));
+                        reregister.as_mut().reset(tokio::time::Instant::now() + wait);
                         if tx.send(TrouterEvent::Connected).is_err() { return Ok(()); }
                     }
                     Some(Frame::Message(data)) => {
@@ -354,7 +386,8 @@ async fn connect_once(client: &Client, tx: &mpsc::UnboundedSender<TrouterEvent>)
                     Some(Frame::Event(data)) if data.contains("trouter.message_loss") => {
                         // The server dropped events: re-register so delivery resumes, and tell the app
                         // to resync history.
-                        register(client, &alloc.surl).await?;
+                        let wait = register_or_retry(client, &alloc.surl).await.unwrap_or(Duration::from_secs(86400 - 600));
+                        reregister.as_mut().reset(tokio::time::Instant::now() + wait);
                         if tx.send(TrouterEvent::Connected).is_err() { return Ok(()); }
                     }
                     Some(Frame::Disconnect) => return Ok(()),
@@ -364,8 +397,9 @@ async fn connect_once(client: &Client, tx: &mpsc::UnboundedSender<TrouterEvent>)
             _ = ping.tick() => {
                 sink.send(WsMessage::text(next(json!({"name": "ping"})))).await.map_err(|e| Error::Ws(Box::new(e)))?;
             }
-            _ = reregister.tick() => {
-                register(client, &alloc.surl).await?;
+            _ = &mut reregister => {
+                let wait = register_or_retry(client, &alloc.surl).await.unwrap_or(Duration::from_secs(86400 - 600));
+                reregister.as_mut().reset(tokio::time::Instant::now() + wait);
             }
         }
     }
@@ -451,6 +485,16 @@ mod tests {
     fn garbage_push_is_ignored() {
         assert!(decode_push("not json").is_none());
         assert!(decode_push(r#"{"id":1,"url":"u","headers":{"X-Microsoft-Skype-Content-Encoding":"gzip"},"body":"!!!"}"#).is_none());
+    }
+
+    #[test]
+    fn parses_retry_after() {
+        let d = retry_after(
+            r#"{"code":42901,"retryAfter":"00:02:52.0065811","message":"Request was throttled"}"#,
+        )
+        .unwrap();
+        assert_eq!(d.as_secs(), 172);
+        assert!(retry_after("{}").is_none());
     }
 
     #[test]

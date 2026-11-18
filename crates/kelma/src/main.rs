@@ -2,6 +2,7 @@
 
 mod backend;
 mod data;
+mod demo;
 mod markdown;
 mod ui;
 
@@ -15,7 +16,22 @@ use teams_proto::Client;
 use ui::UiHandle;
 
 /// Signs in (stored session or device code), then runs the engine until the app quits.
-async fn app_main(ui: UiHandle, mut cmds: tokio::sync::mpsc::UnboundedReceiver<Cmd>, focus: Arc<AtomicBool>) {
+async fn app_main(
+    ui: UiHandle,
+    mut cmds: tokio::sync::mpsc::UnboundedReceiver<Cmd>,
+    focus: Arc<AtomicBool>,
+) {
+    if std::env::var_os("KELMA_DEMO").is_some() {
+        let engine = demo_engine(&ui).expect("demo setup");
+        engine.start_offline();
+        if let Ok(id) = std::env::var("KELMA_DEMO_OPEN") {
+            tokio::spawn(engine.clone().handle(Cmd::SelectChat(id)));
+        }
+        while let Some(cmd) = cmds.recv().await {
+            tokio::spawn(engine.clone().handle(cmd));
+        }
+        return;
+    }
     let engine = loop {
         match sign_in(&ui).await {
             Ok(e) => break e,
@@ -39,9 +55,28 @@ async fn app_main(ui: UiHandle, mut cmds: tokio::sync::mpsc::UnboundedReceiver<C
         }
     });
     engine.start();
+    // Development aid: open a conversation on startup.
+    if let Ok(id) = std::env::var("KELMA_OPEN") {
+        tokio::spawn(engine.clone().handle(Cmd::SelectChat(id)));
+    }
     while let Some(cmd) = cmds.recv().await {
         tokio::spawn(engine.clone().handle(cmd));
     }
+}
+
+fn demo_engine(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
+    let store = store::Store::open_in_memory()?;
+    demo::seed(&store, teams_proto::time::now_ms())?;
+    let client = Client::offline("demo")?;
+    ui.ready("ME".into());
+    Ok(Engine::new(
+        client,
+        store,
+        session::Config::default(),
+        ui.clone(),
+        demo::ME.into(),
+        "Mohamed Eslam".into(),
+    ))
 }
 
 async fn sign_in(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
@@ -91,15 +126,69 @@ async fn device_code(ui: &UiHandle, cfg: &session::Config) -> anyhow::Result<Cli
     Ok(client)
 }
 
+/// Twemoji (COLRv0) — Slint's renderer draws COLRv0/CBDT color glyphs but not COLRv1, which is
+/// what most distributions ship as their emoji font. CC-BY 4.0, see ui/fonts/README.md.
+const EMOJI_FONT: &[u8] = include_bytes!("../ui/fonts/TwemojiMozilla.ttf");
+
+/// Finds a system font file for a fontconfig pattern.
+fn fc_match(pattern: &str) -> Option<std::path::PathBuf> {
+    let out = std::process::Command::new("fc-match")
+        .args(["-f", "%{file}", pattern])
+        .output()
+        .ok()?;
+    let path = std::path::PathBuf::from(String::from_utf8(out.stdout).ok()?.trim());
+    path.is_file().then_some(path)
+}
+
+/// Builds the font chain: the UI font in each weight, then the bundled color emoji font.
+fn configure_fonts() {
+    if std::env::var_os("SLINT_FONT_PATH").is_some() {
+        return;
+    }
+    let Ok(paths) = session::Paths::new() else {
+        return;
+    };
+    let dir = paths.cache_dir.join("fonts");
+    let emoji = dir.join("TwemojiMozilla.ttf");
+    let fresh = std::fs::metadata(&emoji)
+        .map(|m| m.len() == EMOJI_FONT.len() as u64)
+        .unwrap_or(false);
+    if !fresh
+        && (std::fs::create_dir_all(&dir).is_err() || std::fs::write(&emoji, EMOJI_FONT).is_err())
+    {
+        return;
+    }
+    // Static files per weight: weights of a variable font loaded this way are not applied.
+    // Arabic and other scripts keep using the system fallback.
+    let mut chain: Vec<std::path::PathBuf> =
+        ["sans-serif", "sans-serif:semibold", "sans-serif:bold"]
+            .into_iter()
+            .filter_map(fc_match)
+            .collect();
+    chain.dedup();
+    chain.push(emoji);
+    if let Ok(joined) = std::env::join_paths(chain) {
+        // SAFETY: called at the start of main, before any other thread exists.
+        unsafe { std::env::set_var("SLINT_FONT_PATH", joined) };
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    configure_fonts();
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("KELMA_LOG").unwrap_or_else(|_| "warn".into()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("KELMA_LOG")
+                .unwrap_or_else(|_| "warn".into()),
+        )
         .init();
 
     // Software rendering keeps memory low (docs/adr/0001-ui-toolkit.md).
     // KELMA_RENDERER=femtovg switches to the GPU renderer.
     let renderer = std::env::var("KELMA_RENDERER").unwrap_or_else(|_| "software".into());
-    slint::BackendSelector::new().backend_name("winit".into()).renderer_name(renderer).select()?;
+    slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .renderer_name(renderer)
+        .select()?;
     let _ = slint::set_xdg_app_id("kelma");
 
     let window = AppWindow::new()?;
@@ -113,31 +202,45 @@ fn main() -> anyhow::Result<()> {
             window.$cb(move |$($a),*| { let _ = tx.send($e); });
         }};
     }
-    cmd!(on_retry_login, | | Cmd::RetryLogin);
+    cmd!(on_retry_login, || Cmd::RetryLogin);
     cmd!(on_select_chat, |id| Cmd::SelectChat(id.into()));
-    cmd!(on_select_channel, |id, title| Cmd::SelectChannel(id.into(), title.into()));
+    cmd!(on_select_channel, |id, title| Cmd::SelectChannel(
+        id.into(),
+        title.into()
+    ));
     cmd!(on_toggle_team, |i| Cmd::ToggleTeam(i.max(0) as usize));
     cmd!(on_toggle_favorite, |id| Cmd::ToggleFavorite(id.into()));
     cmd!(on_set_filter, |f| Cmd::SetFilter(f.into()));
     cmd!(on_search, |q| Cmd::Search(q.into()));
-    cmd!(on_typing_tick, | | Cmd::TypingTick);
-    cmd!(on_load_older, | | Cmd::LoadOlder);
+    cmd!(on_typing_tick, || Cmd::TypingTick);
+    cmd!(on_load_older, || Cmd::LoadOlder);
     cmd!(on_react, |id, key| Cmd::React(id.into(), key.into()));
     cmd!(on_reply, |id| Cmd::Reply(id.into()));
-    cmd!(on_cancel_reply, | | Cmd::CancelReply);
+    cmd!(on_cancel_reply, || Cmd::CancelReply);
     cmd!(on_edit, |id| Cmd::Edit(id.into()));
     cmd!(on_delete, |id| Cmd::Delete(id.into()));
     cmd!(on_open_url, |u| Cmd::OpenUrl(u.into()));
     cmd!(on_open_thread, |id| Cmd::OpenThread(id.into()));
-    cmd!(on_close_thread, | | Cmd::CloseThread);
-    cmd!(on_attach_image, | | Cmd::AttachImage);
-    cmd!(on_attach_file, | | Cmd::AttachFile);
+    cmd!(on_close_thread, || Cmd::CloseThread);
+    cmd!(on_attach_image, || Cmd::AttachImage);
+    cmd!(on_attach_file, || Cmd::AttachFile);
     {
         let tx = tx.clone();
         let weak = window.as_weak();
         window.on_send(move |text| {
-            let subject = weak.upgrade().map(|w| w.get_post_subject().to_string()).unwrap_or_default();
+            let subject = weak
+                .upgrade()
+                .map(|w| w.get_post_subject().to_string())
+                .unwrap_or_default();
             let _ = tx.send(Cmd::Send(text.into(), subject));
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_dismiss_banner(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_banner(slint::SharedString::new());
+            }
         });
     }
     {
@@ -157,15 +260,25 @@ fn main() -> anyhow::Result<()> {
         use slint::winit_030::WinitWindowAccessor;
         let weak = window.as_weak();
         let focus = focus.clone();
-        focus_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(400), move || {
-            if let Some(w) = weak.upgrade() {
-                let f = w.window().with_winit_window(|ww| ww.has_focus()).unwrap_or(true);
-                focus.store(f, Ordering::Relaxed);
-            }
-        });
+        focus_timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(400),
+            move || {
+                if let Some(w) = weak.upgrade() {
+                    let f = w
+                        .window()
+                        .with_winit_window(|ww| ww.has_focus())
+                        .unwrap_or(true);
+                    focus.store(f, Ordering::Relaxed);
+                }
+            },
+        );
     }
 
-    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?;
     rt.spawn(app_main(ui, rx, focus));
     window.run()?;
     rt.shutdown_timeout(std::time::Duration::from_millis(500));

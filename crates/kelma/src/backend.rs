@@ -4,7 +4,10 @@
 //! store, then marked "dirty"; a render loop rebuilds only the visible view data and pushes it to
 //! the UI. This keeps memory small: only the current conversation window is materialized.
 
-use crate::data::{ChatData, FileData, HeaderData, ImgData, MsgData, Pixels, ReactData, TeamData, color_for, initials};
+use crate::data::{
+    ChatData, FileData, HeaderData, ImgData, MsgData, Pixels, ReactData, TeamData, color_for,
+    initials,
+};
 use crate::markdown::{reaction_emoji, render_blocks};
 use crate::ui::UiHandle;
 use chrono::{Datelike, Local, TimeZone};
@@ -130,18 +133,31 @@ fn preview_of(m: &Message, me: &str) -> String {
         "This message has been deleted.".to_string()
     } else {
         let p = render::plain_text(&render::parse_teams_html(&m.content)).replace('\n', " ");
-        if p.trim().is_empty() && !m.files.is_empty() { format!("📎 {}", m.files[0].name) } else { p }
+        if p.trim().is_empty() && !m.files.is_empty() {
+            format!("📎 {}", m.files[0].name)
+        } else {
+            p
+        }
     };
-    if m.sender_mri == me { format!("You: {text}") } else { text }
+    if m.sender_mri == me {
+        format!("You: {text}")
+    } else {
+        text
+    }
 }
 
 fn chat_time(ms: i64) -> String {
     if ms <= 0 {
         return String::new();
     }
-    let Some(t) = Local.timestamp_millis_opt(ms).single() else { return String::new() };
+    let Some(t) = Local.timestamp_millis_opt(ms).single() else {
+        return String::new();
+    };
     let now = Local::now();
-    let days = now.date_naive().signed_duration_since(t.date_naive()).num_days();
+    let days = now
+        .date_naive()
+        .signed_duration_since(t.date_naive())
+        .num_days();
     match days {
         0 => t.format("%H:%M").to_string(),
         1 => "Yesterday".into(),
@@ -152,8 +168,13 @@ fn chat_time(ms: i64) -> String {
 }
 
 fn day_label(ms: i64) -> String {
-    let Some(t) = Local.timestamp_millis_opt(ms).single() else { return String::new() };
-    let days = Local::now().date_naive().signed_duration_since(t.date_naive()).num_days();
+    let Some(t) = Local.timestamp_millis_opt(ms).single() else {
+        return String::new();
+    };
+    let days = Local::now()
+        .date_naive()
+        .signed_duration_since(t.date_naive())
+        .num_days();
     match days {
         0 => "Today".into(),
         1 => "Yesterday".into(),
@@ -162,7 +183,10 @@ fn day_label(ms: i64) -> String {
 }
 
 fn same_day(a: i64, b: i64) -> bool {
-    match (Local.timestamp_millis_opt(a).single(), Local.timestamp_millis_opt(b).single()) {
+    match (
+        Local.timestamp_millis_opt(a).single(),
+        Local.timestamp_millis_opt(b).single(),
+    ) {
         (Some(x), Some(y)) => x.date_naive() == y.date_naive(),
         _ => false,
     }
@@ -178,9 +202,17 @@ fn one_on_one_members(id: &str) -> Vec<String> {
 
 fn decode_image(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Pixels> {
     let img = image::load_from_memory(bytes).ok()?;
-    let img = if img.width() > max_w || img.height() > max_h { img.thumbnail(max_w, max_h) } else { img };
+    let img = if img.width() > max_w || img.height() > max_h {
+        img.thumbnail(max_w, max_h)
+    } else {
+        img
+    };
     let rgba = img.to_rgba8();
-    Some(Pixels::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
+    Some(Pixels::clone_from_slice(
+        rgba.as_raw(),
+        rgba.width(),
+        rgba.height(),
+    ))
 }
 
 fn system_text(m: &MessageRow) -> Option<String> {
@@ -203,7 +235,14 @@ fn system_text(m: &MessageRow) -> Option<String> {
 }
 
 impl Engine {
-    pub fn new(client: Client, store: Store, cfg: session::Config, ui: UiHandle, me: String, my_name: String) -> Arc<Engine> {
+    pub fn new(
+        client: Client,
+        store: Store,
+        cfg: session::Config,
+        ui: UiHandle,
+        me: String,
+        my_name: String,
+    ) -> Arc<Engine> {
         Arc::new(Engine {
             client,
             store: Mutex::new(store),
@@ -211,8 +250,16 @@ impl Engine {
             ui,
             me,
             my_name,
-            view: Mutex::new(View { filter: "all".into(), limit: PAGE, ..Default::default() }),
-            dirty: Mutex::new(Dirty { chats: true, teams: true, ..Default::default() }),
+            view: Mutex::new(View {
+                filter: "all".into(),
+                limit: PAGE,
+                ..Default::default()
+            }),
+            dirty: Mutex::new(Dirty {
+                chats: true,
+                teams: true,
+                ..Default::default()
+            }),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             focused: Arc::new(AtomicBool::new(true)),
@@ -221,6 +268,12 @@ impl Engine {
 
     fn mark(&self, f: impl FnOnce(&mut Dirty)) {
         f(&mut self.dirty.lock().unwrap());
+    }
+
+    /// Starts only the render loop (demo mode: no network).
+    pub fn start_offline(self: &Arc<Self>) {
+        let e = self.clone();
+        tokio::spawn(async move { e.render_loop().await });
     }
 
     /// Starts background loops: render, live events, periodic token persistence.
@@ -255,18 +308,25 @@ impl Engine {
     pub async fn sync(self: &Arc<Self>) -> anyhow::Result<()> {
         let convs = self.client.conversations(0, 200).await?;
         let snap = self.client.snapshot().await.unwrap_or_default();
-        let meta: HashMap<&str, &teams_proto::csa::ChatMeta> = snap.chats.iter().map(|c| (c.id.as_str(), c)).collect();
+        let meta: HashMap<&str, &teams_proto::csa::ChatMeta> =
+            snap.chats.iter().map(|c| (c.id.as_str(), c)).collect();
         let mut channel_info: HashMap<String, (String, String, String)> = HashMap::new();
         for t in &snap.teams {
             for ch in &t.channels {
-                channel_info.insert(ch.id.clone(), (t.id.clone(), t.name.clone(), ch.name.clone()));
+                channel_info.insert(
+                    ch.id.clone(),
+                    (t.id.clone(), t.name.clone(), ch.name.clone()),
+                );
             }
         }
 
         // Resolve names we need for titles.
         let mut wanted: Vec<String> = vec![];
         for c in &convs {
-            let members = meta.get(c.id.as_str()).map(|m| m.members.clone()).unwrap_or_else(|| one_on_one_members(&c.id));
+            let members = meta
+                .get(c.id.as_str())
+                .map(|m| m.members.clone())
+                .unwrap_or_else(|| one_on_one_members(&c.id));
             wanted.extend(members.into_iter().filter(|m| m != &self.me));
         }
         wanted.sort();
@@ -277,46 +337,83 @@ impl Engine {
         {
             let st = self.store.lock().unwrap();
             for p in profiles {
-                st.upsert_user(&UserRow { mri: p.mri, display_name: p.display_name, email: p.email, avatar: None, updated_ms: now_ms() })?;
+                st.upsert_user(&UserRow {
+                    mri: p.mri,
+                    display_name: p.display_name,
+                    email: p.email,
+                    avatar: None,
+                    updated_ms: now_ms(),
+                })?;
             }
         }
 
         {
             let st = self.store.lock().unwrap();
             for t in &snap.teams {
-                st.upsert_team(&TeamRow { id: t.id.clone(), name: t.name.clone() })?;
+                st.upsert_team(&TeamRow {
+                    id: t.id.clone(),
+                    name: t.name.clone(),
+                })?;
             }
             let mut seen = HashSet::new();
             for c in &convs {
-                let Some(kind) = kind_from(c.kind) else { continue };
+                let Some(kind) = kind_from(c.kind) else {
+                    continue;
+                };
                 if meta.get(c.id.as_str()).is_some_and(|m| m.hidden) {
                     continue;
                 }
                 seen.insert(c.id.clone());
                 let name_of = |mri: &str| st.user(mri).ok().flatten().map(|u| u.display_name);
-                let members = meta.get(c.id.as_str()).map(|m| m.members.clone()).unwrap_or_else(|| one_on_one_members(&c.id));
-                let others: Vec<String> = members.iter().filter(|m| *m != &self.me).filter_map(|m| name_of(m)).collect();
-                let (team_id, team_name, channel_name) = channel_info.get(&c.id).cloned().map(|(a, b, cn)| (Some(a), Some(b), Some(cn))).unwrap_or((None, None, None));
+                let members = meta
+                    .get(c.id.as_str())
+                    .map(|m| m.members.clone())
+                    .unwrap_or_else(|| one_on_one_members(&c.id));
+                let others: Vec<String> = members
+                    .iter()
+                    .filter(|m| *m != &self.me)
+                    .filter_map(|m| name_of(m))
+                    .collect();
+                let (team_id, team_name, channel_name) = channel_info
+                    .get(&c.id)
+                    .cloned()
+                    .map(|(a, b, cn)| (Some(a), Some(b), Some(cn)))
+                    .unwrap_or((None, None, None));
                 let title = match kind {
                     ConvKind::Notes => format!("{} (You)", self.my_name),
-                    ConvKind::Channel => channel_name.unwrap_or_else(|| c.topic.clone().unwrap_or_else(|| "Channel".into())),
+                    ConvKind::Channel => channel_name
+                        .unwrap_or_else(|| c.topic.clone().unwrap_or_else(|| "Channel".into())),
                     _ => meta
                         .get(c.id.as_str())
                         .and_then(|m| m.title.clone())
                         .or_else(|| c.topic.clone())
-                        .or_else(|| (!others.is_empty()).then(|| others.iter().take(4).cloned().collect::<Vec<_>>().join(", ")))
+                        .or_else(|| {
+                            (!others.is_empty()).then(|| {
+                                others
+                                    .iter()
+                                    .take(4)
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                        })
                         .unwrap_or_else(|| "Chat".into()),
                 };
-                let last = c.last_message.as_ref().filter(|m| m.is_chat_content() || m.message_type.starts_with("RichText"));
+                let last = c
+                    .last_message
+                    .as_ref()
+                    .filter(|m| m.is_chat_content() || m.message_type.starts_with("RichText"));
                 let preview = last.map(|m| preview_of(m, &self.me)).unwrap_or_default();
-                let unread = last.is_some_and(|m| m.sender_mri != self.me && m.compose_ms > c.read_horizon_ms);
+                let unread = last
+                    .is_some_and(|m| m.sender_mri != self.me && m.compose_ms > c.read_horizon_ms);
                 let existing = st.conversation(&c.id)?;
                 st.upsert_conversation(&ConversationRow {
                     id: c.id.clone(),
                     kind,
                     title,
                     team_id: team_id.or_else(|| existing.as_ref().and_then(|e| e.team_id.clone())),
-                    team_name: team_name.or_else(|| existing.as_ref().and_then(|e| e.team_name.clone())),
+                    team_name: team_name
+                        .or_else(|| existing.as_ref().and_then(|e| e.team_name.clone())),
                     last_activity_ms: c.last_activity_ms,
                     last_preview: preview,
                     unread,
@@ -409,14 +506,36 @@ impl Engine {
     fn on_event(self: &Arc<Self>, ev: Event) {
         match ev {
             Event::NewMessage(m) | Event::MessageUpdate(m) => self.on_message(m),
-            Event::Typing { conversation_id, from } => {
+            Event::Typing {
+                conversation_id,
+                from,
+            } => {
                 if from != self.me {
-                    let name = self.store.lock().unwrap().user(&from).ok().flatten().map(|u| u.display_name).unwrap_or_else(|| "Someone".into());
-                    self.view.lock().unwrap().typing.insert(conversation_id, (name, Instant::now() + Duration::from_secs(6)));
+                    let name = self
+                        .store
+                        .lock()
+                        .unwrap()
+                        .user(&from)
+                        .ok()
+                        .flatten()
+                        .map(|u| u.display_name)
+                        .unwrap_or_else(|| "Someone".into());
+                    self.view.lock().unwrap().typing.insert(
+                        conversation_id,
+                        (name, Instant::now() + Duration::from_secs(6)),
+                    );
                 }
             }
-            Event::ConversationUpdate { conversation_id } | Event::ThreadUpdate { conversation_id } => {
-                let known = self.store.lock().unwrap().conversation(&conversation_id).ok().flatten().is_some();
+            Event::ConversationUpdate { conversation_id }
+            | Event::ThreadUpdate { conversation_id } => {
+                let known = self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .conversation(&conversation_id)
+                    .ok()
+                    .flatten()
+                    .is_some();
                 if !known {
                     let e = self.clone();
                     tokio::spawn(async move {
@@ -440,7 +559,10 @@ impl Engine {
                 v.pending.retain(|(c, _)| c != cmid);
             }
             v.typing.remove(&m.conversation_id);
-            (v.current.as_deref() == Some(m.conversation_id.as_str()), self.focused.load(Ordering::Relaxed))
+            (
+                v.current.as_deref() == Some(m.conversation_id.as_str()),
+                self.focused.load(Ordering::Relaxed),
+            )
         };
         let known = {
             let st = self.store.lock().unwrap();
@@ -449,7 +571,12 @@ impl Engine {
             let is_new_top = !existed && m.parent_id.is_none() && m.is_chat_content();
             if is_new_top || (!existed && m.parent_id.is_some()) {
                 let unread = !mine && !(is_current && focused);
-                let _ = st.touch_conversation(&m.conversation_id, m.compose_ms, &preview_of(&m, &self.me), unread);
+                let _ = st.touch_conversation(
+                    &m.conversation_id,
+                    m.compose_ms,
+                    &preview_of(&m, &self.me),
+                    unread,
+                );
             }
             if !existed && !mine && m.is_chat_content() && !(is_current && focused) {
                 self.notify(&st, &m);
@@ -479,11 +606,28 @@ impl Engine {
     }
 
     fn notify(&self, st: &Store, m: &Message) {
-        let title = st.conversation(&m.conversation_id).ok().flatten().map(|c| c.title).unwrap_or_default();
-        let summary = if title.is_empty() || title == m.sender_name { m.sender_name.clone() } else { format!("{} — {}", m.sender_name, title) };
-        let body: String = render::plain_text(&render::parse_teams_html(&m.content)).chars().take(200).collect();
+        let title = st
+            .conversation(&m.conversation_id)
+            .ok()
+            .flatten()
+            .map(|c| c.title)
+            .unwrap_or_default();
+        let summary = if title.is_empty() || title == m.sender_name {
+            m.sender_name.clone()
+        } else {
+            format!("{} — {}", m.sender_name, title)
+        };
+        let body: String = render::plain_text(&render::parse_teams_html(&m.content))
+            .chars()
+            .take(200)
+            .collect();
         tokio::task::spawn_blocking(move || {
-            let _ = notify_rust::Notification::new().appname("kelma").summary(&summary).body(&body).icon("mail-message-new").show();
+            let _ = notify_rust::Notification::new()
+                .appname("kelma")
+                .summary(&summary)
+                .body(&body)
+                .icon("mail-message-new")
+                .show();
         });
     }
 
@@ -530,7 +674,9 @@ impl Engine {
             Cmd::TypingTick => {
                 let target = {
                     let mut v = self.view.lock().unwrap();
-                    let due = v.last_typing_sent.is_none_or(|t| t.elapsed() > Duration::from_secs(15));
+                    let due = v
+                        .last_typing_sent
+                        .is_none_or(|t| t.elapsed() > Duration::from_secs(15));
                     let target = v.current.clone().filter(|_| due);
                     if target.is_some() {
                         v.last_typing_sent = Some(Instant::now());
@@ -546,7 +692,11 @@ impl Engine {
             Cmd::Reply(id) => {
                 let row = self.store.lock().unwrap().message(&id)?;
                 if let Some(r) = row {
-                    let preview: String = render::plain_text(&render::parse_teams_html(&r.content_html)).chars().take(120).collect();
+                    let preview: String =
+                        render::plain_text(&render::parse_teams_html(&r.content_html))
+                            .chars()
+                            .take(120)
+                            .collect();
                     self.ui.reply_bar(r.sender_name.clone(), preview, false);
                     let mut v = self.view.lock().unwrap();
                     v.editing = None;
@@ -558,7 +708,8 @@ impl Engine {
                 let row = self.store.lock().unwrap().message(&id)?;
                 if let Some(r) = row.filter(|r| r.sender_mri == self.me) {
                     let text = render::plain_text(&render::parse_teams_html(&r.content_html));
-                    self.ui.reply_bar(String::new(), text.chars().take(120).collect(), true);
+                    self.ui
+                        .reply_bar(String::new(), text.chars().take(120).collect(), true);
                     self.ui.set_draft(text);
                     let mut v = self.view.lock().unwrap();
                     v.reply_to = None;
@@ -584,7 +735,12 @@ impl Engine {
                 }
             }
             Cmd::OpenUrl(url) => {
-                if url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:") {
+                if let Some(media) = url.strip_prefix("kelma-media:") {
+                    self.play_media(media).await?;
+                } else if url.starts_with("https://")
+                    || url.starts_with("http://")
+                    || url.starts_with("mailto:")
+                {
                     let _ = open::that_detached(&url);
                 }
             }
@@ -601,8 +757,18 @@ impl Engine {
                 });
                 let conv = self.view.lock().unwrap().current.clone();
                 if let Some(c) = conv {
-                    let page = self.client.messages(&format!("{c};messageid={root}"), None, 100).await?;
-                    self.store_messages(&page.messages.into_iter().filter(|m| m.id != root).collect::<Vec<_>>(), Some(&root));
+                    let page = self
+                        .client
+                        .messages(&format!("{c};messageid={root}"), None, 100)
+                        .await?;
+                    self.store_messages(
+                        &page
+                            .messages
+                            .into_iter()
+                            .filter(|m| m.id != root)
+                            .collect::<Vec<_>>(),
+                        Some(&root),
+                    );
                     self.mark(|d| {
                         d.messages = true;
                         d.scroll = true;
@@ -619,7 +785,9 @@ impl Engine {
             }
             Cmd::AttachImage => self.attach_image().await?,
             Cmd::AttachFile => {
-                self.ui.banner("Sending files is not supported yet: share a OneDrive link instead.".into());
+                self.ui.banner(
+                    "Sending files is not supported yet: share a OneDrive link instead.".into(),
+                );
             }
         }
         Ok(())
@@ -678,7 +846,11 @@ impl Engine {
         if thread.is_some() {
             return Ok(());
         }
-        let cached = self.store.lock().unwrap().messages_before(&conv, None, limit + PAGE)?;
+        let cached = self
+            .store
+            .lock()
+            .unwrap()
+            .messages_before(&conv, None, limit + PAGE)?;
         if cached.len() < limit + PAGE {
             let oldest = cached.first().map(|m| m.compose_ms);
             if let Some(oldest) = oldest {
@@ -705,13 +877,22 @@ impl Engine {
         }
         let (target, reply, editing, current) = {
             let mut v = self.view.lock().unwrap();
-            (self.current_target_locked(&v), v.reply_to.take(), v.editing.take(), v.current.clone())
+            (
+                self.current_target_locked(&v),
+                v.reply_to.take(),
+                v.editing.take(),
+                v.current.clone(),
+            )
         };
         self.ui.reply_bar(String::new(), String::new(), false);
-        let (Some(target), Some(current)) = (target, current) else { return Ok(()) };
+        let (Some(target), Some(current)) = (target, current) else {
+            return Ok(());
+        };
         if let Some(id) = editing {
             let html = render::text_to_teams_html(&text);
-            self.client.edit_message(&target, &id, &html, &self.my_name).await?;
+            self.client
+                .edit_message(&target, &id, &html, &self.my_name)
+                .await?;
             let st = self.store.lock().unwrap();
             if let Some(mut r) = st.message(&id)? {
                 r.content_html = html;
@@ -724,8 +905,19 @@ impl Engine {
         }
         let html = match &reply {
             Some(r) => {
-                let preview: String = render::plain_text(&render::parse_teams_html(&r.content_html)).chars().take(200).collect();
-                render::reply_html(&r.id, &r.sender_mri, &r.sender_name, r.compose_ms, &preview, &text)
+                let preview: String =
+                    render::plain_text(&render::parse_teams_html(&r.content_html))
+                        .chars()
+                        .take(200)
+                        .collect();
+                render::reply_html(
+                    &r.id,
+                    &r.sender_mri,
+                    &r.sender_name,
+                    r.compose_ms,
+                    &preview,
+                    &text,
+                )
             }
             None => render::text_to_teams_html(&text),
         };
@@ -745,13 +937,21 @@ impl Engine {
             client_message_id: None,
             reactions_json: json!({"s": if subject.is_empty() { Value::Null } else { Value::String(subject.clone()) }}).to_string(),
         };
-        self.view.lock().unwrap().pending.push((pending_id.clone(), row));
+        self.view
+            .lock()
+            .unwrap()
+            .pending
+            .push((pending_id.clone(), row));
         self.mark(|d| {
             d.messages = true;
             d.scroll = true;
         });
         let subj = (!subject.is_empty()).then_some(subject.as_str());
-        match self.client.send_message(&target, &html, &self.my_name, subj).await {
+        match self
+            .client
+            .send_message(&target, &html, &self.my_name, subj)
+            .await
+        {
             Ok(cmid) => {
                 let mut v = self.view.lock().unwrap();
                 if let Some(p) = v.pending.iter_mut().find(|(id, _)| id == &pending_id) {
@@ -767,16 +967,25 @@ impl Engine {
                 let e = self.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_secs(8)).await;
-                    let stale = e.view.lock().unwrap().pending.iter().any(|(c, r)| r.conversation_id == current && c.chars().all(|ch| ch.is_ascii_digit()));
+                    let stale = e.view.lock().unwrap().pending.iter().any(|(c, r)| {
+                        r.conversation_id == current && c.chars().all(|ch| ch.is_ascii_digit())
+                    });
                     if stale {
                         e.fetch_latest(&target).await;
-                        e.view.lock().unwrap().pending.retain(|(c, r)| !(r.conversation_id == current && c.chars().all(|ch| ch.is_ascii_digit())));
+                        e.view.lock().unwrap().pending.retain(|(c, r)| {
+                            !(r.conversation_id == current
+                                && c.chars().all(|ch| ch.is_ascii_digit()))
+                        });
                         e.mark(|d| d.messages = true);
                     }
                 });
             }
             Err(err) => {
-                self.view.lock().unwrap().pending.retain(|(id, _)| id != &pending_id);
+                self.view
+                    .lock()
+                    .unwrap()
+                    .pending
+                    .retain(|(id, _)| id != &pending_id);
                 self.ui.set_draft(text);
                 self.mark(|d| d.messages = true);
                 return Err(err.into());
@@ -794,17 +1003,33 @@ impl Engine {
     }
 
     async fn react(self: &Arc<Self>, msg_id: &str, key: &str) -> anyhow::Result<()> {
-        let Some(target) = self.current_target() else { return Ok(()) };
+        let Some(target) = self.current_target() else {
+            return Ok(());
+        };
         let row = self.store.lock().unwrap().message(msg_id)?;
         let Some(mut row) = row else { return Ok(()) };
-        let mut props: Value = serde_json::from_str(&row.reactions_json).unwrap_or_else(|_| json!({}));
-        let mut reactions: Vec<Value> = props.get("r").and_then(Value::as_array).cloned().unwrap_or_default();
-        let mine = reactions
-            .iter()
-            .any(|r| r["key"] == key && r["users"].as_array().is_some_and(|u| u.iter().any(|x| x == self.me.as_str())));
-        let conv_for_msg = if row.parent_id.is_some() { target.clone() } else { row.conversation_id.clone() };
+        let mut props: Value =
+            serde_json::from_str(&row.reactions_json).unwrap_or_else(|_| json!({}));
+        let mut reactions: Vec<Value> = props
+            .get("r")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mine = reactions.iter().any(|r| {
+            r["key"] == key
+                && r["users"]
+                    .as_array()
+                    .is_some_and(|u| u.iter().any(|x| x == self.me.as_str()))
+        });
+        let conv_for_msg = if row.parent_id.is_some() {
+            target.clone()
+        } else {
+            row.conversation_id.clone()
+        };
         if mine {
-            self.client.remove_reaction(&conv_for_msg, msg_id, key).await?;
+            self.client
+                .remove_reaction(&conv_for_msg, msg_id, key)
+                .await?;
             for r in reactions.iter_mut().filter(|r| r["key"] == key) {
                 if let Some(u) = r["users"].as_array_mut() {
                     u.retain(|x| x != self.me.as_str());
@@ -829,18 +1054,64 @@ impl Engine {
         Ok(())
     }
 
+    /// Downloads a voice message / video with credentials and opens it in the system player.
+    async fn play_media(&self, url: &str) -> anyhow::Result<()> {
+        let dir = session::Paths::new()?.cache_dir.join("media");
+        std::fs::create_dir_all(&dir)?;
+        let name: String = url
+            .split("/objects/")
+            .nth(1)
+            .unwrap_or("media")
+            .split('/')
+            .next()
+            .unwrap_or("media")
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        let path = dir.join(format!("{name}.m4a"));
+        if !path.exists() {
+            self.ui.banner("Downloading…".into());
+            let data = self.client.download_media(url, 100 * 1024 * 1024).await?;
+            std::fs::write(&path, data)?;
+            self.ui.banner(String::new());
+        }
+        open::that_detached(&path)?;
+        Ok(())
+    }
+
     async fn attach_image(self: &Arc<Self>) -> anyhow::Result<()> {
-        let Some(target) = self.current_target() else { return Ok(()) };
-        let Some(file) = rfd::AsyncFileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]).pick_file().await else {
+        let Some(target) = self.current_target() else {
+            return Ok(());
+        };
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
+            .pick_file()
+            .await
+        else {
             return Ok(());
         };
         let data = file.read().await;
-        let (w, h) = image::load_from_memory(&data).map(|i| (i.width(), i.height())).unwrap_or((400, 300));
-        let (w, h) = if w > 400 { (400, h * 400 / w.max(1)) } else { (w, h) };
-        let conv_only = target.split(";messageid=").next().unwrap_or(&target).to_string();
-        let id = self.client.upload_image(&conv_only, &file.file_name(), data).await?;
+        let (w, h) = image::load_from_memory(&data)
+            .map(|i| (i.width(), i.height()))
+            .unwrap_or((400, 300));
+        let (w, h) = if w > 400 {
+            (400, h * 400 / w.max(1))
+        } else {
+            (w, h)
+        };
+        let conv_only = target
+            .split(";messageid=")
+            .next()
+            .unwrap_or(&target)
+            .to_string();
+        let id = self
+            .client
+            .upload_image(&conv_only, &file.file_name(), data)
+            .await?;
         let html = teams_proto::ams::image_html(&id, w, h);
-        self.client.send_message(&target, &html, &self.my_name, None).await?;
+        self.client
+            .send_message(&target, &html, &self.my_name, None)
+            .await?;
         self.ui.banner(String::new());
         Ok(())
     }
@@ -868,7 +1139,11 @@ impl Engine {
                 let mut v = self.view.lock().unwrap();
                 let now = Instant::now();
                 v.typing.retain(|_, (_, until)| *until > now);
-                v.current.as_ref().and_then(|c| v.typing.get(c)).map(|(n, _)| format!("{n} is typing…")).unwrap_or_default()
+                v.current
+                    .as_ref()
+                    .and_then(|c| v.typing.get(c))
+                    .map(|(n, _)| format!("{n} is typing…"))
+                    .unwrap_or_default()
             };
             if typing != last_typing {
                 self.ui.typing(typing.clone());
@@ -888,10 +1163,20 @@ impl Engine {
         cache.insert(mri.to_string(), None);
         drop(cache);
         // Stored avatar first, network second.
-        let stored = self.store.lock().unwrap().user(mri).ok().flatten().and_then(|u| u.avatar);
+        let stored = self
+            .store
+            .lock()
+            .unwrap()
+            .user(mri)
+            .ok()
+            .flatten()
+            .and_then(|u| u.avatar);
         if let Some(bytes) = stored {
             let px = decode_image(&bytes, 64, 64);
-            self.avatars.lock().unwrap().insert(mri.to_string(), px.clone());
+            self.avatars
+                .lock()
+                .unwrap()
+                .insert(mri.to_string(), px.clone());
             return px;
         }
         let e = self.clone();
@@ -902,7 +1187,13 @@ impl Engine {
             {
                 e.avatars.lock().unwrap().insert(mri.clone(), Some(px));
                 let st = e.store.lock().unwrap();
-                let mut u = st.user(&mri).ok().flatten().unwrap_or(UserRow { mri: mri.clone(), display_name: String::new(), email: None, avatar: None, updated_ms: 0 });
+                let mut u = st.user(&mri).ok().flatten().unwrap_or(UserRow {
+                    mri: mri.clone(),
+                    display_name: String::new(),
+                    email: None,
+                    avatar: None,
+                    updated_ms: 0,
+                });
                 u.avatar = Some(bytes);
                 let _ = st.upsert_user(&u);
                 drop(st);
@@ -926,19 +1217,40 @@ impl Engine {
         let e = self.clone();
         let url = url.to_string();
         tokio::spawn(async move {
-            let bytes = if teams_proto::ams::is_ams_url(&url) { e.client.download_image(&url).await } else { e.client.bytes(&url, &[], 10 * 1024 * 1024).await };
-            if let Ok(bytes) = bytes
-                && let Some(px) = tokio::task::spawn_blocking(move || decode_image(&bytes, 480, 360)).await.ok().flatten()
-            {
-                e.images.lock().unwrap().insert(url, Some(px));
-                e.mark(|d| d.messages = true);
+            let bytes = if teams_proto::ams::is_ams_url(&url) {
+                e.client.download_image(&url).await
+            } else {
+                e.client.bytes(&url, &[], 10 * 1024 * 1024).await
+            };
+            match bytes {
+                Ok(bytes) => {
+                    match tokio::task::spawn_blocking(move || decode_image(&bytes, 480, 360))
+                        .await
+                        .ok()
+                        .flatten()
+                    {
+                        Some(px) => {
+                            e.images.lock().unwrap().insert(url, Some(px));
+                            e.mark(|d| d.messages = true);
+                        }
+                        None => tracing::warn!(%url, "image could not be decoded"),
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(%url, %err, "image download failed, retrying in 30s");
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    e.images.lock().unwrap().remove(&url);
+                    e.mark(|d| d.messages = true);
+                }
             }
         });
         None
     }
 
     fn other_member(&self, conv_id: &str) -> Option<String> {
-        one_on_one_members(conv_id).into_iter().find(|m| m != &self.me)
+        one_on_one_members(conv_id)
+            .into_iter()
+            .find(|m| m != &self.me)
     }
 
     fn render_chats(self: &Arc<Self>) {
@@ -957,7 +1269,8 @@ impl Engine {
                 };
                 st.conversations(f, 300).unwrap_or_default()
             } else {
-                st.search_conversations(search.trim(), 100).unwrap_or_default()
+                st.search_conversations(search.trim(), 100)
+                    .unwrap_or_default()
             }
         };
         let mut fav = vec![];
@@ -986,7 +1299,13 @@ impl Engine {
                 time: chat_time(r.last_activity_ms),
                 unread: r.unread && current.as_deref() != Some(r.id.as_str()),
                 favorite: r.favorite,
-                section: if r.favorite { "favorites" } else if r.kind == ConvKind::Channel { "channels" } else { "chats" },
+                section: if r.favorite {
+                    "favorites"
+                } else if r.kind == ConvKind::Channel {
+                    "channels"
+                } else {
+                    "chats"
+                },
                 id: r.id,
                 title,
             };
@@ -1016,7 +1335,10 @@ impl Engine {
                     initials: initials(&t.name),
                     color: color_for(&t.id),
                     expanded: expanded.contains(&t.id),
-                    channels: channels.into_iter().map(|c| (c.id, c.title, c.unread)).collect(),
+                    channels: channels
+                        .into_iter()
+                        .map(|c| (c.id, c.title, c.unread))
+                        .collect(),
                     id: t.id,
                     name: t.name,
                 }
@@ -1029,7 +1351,11 @@ impl Engine {
     fn render_header(self: &Arc<Self>) {
         let (cur, thread, title_override) = {
             let v = self.view.lock().unwrap();
-            (v.current.clone(), v.thread_root.clone(), v.current_title.clone())
+            (
+                v.current.clone(),
+                v.thread_root.clone(),
+                v.current_title.clone(),
+            )
         };
         let Some(id) = cur else {
             self.ui.header(HeaderData::default());
@@ -1037,7 +1363,14 @@ impl Engine {
         };
         let row = self.store.lock().unwrap().conversation(&id).ok().flatten();
         let (title, kind) = match &row {
-            Some(r) => (if title_override.is_empty() { r.title.clone() } else { title_override.clone() }, r.kind),
+            Some(r) => (
+                if title_override.is_empty() {
+                    r.title.clone()
+                } else {
+                    title_override.clone()
+                },
+                r.kind,
+            ),
             None => (title_override.clone(), ConvKind::Group),
         };
         let avatar_mri = match kind {
@@ -1059,7 +1392,12 @@ impl Engine {
     fn render_messages(self: &Arc<Self>, scroll: bool) {
         let (cur, thread, limit, pending) = {
             let v = self.view.lock().unwrap();
-            (v.current.clone(), v.thread_root.clone(), v.limit, v.pending.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>())
+            (
+                v.current.clone(),
+                v.thread_root.clone(),
+                v.limit,
+                v.pending.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>(),
+            )
         };
         let Some(conv) = cur else {
             self.ui.messages(vec![], false);
@@ -1067,18 +1405,29 @@ impl Engine {
         };
         let (rows, is_channel, reply_counts) = {
             let st = self.store.lock().unwrap();
-            let is_channel = st.conversation(&conv).ok().flatten().is_some_and(|c| c.kind == ConvKind::Channel);
+            let is_channel = st
+                .conversation(&conv)
+                .ok()
+                .flatten()
+                .is_some_and(|c| c.kind == ConvKind::Channel);
             let mut rows = match &thread {
                 Some(root) => {
-                    let mut r: Vec<MessageRow> = st.message(root).ok().flatten().into_iter().collect();
+                    let mut r: Vec<MessageRow> =
+                        st.message(root).ok().flatten().into_iter().collect();
                     r.extend(st.thread_replies(root, 500).unwrap_or_default());
                     r
                 }
                 None => st.messages_before(&conv, None, limit).unwrap_or_default(),
             };
-            rows.extend(pending.into_iter().filter(|p| p.conversation_id == conv && p.parent_id == thread));
+            rows.extend(
+                pending
+                    .into_iter()
+                    .filter(|p| p.conversation_id == conv && p.parent_id == thread),
+            );
             let counts: HashMap<String, usize> = if is_channel && thread.is_none() {
-                rows.iter().map(|r| (r.id.clone(), st.reply_count(&r.id).unwrap_or(0))).collect()
+                rows.iter()
+                    .map(|r| (r.id.clone(), st.reply_count(&r.id).unwrap_or(0)))
+                    .collect()
             } else {
                 HashMap::new()
             };
@@ -1086,13 +1435,22 @@ impl Engine {
         };
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
-        for r in rows.iter().filter(|r| !r.message_type.starts_with("Control/")) {
+        for r in rows
+            .iter()
+            .filter(|r| !r.message_type.starts_with("Control/"))
+        {
             let system = system_text(r);
-            let props: Value = serde_json::from_str(&r.reactions_json).unwrap_or_else(|_| json!({}));
+            let props: Value =
+                serde_json::from_str(&r.reactions_json).unwrap_or_else(|_| json!({}));
             let parsed = render_blocks(&render::parse_teams_html(&r.content_html));
             let mine = r.sender_mri == self.me;
             let new_day = prev.is_none_or(|p| !same_day(p.compose_ms, r.compose_ms));
-            let show_header = new_day || prev.is_none_or(|p| p.sender_mri != r.sender_mri || r.compose_ms - p.compose_ms > 5 * 60_000 || system_text(p).is_some());
+            let show_header = new_day
+                || prev.is_none_or(|p| {
+                    p.sender_mri != r.sender_mri
+                        || r.compose_ms - p.compose_ms > 5 * 60_000
+                        || system_text(p).is_some()
+                });
             let reactions = props
                 .get("r")
                 .and_then(Value::as_array)
@@ -1119,8 +1477,16 @@ impl Engine {
                     a.iter()
                         .filter_map(|f| {
                             let name = f.get("name")?.as_str()?.to_string();
-                            let ext = f.get("type").and_then(Value::as_str).unwrap_or_default().to_uppercase();
-                            Some(FileData { url: f.get("url")?.as_str()?.to_string(), ext: if ext.is_empty() { "FILE".into() } else { ext }, name })
+                            let ext = f
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_uppercase();
+                            Some(FileData {
+                                url: f.get("url")?.as_str()?.to_string(),
+                                ext: if ext.is_empty() { "FILE".into() } else { ext },
+                                name,
+                            })
                         })
                         .collect()
                 })
@@ -1129,13 +1495,30 @@ impl Engine {
                 .images
                 .iter()
                 .map(|(url, w, h)| {
-                    let (w, h) = (w.unwrap_or(320) as f32, h.unwrap_or(200) as f32);
-                    let scale = (420.0 / w).min(320.0 / h).min(1.0);
-                    ImgData { pixels: self.inline_image(url), url: url.clone(), w: w * scale, h: h * scale }
+                    let pixels = self.inline_image(url);
+                    // Real pixel size once decoded; the HTML attributes are only a hint.
+                    let (w, h) = match &pixels {
+                        Some(p) => (p.width() as f32, p.height() as f32),
+                        None => (w.unwrap_or(320) as f32, h.unwrap_or(200) as f32),
+                    };
+                    let scale = (420.0 / w.max(1.0)).min(320.0 / h.max(1.0)).min(1.0);
+                    ImgData {
+                        pixels,
+                        url: url.clone(),
+                        w: w * scale,
+                        h: h * scale,
+                    }
                 })
                 .collect();
             let sender = if r.sender_name.is_empty() {
-                self.store.lock().unwrap().user(&r.sender_mri).ok().flatten().map(|u| u.display_name).unwrap_or_default()
+                self.store
+                    .lock()
+                    .unwrap()
+                    .user(&r.sender_mri)
+                    .ok()
+                    .flatten()
+                    .map(|u| u.display_name)
+                    .unwrap_or_default()
             } else {
                 r.sender_name.clone()
             };
@@ -1143,17 +1526,33 @@ impl Engine {
                 id: r.id.clone(),
                 initials: initials(&sender),
                 color: color_for(&r.sender_mri),
-                avatar: if show_header && !mine { self.avatar(&r.sender_mri) } else { None },
+                avatar: if show_header && !mine {
+                    self.avatar(&r.sender_mri)
+                } else {
+                    None
+                },
                 sender,
                 mine,
-                time: Local.timestamp_millis_opt(r.compose_ms).single().map(|t| t.format("%H:%M").to_string()).unwrap_or_default(),
-                day: if new_day { day_label(r.compose_ms) } else { String::new() },
+                time: Local
+                    .timestamp_millis_opt(r.compose_ms)
+                    .single()
+                    .map(|t| t.format("%H:%M").to_string())
+                    .unwrap_or_default(),
+                day: if new_day {
+                    day_label(r.compose_ms)
+                } else {
+                    String::new()
+                },
                 show_header,
                 edited: r.edited_ms.is_some(),
                 deleted: r.deleted,
                 plain: system.clone().unwrap_or(parsed.plain),
                 system: system.is_some(),
-                subject: props.get("s").and_then(Value::as_str).unwrap_or_default().to_string(),
+                subject: props
+                    .get("s")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
                 quote_author: parsed.quote_author,
                 quote_text: parsed.quote_text,
                 markdown: parsed.markdown,
@@ -1161,12 +1560,15 @@ impl Engine {
                 images,
                 files,
                 reactions,
-                reply_count: if is_channel && thread.is_none() { reply_counts.get(&r.id).copied().unwrap_or(0) as i32 } else { -1 },
+                reply_count: if is_channel && thread.is_none() {
+                    reply_counts.get(&r.id).copied().unwrap_or(0) as i32
+                } else {
+                    -1
+                },
                 pending: r.id.starts_with("pending-"),
             });
             prev = Some(r);
         }
         self.ui.messages(out, scroll);
     }
-
 }

@@ -144,6 +144,22 @@ pub fn parse_files(props: Option<&Value>) -> Vec<FileRef> {
         .unwrap_or_default()
 }
 
+/// Message content as displayable HTML: cards (bots, workflows) are flattened into HTML.
+fn message_content(v: &Value, props: Option<&Value>) -> String {
+    let raw = str_field(v, "content").unwrap_or_default();
+    if let Some(cards) = json_or_string(props.and_then(|p| p.get("cards")))
+        && let Some(html) = crate::cards::attachments_html(&cards)
+    {
+        return html;
+    }
+    if raw.contains("<Swift b64=")
+        && let Some(html) = crate::cards::swift_html(raw)
+    {
+        return html;
+    }
+    raw.to_string()
+}
+
 /// Builds a [`Message`] from a chat-service message object (REST history or trouter resource).
 ///
 /// `fallback_conversation` is used when the object carries no conversation link.
@@ -191,7 +207,7 @@ pub fn message_from_json(v: &Value, fallback_conversation: &str) -> Option<Messa
         edited_ms,
         deleted,
         message_type: str_field(v, "messagetype").unwrap_or_default().to_string(),
-        content: str_field(v, "content").unwrap_or_default().to_string(),
+        content: message_content(v, props),
         client_message_id: str_field(v, "clientmessageid").map(str::to_owned),
         reactions: parse_reactions(props),
         files: parse_files(props),

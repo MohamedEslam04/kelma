@@ -56,6 +56,22 @@ impl Client {
         .await
     }
 
+    /// Downloads any AMS object (voice messages, videos). Refuses non-AMS hosts.
+    pub async fn download_media(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>> {
+        if !is_ams_url(url) {
+            return Err(Error::Protocol(
+                "refusing to send credentials to a non-AMS host".into(),
+            ));
+        }
+        let skype = self.tokens().await.skype.unwrap_or_default();
+        self.bytes(
+            url,
+            &[("Cookie", format!("skypetoken_asm={skype}"))],
+            max_bytes,
+        )
+        .await
+    }
+
     /// Uploads an image visible to `conversation_id` and returns the AMS object id.
     pub async fn upload_image(
         &self,

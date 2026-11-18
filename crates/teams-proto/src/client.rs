@@ -123,6 +123,24 @@ impl Client {
         Ok(client)
     }
 
+    /// A client with no credentials, for demo mode and tests. Every network call fails.
+    pub fn offline(epid: &str) -> Result<Client> {
+        let state = State {
+            tokens: Tokens::default(),
+            refresh_token: String::new(),
+            expires_at: Instant::now() + Duration::from_secs(365 * 24 * 3600),
+            chat_service: "https://offline.invalid".into(),
+            middle_tier: "https://offline.invalid".into(),
+            region: None,
+        };
+        Ok(Client {
+            http: build_http()?,
+            tenant: String::new(),
+            epid: epid.into(),
+            state: Arc::new(Mutex::new(state)),
+        })
+    }
+
     /// Refreshes every access token and the skypetoken.
     pub async fn refresh_all(&self) -> Result<()> {
         let rt = self.state.lock().await.refresh_token.clone();

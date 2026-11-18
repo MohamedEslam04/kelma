@@ -218,9 +218,9 @@ component ChatItem inherits Rectangle {
     t := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        if t.has-hover || root.data.favorite: IconButton {
+        if t.has-hover: IconButton {
             x: parent.width - 30px;
-            y: 2px;
+            y: 30px;
             size: 22px;
             icon: @image-url("icons/star.svg");
             tint: root.data.favorite ? #ffd335 : Theme.fg-subtle;
@@ -583,6 +583,7 @@ export component AppWindow inherits Window {
     callback close-thread();
     callback attach-image();
     callback attach-file();
+    callback dismiss-banner();
 
     // Rust bumps these counters to request a scroll to the bottom / composer focus.
     in-out property <int> scroll-tick;
@@ -621,7 +622,9 @@ export component AppWindow inherits Window {
                 Rectangle {
                     height: 32px;
                     y: 8px;
-                    max-width: 720px;
+                    min-width: 280px;
+                    max-width: 640px;
+                    horizontal-stretch: 2;
                     border-radius: 4px;
                     background: search-input.has-focus ? #1f1f1f : #292929;
                     border-width: 1px;
@@ -791,6 +794,24 @@ export component AppWindow inherits Window {
                     Image { source: @image-url("icons/chat.svg"); colorize: #3d3d3d; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
                     Text { text: "Select a chat to start messaging"; color: Theme.fg-subtle; horizontal-alignment: center; }
                 }
+                if root.banner != "": Rectangle {
+                    z: 10;
+                    x: (parent.width - self.width) / 2;
+                    y: 70px;
+                    width: min(parent.width - 40px, banner-text.preferred-width + 60px);
+                    height: 36px;
+                    border-radius: 6px;
+                    background: #3b1f22;
+                    border-width: 1px;
+                    border-color: Theme.danger;
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 6px;
+                        spacing: 8px;
+                        banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                        IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 6px; clicked => { root.dismiss-banner(); } }
+                    }
+                }
                 if root.current-id != "": VerticalLayout {
                     // Header
                     Rectangle {
@@ -833,11 +854,20 @@ export component AppWindow inherits Window {
                         vertical-stretch: 1;
                         msg-list := ListView {
                             property <int> tick: root.scroll-tick;
+                            // Stay pinned to the newest message while content grows (images loading).
+                            property <bool> pinned: true;
                             changed tick => {
+                                self.pinned = true;
                                 self.content-y = min(0px, self.visible-height - self.content-height);
                             }
+                            changed content-height => {
+                                if self.pinned {
+                                    self.content-y = min(0px, self.visible-height - self.content-height);
+                                }
+                            }
                             changed content-y => {
-                                if self.content-y > -40px && root.messages.length > 0 && !root.loading-older {
+                                self.pinned = self.content-y <= self.visible-height - self.content-height + 80px;
+                                if self.content-y > -40px && self.content-height > self.visible-height + 40px && !self.pinned && root.messages.length > 0 && !root.loading-older {
                                     root.load-older();
                                 }
                             }
@@ -872,6 +902,7 @@ export component AppWindow inherits Window {
 
                     // Composer
                     HorizontalLayout {
+                        vertical-stretch: 0;
                         padding-left: 20px;
                         padding-right: 20px;
                         padding-bottom: 16px;
@@ -910,7 +941,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 Rectangle {
-                                    min-height: 44px;
+                                    height: max(44px, min(220px, composer-input.preferred-height + 20px));
                                     composer-scope := FocusScope {
                                         capture-key-pressed(event) => {
                                             if (event.text == Key.Return && !event.modifiers.shift) {

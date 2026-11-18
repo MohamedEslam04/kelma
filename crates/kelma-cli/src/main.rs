@@ -145,6 +145,43 @@ async fn main() -> Result<()> {
                 page.messages.last().map(|m| m.id.as_str()).unwrap_or("-")
             );
         }
+        Some("raw") => {
+            // Prints raw message JSON (structure discovery). Contains message content, never tokens.
+            let conv = args.get(1).context("usage: raw <conversation id> [n]")?;
+            let n: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
+            let (client, _) = connect(&paths).await?;
+            let url = format!(
+                "{}/v1/users/ME/conversations/{}/messages?view=msnp24Equivalent|supportsMessageProperties&pageSize={n}&startTime=1",
+                client.chat_service().await,
+                teams_proto::chatsvc::encode_conversation(conv)
+            );
+            let v = client.json("raw", reqwest::Method::GET, &url, None).await?;
+            println!("{}", serde_json::to_string_pretty(&v["messages"])?);
+        }
+        Some("csa-raw") => {
+            // Prints the aggregator entry of one chat (structure discovery).
+            let id = args.get(1).context("usage: csa-raw <conversation id>")?;
+            let (client, _) = connect(&paths).await?;
+            let url = "https://teams.microsoft.com/api/csa/api/v1/teams/users/me?isPrefetch=false&enableMembershipSummary=true";
+            let v = client.json("csa", reqwest::Method::GET, url, None).await?;
+            let chat = v["chats"]
+                .as_array()
+                .and_then(|a| a.iter().find(|c| c["id"] == id.as_str()))
+                .cloned();
+            let mut c = chat.unwrap_or_default();
+            if let Some(o) = c.as_object_mut() {
+                o.remove("lastMessage");
+            }
+            println!("{}", serde_json::to_string_pretty(&c)?);
+        }
+        Some("img") => {
+            let url = args.get(1).context("usage: img <ams url>")?;
+            let (client, _) = connect(&paths).await?;
+            match client.download_image(url).await {
+                Ok(b) => println!("ok {} bytes", b.len()),
+                Err(e) => println!("error: {e}"),
+            }
+        }
         Some("send") => {
             let (Some(conv), Some(text)) = (args.get(1), args.get(2)) else {
                 bail!("usage: send <conversation id> <text>")

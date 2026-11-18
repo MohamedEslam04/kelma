@@ -109,7 +109,12 @@ pub fn parse_snapshot(v: &Value) -> Snapshot {
                             .and_then(Value::as_array)
                             .map(|m| m.iter().filter_map(|x| s(x, "mri")).collect())
                             .unwrap_or_default(),
-                        hidden: c.get("hidden").and_then(Value::as_bool).unwrap_or(false),
+                        // `hidden` is true for many active 1:1 chats, so it is not a visibility flag;
+                        // deleted conversations are the ones to drop.
+                        hidden: c
+                            .get("isConversationDeleted")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
                     })
                 })
                 .collect()
@@ -145,7 +150,8 @@ mod tests {
             ],
             "chats": [
                 {"id": "19:g@thread.v2", "title": "Morning Standup", "isOneOnOne": false, "members": [{"mri": "8:orgid:a"}, {"mri": "8:orgid:b"}]},
-                {"id": "19:a_b@unq.gbl.spaces", "title": "", "isOneOnOne": true, "members": [{"mri": "8:orgid:a"}]}
+                {"id": "19:a_b@unq.gbl.spaces", "title": "", "isOneOnOne": true, "hidden": true, "members": [{"mri": "8:orgid:a"}]},
+                {"id": "19:gone@thread.v2", "isConversationDeleted": true}
             ]
         }));
         assert_eq!(snap.teams.len(), 1);
@@ -154,6 +160,11 @@ mod tests {
         assert_eq!(snap.chats[0].title.as_deref(), Some("Morning Standup"));
         assert_eq!(snap.chats[1].title, None);
         assert!(snap.chats[1].is_one_on_one);
+        assert!(
+            !snap.chats[1].hidden,
+            "hidden:true must not hide an active 1:1 chat"
+        );
+        assert!(snap.chats[2].hidden);
         assert_eq!(snap.chats[0].members, vec!["8:orgid:a", "8:orgid:b"]);
     }
 

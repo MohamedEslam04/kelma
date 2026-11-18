@@ -2,7 +2,9 @@
 
 use crate::data::{ChatData, HeaderData, MsgData, Pixels, TeamData};
 use crate::{AppWindow, ChannelRow, ChatRow, FileItem, ImageItem, Msg, ReactionItem, TeamRow};
-use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
+use slint::{
+    Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
+};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -75,13 +77,36 @@ fn msg(m: MsgData) -> Msg {
                 .into_iter()
                 .map(|i| {
                     let (image, loaded) = img(&i.pixels);
-                    ImageItem { url: i.url.into(), img: image, loaded, w: i.w, h: i.h }
+                    ImageItem {
+                        url: i.url.into(),
+                        img: image,
+                        loaded,
+                        w: i.w,
+                        h: i.h,
+                    }
                 })
                 .collect(),
         ),
-        files: model(m.files.into_iter().map(|f| FileItem { name: f.name.into(), url: f.url.into(), ext: f.ext.into() }).collect()),
+        files: model(
+            m.files
+                .into_iter()
+                .map(|f| FileItem {
+                    name: f.name.into(),
+                    url: f.url.into(),
+                    ext: f.ext.into(),
+                })
+                .collect(),
+        ),
         reactions: model(
-            m.reactions.into_iter().map(|r| ReactionItem { key: r.key.into(), emoji: r.emoji.into(), count: r.count, mine: r.mine }).collect(),
+            m.reactions
+                .into_iter()
+                .map(|r| ReactionItem {
+                    key: r.key.into(),
+                    emoji: r.emoji.into(),
+                    count: r.count,
+                    mine: r.mine,
+                })
+                .collect(),
         ),
         reply_count: m.reply_count,
         pending: m.pending,
@@ -129,8 +154,20 @@ impl UiHandle {
         });
     }
 
+    /// Shows a transient message for 8 seconds.
     pub fn banner(&self, text: String) {
-        self.run(move |w| w.set_banner(text.into()));
+        self.run(move |w| {
+            let shown: SharedString = text.into();
+            w.set_banner(shown.clone());
+            let weak = w.as_weak();
+            slint::Timer::single_shot(std::time::Duration::from_secs(8), move || {
+                if let Some(w) = weak.upgrade()
+                    && w.get_banner() == shown
+                {
+                    w.set_banner(SharedString::new());
+                }
+            });
+        });
     }
 
     pub fn connected(&self, ok: bool) {
@@ -188,7 +225,16 @@ impl UiHandle {
                         initials: t.initials.into(),
                         color: rgb(t.color),
                         expanded: t.expanded,
-                        channels: model(t.channels.into_iter().map(|(id, name, unread)| ChannelRow { id: id.into(), name: name.into(), unread }).collect()),
+                        channels: model(
+                            t.channels
+                                .into_iter()
+                                .map(|(id, name, unread)| ChannelRow {
+                                    id: id.into(),
+                                    name: name.into(),
+                                    unread,
+                                })
+                                .collect(),
+                        ),
                     })
                     .collect(),
             ));
@@ -220,7 +266,11 @@ impl UiHandle {
                     w.set_messages(ModelRc::from(m.clone()));
                     m
                 });
-                let same_ids = m.row_count() == msgs.len() && msgs.iter().enumerate().all(|(i, x)| m.row_data(i).is_some_and(|r| r.id == x.id.as_str()));
+                let same_ids = m.row_count() == msgs.len()
+                    && msgs
+                        .iter()
+                        .enumerate()
+                        .all(|(i, x)| m.row_data(i).is_some_and(|r| r.id == x.id.as_str()));
                 if same_ids {
                     for (i, x) in msgs.into_iter().enumerate() {
                         m.set_row_data(i, msg(x));
