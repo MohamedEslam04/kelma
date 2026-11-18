@@ -27,17 +27,17 @@ the rail.
     - Trouter `NewMessage` events on `48:notifications` update it live.
     - Read state is the consumption horizon of `48:notifications`.
   - **Done when.** The last 20 items match Teams exactly, including reactions and Workflows cards.
-- [ ] **A1.2 Filters.** Impact 4, effort 1. Unread, @Mentions and Tag mentions, with their shortcuts.
-- [ ] **A1.3 Preview pane with reply.** Impact 4, effort 2.
+- [x] **A1.2 Filters.** Impact 4, effort 1. Unread, @Mentions and Tag mentions, with their shortcuts.
+- [x] **A1.3 Preview pane with reply.** Impact 4, effort 2.
   - **What.**
     - The right pane shows the source conversation scrolled to the item, with the item highlighted.
     - For channel posts there is a reply box with "Send to: thread only / Also send to channel".
     - "Go to chat" or "Go to channel" opens it in Chat.
   - **How.** Reuse the chat message view in a compact mode.
-- [ ] **A1.4 Mark all as read** (Shift+Esc) and per-item mark as read or unread.
+- [x] **A1.4 Mark all as read** (Shift+Esc) and per-item mark as read or unread.
 - [ ] **A1.5 Notification settings link** that opens the notification settings (chat plan 9.1).
-- [ ] **A1.6 Search in Activity.**
-- [ ] **A1.7 Badge sync.** The rail badge and tray count equal the unread Activity count plus unread chats, like Teams.
+- [x] **A1.6 Search in Activity.**
+- [x] **A1.7 Badge sync.** The rail badge and tray count equal the unread Activity count plus unread chats, like Teams.
 
 ## Order
 
