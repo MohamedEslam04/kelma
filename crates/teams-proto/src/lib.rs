@@ -18,6 +18,7 @@ pub mod http;
 pub mod mentions;
 pub mod model;
 pub mod mt;
+pub mod threads;
 pub mod time;
 pub mod trouter;
 
