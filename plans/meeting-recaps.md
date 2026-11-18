@@ -16,11 +16,11 @@ kelma shows what the user's license allows and labels the rest.
 
 ## Phase R0: discovery
 
-- [ ] **R0.1** Capture the Recap app and a meeting's Recap tab: the list, notes, tasks, chapters, mentions, timeline and share. Document it in `docs/protocol-meetings.md`.
+- [ ] **R0.1** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). Capture the Recap app and a meeting's Recap tab: the list, notes, tasks, chapters, mentions, timeline and share. Document it in `docs/protocol-meetings.md`.
 
 ## Phase R1: recaps from files (no AI license needed)
 
-- [ ] **R1.1 Recap list.** Impact 3, effort 3.
+- [ ] **R1.1 Recap list.** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). Impact 3, effort 3.
   - **What.**
     - "Good afternoon, <name>".
     - All and Followed.
@@ -29,23 +29,23 @@ kelma shows what the user's license allows and labels the rest.
     - The past 30 days of meetings that have a recording or transcript.
     - Filters for date, people and keywords.
   - **How.** Calendar events (`plans/calendar.md`) joined with the `Recordings` files (OneDrive and channel libraries). Followed comes from R0.
-- [ ] **R1.2 Recording player.** Impact 3, effort 3.
+- [ ] **R1.2 Recording player.** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). Impact 3, effort 3.
   - **What.**
     - Plays the recording (GStreamer or libmpv) with seek and speed.
     - Captions from the transcript.
     - A speaker timeline built from the VTT voice tags.
     - "Your mentions" markers, found where the transcript names you.
   - **How.** `/content` streams with HTTP range requests on the Graph token.
-- [ ] **R1.3 Transcript pane.** Impact 3, effort 2.
+- [ ] **R1.3 Transcript pane.** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). Impact 3, effort 2.
   - **What.** Speaker, time and text; search; click to seek; download.
 
 ## Phase R2: AI recap (license-gated)
 
-- [ ] **R2.1 Notes, tasks and chapters** through the R0 endpoint.
+- [ ] **R2.1 Notes, tasks and chapters** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). through the R0 endpoint.
   - **What.** AI notes (titles, bullets, sub-points), suggested tasks with owners, chapters, and Ask Copilot (`plans/copilot.md`).
   - **Fallback.** Open the `recapUrl` deep link in the web host.
-- [ ] **R2.2 Share recap.** Copy link and share by email; deleting the recap is for organizers only.
-- [ ] **R2.3 Audio and video recap.** Play them when they exist (`Recordings/AudioRecaps`). Generating them stays in Teams.
+- [ ] **R2.2 Share recap.** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). Copy link and share by email; deleting the recap is for organizers only.
+- [ ] **R2.3 Audio and video recap.** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). Play them when they exist (`Recordings/AudioRecaps`). Generating them stays in Teams.
 
 ## Order
 
