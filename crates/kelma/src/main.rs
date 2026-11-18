@@ -5,6 +5,8 @@ mod data;
 mod demo;
 mod markdown;
 mod ui;
+#[cfg(test)]
+mod ui_tests;
 
 slint::include_modules!();
 

@@ -27,3 +27,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [build-dependencies]
 slint-build = "1.19"
+
+[dev-dependencies]
+i-slint-backend-testing = "=1.19.0"

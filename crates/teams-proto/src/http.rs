@@ -17,6 +17,8 @@ pub struct Tokens {
     pub csa: Option<String>,
     /// Bearer token for `presence.teams.microsoft.com`.
     pub presence: Option<String>,
+    /// Bearer token for `graph.microsoft.com` (OneDrive file upload).
+    pub graph: Option<String>,
 }
 
 impl std::fmt::Debug for Tokens {
@@ -27,6 +29,7 @@ impl std::fmt::Debug for Tokens {
             .field("spaces", &self.spaces.is_some())
             .field("csa", &self.csa.is_some())
             .field("presence", &self.presence.is_some())
+            .field("graph", &self.graph.is_some())
             .finish()
     }
 }
@@ -46,6 +49,8 @@ pub enum Backend {
     Trouter,
     /// AMS / async gateway (images and files).
     Ams,
+    /// Microsoft Graph (OneDrive uploads and sharing).
+    Graph,
     /// Anything else: no credentials are attached.
     Other,
 }
@@ -68,6 +73,8 @@ pub fn backend_of(url: &Url) -> Backend {
         Backend::Trouter
     } else if host.ends_with("asm.skype.com") || host.ends_with("asyncgw.teams.microsoft.com") {
         Backend::Ams
+    } else if host == "graph.microsoft.com" {
+        Backend::Graph
     } else {
         Backend::Other
     }
@@ -129,6 +136,7 @@ pub fn headers_for(url: &Url, t: &Tokens, epid: &str) -> Vec<(&'static str, Stri
                 h.push(("Authorization", format!("skype_token {s}")));
             }
         }
+        Backend::Graph => bearer(&mut h, &t.graph),
         Backend::Other => {}
     }
     h
@@ -144,6 +152,7 @@ mod tests {
             spaces: Some("SP".into()),
             csa: Some("CS".into()),
             presence: None,
+            graph: Some("GR".into()),
         }
     }
     fn get<'a>(h: &'a [(&'static str, String)], k: &str) -> Option<&'a str> {
@@ -153,6 +162,26 @@ mod tests {
     }
     fn u(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn graph_gets_only_its_bearer() {
+        let h = headers_for(
+            &u("https://graph.microsoft.com/v1.0/me/drive/root"),
+            &toks(),
+            "e",
+        );
+        assert_eq!(get(&h, "Authorization"), Some("Bearer GR"));
+        assert_eq!(get(&h, "X-Skypetoken"), None);
+        // Pre-authenticated upload session URLs on SharePoint get no credentials.
+        let h = headers_for(
+            &u(
+                "https://contoso-my.sharepoint.com/personal/x/_api/v2.0/drive/items/1/uploadSession?guid=a",
+            ),
+            &toks(),
+            "e",
+        );
+        assert_eq!(get(&h, "Authorization"), None);
     }
 
     #[test]

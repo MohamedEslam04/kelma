@@ -2988,6 +2988,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "chrono",
+ "i-slint-backend-testing",
  "image",
  "notify-rust",
  "open",

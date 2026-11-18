@@ -39,7 +39,7 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 | Delete | `DELETE …/{id}/messages/{msgId}?behavior=softDelete` | ✅ (self notes) |
 | React | `PUT …/{id}/messages/{msgId}/properties?name=emotions` `{"emotions":{"key":"like","value":<ms>}}` | ✅ (self notes) |
 | Un-react | `DELETE …/{id}/messages/{msgId}/properties?name=emotions` `{"emotions":{"key":"like"}}` | ✅ (self notes) |
-| Read marker | `PUT …/{id}/properties?name=consumptionhorizon` `{"consumptionhorizon":"<id>;<ms>;<cmid>"}` | ⚠️ |
+| Read marker | `PUT …/{id}/properties?name=consumptionhorizon` `{"consumptionhorizon":"<id>;<ms>;<cmid>"}` | ✅ (horizon equals the newest message after the app opened the chat) |
 | Typing | `POST …/{id}/messages` `{messagetype:"Control/Typing", contenttype:"Application/Message", content:""}` | ⚠️ |
 | Self | `GET /v1/users/ME/properties` → `skypeName` (`orgid:<guid>`) | ✅ |
 
@@ -91,8 +91,29 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
   1. `POST as-prod.asyncgw.teams.microsoft.com/v1/objects/` `{type:"pish/image", permissions:{<conv>:["read"]}, filename, sharingMode:"Inline"}` → `id`
   2. `PUT …/v1/objects/{id}/content/imgpsh` with the bytes
   3. Send `<img itemtype="http://schema.skype.com/AMSImage" src=".../views/imgo">` ✅ (self notes)
-- **Files:** sending real file attachments goes through OneDrive/SharePoint (Graph scopes). That is
-  not implemented: kelma shows file cards and opens them in the browser.
+- **Files** are not AMS: see [Files](#files--2026-11-18) below.
+
+## Files ✅ 2026-11-18
+
+Chat files live in the sender's OneDrive, in `Microsoft Teams Chat Files`. The Teams client id
+gets a Graph token through the usual refresh (`scope=https://graph.microsoft.com/.default`), and it
+carries `Files.ReadWrite.All`.
+
+1. Upload:
+   - Up to 4 MB: `PUT graph.microsoft.com/v1.0/me/drive/root:/Microsoft Teams Chat Files/<name>:/content?@microsoft.graph.conflictBehavior=rename`.
+   - Larger files: `POST …:/createUploadSession`, then `PUT` chunks (multiples of 320 KiB) with
+     `Content-Range` to the returned `uploadUrl`. That URL is pre-authenticated, so it gets no token.
+2. `GET /me/drive/items/{id}?$select=id,name,webUrl,sharepointIds`.
+3. Share with the other chat members: `POST /me/drive/items/{id}/invite`
+   `{recipients:[{objectId}], requireSignIn:true, sendInvitation:false, roles:["write"]}`. The object
+   id is the GUID in `8:orgid:<guid>`. Self notes skip this step.
+4. Send a message with empty content and `properties.files` = a JSON string of
+   `[{"@type":"http://schema.skype.com/File", id: listItemUniqueId, baseUrl: siteUrl/, objectUrl: webUrl, fileName, fileType, fileInfo:{fileUrl, siteUrl, shareUrl}, …}]`.
+
+Verified in self notes: a 55-byte file with an Arabic name, and a 5.5 MB file uploaded in two
+chunks. The sizes in OneDrive matched, and both came back as file cards. The invite step (step 3)
+is unit-tested only, because a live test would share a file with a colleague. Channel files live
+in the team's SharePoint site and are not supported: kelma says so instead of sending.
 
 ## Real-time (trouter) ✅
 
@@ -109,3 +130,7 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
 7. The registrar throttles at `HTTP 429 {"retryAfter":"00:02:52"}`. kelma keeps the socket open
    and retries after that delay. `trouter.message_loss` arrives right after connecting, so
    kelma re-registers at most once a minute and resyncs history.
+8. After suspend, the server resets the socket (`Connection reset by peer`). kelma reconnects and
+   resyncs. This was verified by freezing the process for 3 minutes: a message sent during the
+   freeze was in the cache after resume, and a message sent after resume arrived live. Token expiry
+   uses wall-clock time, because a monotonic clock stops during suspend.

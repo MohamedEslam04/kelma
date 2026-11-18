@@ -2,13 +2,13 @@
 //! with the right headers for each backend.
 
 use crate::auth::{self, DeviceCode, SkypeToken};
-use crate::client_info::{RESOURCE_CSA, RESOURCE_PRESENCE, RESOURCE_SPACES};
+use crate::client_info::{RESOURCE_CSA, RESOURCE_GRAPH, RESOURCE_PRESENCE, RESOURCE_SPACES};
 use crate::error::{Error, Result};
 use crate::http::{Tokens, headers_for};
 use reqwest::Method;
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -40,7 +40,8 @@ struct State {
     tokens: Tokens,
     refresh_token: String,
     /// Earliest expiry across the tokens we hold.
-    expires_at: Instant,
+    /// Wall-clock expiry. `Instant` would stop during system suspend and miss expiry after sleep.
+    expires_at: SystemTime,
     chat_service: String,
     middle_tier: String,
     region: Option<String>,
@@ -71,6 +72,11 @@ fn build_http() -> Result<reqwest::Client> {
 
 /// Seconds before expiry at which tokens are refreshed.
 const REFRESH_MARGIN: Duration = Duration::from_secs(300);
+
+/// True when tokens expiring at `expires_at` must be refreshed at wall-clock time `now`.
+fn refresh_due(expires_at: SystemTime, now: SystemTime) -> bool {
+    expires_at <= now + REFRESH_MARGIN
+}
 
 impl Client {
     /// Starts a device-code sign-in. `on_code` is called once with the code to show to the user;
@@ -108,7 +114,7 @@ impl Client {
         let state = State {
             tokens: Tokens::default(),
             refresh_token: session.refresh_token,
-            expires_at: Instant::now(),
+            expires_at: SystemTime::UNIX_EPOCH,
             chat_service: String::new(),
             middle_tier: String::new(),
             region: None,
@@ -128,7 +134,7 @@ impl Client {
         let state = State {
             tokens: Tokens::default(),
             refresh_token: String::new(),
-            expires_at: Instant::now() + Duration::from_secs(365 * 24 * 3600),
+            expires_at: SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
             chat_service: "https://offline.invalid".into(),
             middle_tier: "https://offline.invalid".into(),
             region: None,
@@ -151,11 +157,16 @@ impl Client {
         let presence = auth::refresh(&self.http, &self.tenant, &rt, RESOURCE_PRESENCE)
             .await
             .ok();
+        // Graph is optional too: only file upload needs it.
+        let graph = auth::refresh(&self.http, &self.tenant, &rt, RESOURCE_GRAPH)
+            .await
+            .ok();
         let sky: SkypeToken = auth::skypetoken(&self.http, &spaces.access_token).await?;
         let min_s = [
             Some(spaces.expires_in_s),
             Some(csa.expires_in_s),
             presence.as_ref().map(|p| p.expires_in_s),
+            graph.as_ref().map(|g| g.expires_in_s),
             Some(sky.expires_in_s),
         ]
         .into_iter()
@@ -169,8 +180,9 @@ impl Client {
             spaces: Some(spaces.access_token),
             csa: Some(csa.access_token),
             presence: presence.map(|p| p.access_token),
+            graph: graph.map(|g| g.access_token),
         };
-        st.expires_at = Instant::now() + Duration::from_secs(min_s);
+        st.expires_at = SystemTime::now() + Duration::from_secs(min_s);
         st.chat_service = sky.chat_service;
         st.middle_tier = sky.middle_tier;
         st.region = sky.region;
@@ -180,7 +192,7 @@ impl Client {
 
     /// Refreshes tokens if any of them expires soon.
     pub async fn ensure_fresh(&self) -> Result<()> {
-        let due = { self.state.lock().await.expires_at <= Instant::now() + REFRESH_MARGIN };
+        let due = refresh_due(self.state.lock().await.expires_at, SystemTime::now());
         if due {
             self.refresh_all().await
         } else {
@@ -309,5 +321,21 @@ impl Client {
             )));
         }
         Ok(data.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_due_uses_wall_clock_margin() {
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let exp = t0 + Duration::from_secs(3600);
+        assert!(!refresh_due(exp, t0));
+        assert!(!refresh_due(exp, t0 + Duration::from_secs(3600 - 301)));
+        assert!(refresh_due(exp, t0 + Duration::from_secs(3600 - 300)));
+        // Eight hours of suspend: wall clock moved on, so the tokens are due.
+        assert!(refresh_due(exp, t0 + Duration::from_secs(8 * 3600)));
     }
 }

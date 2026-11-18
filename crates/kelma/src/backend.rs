@@ -130,6 +130,18 @@ fn row_from_message(m: &Message, parent: Option<&str>) -> MessageRow {
 }
 
 /// Preview text for the chat list.
+/// Whether an incoming message pops a desktop notification: new chat content from someone else
+/// that the user is not already looking at.
+fn should_notify(
+    existed: bool,
+    mine: bool,
+    chat_content: bool,
+    is_current: bool,
+    focused: bool,
+) -> bool {
+    !existed && !mine && chat_content && !(is_current && focused)
+}
+
 fn preview_of(m: &Message, me: &str) -> String {
     let text = if m.deleted {
         "This message has been deleted.".to_string()
@@ -588,7 +600,7 @@ impl Engine {
                     unread,
                 );
             }
-            if !existed && !mine && m.is_chat_content() && !(is_current && focused) {
+            if should_notify(existed, mine, m.is_chat_content(), is_current, focused) {
                 self.notify(&st, &m);
             }
             st.conversation(&m.conversation_id).ok().flatten().is_some()
@@ -631,6 +643,7 @@ impl Engine {
             .chars()
             .take(200)
             .collect();
+        tracing::info!(conversation = %m.conversation_id, "desktop notification");
         tokio::task::spawn_blocking(move || {
             let _ = notify_rust::Notification::new()
                 .appname("kelma")
@@ -796,11 +809,7 @@ impl Engine {
                 });
             }
             Cmd::AttachImage => self.attach_image().await?,
-            Cmd::AttachFile => {
-                self.ui.banner(
-                    "Sending files is not supported yet: share a OneDrive link instead.".into(),
-                );
-            }
+            Cmd::AttachFile => self.attach_file().await?,
         }
         Ok(())
     }
@@ -1123,6 +1132,24 @@ impl Engine {
         let html = teams_proto::ams::image_html(&id, w, h);
         self.client
             .send_message(&target, &html, &self.my_name, None)
+            .await?;
+        self.ui.banner(String::new());
+        Ok(())
+    }
+
+    /// Picks a file, uploads it to OneDrive, shares it with the chat and posts it.
+    async fn attach_file(self: &Arc<Self>) -> anyhow::Result<()> {
+        let Some(target) = self.current_target() else {
+            return Ok(());
+        };
+        let Some(file) = rfd::AsyncFileDialog::new().pick_file().await else {
+            return Ok(());
+        };
+        let name = file.file_name();
+        self.ui.banner(format!("Uploading {name}…"));
+        let data = file.read().await;
+        self.client
+            .send_file(&target, &name, data, &self.my_name)
             .await?;
         self.ui.banner(String::new());
         Ok(())
@@ -1584,5 +1611,23 @@ impl Engine {
             prev = Some(r);
         }
         self.ui.messages(out, scroll);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_notify;
+
+    #[test]
+    fn notifies_only_for_new_messages_from_others_out_of_view() {
+        // New message from someone else in another chat, or with the window unfocused.
+        assert!(should_notify(false, false, true, false, true));
+        assert!(should_notify(false, false, true, true, false));
+        // Already looking at it.
+        assert!(!should_notify(false, false, true, true, true));
+        // Own messages, repeats (edits, resync) and system lines never notify.
+        assert!(!should_notify(false, true, true, false, false));
+        assert!(!should_notify(true, false, true, false, false));
+        assert!(!should_notify(false, false, false, false, false));
     }
 }

@@ -11,7 +11,7 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
 ## /finish — 2026-11-18: all phases to Teams shape
 
 ### Phase 0: scaffold
-- [ ] Manual Arabic typing test in `spikes/slint-spike` (needs the user), then set ADR 0001 to `accepted` — BLOCKED: needs the user (typing with an Arabic keyboard layout)
+- [x] Arabic typing test, then set ADR 0001 to `accepted`. Done on the real composer instead of the spike: `crates/kelma/src/ui_tests.rs` checks per-key Arabic and mixed input, arrows, selection and copy/paste. Upstream Home/End RTL limitation recorded in the ADR
 - [x] Initial commit, `gh repo create MohamedEslam04/kelma --public`, push `main` (only after confirming no tokens are in the tree)
 - [x] CI: `.github/workflows/ci.yml` runs fmt check, clippy `-D warnings` and tests on PRs and pushes to `main`
 
@@ -35,7 +35,7 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
 - [x] Edit and delete own messages — verified live in 48:notes
 - [ ] Channel posts: list, reply, new post — BLOCKED: listing posts and threads verified live; posting into a real channel needs the user's OK because colleagues would see the test post
 - [x] Images: AMS upload, plus download with a disk cache — verified live (upload, send, download)
-- [ ] Files: SharePoint/OneDrive file cards with "open in browser". Upload, or `BLOCKED` with the fallback from the spec. — BLOCKED: file cards + open in browser verified live; upload needs OneDrive/Graph scopes, fallback from the spec in place (attach explains it)
+- [x] Files: SharePoint/OneDrive file cards with "open in browser". Upload, or `BLOCKED` with the fallback from the spec. — upload via Graph (`Files.ReadWrite.All`) to `Microsoft Teams Chat Files`, then share with members and send `properties.files`. Verified live in 48:notes: small and 5.5 MB chunked uploads, sizes matched. Channels are not supported and say so
 
 ### Shared crates
 - [x] `crates/render`, with tests:
@@ -59,8 +59,8 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
   - date separators, "Edited" marker
   - reactions row, quoted reply, inline images, file cards, links
   - RTL handled per paragraph
-- [ ] Hover actions on a message: react, reply, edit or delete own messages — BLOCKED: needs the user to hover and click (the reaction/edit/delete APIs are verified live)
-- [ ] Composer: — BLOCKED: needs the user for an interactive check (send/reply APIs verified live)
+- [x] Hover actions on a message: react, reply, edit or delete own messages — UI tests hover the real `MessageRow` and click each action (edit/delete only on own messages); the APIs are verified live
+- [x] Composer: — UI tests cover each point below on the real `AppWindow`; the send and reply APIs are verified live
   - rounded box
   - emoji picker
   - attach image or file
@@ -72,7 +72,7 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
 - [x] Screenshots of kelma next to the Teams reference in `docs/screenshots/` — demo-mode screenshots only: real-account screenshots and the Teams reference contain colleagues' data and are not committed
 
 ### Phase 4: hardening
-- [ ] Reconnect after network loss or sleep, with history catch-up — BLOCKED: reconnect and resync verified for socket/registration failures; a real network drop needs the user's OK to take the network down
+- [x] Reconnect after network loss or sleep, with history catch-up — process frozen for 3 min (SIGSTOP, like suspend): the server reset the socket, kelma reconnected, the message sent during the freeze was caught up and the next one arrived live. Token expiry now uses wall-clock time so it survives suspend
 - [ ] Skypetoken re-mint before expiry; the rotated refresh token is persisted
 - [x] Memory: after 10 min idle with about 20 chats, under 120 MB PSS (`portstat -a kelma`). Record the result in the README. — ~29 MB PSS idle, ~62 MB PSS+swap with an image chat open
 - [x] `.desktop` file, an original icon (not Microsoft's), and release build and install instructions

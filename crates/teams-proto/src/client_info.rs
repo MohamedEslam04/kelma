@@ -15,6 +15,8 @@ pub const RESOURCE_SPACES: &str = "https://api.spaces.skype.com";
 pub const RESOURCE_CSA: &str = "https://chatsvcagg.teams.microsoft.com";
 /// Presence service.
 pub const RESOURCE_PRESENCE: &str = "https://presence.teams.microsoft.com";
+/// Microsoft Graph, for OneDrive file upload (`Files.ReadWrite.All` is granted to this client).
+pub const RESOURCE_GRAPH: &str = "https://graph.microsoft.com";
 
 /// Client version string sent in several headers and the trouter registration.
 pub const CLIENT_VERSION: &str = "49/25113001312";
