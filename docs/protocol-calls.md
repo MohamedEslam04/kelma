@@ -37,7 +37,11 @@ their meetings. Command: `kelma-cli call join --secs 60 --out <wav> --dump <dir>
    - The organizer's voice was received and decoded: 1046 packets, about 21 s, confirmed by ear.
    - webrtc-rs's DTLS-SRTP works with the Teams media server.
    - Leaving through the `leave` link ends the call cleanly.
-7. **Remote tracks.**
+7. **Real devices.**
+   - Same run shape with `--mic --speaker`: the laptop's built-in mic through cpal/ALSA (PipeWire), output to Bluetooth earbuds (A2DP).
+   - The organizer heard kelma's mic, and kelma played the organizer's voice: 4510 packets sent over 90 s, 1466 received, no underruns or errors.
+   - With the phone (organizer) near the laptop, its speaker leaked into the laptop mic and came back distorted. kelma has no echo cancellation yet.
+8. **Remote tracks.**
    - Teams' SDP names no SSRCs, only `a=x-ssrc-range`, so a remote track can arrive with an unknown kind.
    - Every track must be drained. Otherwise webrtc-rs's queue fills and the packets are dropped.
 
@@ -45,5 +49,5 @@ their meetings. Command: `kelma-cli call join --secs 60 --out <wav> --dump <dir>
 
 - **TURN.** The trap relay answers Allocate with `300 Try Alternate` on UDP 3478. webrtc-rs does not follow `ALTERNATE-SERVER`, and it has no TURN over TCP or TLS. ICE connected without a relay in every run.
 - **1:1 calls.** Placing, accepting and declining a 1:1 call, and the template key, are not verified. The tenant policy blocks them against the test account.
-- **Mic and speaker.** The `--mic` and `--speaker` device paths are not exercised live yet.
+- **Echo cancellation and noise suppression.** There are none yet. Options: PipeWire's `module-echo-cancel` at system level, or WebRTC audio processing inside `calling::audio`.
 - **Disconnected.** One short `Disconnected` → `Connected` blip was seen before leaving.
