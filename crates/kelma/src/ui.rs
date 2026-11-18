@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(crate) mod activity;
+pub(crate) mod drive;
 mod people;
 
 thread_local! {

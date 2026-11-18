@@ -359,6 +359,14 @@ fn main() -> anyhow::Result<()> {
         });
     }
     {
+        let tx = tx.clone();
+        window.global::<DriveStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::DriveCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Drive(c));
+            }
+        });
+    }
+    {
         let weak = window.as_weak();
         window.on_dismiss_banner(move || {
             if let Some(w) = weak.upgrade() {
@@ -382,9 +390,16 @@ fn main() -> anyhow::Result<()> {
     {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
         let tx = tx.clone();
+        let weak = window.as_weak();
         window.window().on_winit_window_event(move |_, event| {
             if let WindowEvent::DroppedFile(path) = event {
-                let _ = tx.send(Cmd::AddFile(path.clone()));
+                // On the OneDrive view a drop uploads; elsewhere it attaches to the message.
+                let on_drive = weak.upgrade().is_some_and(|w| w.get_view() == "onedrive");
+                let _ = tx.send(if on_drive {
+                    Cmd::Drive(backend::DriveCmd::Drop(path.clone()))
+                } else {
+                    Cmd::AddFile(path.clone())
+                });
             }
             EventResult::Propagate
         });

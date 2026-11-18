@@ -227,6 +227,25 @@ Deleting a folder puts one folder entry (and, depending on timing, its children)
 Around files: meeting recordings are the children of `Recordings` in My files (✅ 3 items). Sync is
 a text (`onedrive::sync_help`) that points at the `onedrive` client and `rclone`.
 
+Which view uses which call (the OneDrive app of the rail, `crates/kelma/src/backend/drive.rs`):
+
+| View | Call | Notes |
+|---|---|---|
+| Home (Recent) | `browse::recent` (`/me/drive/recent`, Search when empty) | the type pills and the filter box work on this list on the client |
+| Shared, "Shared with you" | `browse::shared_with_me` (`/me/drive/sharedWithMe`) | a shared folder opens as its own root |
+| My files, folders | `browse::children` | breadcrumbs are kept on the client, each crumb is a (drive id, item id) |
+| Favorites | `browse::following` | the star on a row calls `follow` or `unfollow` |
+| Libraries, Quick access | `followed_sites` (joined teams as the fallback) and `site_drives` | the first drive of each site, at most 12 sites |
+| Recycle bin | `bin::recycle_bin`, `restore`, `delete_forever` | SharePoint REST on the `-my` host |
+| Meetings | `recordings` | the `Recordings` folder of My files |
+| Search | `browse::search` | `driveItem` and `listItem` hits |
+| Preview | `ops::download` for images, text and markdown; `ops::preview_url` for Office files and PDFs | the preview URL opens in the browser |
+
+Not covered, because no browser capture of the Teams web OneDrive app was run (the Graph calls above
+answered for everything the view needs): the "For you" cards ("You frequently open", "X shared this
+in a Teams chat"), "Shared by you", and the "Browse files by" People and Media lists. A later
+capture of those three should add its calls here and to `plans/onedrive.md` (O0.1, O1.2, O1.3).
+
 Pitfalls found live:
 - A `reqwest` error message contains the request URL, and upload session and monitor URLs carry a
   temporary `tempauth` token. kelma strips the URL from those errors.
