@@ -208,6 +208,22 @@ pub struct Playback {
 impl Playback {
     /// Open the default output device, or the one matching `device` (see [`DeviceInfo`]).
     pub fn start(device: Option<&str>) -> Result<Self> {
+        Self::open(device, None)
+    }
+
+    /// Like [`start`](Self::start), and `tap` gets every 48 kHz mono 20 ms frame of what the
+    /// device actually plays, from the output callback at the moment it is handed over
+    /// (silence included). Feed it to an echo canceller's render side (`EchoReference::push`
+    /// with feature `aec`), so the echo delay it has to bridge is just the device latency.
+    /// `tap` runs on the audio thread: it must not block.
+    pub fn start_with_tap(
+        device: Option<&str>,
+        tap: impl FnMut(&[i16]) + Send + 'static,
+    ) -> Result<Self> {
+        Self::open(device, Some(Box::new(tap)))
+    }
+
+    fn open(device: Option<&str>, tap: Option<Tap>) -> Result<Self> {
         let device = pick_device(device, false)?;
         let supported = device
             .default_output_config()
@@ -227,12 +243,13 @@ impl Playback {
             PLAYOUT_MAX_FRAMES,
         )));
         let conv = OutputConverter::new(config.sample_rate, config.channels);
+        let tap = tap.map(|t| PlayedTap::new(config.sample_rate, config.channels, t));
         let stream = match format {
-            SampleFormat::I16 => build_output::<i16>(&device, config, buffer.clone()),
-            SampleFormat::U16 => build_output::<u16>(&device, config, buffer.clone()),
-            SampleFormat::I32 => build_output::<i32>(&device, config, buffer.clone()),
-            SampleFormat::F32 => build_output::<f32>(&device, config, buffer.clone()),
-            SampleFormat::F64 => build_output::<f64>(&device, config, buffer.clone()),
+            SampleFormat::I16 => build_output::<i16>(&device, config, buffer.clone(), tap),
+            SampleFormat::U16 => build_output::<u16>(&device, config, buffer.clone(), tap),
+            SampleFormat::I32 => build_output::<i32>(&device, config, buffer.clone(), tap),
+            SampleFormat::F32 => build_output::<f32>(&device, config, buffer.clone(), tap),
+            SampleFormat::F64 => build_output::<f64>(&device, config, buffer.clone(), tap),
             other => Err(Error::Audio(format!(
                 "unsupported output sample format {other}"
             ))),
@@ -253,10 +270,36 @@ impl Playback {
     }
 }
 
+/// Receives played 48 kHz mono frames on the audio thread.
+type Tap = Box<dyn FnMut(&[i16]) + Send>;
+
+/// Turns what the output callback hands the device (device rate and channels) back into the
+/// 48 kHz mono frames the rest of the crate speaks, for a played-audio tap.
+struct PlayedTap {
+    conv: InputConverter,
+    tap: Tap,
+}
+
+impl PlayedTap {
+    fn new(sample_rate: u32, channels: u16, tap: Tap) -> Self {
+        Self {
+            conv: InputConverter::new(sample_rate, channels),
+            tap,
+        }
+    }
+
+    fn played(&mut self, device_samples: &[i16]) {
+        for frame in self.conv.push(device_samples) {
+            (self.tap)(&frame);
+        }
+    }
+}
+
 fn build_output<T>(
     device: &Device,
     config: StreamConfig,
     buffer: Arc<Mutex<JitterBuffer>>,
+    mut tap: Option<PlayedTap>,
 ) -> Result<Stream>
 where
     T: SizedSample + FromSample<i16>,
@@ -270,6 +313,9 @@ where
                 match buffer.lock() {
                     Ok(mut b) => b.pop_into(&mut scratch),
                     Err(_) => scratch.fill(0),
+                }
+                if let Some(tap) = &mut tap {
+                    tap.played(&scratch);
                 }
                 for (o, &s) in data.iter_mut().zip(&scratch) {
                     *o = T::from_sample(s);
@@ -303,5 +349,23 @@ mod tests {
         let outs = list_output_devices().unwrap();
         println!("{outs:#?}");
         println!("{:#?}", list_input_devices().unwrap());
+    }
+
+    #[test]
+    fn played_tap_sees_the_mono_48k_frames_handed_to_a_stereo_device() {
+        let frame: Vec<i16> = (0..crate::FRAME_SAMPLES as i16).collect();
+        let stereo = OutputConverter::new(48_000, 2).convert(&frame);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let mut tap = PlayedTap::new(
+            48_000,
+            2,
+            Box::new(move |f: &[i16]| sink.lock().unwrap().push(f.to_vec())),
+        );
+        // The device pulls in callback-sized pieces, not whole frames.
+        for piece in stereo.chunks(256) {
+            tap.played(piece);
+        }
+        assert_eq!(*seen.lock().unwrap(), vec![frame]);
     }
 }

@@ -41,13 +41,24 @@ their meetings. Command: `kelma-cli call join --secs 60 --out <wav> --dump <dir>
    - Same run shape with `--mic --speaker`: the laptop's built-in mic through cpal/ALSA (PipeWire), output to Bluetooth earbuds (A2DP).
    - The organizer heard kelma's mic, and kelma played the organizer's voice: 4510 packets sent over 90 s, 1466 received, no underruns or errors.
    - With the phone (organizer) near the laptop, its speaker leaked into the laptop mic and came back distorted. kelma has no echo cancellation yet.
-8. **Remote tracks.**
+8. **TURN.**
+   - Every trap relay gateway answers the first, unauthenticated Allocate with `300 Try Alternate`. The answer carries `ALTERNATE-SERVER`, `REALM=rtcmedia` and a `NONCE`.
+   - The alternate address answers `401` and then allocates with the `trap/tokens` credentials: one hop.
+   - webrtc-rs does not follow the 300: it signs a retry to the same gateway and fails. So kelma probes first (`relay::resolve_ice_servers`) and gives webrtc-rs the alternate's `turn:<ip>:3478?transport=udp`.
+   - Gateways that resolve in DNS: `gateway-{eu,us,in,world}.az.relay.teams.cloud.microsoft`. kelma maps the authz region to one of them.
+   - A relay-only run (`--relay-only`: only `typ relay` candidates) reached Connected in the lobby and in the meeting.
+9. **Echo cancellation.**
+   - `calling::audio` runs AEC3, noise suppression and AGC2 through `sonora` (a pure-Rust port of WebRTC's audio processing) on the mic path. The far-end reference is tapped from the playback device callback.
+   - Live check: the far end, on earbuds in another room, heard no echo of themselves while kelma played them on the laptop speaker into the laptop mic.
+   - With `--no-aec` the echo came back.
+   - Two endpoints in the same room still howl, as they do with the official clients: kelma cancels only its own playback.
+10. **Remote tracks.**
    - Teams' SDP names no SSRCs, only `a=x-ssrc-range`, so a remote track can arrive with an unknown kind.
    - Every track must be drained. Otherwise webrtc-rs's queue fills and the packets are dropped.
 
 ## Open
 
-- **TURN.** The trap relay answers Allocate with `300 Try Alternate` on UDP 3478. webrtc-rs does not follow `ALTERNATE-SERVER`, and it has no TURN over TCP or TLS. ICE connected without a relay in every run.
+- **TURN over TCP/TLS.** webrtc-rs 0.21.1 only relays over UDP. A network that blocks UDP 3478 needs a TLS shim to `turns:<gateway>:443`.
 - **1:1 calls.** Placing, accepting and declining a 1:1 call, and the template key, are not verified. The tenant policy blocks them against the test account.
-- **Echo cancellation and noise suppression.** There are none yet. Options: PipeWire's `module-echo-cancel` at system level, or WebRTC audio processing inside `calling::audio`.
+- **AEC delay.** The stream delay starts at a fixed 40 ms (AEC3 estimates the rest). It is not yet taken from cpal's measured latency.
 - **Disconnected.** One short `Disconnected` → `Connected` blip was seen before leaving.
