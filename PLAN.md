@@ -12,20 +12,20 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
 
 ### Phase 0: scaffold
 - [ ] Manual Arabic typing test in `spikes/slint-spike` (needs the user), then set ADR 0001 to `accepted`
-- [ ] Initial commit, `gh repo create MohamedEslam04/kelma --public`, push `main` (only after confirming no tokens are in the tree)
-- [ ] CI: `.github/workflows/ci.yml` runs fmt check, clippy `-D warnings` and tests on PRs and pushes to `main`
+- [x] Initial commit, `gh repo create MohamedEslam04/kelma --public`, push `main` (only after confirming no tokens are in the tree)
+- [x] CI: `.github/workflows/ci.yml` runs fmt check, clippy `-D warnings` and tests on PRs and pushes to `main`
 
 ### Phase 1: protocol core (`crates/teams-proto`)
-- [ ] `client_info.rs` (version, user-agent, client ids) plus an `http` per-host header policy, with unit tests
-- [ ] `auth`: device code start and poll, refresh per resource, skypetoken authz with region to chat host, with fixture tests
-- [ ] Refresh token kept in the system keyring (`keyring` crate); epid persisted in the config dir
-- [ ] `chatsvc`: conversations list, history paging, send, consumption horizon, typing, with fixture tests
-- [ ] `csa`: teams, channels and chat metadata list, with fixture tests
-- [ ] `mt`: fetchShortProfile plus avatar fetch
-- [ ] `trouter`: socket.io v0 frame codec and gzip/`cp`/`gp` payload decode, with unit tests
+- [x] `client_info.rs` (version, user-agent, client ids) plus an `http` per-host header policy, with unit tests
+- [x] `auth`: device code start and poll, refresh per resource, skypetoken authz with region to chat host, with fixture tests
+- [x] Refresh token kept in the system keyring (`keyring` crate); epid persisted in the config dir
+- [x] `chatsvc`: conversations list, history paging, send, consumption horizon, typing, with fixture tests
+- [x] `csa`: teams, channels and chat metadata list, with fixture tests
+- [x] `mt`: fetchShortProfile plus avatar fetch
+- [x] `trouter`: socket.io v0 frame codec and gzip/`cp`/`gp` payload decode, with unit tests
 - [ ] `trouter`: connect, authenticate, 3 registrations, ack, 30 s ping, reconnect loop
-- [ ] `model`: Event enum parsed from trouter payloads (NewMessage, MessageUpdate, ConversationUpdate), with tests
-- [ ] `cli/` binary `kelma-cli`: `login | chats | read <id> | send <id> <text> | tail`
+- [x] `model`: Event enum parsed from trouter payloads (NewMessage, MessageUpdate, ConversationUpdate), with tests
+- [x] `crates/kelma-cli` binary `kelma-cli`: `login | chats | read <id> | send <id> <text> | tail`
 - [ ] Manual e2e (needs the user for the device code): login, list chats, send to `48:notes`, receive a live message
 
 ### Phase 2: protocol gaps
@@ -38,10 +38,10 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
 - [ ] Files: SharePoint/OneDrive file cards with "open in browser". Upload, or `BLOCKED` with the fallback from the spec.
 
 ### Shared crates
-- [ ] `crates/render`, with tests:
+- [x] `crates/render`, with tests:
   - converts Teams HTML into a rich-text AST: bold, italic, links, lists, code, emoji `alt`, `<at>` mentions, reply blockquote, AMS images and file cards
   - per-paragraph direction
-- [ ] `crates/store`: SQLite schema for conversations, messages, users and avatars, with upsert and windowed queries, plus tests
+- [x] `crates/store`: SQLite schema for conversations, messages, users and avatars, with upsert and windowed queries, plus tests
 
 ### Phase 3: UI (`app/`, Slint, software renderer)
 - [ ] Dark Teams-like theme tokens: background, panels, accent `#7f85f5`, own and other bubbles. Bundle a color emoji font.
