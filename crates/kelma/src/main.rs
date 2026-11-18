@@ -4,6 +4,7 @@ mod backend;
 mod data;
 mod demo;
 mod markdown;
+mod reactions;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
@@ -247,6 +248,20 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_close_thread, || Cmd::CloseThread);
     cmd!(on_attach_image, || Cmd::AttachImage);
     cmd!(on_attach_file, || Cmd::AttachFile);
+    cmd!(on_copy_link, |id| Cmd::CopyLink(id.into()));
+    cmd!(on_toggle_save, |id| Cmd::ToggleSave(id.into()));
+    cmd!(on_pin, |id| Cmd::Pin(id.into()));
+    cmd!(on_mark_unread, |id| Cmd::MarkUnread(id.into()));
+    cmd!(on_forward_begin, |id| Cmd::ForwardBegin(Some(id.into())));
+    cmd!(on_forward_begin_selected, || Cmd::ForwardBegin(None));
+    cmd!(on_forward_search, |q| Cmd::ForwardSearch(q.into()));
+    cmd!(on_forward_toggle, |id| Cmd::ForwardToggle(id.into()));
+    cmd!(on_forward_send, |note| Cmd::ForwardSend(note.into()));
+    cmd!(on_forward_cancel, || Cmd::ForwardCancel);
+    cmd!(on_select_begin, |id| Cmd::SelectBegin(id.into()));
+    cmd!(on_toggle_select, |id| Cmd::ToggleSelect(id.into()));
+    cmd!(on_select_cancel, || Cmd::SelectCancel);
+    ui::install_local(&window);
     {
         let tx = tx.clone();
         let weak = window.as_weak();

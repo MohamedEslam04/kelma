@@ -11,6 +11,7 @@ publish = false
 anyhow = "1.0.104"
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+emoji = { version = "0.0.0", path = "../emoji" }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 notify-rust = "4.19.0"
 open = "5.4.5"

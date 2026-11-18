@@ -1,7 +1,11 @@
 //! UI-thread side: turns view data into Slint models.
 
-use crate::data::{ChatData, HeaderData, MsgData, Pixels, TeamData};
-use crate::{AppWindow, ChannelRow, ChatRow, FileItem, ImageItem, Msg, ReactionItem, TeamRow};
+use crate::data::{ChatData, HeaderData, MsgData, Pixels, RecipientData, TeamData};
+use crate::reactions;
+use crate::{
+    AppWindow, ChannelRow, ChatRow, EmojiItem, FileItem, ImageItem, Msg, ReactionItem, Recipient,
+    TeamRow,
+};
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
 };
@@ -105,12 +109,49 @@ fn msg(m: MsgData) -> Msg {
                     emoji: r.emoji.into(),
                     count: r.count,
                     mine: r.mine,
+                    names: r.names.into(),
                 })
                 .collect(),
         ),
         reply_count: m.reply_count,
         pending: m.pending,
+        saved: m.saved,
+        selected: m.selected,
     }
+}
+
+fn recipient(r: RecipientData) -> Recipient {
+    Recipient {
+        id: r.id.into(),
+        title: r.title.into(),
+        initials: r.initials.into(),
+        color: rgb(r.color),
+        picked: r.picked,
+    }
+}
+
+fn picker_model(query: &str) -> ModelRc<EmojiItem> {
+    model(
+        reactions::picker_items(query)
+            .into_iter()
+            .map(|i| EmojiItem {
+                key: i.key.into(),
+                emoji: i.emoji.into(),
+                name: i.name.into(),
+            })
+            .collect(),
+    )
+}
+
+/// Wires what the UI thread answers by itself, without the engine: the "More reactions" search.
+pub fn install_local(window: &AppWindow) {
+    window.set_picker_items(picker_model(""));
+    let weak = window.as_weak();
+    window.on_picker_search(move |q| {
+        if let Some(w) = weak.upgrade() {
+            w.set_picker_items(picker_model(&q));
+        }
+    });
 }
 
 /// Thread-safe handle the backend uses to update the window.
@@ -203,6 +244,31 @@ impl UiHandle {
             } else {
                 w.set_editing_id("1".into());
             }
+        });
+    }
+
+    /// Search results and picked recipients of the forward dialog.
+    pub fn forward_results(&self, results: Vec<RecipientData>, picked: Vec<RecipientData>) {
+        self.run(move |w| {
+            w.set_forward_results(model(results.into_iter().map(recipient).collect()));
+            w.set_forward_picked(model(picked.into_iter().map(recipient).collect()));
+        });
+    }
+
+    /// The message was forwarded: close the dialog and leave multi-select mode.
+    pub fn forward_done(&self) {
+        self.run(|w| {
+            w.set_forward_open(false);
+            w.set_select_mode(false);
+            w.set_select_count(0);
+        });
+    }
+
+    /// Multi-select mode and how many messages are ticked.
+    pub fn selection(&self, mode: bool, count: i32) {
+        self.run(move |w| {
+            w.set_select_mode(mode);
+            w.set_select_count(count);
         });
     }
 

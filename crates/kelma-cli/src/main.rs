@@ -237,8 +237,13 @@ async fn main() -> Result<()> {
                 &preview,
                 text,
             );
+            let qtd = teams_proto::chatsvc::quoted_messages_property(
+                &orig.id,
+                &orig.sender_mri,
+                orig.compose_ms,
+            );
             client
-                .send_message(conv, &html, &cfg.display_name.unwrap_or_default(), None)
+                .send_quote_reply(conv, &html, &cfg.display_name.unwrap_or_default(), &qtd)
                 .await?;
             println!("replied");
         }

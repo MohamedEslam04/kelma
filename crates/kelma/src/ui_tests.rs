@@ -6,15 +6,18 @@ use std::rc::Rc;
 
 use i_slint_backend_testing::{self as testing, ElementHandle};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, LogicalSize, ModelRc, SharedString, VecModel};
+use slint::{
+    ComponentHandle, LogicalPosition, LogicalSize, Model, ModelRc, SharedString, VecModel,
+};
 
-use crate::{AppWindow, Msg};
+use crate::{AppWindow, Msg, ReactionItem};
 
 type Log = Rc<RefCell<Vec<String>>>;
 
 fn app_with_messages(msgs: Vec<Msg>) -> AppWindow {
     testing::init_no_event_loop();
     let app = AppWindow::new().unwrap();
+    crate::ui::install_local(&app);
     app.window().set_size(LogicalSize::new(1200., 800.));
     app.set_login_state("ready".into());
     app.set_current_id("48:notes".into());
@@ -128,10 +131,18 @@ fn rows(app: &AppWindow) -> Vec<ElementHandle> {
     ElementHandle::find_by_element_type_name(app, "MessageRow").collect()
 }
 
-/// Action-bar buttons (reply, edit, delete) of the hovered row, left to right.
+fn label(e: &ElementHandle) -> String {
+    e.accessible_label().unwrap_or_default().to_string()
+}
+
+fn click(e: &ElementHandle) {
+    e.mock_single_click(PointerEventButton::Left);
+}
+
+/// Hover-bar buttons (the IconButtons in the band of the hovered row), left to right.
 fn bar_buttons(app: &AppWindow, row: &ElementHandle) -> Vec<ElementHandle> {
     let top = row.absolute_position().y;
-    let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "IconButton::touch")
+    let mut v: Vec<_> = ElementHandle::find_by_element_type_name(app, "IconButton")
         .filter(|b| {
             let y = b.absolute_position().y;
             y >= top && y < top + 32.
@@ -141,51 +152,491 @@ fn bar_buttons(app: &AppWindow, row: &ElementHandle) -> Vec<ElementHandle> {
     v
 }
 
-#[test]
-fn hover_shows_actions_and_they_fire_for_own_message() {
-    let app = app_with_messages(vec![msg("m1", "first", false), msg("m2", "mine", true)]);
+/// The four quick reactions of the hover bar, left to right.
+fn quick_reactions(app: &AppWindow) -> Vec<ElementHandle> {
+    let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "MessageRow::et").collect();
+    v.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
+    v
+}
+
+/// Labels of the open message menu, top to bottom.
+fn menu_labels(app: &AppWindow) -> Vec<String> {
+    menu_items(app).iter().map(label).collect()
+}
+
+fn menu_items(app: &AppWindow) -> Vec<ElementHandle> {
+    let mut v: Vec<_> = ElementHandle::find_by_element_type_name(app, "MenuItem").collect();
+    v.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    v
+}
+
+fn menu_item(app: &AppWindow, name: &str) -> ElementHandle {
+    menu_items(app)
+        .into_iter()
+        .find(|i| label(i) == name)
+        .unwrap_or_else(|| panic!("menu item {name:?} in {:?}", menu_labels(app)))
+}
+
+/// Hovers a row and presses "More actions" in its bar.
+fn open_menu(app: &AppWindow, row: &ElementHandle) {
+    hover(app, row);
+    let more = bar_buttons(app, row).pop().expect("bar buttons");
+    assert_eq!(label(&more), "More actions");
+    click(&more);
+    assert!(app.get_menu_open());
+}
+
+/// Records every callback the menu, picker, forward dialog and multi-select raise.
+fn record_actions(app: &AppWindow) -> Log {
     let log = Log::default();
-    {
-        let l = log.clone();
-        app.on_react(move |id, k| l.borrow_mut().push(format!("react {id} {k}")));
-        let l = log.clone();
-        app.on_reply(move |id| l.borrow_mut().push(format!("reply {id}")));
-        let l = log.clone();
-        app.on_edit(move |id| l.borrow_mut().push(format!("edit {id}")));
-        let l = log.clone();
-        app.on_delete(move |id| l.borrow_mut().push(format!("delete {id}")));
+    macro_rules! rec {
+        ($on:ident, $name:literal, ||) => {{
+            let l = log.clone();
+            app.$on(move || l.borrow_mut().push($name.to_string()));
+        }};
+        ($on:ident, $name:literal, |$($a:ident),*|) => {{
+            let l = log.clone();
+            app.$on(move |$($a),*| {
+                let args: Vec<String> = vec![$($a.to_string()),*];
+                l.borrow_mut().push(format!("{} {}", $name, args.join(" ")).trim().to_string());
+            });
+        }};
     }
+    rec!(on_react, "react", |id, k|);
+    rec!(on_reply, "reply", |id|);
+    rec!(on_edit, "edit", |id|);
+    rec!(on_delete, "delete", |id|);
+    rec!(on_copy_link, "copy-link", |id|);
+    rec!(on_toggle_save, "save", |id|);
+    rec!(on_pin, "pin", |id|);
+    rec!(on_mark_unread, "unread", |id|);
+    rec!(on_forward_begin, "forward-begin", |id|);
+    rec!(on_forward_begin_selected, "forward-begin-selected", ||);
+    rec!(on_forward_search, "forward-search", |q|);
+    rec!(on_forward_toggle, "forward-toggle", |id|);
+    rec!(on_forward_send, "forward-send", |note|);
+    rec!(on_forward_cancel, "forward-cancel", ||);
+    rec!(on_select_begin, "select-begin", |id|);
+    rec!(on_toggle_select, "select-toggle", |id|);
+    rec!(on_select_cancel, "select-cancel", ||);
+    log
+}
+
+#[test]
+fn hover_bar_order_for_own_message() {
+    let app = app_with_messages(vec![msg("m1", "first", false), msg("m2", "mine", true)]);
+    let log = record_actions(&app);
     let rows = rows(&app);
     assert_eq!(rows.len(), 2);
     let own = &rows[1];
 
-    assert_eq!(
-        ElementHandle::find_by_element_id(&app, "MessageRow::et").count(),
-        0,
+    assert!(
+        quick_reactions(&app).is_empty(),
         "no action bar before hover"
     );
     hover(&app, own);
-    let reacts: Vec<_> = ElementHandle::find_by_element_id(&app, "MessageRow::et").collect();
-    assert_eq!(reacts.len(), 6, "six quick reactions");
-    reacts[1].mock_single_click(PointerEventButton::Left);
 
-    let buttons = bar_buttons(&app, own);
-    assert_eq!(buttons.len(), 3, "reply, edit, delete on own message");
-    for b in &buttons {
-        b.mock_single_click(PointerEventButton::Left);
+    // 👍 ❤️ 😆 😮 first ...
+    let reacts = quick_reactions(&app);
+    assert_eq!(reacts.len(), 4, "four quick reactions");
+    for r in &reacts {
+        click(r);
     }
     assert_eq!(
         *log.borrow(),
-        vec!["react m2 heart", "reply m2", "edit m2", "delete m2"]
+        vec![
+            "react m2 like",
+            "react m2 heart",
+            "react m2 laugh",
+            "react m2 surprised"
+        ]
+    );
+
+    // ... then More reactions, Reply with quote, Edit, "…".
+    let buttons = bar_buttons(&app, own);
+    let labels: Vec<_> = buttons.iter().map(label).collect();
+    assert_eq!(
+        labels,
+        ["More reactions", "Reply with quote", "Edit", "More actions"]
+    );
+    let last_reaction_x = reacts.last().unwrap().absolute_position().x;
+    assert!(buttons[0].absolute_position().x > last_reaction_x);
+
+    log.borrow_mut().clear();
+    click(&buttons[1]);
+    click(&buttons[2]);
+    assert_eq!(*log.borrow(), vec!["reply m2", "edit m2"]);
+}
+
+#[test]
+fn others_messages_have_no_edit_in_the_bar() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    let row = &rows(&app)[0];
+    hover(&app, row);
+    let labels: Vec<_> = bar_buttons(&app, row).iter().map(label).collect();
+    assert_eq!(
+        labels,
+        ["More reactions", "Reply with quote", "More actions"]
     );
 }
 
 #[test]
-fn others_messages_only_offer_react_and_reply() {
+fn more_reactions_picker_lists_teams_keys_and_filters_by_search() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    let log = record_actions(&app);
+    let row = &rows(&app)[0];
+    hover(&app, row);
+    click(&bar_buttons(&app, row)[0]);
+    assert!(app.get_picker_open());
+    assert_eq!(app.get_picker_msg_id(), "m1");
+
+    let cells = || -> Vec<ElementHandle> {
+        ElementHandle::find_by_element_id(&app, "ReactionPicker::cell").collect()
+    };
+    let mut all = cells();
+    all.sort_by(|a, b| {
+        let (pa, pb) = (a.absolute_position(), b.absolute_position());
+        pa.y.total_cmp(&pb.y).then(pa.x.total_cmp(&pb.x))
+    });
+    assert!(all.len() >= 48, "a full grid, not an empty picker");
+    let first: Vec<_> = all.iter().take(6).map(label).collect();
+    assert_eq!(
+        first,
+        ["like", "heart", "laugh", "surprised", "sad", "angry"],
+        "Teams reactions come first"
+    );
+
+    let input = ElementHandle::find_by_element_id(&app, "ReactionPicker::input")
+        .next()
+        .expect("search input");
+    click(&input);
+    type_text(&app, "fire");
+    let found = cells();
+    assert!(!found.is_empty() && found.len() < all.len());
+    let fire = found.iter().find(|c| label(c) == "fire").expect("fire");
+    click(fire);
+
+    assert_eq!(*log.borrow(), vec!["react m1 1f525_fire"]);
+    assert!(!app.get_picker_open(), "picking closes the picker");
+}
+
+#[test]
+fn picker_finds_a_search_with_no_match() {
     let app = app_with_messages(vec![msg("m1", "theirs", false)]);
     let row = &rows(&app)[0];
     hover(&app, row);
-    assert_eq!(bar_buttons(&app, row).len(), 1, "reply only");
+    click(&bar_buttons(&app, row)[0]);
+    let input = ElementHandle::find_by_element_id(&app, "ReactionPicker::input")
+        .next()
+        .unwrap();
+    click(&input);
+    type_text(&app, "zzzzqqq");
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "ReactionPicker::cell").count(),
+        0
+    );
+}
+
+#[test]
+fn menu_for_others_message() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    open_menu(&app, &rows(&app)[0]);
+    assert_eq!(
+        menu_labels(&app),
+        [
+            "Reply with quote",
+            "Forward",
+            "Copy message link",
+            "Save this message",
+            "Pin for everyone",
+            "Mark as unread",
+        ]
+    );
+}
+
+#[test]
+fn menu_for_own_message_has_edit_and_delete_but_no_save() {
+    let app = app_with_messages(vec![msg("m1", "mine", true)]);
+    open_menu(&app, &rows(&app)[0]);
+    assert_eq!(
+        menu_labels(&app),
+        [
+            "Reply with quote",
+            "Forward",
+            "Copy message link",
+            "Pin for everyone",
+            "Mark as unread",
+            "Edit",
+            "Delete",
+        ]
+    );
+}
+
+#[test]
+fn menu_in_a_channel_has_no_pin_and_a_saved_message_offers_unsave() {
+    let app = app_with_messages(vec![Msg {
+        saved: true,
+        ..msg("m1", "theirs", false)
+    }]);
+    app.set_current_is_channel(true);
+    open_menu(&app, &rows(&app)[0]);
+    let labels = menu_labels(&app);
+    assert!(
+        !labels.contains(&"Pin for everyone".to_string()),
+        "{labels:?}"
+    );
+    assert!(
+        labels.contains(&"Unsave this message".to_string()),
+        "{labels:?}"
+    );
+}
+
+#[test]
+fn right_click_opens_the_same_menu() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false), msg("m2", "mine", true)]);
+    rows(&app)[0].mock_single_click(PointerEventButton::Right);
+    assert!(app.get_menu_open());
+    assert_eq!(app.get_menu_msg().id, "m1");
+    let others = menu_labels(&app);
+    app.set_menu_open(false);
+
+    open_menu(&app, &rows(&app)[0]);
+    assert_eq!(menu_labels(&app), others, "bar and right click agree");
+}
+
+#[test]
+fn menu_actions_fire_with_the_message_id_and_close_the_menu() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false), msg("m2", "mine", true)]);
+    let log = record_actions(&app);
+    let (theirs, mine) = {
+        let r = rows(&app);
+        (r[0].clone(), r[1].clone())
+    };
+    for (row, item) in [
+        (&theirs, "Reply with quote"),
+        (&theirs, "Copy message link"),
+        (&theirs, "Save this message"),
+        (&theirs, "Pin for everyone"),
+        (&theirs, "Mark as unread"),
+        (&mine, "Edit"),
+        (&mine, "Delete"),
+    ] {
+        open_menu(&app, row);
+        click(&menu_item(&app, item));
+        assert!(!app.get_menu_open(), "{item} closes the menu");
+    }
+    assert_eq!(
+        *log.borrow(),
+        vec![
+            "reply m1",
+            "copy-link m1",
+            "save m1",
+            "pin m1",
+            "unread m1",
+            "edit m2",
+            "delete m2"
+        ]
+    );
+}
+
+fn recipient(id: &str, title: &str, picked: bool) -> crate::Recipient {
+    crate::Recipient {
+        id: id.into(),
+        title: title.into(),
+        initials: "XX".into(),
+        picked,
+        ..Default::default()
+    }
+}
+
+fn recipients(v: Vec<crate::Recipient>) -> ModelRc<crate::Recipient> {
+    ModelRc::new(VecModel::from(v))
+}
+
+fn result_rows(app: &AppWindow) -> Vec<ElementHandle> {
+    ElementHandle::find_by_element_id(app, "ForwardDialog::hit").collect()
+}
+
+#[test]
+fn forward_dialog_flow() {
+    let app = app_with_messages(vec![msg("m1", "hello there", false)]);
+    let log = record_actions(&app);
+    open_menu(&app, &rows(&app)[0]);
+
+    // Forward has two choices: this message, or several.
+    click(&menu_item(&app, "Forward"));
+    assert_eq!(
+        menu_labels(&app)
+            .iter()
+            .filter(|l| *l == "This message" || *l == "Multiple messages")
+            .count(),
+        2
+    );
+    click(&menu_item(&app, "This message"));
+    assert!(app.get_forward_open());
+    assert!(!app.get_menu_open());
+    assert_eq!(*log.borrow(), vec!["forward-begin m1"]);
+    assert_eq!(app.get_forward_count(), 1);
+    assert_eq!(app.get_forward_preview_author(), "Me");
+    assert_eq!(app.get_forward_preview_text(), "hello there");
+
+    // The engine answers with the chats to pick from.
+    app.set_forward_results(recipients(vec![
+        recipient("c1", "Sara Hassan", false),
+        recipient("c2", "Project room", false),
+    ]));
+
+    // Typing in "Add recipients" searches.
+    let search = ElementHandle::find_by_element_id(&app, "ForwardDialog::recipient-input")
+        .next()
+        .expect("recipient input");
+    click(&search);
+    type_text(&app, "sa");
+    assert_eq!(log.borrow().last().unwrap(), "forward-search sa");
+
+    // Forward stays disabled until someone is picked.
+    let send = ElementHandle::find_by_element_id(&app, "ForwardDialog::send-touch")
+        .next()
+        .unwrap();
+    click(&send);
+    assert!(
+        !log.borrow().iter().any(|l| l.starts_with("forward-send")),
+        "nothing picked, nothing sent"
+    );
+
+    let rows = result_rows(&app);
+    assert_eq!(rows.len(), 2);
+    click(&rows[0]);
+    assert_eq!(log.borrow().last().unwrap(), "forward-toggle c1");
+    app.set_forward_picked(recipients(vec![recipient("c1", "Sara Hassan", true)]));
+    app.set_forward_results(recipients(vec![
+        recipient("c1", "Sara Hassan", true),
+        recipient("c2", "Project room", false),
+    ]));
+    assert_eq!(result_rows(&app).len(), 2, "rows survive a refresh");
+
+    let note = ElementHandle::find_by_element_id(&app, "ForwardDialog::note")
+        .next()
+        .expect("optional message");
+    click(&note);
+    type_text(&app, "FYI");
+    click(&send);
+    assert_eq!(log.borrow().last().unwrap(), "forward-send FYI");
+
+    // Cancel closes and tells the engine.
+    let cancel = ElementHandle::find_by_element_id(&app, "ForwardDialog::cancel-touch")
+        .next()
+        .unwrap();
+    click(&cancel);
+    assert!(!app.get_forward_open());
+    assert_eq!(log.borrow().last().unwrap(), "forward-cancel");
+}
+
+fn checkboxes(app: &AppWindow) -> Vec<ElementHandle> {
+    let mut v: Vec<_> = ElementHandle::find_by_accessible_label(app, "Select message").collect();
+    v.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    v
+}
+
+#[test]
+fn multi_select_ticks_messages_and_forwards_them() {
+    let app = app_with_messages(vec![
+        msg("m1", "one", false),
+        msg("m2", "two", false),
+        msg("m3", "three", true),
+    ]);
+    let log = record_actions(&app);
+    assert!(
+        checkboxes(&app).is_empty(),
+        "no checkboxes outside the mode"
+    );
+
+    open_menu(&app, &rows(&app)[1]);
+    click(&menu_item(&app, "Forward"));
+    click(&menu_item(&app, "Multiple messages"));
+    assert!(app.get_select_mode());
+    assert_eq!(*log.borrow(), vec!["select-begin m2"]);
+    assert_eq!(checkboxes(&app).len(), 3, "a checkbox per message");
+
+    // No hover bar while selecting.
+    hover(&app, &rows(&app)[0]);
+    assert!(quick_reactions(&app).is_empty());
+
+    // The engine owns the ticks; the row only reports the click.
+    click(&rows(&app)[0]);
+    click(&rows(&app)[2]);
+    assert_eq!(log.borrow()[1..], ["select-toggle m1", "select-toggle m3"]);
+
+    // The engine pushes the new state back.
+    let model = app.get_messages();
+    for i in 0..model.row_count() {
+        let mut m = model.row_data(i).unwrap();
+        m.selected = i != 1;
+        model.set_row_data(i, m);
+    }
+    app.set_select_count(2);
+    let ticked: Vec<_> = checkboxes(&app)
+        .iter()
+        .map(|c| c.accessible_checked().unwrap())
+        .collect();
+    assert_eq!(ticked, [true, false, true]);
+
+    let forward = ElementHandle::find_by_element_id(&app, "SelectBar::forward-touch")
+        .next()
+        .expect("select bar");
+    click(&forward);
+    assert_eq!(log.borrow().last().unwrap(), "forward-begin-selected");
+    assert!(app.get_forward_open());
+    assert_eq!(app.get_forward_count(), 2);
+
+    // Leaving the mode.
+    app.set_forward_open(false);
+    let cancel = ElementHandle::find_by_element_id(&app, "SelectBar::cancel-touch")
+        .next()
+        .unwrap();
+    click(&cancel);
+    assert!(!app.get_select_mode());
+    assert_eq!(log.borrow().last().unwrap(), "select-cancel");
+    assert!(checkboxes(&app).is_empty());
+}
+
+#[test]
+fn select_bar_forward_is_disabled_without_ticks() {
+    let app = app_with_messages(vec![msg("m1", "one", false)]);
+    let log = record_actions(&app);
+    app.set_select_mode(true);
+    app.set_select_count(0);
+    let forward = ElementHandle::find_by_element_id(&app, "SelectBar::forward-touch")
+        .next()
+        .unwrap();
+    click(&forward);
+    assert!(!app.get_forward_open());
+    assert!(log.borrow().is_empty());
+}
+
+#[test]
+fn reaction_chip_tooltip_lists_who_reacted() {
+    let mut m = msg("m1", "react to me", false);
+    m.reactions = ModelRc::new(VecModel::from(vec![ReactionItem {
+        key: "like".into(),
+        emoji: "👍".into(),
+        count: 2,
+        mine: true,
+        names: "Sara Hassan, You".into(),
+    }]));
+    let app = app_with_messages(vec![m]);
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "ReactionChip::tip").count(),
+        0
+    );
+    let chip = ElementHandle::find_by_element_type_name(&app, "ReactionChip")
+        .next()
+        .expect("reaction chip");
+    hover(&app, &chip);
+    let tip = ElementHandle::find_by_element_id(&app, "ReactionChip::tip")
+        .next()
+        .expect("tooltip while hovering");
+    assert_eq!(label(&tip), "Sara Hassan, You");
 }
 
 #[test]

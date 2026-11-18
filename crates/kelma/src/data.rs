@@ -42,6 +42,8 @@ pub struct ReactData {
     pub emoji: String,
     pub count: i32,
     pub mine: bool,
+    /// Display names of who reacted, comma separated (the chip tooltip).
+    pub names: String,
 }
 
 #[derive(Clone)]
@@ -69,6 +71,18 @@ pub struct MsgData {
     pub reactions: Vec<ReactData>,
     pub reply_count: i32,
     pub pending: bool,
+    pub saved: bool,
+    pub selected: bool,
+}
+
+/// A forward target: an existing chat or channel.
+#[derive(Clone)]
+pub struct RecipientData {
+    pub id: String,
+    pub title: String,
+    pub initials: String,
+    pub color: u32,
+    pub picked: bool,
 }
 
 #[derive(Clone)]

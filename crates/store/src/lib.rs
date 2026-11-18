@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 pub use model::{
     ConvFilter, ConvKind, ConversationRow, Draft, MessageRow, OutboxItem, OutboxKind, OutboxState,
-    TeamRow, UserRow,
+    SavedMessage, TeamRow, UserRow,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -388,6 +388,92 @@ impl Store {
             .prepare_cached(&format!("SELECT {MSG_COLS} FROM messages WHERE id = ?1"))?
             .query_row([id], msg_from_row)
             .optional()?)
+    }
+
+    /// Id of the top-level message right before the one composed at `compose_ms`
+    /// (what "Mark as unread" bookmarks), or `None` for the first message.
+    pub fn message_before(&self, conversation_id: &str, compose_ms: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT id FROM messages \
+                 WHERE conversation_id = ?1 AND parent_id IS NULL AND compose_ms < ?2 \
+                 ORDER BY compose_ms DESC, id DESC LIMIT 1",
+            )?
+            .query_row(params![conversation_id, compose_ms], |r| r.get(0))
+            .optional()?)
+    }
+
+    // ---- saved messages --------------------------------------------------
+
+    /// Saves a message, replacing the row when it is already saved.
+    pub fn save_message(&self, m: &SavedMessage) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO saved_messages \
+                     (conversation_id, message_id, root_id, sender_name, preview, saved_ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?
+            .execute(params![
+                m.conversation_id,
+                m.message_id,
+                m.root_id,
+                m.sender_name,
+                m.preview,
+                m.saved_ms
+            ])?;
+        Ok(())
+    }
+
+    pub fn unsave_message(&self, conversation_id: &str, message_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "DELETE FROM saved_messages WHERE conversation_id = ?1 AND message_id = ?2",
+            )?
+            .execute(params![conversation_id, message_id])?;
+        Ok(())
+    }
+
+    pub fn is_saved(&self, conversation_id: &str, message_id: &str) -> Result<bool> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT 1 FROM saved_messages WHERE conversation_id = ?1 AND message_id = ?2",
+            )?
+            .exists(params![conversation_id, message_id])?)
+    }
+
+    /// Ids of the saved messages of one conversation.
+    pub fn saved_ids(&self, conversation_id: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT message_id FROM saved_messages WHERE conversation_id = ?1 \
+             ORDER BY saved_ms DESC, message_id",
+        )?;
+        let out = stmt
+            .query_map([conversation_id], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
+    }
+
+    /// Every saved message, newest first (the Saved view).
+    pub fn saved_messages(&self) -> Result<Vec<SavedMessage>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT conversation_id, message_id, root_id, sender_name, preview, saved_ms \
+             FROM saved_messages ORDER BY saved_ms DESC, message_id",
+        )?;
+        let out = stmt
+            .query_map([], |r| {
+                Ok(SavedMessage {
+                    conversation_id: r.get(0)?,
+                    message_id: r.get(1)?,
+                    root_id: r.get(2)?,
+                    sender_name: r.get(3)?,
+                    preview: r.get(4)?,
+                    saved_ms: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
     }
 
     // ---- users ---------------------------------------------------------

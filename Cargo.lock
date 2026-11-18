@@ -3001,6 +3001,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "chrono",
+ "emoji",
  "i-slint-backend-testing",
  "image",
  "notify-rust",
