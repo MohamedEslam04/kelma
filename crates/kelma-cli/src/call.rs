@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! kelma-cli call probe        authz calling endpoints, TURN credentials, calling trouter (no call)
+//!     --turn-tls     find the TURN relay over TLS on port 443 instead of UDP
 //! kelma-cli call meetings     meetings with an active call, as the CSA chat list shows them
 //! kelma-cli call history [n]  the last n calls (default 20) from the call log: time (UTC), direction, outcome, duration, party
 //! kelma-cli call join [opts]   join the newest active meeting (or --link URL), send audio, record what arrives
@@ -14,6 +15,7 @@
 //!     --secs <n>     stay this long, then leave (default: 30)
 //!     --relay <host> TURN gateway to start from (default: chosen from the authz region)
 //!     --relay-only   use relayed (TURN) candidates only, to prove the relay path
+//!     --turn-tls     reach the TURN relay over TLS on port 443 (for networks that block UDP)
 //!     --dump <dir>   write every SDP exchanged to this directory (keep it out of the repo)
 //!     --mute-at <s>        mute us <s> seconds after the join (stop sending the mic, publish
 //!                          isMuted); repeatable, like the three below
@@ -86,11 +88,18 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
                 ep.partition,
                 ep.ring
             );
-            match calling::relay::resolve_ice_servers(client, &ep.region, opt(args, "--relay"))
-                .await
-            {
-                Ok((ice, expires)) => println!(
-                    "TURN: {} ({} credential(s), expire in {expires:?})",
+            let turn = if args.iter().any(|a| a == "--turn-tls") {
+                calling::relay::resolve_tls_ice_servers(client, &ep.region, opt(args, "--relay"))
+                    .await
+                    .map(|(ice, expires, _shim)| (ice, expires, " over TLS via a loopback shim"))
+            } else {
+                calling::relay::resolve_ice_servers(client, &ep.region, opt(args, "--relay"))
+                    .await
+                    .map(|(ice, expires)| (ice, expires, ""))
+            };
+            match turn {
+                Ok((ice, expires, how)) => println!(
+                    "TURN: {}{how} ({} credential(s), expire in {expires:?})",
                     ice.first()
                         .and_then(|s| s.urls.first())
                         .map(String::as_str)
@@ -308,12 +317,22 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     println!("calling trouter registered");
 
     let region = ngc.endpoints().region.clone();
-    let ice = match calling::relay::resolve_ice_servers(client, &region, opt(args, "--relay")).await
-    {
-        Ok((ice, _)) => ice,
-        Err(e) => {
-            println!("TURN unavailable ({e}); host candidates only");
-            vec![]
+    // The TLS shim must outlive every media session built from `ice`.
+    let (ice, _turn_shim) = if args.iter().any(|a| a == "--turn-tls") {
+        match calling::relay::resolve_tls_ice_servers(client, &region, opt(args, "--relay")).await {
+            Ok((ice, _, shim)) => (ice, Some(shim)),
+            Err(e) => {
+                println!("TURN over TLS unavailable ({e}); host candidates only");
+                (vec![], None)
+            }
+        }
+    } else {
+        match calling::relay::resolve_ice_servers(client, &region, opt(args, "--relay")).await {
+            Ok((ice, _)) => (ice, None),
+            Err(e) => {
+                println!("TURN unavailable ({e}); host candidates only");
+                (vec![], None)
+            }
         }
     };
     if let Some(url) = ice.first().and_then(|s| s.urls.first()) {
