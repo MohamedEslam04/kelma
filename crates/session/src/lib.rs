@@ -60,6 +60,20 @@ pub struct Config {
     /// The calendar time scale in minutes (15, 30 or 60).
     #[serde(default)]
     pub calendar_scale: Option<u32>,
+    /// Composer: Enter sends the message (default). When false, Enter starts a new line and
+    /// Ctrl+Enter sends.
+    #[serde(default = "default_true")]
+    pub enter_sends: bool,
+    /// Emoji skin tone: 0 for the default yellow, 1..=5 for light to dark.
+    #[serde(default)]
+    pub skin_tone: u8,
+    /// Recently used emoji, newest first.
+    #[serde(default)]
+    pub recent_emoji: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -73,6 +87,9 @@ impl Default for Config {
             open_chat_at: OpenChatAt::default(),
             calendar_view: None,
             calendar_scale: None,
+            enter_sends: true,
+            skin_tone: 0,
+            recent_emoji: Vec::new(),
         }
     }
 }
@@ -224,6 +241,21 @@ mod tests {
             calendar_scale: Some(15),
             ..c
         };
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
+    }
+
+    #[test]
+    fn config_written_before_the_composer_settings_still_loads() {
+        let old = r#"{"account":"default","tenant":"organizations","epid":"e"}"#;
+        let c: Config = serde_json::from_str(old).unwrap();
+        assert!(c.enter_sends, "Enter sends by default");
+        assert_eq!(c.skin_tone, 0);
+        assert!(c.recent_emoji.is_empty());
+        let mut c = c;
+        c.enter_sends = false;
+        c.skin_tone = 3;
+        c.recent_emoji = vec!["👍".into()];
         let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
         assert_eq!(back, c);
     }

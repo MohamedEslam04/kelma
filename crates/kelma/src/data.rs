@@ -19,6 +19,16 @@ pub struct ChatData {
     pub rtl_title: bool,
     pub rtl_preview: bool,
     pub favorite: bool,
+    /// `preview` is an unsent draft, not the last message.
+    pub draft: bool,
+}
+
+/// A chip above the composer.
+pub struct AttachmentData {
+    pub name: String,
+    pub detail: String,
+    pub is_image: bool,
+    pub thumb: Option<Pixels>,
 }
 
 #[derive(Clone)]

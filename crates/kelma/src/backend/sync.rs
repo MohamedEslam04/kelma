@@ -207,6 +207,7 @@ impl Engine {
             .filter(|c| c.unread)
             .map(|c| c.read_horizon_ms);
         let open_at = self.cfg.lock().unwrap().open_chat_at;
+        self.flush_draft();
         {
             let mut v = self.view.lock().unwrap();
             if v.current.as_deref() == Some(id.as_str()) && v.thread_root.is_none() {
@@ -230,7 +231,9 @@ impl Engine {
         }
         self.ui.selection(false, 0);
         self.ui.new_count(0);
-        self.ui.reply_bar(String::new(), String::new(), false);
+        // Shows the chat's stored draft and reply target (or clears the reply bar).
+        self.restore_draft(&id);
+        self.push_attachments();
         self.mark(|d| {
             d.header = true;
             d.messages = true;

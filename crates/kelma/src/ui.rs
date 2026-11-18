@@ -2,11 +2,13 @@
 
 mod cal;
 
-use crate::data::{ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData};
+use crate::data::{
+    AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
+};
 use crate::reactions;
 use crate::{
-    AppWindow, ChannelRow, ChatRow, EmojiItem, FileItem, ImageItem, Msg, ReactionItem, Recipient,
-    TeamRow,
+    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, Msg,
+    PendingAttachment, ReactionItem, Recipient, TeamRow,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -51,6 +53,7 @@ fn chat_row(c: ChatData) -> ChatRow {
         rtl_title: c.rtl_title,
         rtl_preview: c.rtl_preview,
         favorite: c.favorite,
+        draft: c.draft,
     }
 }
 
@@ -172,6 +175,11 @@ impl UiHandle {
     }
 
     fn run(&self, f: impl FnOnce(AppWindow) + Send + 'static) {
+        // Tests drive the window on their own thread without an event loop.
+        #[cfg(test)]
+        if let Some(w) = self.weak.upgrade() {
+            return f(w);
+        }
         let _ = self.weak.upgrade_in_event_loop(f);
     }
 
@@ -233,8 +241,50 @@ impl UiHandle {
         self.run(|w| w.set_focus_tick(w.get_focus_tick() + 1));
     }
 
+    /// The chips above the composer.
+    pub fn attachments(&self, chips: Vec<AttachmentData>) {
+        self.run(move |w| {
+            w.set_pending_attachments(model(
+                chips
+                    .into_iter()
+                    .map(|c| {
+                        let (preview, has_preview) = img(&c.thumb);
+                        PendingAttachment {
+                            name: c.name.into(),
+                            detail: c.detail.into(),
+                            is_image: c.is_image,
+                            preview,
+                            has_preview,
+                        }
+                    })
+                    .collect(),
+            ));
+        });
+    }
+
+    /// Replaces the composer text, with the cursor at its end.
     pub fn set_draft(&self, text: String) {
-        self.run(move |w| w.set_draft(text.into()));
+        self.run(move |w| {
+            w.set_draft(text.into());
+            w.set_cursor_tick(w.get_cursor_tick() + 1);
+        });
+    }
+
+    /// Saved composer preferences: Enter behavior, emoji skin tone and the recent emoji row.
+    pub fn prefs(&self, enter_sends: bool, skin_tone: u8, recent: Vec<String>) {
+        self.run(move |w| {
+            w.set_enter_sends(enter_sends);
+            w.set_skin_tone(skin_tone.into());
+            w.set_recent_emoji(model(
+                recent
+                    .into_iter()
+                    .map(|ch| ComposerEmoji {
+                        ch: ch.into(),
+                        name: SharedString::new(),
+                    })
+                    .collect(),
+            ));
+        });
     }
 
     pub fn clear_subject(&self) {

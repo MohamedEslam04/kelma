@@ -13,7 +13,21 @@ impl Engine {
         subject: String,
     ) -> anyhow::Result<()> {
         let text = text.trim().to_string();
+        let editing_now = self.view.lock().unwrap().editing.is_some();
+        // Chips go first, each as its own outbox item (an image or a file card), then the text.
+        if !editing_now && let Err(err) = self.queue_attachments() {
+            // Whatever could not be queued is still a chip; the text goes back to the composer.
+            if !text.is_empty() {
+                self.ui.set_draft(text.clone());
+                self.view.lock().unwrap().draft_text = text;
+                self.schedule_draft_save();
+            }
+            self.flush_outbox(false).await;
+            return Err(err);
+        }
         if text.is_empty() {
+            // Nothing but attachments (or nothing at all).
+            self.flush_outbox(false).await;
             return Ok(());
         }
         let (target, reply, editing) = {
@@ -29,6 +43,9 @@ impl Engine {
             return Ok(());
         };
         if let Some(id) = editing {
+            // The composer shows the draft that was there before the edit again.
+            let draft = self.view.lock().unwrap().draft_text.clone();
+            self.ui.set_draft(draft);
             let html = render::text_to_teams_html(&text);
             self.client
                 .edit_message(&target, &id, &html, &self.my_name)
@@ -61,6 +78,15 @@ impl Engine {
             }
             None => render::text_to_teams_html(&text),
         };
+        // The draft is sent: forget it. It comes back if the message cannot even be queued.
+        let current = self
+            .view
+            .lock()
+            .unwrap()
+            .current
+            .clone()
+            .unwrap_or_default();
+        self.clear_draft(&current);
         let item = self.new_outbox_item(
             target,
             OutboxKind::Text,
@@ -73,10 +99,14 @@ impl Engine {
             None,
         );
         self.ui.clear_subject();
-        if let Err(err) = self.enqueue_and_flush(item).await {
-            self.ui.set_draft(text);
+        if let Err(err) = self.enqueue(item) {
+            self.ui.set_draft(text.clone());
+            self.view.lock().unwrap().draft_text = text;
+            self.schedule_draft_save();
+            self.flush_outbox(false).await;
             return Err(err);
         }
+        self.flush_outbox(false).await;
         Ok(())
     }
 
@@ -157,44 +187,41 @@ impl Engine {
         Ok(())
     }
 
-    /// Copies a picked file into the cache (so it outlives the file dialog, and a restart) and
-    /// queues it in the outbox.
-    async fn queue_attachment(
-        self: &Arc<Self>,
+    /// Copies a chip's bytes into the cache (so they outlive the composer, and a restart) and
+    /// queues them in the outbox as an image or file item. Sending is left to `flush_outbox`.
+    pub(super) fn queue_attachment(
+        &self,
+        target: String,
         kind: OutboxKind,
         name: &str,
-        data: Vec<u8>,
+        data: &[u8],
     ) -> anyhow::Result<()> {
-        let Some(target) = self.current_target() else {
-            return Ok(());
-        };
         let item = self.new_outbox_item(target, kind, String::new(), None, None, None);
         let dir = session::Paths::new()?
             .cache_dir
             .join("outbox")
             .join(&item.client_message_id);
-        std::fs::create_dir_all(&dir)?;
         // Keep only the file name: it is shown in the row and used as the upload name.
         let name = std::path::Path::new(name)
             .file_name()
             .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
         let path = dir.join(name);
-        std::fs::write(&path, data)?;
         let item = store::OutboxItem {
             payload_path: Some(path.to_string_lossy().into_owned()),
             ..item
         };
-        if let Err(err) = self.enqueue_and_flush(item).await {
+        let queued = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(&path, data))
+            .map_err(anyhow::Error::from)
+            .and_then(|()| self.enqueue(item));
+        if queued.is_err() {
             let _ = std::fs::remove_dir_all(dir);
-            return Err(err);
         }
-        Ok(())
+        queued
     }
 
+    /// Picks an image and adds it as a chip; it goes through the outbox when the message is sent.
     pub(super) async fn attach_image(self: &Arc<Self>) -> anyhow::Result<()> {
-        if self.current_target().is_none() {
-            return Ok(());
-        }
         let Some(file) = rfd::AsyncFileDialog::new()
             .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
             .pick_file()
@@ -202,21 +229,17 @@ impl Engine {
         else {
             return Ok(());
         };
-        let data = file.read().await;
-        self.queue_attachment(OutboxKind::Image, &file.file_name(), data)
+        self.add_attachment(file.file_name(), file.read().await)
             .await
     }
 
-    /// Picks a file; it is uploaded to OneDrive, shared with the chat and posted from the outbox.
+    /// Picks a file and adds it as a chip; it is uploaded to OneDrive from the outbox when the
+    /// message is sent.
     pub(super) async fn attach_file(self: &Arc<Self>) -> anyhow::Result<()> {
-        if self.current_target().is_none() {
-            return Ok(());
-        }
         let Some(file) = rfd::AsyncFileDialog::new().pick_file().await else {
             return Ok(());
         };
-        let data = file.read().await;
-        self.queue_attachment(OutboxKind::File, &file.file_name(), data)
+        self.add_attachment(file.file_name(), file.read().await)
             .await
     }
 }

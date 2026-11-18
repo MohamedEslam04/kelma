@@ -131,11 +131,9 @@ fn remove_payload(item: &OutboxItem) {
 }
 
 impl Engine {
-    /// Queues a message and sends it (now, or on the next reconnect).
-    pub(super) async fn enqueue_and_flush(
-        self: &Arc<Self>,
-        item: OutboxItem,
-    ) -> anyhow::Result<()> {
+    /// Stores a message in the outbox and shows it as a pending row. `flush_outbox` sends it (now,
+    /// or on the next reconnect).
+    pub(super) fn enqueue(&self, item: OutboxItem) -> anyhow::Result<()> {
         self.store.lock().unwrap().enqueue(&item)?;
         {
             // Our own message always scrolls into view.
@@ -145,7 +143,6 @@ impl Engine {
             d.messages = true;
             d.scroll = true;
         });
-        self.flush_outbox(false).await;
         Ok(())
     }
 

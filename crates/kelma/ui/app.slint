@@ -2,11 +2,11 @@
 // The pieces live in sibling modules; this file keeps the AppWindow state, callbacks and wiring.
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ActivityRow, ChatRow, EmojiItem, Msg, Recipient, TeamRow } from "types.slint";
+import { ActivityRow, ChatRow, ComposerEmoji, EmojiItem, Msg, PendingAttachment, Recipient, TeamRow } from "types.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { MessageRow } from "message_row.slint";
-import { Composer } from "composer.slint";
+import { Composer, EmojiApi } from "composer.slint";
 import { MessageMenu } from "message_menu.slint";
 import { ReactionPicker } from "reaction_picker.slint";
 import { ForwardDialog } from "forward_dialog.slint";
@@ -16,7 +16,8 @@ import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
 import { ActivityView } from "activity.slint";
 
 export { Theme } from "theme.slint";
-export { ActivityRow, ChatRow, ReactionItem, EmojiItem, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
+export { ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
+export { EmojiApi } from "composer.slint";
 export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
 
 export component AppWindow inherits Window {
@@ -38,7 +39,7 @@ export component AppWindow inherits Window {
     in property <bool> connected: true;
     in property <string> banner;
 
-    in-out property <string> view: "chat"; // chat | teams | activity
+    in-out property <string> view: "chat"; // chat | teams | activity | calendar
     in-out property <string> filter: "all";
     in property <[ChatRow]> chats-favorites;
     in property <[ChatRow]> chats-main;
@@ -103,6 +104,11 @@ export component AppWindow inherits Window {
     // Unread Activity items plus unread chats, like Teams; shown in the window title.
     out property <int> badge-total: root.activity-unread + root.chats-unread;
     out property <string> window-title: root.badge-total > 0 ? "(" + root.badge-total + ") kelma" : "kelma";
+    in-out property <bool> enter-sends: true;
+    in-out property <int> skin-tone: 0;
+    in property <[ComposerEmoji]> recent-emoji;
+    in property <[PendingAttachment]> pending-attachments;
+    in property <int> cursor-tick; // Rust bumps it to put the composer cursor at the end
 
     // --- callbacks to Rust ---
     callback retry-login();
@@ -115,6 +121,7 @@ export component AppWindow inherits Window {
     callback search(string);
     callback send(string);
     callback typing-tick();
+    callback draft-edited(string);
     callback load-older();
     callback react(string, string);
     callback reply(string);
@@ -126,6 +133,11 @@ export component AppWindow inherits Window {
     callback close-thread();
     callback attach-image();
     callback attach-file();
+    callback set-enter-sends(bool);
+    callback emoji-used(string);
+    callback paste-image();
+    callback remove-attachment(int);
+    callback skin-tone-changed(int);
     callback dismiss-banner();
     callback picker-search(string);
     callback copy-link(string);
@@ -540,8 +552,19 @@ export component AppWindow inherits Window {
                         draft <=> root.draft;
                         post-subject <=> root.post-subject;
                         focus-tick <=> root.focus-tick;
+                        enter-sends <=> root.enter-sends;
+                        set-enter-sends(on) => { root.set-enter-sends(on); }
+                        skin-tone <=> root.skin-tone;
+                        recent-emoji: root.recent-emoji;
+                        pending-attachments: root.pending-attachments;
+                        paste-image => { root.paste-image(); }
+                        remove-attachment(i) => { root.remove-attachment(i); }
+                        cursor-tick: root.cursor-tick;
+                        emoji-used(e) => { root.emoji-used(e); }
+                        skin-tone-changed(t) => { root.skin-tone-changed(t); }
                         send(text) => { root.send(text); }
                         typing-tick => { root.typing-tick(); }
+                        draft-edited(text) => { root.draft-edited(text); }
                         cancel-reply => { root.cancel-reply(); }
                         attach-image => { root.attach-image(); }
                         attach-file => { root.attach-file(); }

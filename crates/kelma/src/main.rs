@@ -1,6 +1,7 @@
 //! kelma: a lightweight native Microsoft Teams chat client (unofficial).
 
 mod backend;
+mod composer;
 mod data;
 mod demo;
 mod markdown;
@@ -31,7 +32,7 @@ async fn app_main(
             tokio::spawn(engine.clone().handle(Cmd::SelectChat(id)));
         }
         while let Some(cmd) = cmds.recv().await {
-            tokio::spawn(engine.clone().handle(cmd));
+            engine.dispatch(cmd);
         }
         return;
     }
@@ -73,7 +74,7 @@ async fn app_main(
         });
     }
     while let Some(cmd) = cmds.recv().await {
-        tokio::spawn(engine.clone().handle(cmd));
+        engine.dispatch(cmd);
     }
 }
 
@@ -209,6 +210,7 @@ fn main() -> anyhow::Result<()> {
     let _ = slint::set_xdg_app_id("kelma");
 
     let window = AppWindow::new()?;
+    composer::wire(&window);
     if let Ok(view) = std::env::var("KELMA_VIEW") {
         window.set_view(view.into());
     }
@@ -294,6 +296,16 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_activity_settings, || Cmd::Activity(
         ActivityCmd::Settings
     ));
+    cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
+    cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
+    cmd!(on_emoji_used, |e| Cmd::EmojiUsed(e.into()));
+    cmd!(on_paste_image, || Cmd::PasteImage);
+    cmd!(on_remove_attachment, |i| Cmd::RemoveAttachment(
+        i.max(0) as usize
+    ));
+    cmd!(on_skin_tone_changed, |t| Cmd::SetSkinTone(
+        t.clamp(0, 5) as u8
+    ));
     {
         let tx = tx.clone();
         let weak = window.as_weak();
@@ -332,6 +344,19 @@ fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Files dropped on the window become attachments. winit reports one event per file. Wayland has
+    // no drop events in winit 0.30, so this only fires on X11, Windows and macOS.
+    {
+        use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
+        let tx = tx.clone();
+        window.window().on_winit_window_event(move |_, event| {
+            if let WindowEvent::DroppedFile(path) = event {
+                let _ = tx.send(Cmd::AddFile(path.clone()));
+            }
+            EventResult::Propagate
+        });
+    }
+
     // Track window focus for notifications and read markers.
     let focus_timer = slint::Timer::default();
     {
@@ -359,6 +384,9 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     rt.spawn(app_main(ui, rx, focus));
     window.run()?;
+    // Give the engine a moment to write a draft typed just before closing.
+    let _ = tx.send(Cmd::Flush);
+    std::thread::sleep(std::time::Duration::from_millis(100));
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
     Ok(())
 }
