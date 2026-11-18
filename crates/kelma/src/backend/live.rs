@@ -99,6 +99,11 @@ impl Engine {
     }
 
     fn on_message(self: &Arc<Self>, m: Message) {
+        if m.conversation_id == "48:notifications" {
+            // The Activity feed: reload it instead of storing the notification as a chat message.
+            self.on_activity_event();
+            return;
+        }
         if m.message_type.starts_with("Control/") {
             return;
         }

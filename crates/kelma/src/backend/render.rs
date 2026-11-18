@@ -32,6 +32,9 @@ impl Engine {
             if d.messages {
                 self.render_messages(d.scroll);
             }
+            if d.activity || d.chats || d.messages {
+                self.render_activity(d.activity || d.chats, d.activity || d.messages);
+            }
             let typing = {
                 let mut v = self.view.lock().unwrap();
                 let now = Instant::now();
@@ -49,7 +52,7 @@ impl Engine {
         }
     }
 
-    fn avatar(self: &Arc<Self>, mri: &str) -> Option<Pixels> {
+    pub(super) fn avatar(self: &Arc<Self>, mri: &str) -> Option<Pixels> {
         if mri.is_empty() || mri.starts_with("28:") {
             return None;
         }
@@ -332,6 +335,18 @@ impl Engine {
             };
             (rows, is_channel, counts)
         };
+        let out = self.build_msgs(&rows, is_channel, &thread, &reply_counts);
+        self.ui.messages(out, scroll);
+    }
+
+    /// Turns stored messages into view data (shared by the chat view and the Activity preview).
+    pub(super) fn build_msgs(
+        self: &Arc<Self>,
+        rows: &[MessageRow],
+        is_channel: bool,
+        thread: &Option<String>,
+        reply_counts: &HashMap<String, usize>,
+    ) -> Vec<MsgData> {
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
         for r in rows
@@ -468,6 +483,6 @@ impl Engine {
             });
             prev = Some(r);
         }
-        self.ui.messages(out, scroll);
+        out
     }
 }

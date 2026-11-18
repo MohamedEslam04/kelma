@@ -8,6 +8,8 @@ use slint::{
 use std::cell::RefCell;
 use std::rc::Rc;
 
+pub(crate) mod activity;
+
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
 }

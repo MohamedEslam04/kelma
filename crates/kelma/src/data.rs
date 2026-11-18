@@ -92,6 +92,37 @@ pub struct HeaderData {
     pub thread_root: String,
 }
 
+/// One row of the Activity list.
+#[derive(Clone)]
+pub struct ActivityData {
+    pub id: String,
+    pub title: String,
+    pub initials: String,
+    pub color: u32,
+    pub avatar: Option<Pixels>,
+    pub badge: String,
+    pub unread: bool,
+    pub preview: String,
+    pub time: String,
+    pub location: String,
+    pub rtl_preview: bool,
+}
+
+/// The right-hand preview of the selected Activity item.
+#[derive(Clone, Default)]
+pub struct PreviewData {
+    /// Id of the Activity item the messages belong to.
+    pub id: String,
+    pub title: String,
+    pub location: String,
+    /// Channel posts get an inline reply box.
+    pub is_channel: bool,
+    pub loading: bool,
+    pub msgs: Vec<MsgData>,
+    /// Id of the source message to scroll to and highlight.
+    pub highlight: String,
+}
+
 /// Initials for an avatar placeholder ("Sara Hassan" → "SH", "مجموعة الإدارة" → "ما").
 pub fn initials(name: &str) -> String {
     let words: Vec<&str> = name

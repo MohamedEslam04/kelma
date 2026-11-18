@@ -13,11 +13,16 @@ use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
 use teams_proto::Client;
 
+mod activity;
 mod live;
 mod render;
 mod send;
 mod sync;
 mod util;
+
+pub use activity::ActivityCmd;
+#[cfg(test)]
+pub(crate) use activity::{State as ActivityState, row_data as activity_row_data};
 
 /// Commands sent by the UI.
 #[derive(Debug, Clone)]
@@ -42,6 +47,7 @@ pub enum Cmd {
     CloseThread,
     AttachImage,
     AttachFile,
+    Activity(ActivityCmd),
 }
 
 #[derive(Default)]
@@ -68,6 +74,7 @@ struct Dirty {
     teams: bool,
     header: bool,
     scroll: bool,
+    activity: bool,
 }
 
 /// Shared engine state.
@@ -80,6 +87,7 @@ pub struct Engine {
     my_name: String,
     view: Mutex<View>,
     dirty: Mutex<Dirty>,
+    activity: Mutex<activity::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     pub focused: Arc<AtomicBool>,
@@ -115,6 +123,7 @@ impl Engine {
                 teams: true,
                 ..Default::default()
             }),
+            activity: Mutex::new(activity::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             focused: Arc::new(AtomicBool::new(true)),
@@ -149,6 +158,12 @@ impl Engine {
                     let _ = session::persist(&cfg, &e.client).await;
                 }
                 e.mark(|d| d.chats = true);
+            }
+        });
+        let e = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = e.activity_refresh().await {
+                tracing::warn!(%err, "activity feed load failed");
             }
         });
         let e = self.clone();
@@ -314,6 +329,7 @@ impl Engine {
             }
             Cmd::AttachImage => self.attach_image().await?,
             Cmd::AttachFile => self.attach_file().await?,
+            Cmd::Activity(c) => self.activity_cmd(c).await?,
         }
         Ok(())
     }
