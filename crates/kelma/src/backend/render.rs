@@ -16,6 +16,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use store::{ConvFilter, ConvKind, MessageRow, OutboxState, UserRow};
 
+/// Per-row marks `build_msgs` needs from the chat view (the Activity preview passes none).
+#[derive(Default)]
+pub(super) struct MsgMarks<'a> {
+    pub saved: Option<&'a HashSet<String>>,
+    pub selected: &'a [String],
+    pub failed: Option<&'a HashSet<String>>,
+    /// Index (among the non-control rows) where the unread divider sits.
+    pub divider: Option<usize>,
+}
+
 impl Engine {
     pub(super) async fn render_loop(self: Arc<Self>) {
         let mut last_typing = String::new();
@@ -34,6 +44,9 @@ impl Engine {
             if d.messages {
                 self.render_messages(d.scroll);
             }
+            if d.activity || d.chats || d.messages {
+                self.render_activity(d.activity || d.chats, d.activity || d.messages);
+            }
             let typing = {
                 let mut v = self.view.lock().unwrap();
                 let now = Instant::now();
@@ -51,7 +64,7 @@ impl Engine {
         }
     }
 
-    fn avatar(self: &Arc<Self>, mri: &str) -> Option<Pixels> {
+    pub(super) fn avatar(self: &Arc<Self>, mri: &str) -> Option<Pixels> {
         if mri.is_empty() || mri.starts_with("28:") {
             return None;
         }
@@ -386,6 +399,61 @@ impl Engine {
         } else {
             None
         };
+        let out = self.build_msgs(
+            &rows,
+            is_channel,
+            &thread,
+            &reply_counts,
+            &MsgMarks {
+                saved: Some(&saved),
+                selected: &selected,
+                failed: Some(&failed),
+                divider,
+            },
+        );
+        let mode = {
+            let mut v = self.view.lock().unwrap();
+            let mode = if !scroll {
+                Scroll::Keep
+            } else if let Some(i) =
+                divider.filter(|_| v.opening && open_at_divider(v.open_at, divider))
+            {
+                Scroll::Divider(i)
+            } else if v.at_bottom || v.opening {
+                Scroll::Bottom
+            } else {
+                Scroll::Keep
+            };
+            if scroll && v.loaded {
+                v.opening = false;
+            }
+            if let Scroll::Divider(i) = mode {
+                v.new_count = unread_after(&info, i);
+                self.ui.new_count(v.new_count);
+            }
+            mode
+        };
+        self.ui.messages(out, mode);
+    }
+
+    /// Turns stored messages into view data (shared by the chat view and the Activity preview).
+    pub(super) fn build_msgs(
+        self: &Arc<Self>,
+        rows: &[MessageRow],
+        is_channel: bool,
+        thread: &Option<String>,
+        reply_counts: &HashMap<String, usize>,
+        marks: &MsgMarks,
+    ) -> Vec<MsgData> {
+        let none = HashSet::new();
+        let saved = marks.saved.unwrap_or(&none);
+        let selected = marks.selected;
+        let failed = marks.failed.unwrap_or(&none);
+        let divider = marks.divider;
+        let visible: Vec<&MessageRow> = rows
+            .iter()
+            .filter(|r| !r.message_type.starts_with("Control/"))
+            .collect();
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
         for (i, r) in visible.iter().copied().enumerate() {
@@ -525,28 +593,6 @@ impl Engine {
             });
             prev = Some(r);
         }
-        let mode = {
-            let mut v = self.view.lock().unwrap();
-            let mode = if !scroll {
-                Scroll::Keep
-            } else if let Some(i) =
-                divider.filter(|_| v.opening && open_at_divider(v.open_at, divider))
-            {
-                Scroll::Divider(i)
-            } else if v.at_bottom || v.opening {
-                Scroll::Bottom
-            } else {
-                Scroll::Keep
-            };
-            if scroll && v.loaded {
-                v.opening = false;
-            }
-            if let Scroll::Divider(i) = mode {
-                v.new_count = unread_after(&info, i);
-                self.ui.new_count(v.new_count);
-            }
-            mode
-        };
-        self.ui.messages(out, mode);
+        out
     }
 }

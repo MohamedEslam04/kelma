@@ -12,6 +12,8 @@ use slint::{
 
 use crate::{AppWindow, Msg, ReactionItem};
 
+mod activity;
+
 type Log = Rc<RefCell<Vec<String>>>;
 
 fn app_with_messages(msgs: Vec<Msg>) -> AppWindow {

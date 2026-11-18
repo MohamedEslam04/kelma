@@ -2,7 +2,7 @@
 // The pieces live in sibling modules; this file keeps the AppWindow state, callbacks and wiring.
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ChatRow, EmojiItem, Msg, Recipient, TeamRow } from "types.slint";
+import { ActivityRow, ChatRow, EmojiItem, Msg, Recipient, TeamRow } from "types.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { MessageRow } from "message_row.slint";
@@ -13,13 +13,14 @@ import { ForwardDialog } from "forward_dialog.slint";
 import { SelectBar } from "select_bar.slint";
 import { LoginView } from "login.slint";
 import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
+import { ActivityView } from "activity.slint";
 
 export { Theme } from "theme.slint";
-export { ChatRow, ReactionItem, EmojiItem, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
+export { ActivityRow, ChatRow, ReactionItem, EmojiItem, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
 export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
 
 export component AppWindow inherits Window {
-    title: "kelma";
+    title: root.window-title;
     icon: @image-url("icons/app.svg");
     preferred-width: 1400px;
     preferred-height: 900px;
@@ -37,7 +38,7 @@ export component AppWindow inherits Window {
     in property <bool> connected: true;
     in property <string> banner;
 
-    in-out property <string> view: "chat"; // chat | teams
+    in-out property <string> view: "chat"; // chat | teams | activity
     in-out property <string> filter: "all";
     in property <[ChatRow]> chats-favorites;
     in property <[ChatRow]> chats-main;
@@ -86,6 +87,23 @@ export component AppWindow inherits Window {
     in-out property <bool> select-mode: false;
     in property <int> select-count;
 
+    // Activity view
+    in property <[ActivityRow]> activity-items;
+    in property <int> activity-unread;
+    in property <int> chats-unread;
+    in-out property <string> activity-filter: "all";
+    in-out property <string> activity-selected;
+    in property <string> activity-preview-id;
+    in property <string> activity-preview-title;
+    in property <string> activity-preview-location;
+    in property <bool> activity-preview-is-channel;
+    in property <bool> activity-preview-loading;
+    in property <[Msg]> activity-preview;
+    in property <string> activity-highlight;
+    // Unread Activity items plus unread chats, like Teams; shown in the window title.
+    out property <int> badge-total: root.activity-unread + root.chats-unread;
+    out property <string> window-title: root.badge-total > 0 ? "(" + root.badge-total + ") kelma" : "kelma";
+
     // --- callbacks to Rust ---
     callback retry-login();
     callback copy-code();
@@ -130,6 +148,15 @@ export component AppWindow inherits Window {
     callback jump-to-newest();
     callback retry-send(string);
     callback discard-send(string);
+    callback activity-refresh();
+    callback activity-select(string);
+    callback activity-set-filter(string);
+    callback activity-search(string);
+    callback activity-mark(string, bool);
+    callback activity-mark-all();
+    callback activity-go-to();
+    callback activity-reply(string);
+    callback activity-settings();
 
     // Rust bumps these counters to request a scroll to the bottom / composer focus.
     in-out property <int> scroll-tick;
@@ -148,9 +175,10 @@ export component AppWindow inherits Window {
     }
 
     if root.login-state == "ready": FocusScope {
-        // Shift+Esc marks every chat read, wherever the focus is.
+        // Shift+Esc marks every chat read, wherever the focus is. The Activity view handles it
+        // itself (marks every Activity item read).
         capture-key-pressed(event) => {
-            if (event.text == Key.Escape && event.modifiers.shift) {
+            if (event.text == Key.Escape && event.modifiers.shift && root.view != "activity") {
                 root.mark-all-read();
                 return accept;
             }
@@ -219,7 +247,8 @@ export component AppWindow inherits Window {
                     padding-top: 8px;
                     spacing: 4px;
                     alignment: start;
-                    for item in [{key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}, {key: "calendar", label: "Calendar", icon: @image-url("icons/calendar.svg")}]: Rectangle {
+                    for item in [{key: "activity", label: "Activity", icon: @image-url("icons/activity.svg")}, {key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}, {key: "calendar", label: "Calendar", icon: @image-url("icons/calendar.svg")}]: ri := Rectangle {
+                        property <int> badge-count: item.key == "activity" ? root.activity-unread : (item.key == "chat" ? root.chats-unread : 0);
                         height: 56px;
                         Rectangle {
                             x: 0;
@@ -235,13 +264,33 @@ export component AppWindow inherits Window {
                             Icon { source: item.icon; tint: root.view == item.key || rt.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
                             Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px; horizontal-alignment: center; }
                         }
-                        rt := TouchArea { mouse-cursor: pointer; clicked => { root.view = item.key; } }
+                        if ri.badge-count > 0: Rectangle {
+                            x: parent.width / 2 + 2px;
+                            y: 4px;
+                            height: 16px;
+                            width: max(16px, badge-text.preferred-width + 8px);
+                            border-radius: 8px;
+                            background: Theme.unread-badge;
+                            accessible-role: text;
+                            accessible-label: ri.badge-count + " unread";
+                            badge-text := Text { text: ri.badge-count > 99 ? "99+" : ri.badge-count; color: #ffffff; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        rt := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.view = item.key;
+                                if item.key == "activity" { root.activity-refresh(); }
+                            }
+                        }
                     }
                 }
             }
 
             // Sidebar
             if root.view != "calendar": Sidebar {
+                visible: root.view != "activity";
+                width: root.view == "activity" ? 0px : 320px;
+                max-height: 100000px;
                 view: root.view;
                 filter <=> root.filter;
                 chats-favorites: root.chats-favorites;
@@ -263,6 +312,33 @@ export component AppWindow inherits Window {
             // Conversation
             if root.view != "calendar": Rectangle {
                 background: Theme.main;
+                if root.view == "activity": ActivityView {
+                    z: 20;
+                    width: parent.width;
+                    height: parent.height;
+                    items: root.activity-items;
+                    unread-count: root.activity-unread;
+                    filter <=> root.activity-filter;
+                    selected-id <=> root.activity-selected;
+                    preview-id: root.activity-preview-id;
+                    preview-title: root.activity-preview-title;
+                    preview-location: root.activity-preview-location;
+                    preview-is-channel: root.activity-preview-is-channel;
+                    preview-loading: root.activity-preview-loading;
+                    preview: root.activity-preview;
+                    highlight: root.activity-highlight;
+                    banner: root.banner;
+                    select(id) => { root.activity-select(id); }
+                    set-filter(f) => { root.activity-set-filter(f); }
+                    search(q) => { root.activity-search(q); }
+                    mark(id, read) => { root.activity-mark(id, read); }
+                    mark-all => { root.activity-mark-all(); }
+                    go-to => { root.view = "chat"; root.activity-go-to(); }
+                    send-reply(t) => { root.activity-reply(t); }
+                    open-url(u) => { root.open-url(u); }
+                    notification-settings => { root.activity-settings(); }
+                    dismiss-banner => { root.dismiss-banner(); }
+                }
                 if root.current-id == "": VerticalLayout {
                     alignment: center;
                     Image { source: @image-url("icons/chat.svg"); colorize: #3d3d3d; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }

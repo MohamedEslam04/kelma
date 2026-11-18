@@ -11,7 +11,7 @@ mod ui_tests;
 
 slint::include_modules!();
 
-use backend::{Cmd, Engine};
+use backend::{ActivityCmd, Cmd, Engine};
 use slint::ComponentHandle;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,15 +81,19 @@ fn demo_engine(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
     let store = store::Store::open_in_memory()?;
     demo::seed(&store, teams_proto::time::now_ms())?;
     let client = Client::offline("demo")?;
+    let now = teams_proto::time::now_ms();
+    let activity = demo::activity(&store, now);
     ui.ready("ME".into());
-    Ok(Engine::new(
+    let engine = Engine::new(
         client,
         store,
         session::Config::default(),
         ui.clone(),
         demo::ME.into(),
         "Mohamed Eslam".into(),
-    ))
+    );
+    engine.seed_activity(activity);
+    Ok(engine)
 }
 
 async fn sign_in(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
@@ -267,6 +271,29 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_mark_chat_unread, |id| Cmd::MarkChatUnread(id.into()));
     cmd!(on_mark_all_read, || Cmd::MarkAllRead);
     ui::install_local(&window);
+    cmd!(on_activity_refresh, || Cmd::Activity(ActivityCmd::Refresh));
+    cmd!(on_activity_select, |id| Cmd::Activity(ActivityCmd::Select(
+        id.into()
+    )));
+    cmd!(on_activity_set_filter, |f| Cmd::Activity(
+        ActivityCmd::SetFilter(f.into())
+    ));
+    cmd!(on_activity_search, |q| Cmd::Activity(ActivityCmd::Search(
+        q.into()
+    )));
+    cmd!(on_activity_mark, |id, read| Cmd::Activity(
+        ActivityCmd::MarkRead(id.into(), read)
+    ));
+    cmd!(on_activity_mark_all, || Cmd::Activity(
+        ActivityCmd::MarkAllRead
+    ));
+    cmd!(on_activity_go_to, || Cmd::Activity(ActivityCmd::GoTo));
+    cmd!(on_activity_reply, |t| Cmd::Activity(ActivityCmd::Reply(
+        t.into()
+    )));
+    cmd!(on_activity_settings, || Cmd::Activity(
+        ActivityCmd::Settings
+    ));
     {
         let tx = tx.clone();
         let weak = window.as_weak();

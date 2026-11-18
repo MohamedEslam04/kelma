@@ -14,6 +14,7 @@ use store::{MessageRow, Store};
 use teams_proto::Client;
 
 mod actions;
+mod activity;
 mod cal;
 mod live;
 mod outbox;
@@ -23,6 +24,9 @@ mod sync;
 mod unread;
 mod util;
 
+pub use activity::ActivityCmd;
+#[cfg(test)]
+pub(crate) use activity::{State as ActivityState, row_data as activity_row_data};
 pub use cal::{CalCmd, CalData};
 #[cfg(test)]
 pub use cal::{Ctx, build, parse_view};
@@ -74,6 +78,7 @@ pub enum Cmd {
     MarkChatUnread(String),
     MarkAllRead,
     Calendar(CalCmd),
+    Activity(ActivityCmd),
 }
 
 #[derive(Default)]
@@ -127,6 +132,7 @@ struct Dirty {
     teams: bool,
     header: bool,
     scroll: bool,
+    activity: bool,
 }
 
 /// Shared engine state.
@@ -140,6 +146,7 @@ pub struct Engine {
     my_name: String,
     view: Mutex<View>,
     dirty: Mutex<Dirty>,
+    activity: Mutex<activity::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -187,6 +194,7 @@ impl Engine {
                 teams: true,
                 ..Default::default()
             }),
+            activity: Mutex::new(activity::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -228,6 +236,12 @@ impl Engine {
                     let _ = session::persist(&cfg, &e.client).await;
                 }
                 e.mark(|d| d.chats = true);
+            }
+        });
+        let e = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = e.activity_refresh().await {
+                tracing::warn!(%err, "activity feed load failed");
             }
         });
         let e = self.clone();
@@ -426,6 +440,7 @@ impl Engine {
             Cmd::MarkChatUnread(id) => self.mark_chat_unread(&id).await?,
             Cmd::MarkAllRead => self.mark_all_read().await?,
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
+            Cmd::Activity(c) => self.activity_cmd(c).await?,
         }
         Ok(())
     }

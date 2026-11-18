@@ -53,3 +53,18 @@ export struct Msg {
 
 export struct ChannelRow { id: string, name: string, unread: bool }
 export struct TeamRow { id: string, name: string, initials: string, color: color, expanded: bool, channels: [ChannelRow] }
+
+export struct ActivityRow {
+    id: string,
+    title: string,
+    initials: string,
+    color: color,
+    avatar: image,
+    has-avatar: bool,
+    badge: string,      // "@", an emoji, a reply arrow, ...
+    unread: bool,
+    preview: string,
+    time: string,
+    location: string,   // "Team › channel" or "In chat with …"
+    rtl-preview: bool,
+}
