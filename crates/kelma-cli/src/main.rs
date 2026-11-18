@@ -16,11 +16,14 @@
 //! kelma-cli card [mri]            profile card of a person, default yourself
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
 //! kelma-cli drive <ls [path]|search q|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir name|rm id|selftest>
+//! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
+//!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
 mod drive;
+mod team;
 
 use anyhow::{Context, Result, bail};
 use session::Paths;
@@ -728,6 +731,15 @@ async fn main() -> Result<()> {
                 client.read_receipts_enabled().await?
             );
         }
+        Some("team") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = team::run(&client, &args[1..]).await;
+            // A busy keyring must not fail (and so invite a retry of) a write that already ran.
+            if let Err(e) = session::persist(&cfg, &client).await {
+                eprintln!("warning: could not store the refreshed session: {e}");
+            }
+            r?;
+        }
         Some("drive") => {
             let (client, cfg) = connect(&paths).await?;
             let r = drive::run(&client, &args[1..]).await;
@@ -848,6 +860,7 @@ async fn main() -> Result<()> {
                    card [mri]\n\
                    horizons <conv>\n\
                    drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest|purge>\n\
+                   team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
                    tail"
             );
         }
