@@ -9,7 +9,7 @@ use crate::data::{
 use crate::markdown::{reaction_emoji, render_blocks};
 use chrono::{Local, TimeZone};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use store::{ConvFilter, ConvKind, MessageRow, UserRow};
@@ -151,9 +151,14 @@ impl Engine {
     }
 
     fn render_chats(self: &Arc<Self>) {
-        let (filter, search, current) = {
+        let (filter, search, current, keep_unread) = {
             let v = self.view.lock().unwrap();
-            (v.filter.clone(), v.search.clone(), v.current.clone())
+            (
+                v.filter.clone(),
+                v.search.clone(),
+                v.current.clone(),
+                v.keep_unread.clone(),
+            )
         };
         let rows = {
             let st = self.store.lock().unwrap();
@@ -194,7 +199,9 @@ impl Engine {
                 rtl_preview: render::base_direction(&r.last_preview) == render::Dir::Rtl,
                 preview: r.last_preview.chars().take(120).collect(),
                 time: chat_time(r.last_activity_ms),
-                unread: r.unread && current.as_deref() != Some(r.id.as_str()),
+                unread: r.unread
+                    && (current.as_deref() != Some(r.id.as_str())
+                        || keep_unread.as_deref() == Some(r.id.as_str())),
                 favorite: r.favorite,
                 section: if r.favorite {
                     "favorites"
@@ -289,21 +296,27 @@ impl Engine {
     }
 
     fn render_messages(self: &Arc<Self>, scroll: bool) {
-        let (cur, thread, limit, pending) = {
+        let (cur, thread, limit, pending, selected) = {
             let v = self.view.lock().unwrap();
             (
                 v.current.clone(),
                 v.thread_root.clone(),
                 v.limit,
                 v.pending.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>(),
+                v.selected.clone(),
             )
         };
         let Some(conv) = cur else {
             self.ui.messages(vec![], false);
             return;
         };
-        let (rows, is_channel, reply_counts) = {
+        let (rows, is_channel, reply_counts, saved) = {
             let st = self.store.lock().unwrap();
+            let saved: HashSet<String> = st
+                .saved_ids(&conv)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
             let is_channel = st
                 .conversation(&conv)
                 .ok()
@@ -330,7 +343,7 @@ impl Engine {
             } else {
                 HashMap::new()
             };
-            (rows, is_channel, counts)
+            (rows, is_channel, counts, saved)
         };
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
@@ -362,6 +375,7 @@ impl Engine {
                                 emoji: reaction_emoji(&key),
                                 count: users.len() as i32,
                                 mine: users.iter().any(|u| u == self.me.as_str()),
+                                names: self.reactor_names(users),
                                 key,
                             })
                         })
@@ -465,6 +479,8 @@ impl Engine {
                     -1
                 },
                 pending: r.id.starts_with("pending-"),
+                saved: saved.contains(&r.id),
+                selected: selected.contains(&r.id),
             });
             prev = Some(r);
         }

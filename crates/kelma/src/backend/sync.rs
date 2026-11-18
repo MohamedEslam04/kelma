@@ -196,7 +196,11 @@ impl Engine {
             v.limit = PAGE;
             v.reply_to = None;
             v.editing = None;
+            v.selected.clear();
+            v.forward = None;
+            v.keep_unread = None;
         }
+        self.ui.selection(false, 0);
         self.ui.reply_bar(String::new(), String::new(), false);
         self.mark(|d| {
             d.header = true;

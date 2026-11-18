@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
 use teams_proto::Client;
 
+mod actions;
 mod live;
 mod render;
 mod send;
@@ -42,6 +43,19 @@ pub enum Cmd {
     CloseThread,
     AttachImage,
     AttachFile,
+    CopyLink(String),
+    ToggleSave(String),
+    Pin(String),
+    MarkUnread(String),
+    /// Forward dialog opened for one message, or for the multi-select ticks when `None`.
+    ForwardBegin(Option<String>),
+    ForwardSearch(String),
+    ForwardToggle(String),
+    ForwardSend(String),
+    ForwardCancel,
+    SelectBegin(String),
+    ToggleSelect(String),
+    SelectCancel,
 }
 
 #[derive(Default)]
@@ -59,6 +73,19 @@ struct View {
     last_typing_sent: Option<Instant>,
     collapsed_teams: HashSet<String>,
     teams_order: Vec<String>,
+    /// Multi-select ticks, in the order they were made (at most `actions::MAX_FORWARD`).
+    selected: Vec<String>,
+    /// Open forward dialog: what is forwarded, the last search and the picked chats.
+    forward: Option<ForwardState>,
+    /// Chat marked unread while open; the list shows it until another chat is opened.
+    keep_unread: Option<String>,
+}
+
+#[derive(Default)]
+struct ForwardState {
+    ids: Vec<String>,
+    query: String,
+    picked: Vec<String>,
 }
 
 #[derive(Default)]
@@ -82,6 +109,8 @@ pub struct Engine {
     dirty: Mutex<Dirty>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
+    /// Reactor MRIs whose profile fetch was already started (tooltip names).
+    name_requests: Mutex<HashSet<String>>,
     pub focused: Arc<AtomicBool>,
     /// Demo mode: no network, so network errors are not shown.
     pub offline: AtomicBool,
@@ -117,6 +146,7 @@ impl Engine {
             }),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
+            name_requests: Mutex::new(HashSet::new()),
             focused: Arc::new(AtomicBool::new(true)),
             offline: AtomicBool::new(false),
         })
@@ -313,6 +343,18 @@ impl Engine {
             }
             Cmd::AttachImage => self.attach_image().await?,
             Cmd::AttachFile => self.attach_file().await?,
+            Cmd::CopyLink(id) => self.copy_link(&id)?,
+            Cmd::ToggleSave(id) => self.toggle_save(&id).await?,
+            Cmd::Pin(id) => self.pin(&id).await?,
+            Cmd::MarkUnread(id) => self.mark_unread(&id).await?,
+            Cmd::ForwardBegin(id) => self.forward_begin(id)?,
+            Cmd::ForwardSearch(q) => self.forward_search(q)?,
+            Cmd::ForwardToggle(id) => self.forward_toggle(&id)?,
+            Cmd::ForwardSend(note) => self.forward_send(&note).await?,
+            Cmd::ForwardCancel => self.view.lock().unwrap().forward = None,
+            Cmd::SelectBegin(id) => self.select_begin(&id),
+            Cmd::ToggleSelect(id) => self.toggle_select(&id),
+            Cmd::SelectCancel => self.select_cancel(),
         }
         Ok(())
     }

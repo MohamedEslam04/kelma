@@ -2,15 +2,19 @@
 // The pieces live in sibling modules; this file keeps the AppWindow state, callbacks and wiring.
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ChatRow, Msg, TeamRow } from "types.slint";
+import { ChatRow, EmojiItem, Msg, Recipient, TeamRow } from "types.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { MessageRow } from "message_row.slint";
 import { Composer } from "composer.slint";
+import { MessageMenu } from "message_menu.slint";
+import { ReactionPicker } from "reaction_picker.slint";
+import { ForwardDialog } from "forward_dialog.slint";
+import { SelectBar } from "select_bar.slint";
 import { LoginView } from "login.slint";
 
 export { Theme } from "theme.slint";
-export { ChatRow, ReactionItem, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
+export { ChatRow, ReactionItem, EmojiItem, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
 
 export component AppWindow inherits Window {
     title: "kelma";
@@ -54,6 +58,26 @@ export component AppWindow inherits Window {
     in-out property <string> draft;
     in-out property <string> post-subject;
 
+    // Message menu, "More reactions" picker, forward dialog and multi-select (see the
+    // message_menu, reaction_picker, forward_dialog and select_bar modules).
+    in-out property <bool> menu-open: false;
+    in-out property <length> menu-x;
+    in-out property <length> menu-y;
+    in-out property <Msg> menu-msg;
+    in-out property <bool> picker-open: false;
+    in-out property <length> picker-x;
+    in-out property <length> picker-y;
+    in-out property <string> picker-msg-id;
+    in property <[EmojiItem]> picker-items;
+    in-out property <bool> forward-open: false;
+    in property <[Recipient]> forward-results;
+    in property <[Recipient]> forward-picked;
+    in-out property <int> forward-count: 1;
+    in-out property <string> forward-preview-author;
+    in-out property <string> forward-preview-text;
+    in-out property <bool> select-mode: false;
+    in property <int> select-count;
+
     // --- callbacks to Rust ---
     callback retry-login();
     callback copy-code();
@@ -77,6 +101,20 @@ export component AppWindow inherits Window {
     callback attach-image();
     callback attach-file();
     callback dismiss-banner();
+    callback picker-search(string);
+    callback copy-link(string);
+    callback toggle-save(string);
+    callback pin(string);
+    callback mark-unread(string);
+    callback forward-begin(string);
+    callback forward-begin-selected();
+    callback forward-search(string);
+    callback forward-toggle(string);
+    callback forward-send(string);
+    callback forward-cancel();
+    callback select-begin(string);
+    callback toggle-select(string);
+    callback select-cancel();
 
     // Rust bumps these counters to request a scroll to the bottom / composer focus.
     in-out property <int> scroll-tick;
@@ -280,10 +318,24 @@ export component AppWindow inherits Window {
                                     m: m;
                                     max-bubble: min(720px, msg-list.width * 0.75);
                                     in-channel: root.current-is-channel && root.thread-root == "";
+                                    select-mode: root.select-mode;
                                     react(k) => { root.react(m.id, k); }
                                     reply => { root.reply(m.id); }
                                     edit => { root.edit(m.id); }
-                                    delete => { root.delete(m.id); }
+                                    more-reactions(x, y) => {
+                                        root.picker-msg-id = m.id;
+                                        root.picker-x = x;
+                                        root.picker-y = y;
+                                        root.picker-open = true;
+                                        root.picker-search("");
+                                    }
+                                    menu(x, y) => {
+                                        root.menu-msg = m;
+                                        root.menu-x = x;
+                                        root.menu-y = y;
+                                        root.menu-open = true;
+                                    }
+                                    toggle-select => { root.toggle-select(m.id); }
                                     open-url(u) => { root.open-url(u); }
                                     open-thread => { root.open-thread(m.id); }
                                     open-image(u) => { root.open-url(u); }
@@ -305,6 +357,21 @@ export component AppWindow inherits Window {
                         Text { text: root.typing; color: Theme.fg-muted; font-size: 12px; }
                     }
 
+                    if root.select-mode: SelectBar {
+                        count: root.select-count;
+                        forward => {
+                            root.forward-count = root.select-count;
+                            root.forward-preview-author = "";
+                            root.forward-preview-text = "";
+                            root.forward-open = true;
+                            root.forward-begin-selected();
+                        }
+                        cancel => {
+                            root.select-mode = false;
+                            root.select-cancel();
+                        }
+                    }
+
                     // Composer
                     Composer {
                         vertical-stretch: 0;
@@ -323,6 +390,90 @@ export component AppWindow inherits Window {
                         attach-file => { root.attach-file(); }
                     }
                 }
+            }
+        }
+    }
+
+    if root.login-state == "ready" && root.menu-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    root.menu-open = false;
+                }
+            }
+        }
+        msg-menu := MessageMenu {
+            x: max(8px, min(root.menu-x, root.width - self.width - 8px));
+            y: max(8px, min(root.menu-y, root.height - self.height - 8px));
+            mine: root.menu-msg.mine;
+            saved: root.menu-msg.saved;
+            can-pin: !root.current-is-channel;
+            reply => { root.menu-open = false; root.reply(root.menu-msg.id); }
+            forward-one => {
+                root.menu-open = false;
+                root.forward-count = 1;
+                root.forward-preview-author = root.menu-msg.sender;
+                root.forward-preview-text = root.menu-msg.plain;
+                root.forward-open = true;
+                root.forward-begin(root.menu-msg.id);
+            }
+            forward-many => {
+                root.menu-open = false;
+                root.select-mode = true;
+                root.select-begin(root.menu-msg.id);
+            }
+            copy-link => { root.menu-open = false; root.copy-link(root.menu-msg.id); }
+            toggle-save => { root.menu-open = false; root.toggle-save(root.menu-msg.id); }
+            pin => { root.menu-open = false; root.pin(root.menu-msg.id); }
+            mark-unread => { root.menu-open = false; root.mark-unread(root.menu-msg.id); }
+            edit => { root.menu-open = false; root.edit(root.menu-msg.id); }
+            delete => { root.menu-open = false; root.delete(root.menu-msg.id); }
+        }
+    }
+
+    if root.login-state == "ready" && root.picker-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    root.picker-open = false;
+                }
+            }
+        }
+        ReactionPicker {
+            x: max(8px, min(root.picker-x, root.width - self.width - 8px));
+            y: max(8px, min(root.picker-y, root.height - self.height - 8px));
+            items: root.picker-items;
+            search(q) => { root.picker-search(q); }
+            pick(key) => {
+                root.picker-open = false;
+                root.react(root.picker-msg-id, key);
+            }
+        }
+    }
+
+    if root.login-state == "ready" && root.forward-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        ForwardDialog {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            results: root.forward-results;
+            picked: root.forward-picked;
+            count: root.forward-count;
+            preview-author: root.forward-preview-author;
+            preview-text: root.forward-preview-text;
+            search(q) => { root.forward-search(q); }
+            toggle(id) => { root.forward-toggle(id); }
+            send(note) => { root.forward-send(note); }
+            cancel => {
+                root.forward-open = false;
+                root.forward-cancel();
             }
         }
     }

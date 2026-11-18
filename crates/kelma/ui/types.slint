@@ -14,7 +14,9 @@ export struct ChatRow {
     favorite: bool,
 }
 
-export struct ReactionItem { key: string, emoji: string, count: int, mine: bool }
+export struct ReactionItem { key: string, emoji: string, count: int, mine: bool, names: string }
+export struct EmojiItem { key: string, emoji: string, name: string }
+export struct Recipient { id: string, title: string, initials: string, color: color, picked: bool }
 export struct FileItem { name: string, url: string, ext: string }
 export struct ImageItem { url: string, img: image, loaded: bool, w: length, h: length }
 
@@ -43,6 +45,8 @@ export struct Msg {
     reactions: [ReactionItem],
     reply-count: int,
     pending: bool,
+    saved: bool,           // in the local saved list
+    selected: bool,        // ticked in multi-select mode
 }
 
 export struct ChannelRow { id: string, name: string, unread: bool }
