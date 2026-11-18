@@ -27,9 +27,16 @@ fn init_platform() {
     }
 }
 
-fn app_with_messages(msgs: Vec<Msg>) -> AppWindow {
+/// A window with the composer's Rust side attached, like `main` builds it.
+fn new_window() -> AppWindow {
     init_platform();
     let app = AppWindow::new().unwrap();
+    crate::composer::wire(&app);
+    app
+}
+
+fn app_with_messages(msgs: Vec<Msg>) -> AppWindow {
+    let app = new_window();
     app.window().set_size(LogicalSize::new(1200., 800.));
     app.set_login_state("ready".into());
     app.set_current_id("48:notes".into());
@@ -238,17 +245,6 @@ fn toolbar_emoji_picker_and_attach_buttons() {
     let tb = toolbar(&app);
     assert_eq!(tb.len(), 5, "emoji, image, file, more, send");
 
-    app.set_draft("hi ".into());
-    assert_eq!(
-        ElementHandle::find_by_element_id(&app, "Composer::ea").count(),
-        0
-    );
-    tb[0].mock_single_click(PointerEventButton::Left);
-    let emoji: Vec<_> = ElementHandle::find_by_element_id(&app, "Composer::ea").collect();
-    assert_eq!(emoji.len(), 32, "picker shows 32 emoji");
-    emoji[9].mock_single_click(PointerEventButton::Left);
-    assert_eq!(app.get_draft(), "hi 👍");
-
     tb[1].mock_single_click(PointerEventButton::Left);
     tb[2].mock_single_click(PointerEventButton::Left);
     assert_eq!(*log.borrow(), vec!["image", "file"]);
@@ -406,8 +402,7 @@ impl Harness {
     }
 
     fn with_store(store: Store) -> Self {
-        init_platform();
-        let app = AppWindow::new().unwrap();
+        let app = new_window();
         app.window().set_size(LogicalSize::new(1200., 800.));
         app.set_login_state("ready".into());
         app.show().unwrap();
@@ -560,4 +555,275 @@ fn chat_list_marks_drafts_and_has_a_drafts_view() {
     h.runner()(Cmd::SetFilter("drafts".into()));
     let ids: Vec<_> = h.chats().into_iter().map(|c| c.id.to_string()).collect();
     assert_eq!(ids, vec![NOTES.to_string()]);
+}
+
+fn left(app: &AppWindow, times: usize) {
+    for _ in 0..times {
+        key(app, Key::LeftArrow, true);
+        key(app, Key::LeftArrow, false);
+    }
+}
+
+fn ids(app: &AppWindow, id: &str) -> Vec<ElementHandle> {
+    ElementHandle::find_by_element_id(app, id).collect()
+}
+
+fn open_emoji_panel(app: &AppWindow) {
+    toolbar(app)[0].mock_single_click(PointerEventButton::Left);
+}
+
+fn emoji_in_category(app: &AppWindow, tab: i32) -> usize {
+    use crate::EmojiApi;
+    app.global::<EmojiApi>()
+        .invoke_list(tab, "".into(), 0)
+        .row_count()
+}
+
+/// Number of `:xx` suggestions the engine-free helper offers for the text before the cursor.
+fn suggestions(text_before_cursor: &str) -> Vec<&'static emoji::Emoji> {
+    emoji::autocomplete(text_before_cursor)
+        .map(|(_, hits)| hits)
+        .unwrap_or_default()
+}
+
+#[test]
+fn emoji_panel_has_tabs_and_lists_a_category() {
+    let app = app_with_messages(vec![]);
+    open_emoji_panel(&app);
+    assert_eq!(
+        ids(&app, "Composer::emoji-tab-area").len(),
+        9,
+        "one tab per category"
+    );
+    assert!(emoji_in_category(&app, 0) > 100);
+    // Only the rows in view exist, so just check there is a grid.
+    let shown = ids(&app, "EmojiGrid::cell").len();
+    assert!(
+        (18..=emoji_in_category(&app, 0)).contains(&shown),
+        "{shown}"
+    );
+
+    // The last tab is flags: its first cell inserts the first flag.
+    ids(&app, "Composer::emoji-tab-area")[8].mock_single_click(PointerEventButton::Left);
+    ids(&app, "EmojiGrid::cell")[0].mock_single_click(PointerEventButton::Left);
+    let flag = emoji::all()
+        .iter()
+        .find(|e| e.category == emoji::Category::Flags)
+        .unwrap();
+    assert_eq!(app.get_draft(), flag.ch);
+}
+
+#[test]
+fn emoji_search_then_pick_inserts_at_the_cursor() {
+    let app = app_with_messages(vec![]);
+    let used = Log::default();
+    {
+        let l = used.clone();
+        app.on_emoji_used(move |e| l.borrow_mut().push(e.to_string()));
+    }
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, "hello world");
+    left(&app, 5);
+
+    open_emoji_panel(&app);
+    let search = ids(&app, "Composer::emoji-search");
+    assert_eq!(search.len(), 1);
+    search[0].mock_single_click(PointerEventButton::Left);
+    type_text(&app, "heart");
+    let cells = ids(&app, "EmojiGrid::cell");
+    assert_eq!(cells.len(), emoji::search("heart", 120).len());
+    assert_eq!(
+        ids(&app, "Composer::emoji-tab-area").len(),
+        0,
+        "tabs give way to results"
+    );
+
+    cells[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        app.get_draft(),
+        "hello ❤\u{fe0f}world",
+        "the heart lands at the cursor, not the end"
+    );
+    assert_eq!(*used.borrow(), vec!["❤\u{fe0f}"]);
+    type_text(&app, "!");
+    assert_eq!(
+        app.get_draft(),
+        "hello ❤\u{fe0f}!world",
+        "typing goes on after the emoji"
+    );
+}
+
+#[test]
+fn colon_autocomplete_offers_emoji_and_tab_inserts_the_first() {
+    let app = app_with_messages(vec![]);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, "at 12:30 and :h");
+    assert_eq!(
+        ids(&app, "Composer::sug-area").len(),
+        0,
+        "needs two letters after the colon"
+    );
+    type_text(&app, "ea");
+    assert_eq!(
+        ids(&app, "Composer::sug-area").len(),
+        suggestions("at 12:30 and :hea").len()
+    );
+    assert!(!ids(&app, "Composer::sug-area").is_empty());
+
+    key(&app, Key::Tab, true);
+    key(&app, Key::Tab, false);
+    assert_eq!(app.get_draft(), "at 12:30 and ❤\u{fe0f}");
+    assert_eq!(ids(&app, "Composer::sug-area").len(), 0);
+}
+
+#[test]
+fn autocomplete_replaces_the_word_before_the_cursor_and_enter_does_not_send() {
+    let app = app_with_messages(vec![]);
+    let sent = record_send(&app);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, "see :heart and more");
+    left(&app, " and more".len());
+    assert!(!ids(&app, "Composer::sug-area").is_empty());
+
+    enter(&app);
+    assert!(
+        sent.borrow().is_empty(),
+        "Enter picks the emoji while the popup is open"
+    );
+    assert_eq!(app.get_draft(), "see ❤\u{fe0f} and more");
+    type_text(&app, "X");
+    assert_eq!(app.get_draft(), "see ❤\u{fe0f}X and more");
+}
+
+#[test]
+fn autocomplete_arrows_click_and_escape() {
+    let app = app_with_messages(vec![]);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, ":sm");
+    assert!(!ids(&app, "Composer::sug-area").is_empty());
+
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+    assert_eq!(
+        ids(&app, "Composer::sug-area").len(),
+        0,
+        "Escape closes the popup"
+    );
+    type_text(&app, "i");
+    assert!(
+        !ids(&app, "Composer::sug-area").is_empty(),
+        "more typing brings it back"
+    );
+
+    // Arrow down moves the highlight; Enter then takes the second hit.
+    key(&app, Key::DownArrow, true);
+    key(&app, Key::DownArrow, false);
+    enter(&app);
+    assert_eq!(app.get_draft(), suggestions(":smi")[1].ch);
+
+    // Clicking a suggestion works too.
+    app.set_draft("".into());
+    type_text(&app, " :smile");
+    ids(&app, "Composer::sug-area")[2].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        app.get_draft(),
+        format!(" {}", suggestions(" :smile")[2].ch)
+    );
+}
+
+#[test]
+fn skin_tone_choice_applies_to_the_panel_and_is_reported() {
+    let app = app_with_messages(vec![]);
+    let log = Log::default();
+    {
+        let l = log.clone();
+        app.on_skin_tone_changed(move |t| l.borrow_mut().push(format!("tone {t}")));
+    }
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    open_emoji_panel(&app);
+    let tones = ids(&app, "Composer::tone");
+    assert_eq!(tones.len(), 6, "default plus five tones");
+    tones[2].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), vec!["tone 2"]);
+    assert_eq!(app.get_skin_tone(), 2);
+
+    ids(&app, "Composer::emoji-search")[0].mock_single_click(PointerEventButton::Left);
+    type_text(&app, "thumbs up");
+    ids(&app, "EmojiGrid::cell")[0].mock_single_click(PointerEventButton::Left);
+    let thumbs = emoji::by_shortcode("thumbs_up").unwrap();
+    assert_eq!(app.get_draft(), emoji::with_skin_tone(thumbs, 2));
+    assert!(app.get_draft().contains('\u{1F3FC}'));
+}
+
+#[test]
+fn recent_emoji_get_their_own_row_above_the_category() {
+    use crate::EmojiItem;
+    let app = app_with_messages(vec![]);
+    let used = Log::default();
+    {
+        let l = used.clone();
+        app.on_emoji_used(move |e| l.borrow_mut().push(e.to_string()));
+    }
+    app.set_recent_emoji(ModelRc::new(VecModel::from(vec![
+        EmojiItem {
+            ch: "🎉".into(),
+            name: "".into(),
+        },
+        EmojiItem {
+            ch: "🔥".into(),
+            name: "".into(),
+        },
+    ])));
+    open_emoji_panel(&app);
+    ids(&app, "EmojiGrid::cell")[1].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*used.borrow(), vec!["🔥"], "recent row comes first");
+    assert_eq!(app.get_draft(), "🔥");
+
+    open_emoji_panel(&app);
+    ids(&app, "Composer::emoji-search")[0].mock_single_click(PointerEventButton::Left);
+    type_text(&app, "party");
+    ids(&app, "EmojiGrid::cell")[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        used.borrow()[1],
+        emoji::search("party", 1)[0].ch,
+        "no recent row while searching"
+    );
+}
+
+#[test]
+fn recent_emoji_and_skin_tone_are_remembered_by_the_engine() {
+    let h = Harness::new();
+    let run = h.runner();
+    run(Cmd::EmojiUsed("😀".into()));
+    run(Cmd::EmojiUsed("🎉".into()));
+    run(Cmd::EmojiUsed("😀".into()));
+    let recent = |h: &Harness| -> Vec<String> {
+        h.app
+            .get_recent_emoji()
+            .iter()
+            .map(|e| e.ch.to_string())
+            .collect()
+    };
+    assert_eq!(recent(&h), vec!["😀", "🎉"], "newest first, no duplicates");
+    for i in 0..30 {
+        run(Cmd::EmojiUsed(format!("e{i}")));
+    }
+    assert_eq!(recent(&h).len(), 16, "the row is capped");
+
+    run(Cmd::SetSkinTone(4));
+    assert_eq!(h.app.get_skin_tone(), 4);
+    assert_eq!(h.engine.config().skin_tone, 4);
+    assert_eq!(h.engine.config().recent_emoji.len(), 16);
+}
+
+#[test]
+fn restored_draft_has_the_cursor_at_the_end() {
+    let h = Harness::new();
+    h.select(NOTES);
+    h.type_in_composer("remember");
+    h.select(BACKEND);
+    h.type_in_composer("x");
+    h.select(NOTES);
+    type_text(&h.app, " it");
+    assert_eq!(h.app.get_draft(), "remember it");
 }

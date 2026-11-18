@@ -1,7 +1,9 @@
 //! UI-thread side: turns view data into Slint models.
 
 use crate::data::{ChatData, HeaderData, MsgData, Pixels, TeamData};
-use crate::{AppWindow, ChannelRow, ChatRow, FileItem, ImageItem, Msg, ReactionItem, TeamRow};
+use crate::{
+    AppWindow, ChannelRow, ChatRow, EmojiItem, FileItem, ImageItem, Msg, ReactionItem, TeamRow,
+};
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
 };
@@ -192,12 +194,29 @@ impl UiHandle {
         self.run(|w| w.set_focus_tick(w.get_focus_tick() + 1));
     }
 
+    /// Replaces the composer text, with the cursor at its end.
     pub fn set_draft(&self, text: String) {
-        self.run(move |w| w.set_draft(text.into()));
+        self.run(move |w| {
+            w.set_draft(text.into());
+            w.set_cursor_tick(w.get_cursor_tick() + 1);
+        });
     }
 
-    pub fn enter_sends(&self, on: bool) {
-        self.run(move |w| w.set_enter_sends(on));
+    /// Saved composer preferences: Enter behavior, emoji skin tone and the recent emoji row.
+    pub fn prefs(&self, enter_sends: bool, skin_tone: u8, recent: Vec<String>) {
+        self.run(move |w| {
+            w.set_enter_sends(enter_sends);
+            w.set_skin_tone(skin_tone.into());
+            w.set_recent_emoji(model(
+                recent
+                    .into_iter()
+                    .map(|ch| EmojiItem {
+                        ch: ch.into(),
+                        name: SharedString::new(),
+                    })
+                    .collect(),
+            ));
+        });
     }
 
     pub fn clear_subject(&self) {

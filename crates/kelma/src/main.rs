@@ -1,6 +1,7 @@
 //! kelma: a lightweight native Microsoft Teams chat client (unofficial).
 
 mod backend;
+mod composer;
 mod data;
 mod demo;
 mod markdown;
@@ -204,6 +205,7 @@ fn main() -> anyhow::Result<()> {
     let _ = slint::set_xdg_app_id("kelma");
 
     let window = AppWindow::new()?;
+    composer::wire(&window);
     if let Ok(view) = std::env::var("KELMA_VIEW") {
         window.set_view(view.into());
     }
@@ -249,6 +251,10 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_attach_file, || Cmd::AttachFile);
     cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
     cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
+    cmd!(on_emoji_used, |e| Cmd::EmojiUsed(e.into()));
+    cmd!(on_skin_tone_changed, |t| Cmd::SetSkinTone(
+        t.clamp(0, 5) as u8
+    ));
     {
         let tx = tx.clone();
         let weak = window.as_weak();

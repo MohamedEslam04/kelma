@@ -1,5 +1,38 @@
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import { Edited, EmojiItem } from "types.slint";
 import { IconButton } from "widgets.slint";
+
+// Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
+export global EmojiApi {
+    // category index, search text, skin tone -> what the panel shows
+    pure callback list(int, string, int) -> [EmojiItem];
+    // text, cursor byte offset, skin tone -> emoji for the `:xx` before the cursor
+    pure callback suggest(string, int, int) -> [EmojiItem];
+    pure callback insert(string, int, string) -> Edited;
+    // like insert, but replaces the `:xx` before the cursor
+    pure callback complete(string, int, string) -> Edited;
+}
+
+component EmojiGrid inherits Rectangle {
+    in property <[EmojiItem]> items;
+    callback picked(string);
+    width: 324px; // nine columns
+    height: ceil(root.items.length / 9) * 36px;
+    for e[i] in root.items: Rectangle {
+        x: mod(i, 9) * 36px;
+        y: floor(i / 9) * 36px;
+        width: 36px;
+        height: 36px;
+        border-radius: 4px;
+        background: cell.has-hover ? Theme.surface-hover : transparent;
+        Text { text: e.ch; font-size: 20px; }
+        cell := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.picked(e.ch); }
+        }
+    }
+}
 
 export component Composer inherits Rectangle {
     in property <bool> current-is-channel;
@@ -12,14 +45,47 @@ export component Composer inherits Rectangle {
     in-out property <int> focus-tick;
     // true: Enter sends and Shift+Enter adds a line. false: Enter adds a line and Ctrl+Enter sends.
     in-out property <bool> enter-sends: true;
+    // Request to put the cursor at the end of the text (a draft was restored).
+    in property <int> cursor-tick;
+    in property <[EmojiItem]> recent-emoji;
+    in-out property <int> skin-tone: 0; // 0 default, 1..5 light to dark
 
     callback send(string);
     callback set-enter-sends(bool);
+    callback emoji-used(string);
+    callback skin-tone-changed(int);
     callback typing-tick();
     callback draft-edited(string);
     callback cancel-reply();
     callback attach-image();
     callback attach-file();
+
+    property <int> emoji-tab: 0;
+    property <string> emoji-query;
+    property <[EmojiItem]> suggestions: EmojiApi.suggest(root.draft, composer-input.cursor-position-byte-offset, root.skin-tone);
+    property <int> sug-index: 0;
+    property <string> sug-dismissed; // the draft for which Escape closed the popup
+    property <bool> sug-open: root.suggestions.length > 0 && root.sug-dismissed != root.draft;
+
+    changed cursor-tick => { composer-input.set-selection-offsets(2000000000, 2000000000); }
+    changed suggestions => { root.sug-index = 0; }
+
+    function put(e: Edited) {
+        composer-input.text = e.text;
+        composer-input.set-selection-offsets(e.cursor, e.cursor);
+        root.draft-edited(e.text);
+        root.focus-tick += 1;
+    }
+
+    function pick-emoji(ch: string) {
+        root.put(EmojiApi.insert(root.draft, composer-input.cursor-position-byte-offset, ch));
+        root.emoji-used(ch);
+    }
+
+    function accept-suggestion() {
+        root.emoji-used(root.suggestions[root.sug-index].ch);
+        root.put(EmojiApi.complete(root.draft, composer-input.cursor-position-byte-offset, root.suggestions[root.sug-index].ch));
+    }
 
     function submit() {
         if composer-input.text != "" {
@@ -78,6 +144,24 @@ export component Composer inherits Rectangle {
                     height: max(44px, min(220px, composer-input.preferred-height + 20px));
                     composer-scope := FocusScope {
                         capture-key-pressed(event) => {
+                            if root.sug-open {
+                                if event.text == Key.DownArrow {
+                                    root.sug-index = min(root.sug-index + 1, root.suggestions.length - 1);
+                                    return accept;
+                                }
+                                if event.text == Key.UpArrow {
+                                    root.sug-index = max(root.sug-index - 1, 0);
+                                    return accept;
+                                }
+                                if event.text == Key.Escape {
+                                    root.sug-dismissed = root.draft;
+                                    return accept;
+                                }
+                                if event.text == Key.Tab || (event.text == Key.Return && !event.modifiers.shift) {
+                                    root.accept-suggestion();
+                                    return accept;
+                                }
+                            }
                             if (event.text == Key.Return && (root.enter-sends ? !event.modifiers.shift : event.modifiers.control || event.modifiers.meta)) {
                                 root.submit();
                                 return accept;
@@ -114,7 +198,7 @@ export component Composer inherits Rectangle {
                     padding-bottom: 6px;
                     spacing: 2px;
                     alignment: end;
-                    IconButton { icon: @image-url("icons/emoji.svg"); clicked => { emoji-popup.show(); } }
+                    IconButton { icon: @image-url("icons/emoji.svg"); clicked => { root.emoji-query = ""; emoji-popup.show(); } }
                     IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
                     IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
                     IconButton { icon: @image-url("icons/more.svg"); clicked => { more-popup.show(); } }
@@ -134,30 +218,128 @@ export component Composer inherits Rectangle {
         }
     }
 
+    if root.sug-open: Rectangle {
+        z: 100;
+        x: 20px;
+        y: -self.height - 4px;
+        width: 300px;
+        height: root.suggestions.length * 32px + 8px;
+        background: #2b2b2b;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 4px;
+            for s[i] in root.suggestions: Rectangle {
+                height: 32px;
+                border-radius: 4px;
+                background: i == root.sug-index || sug-area.has-hover ? Theme.surface-hover : transparent;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    spacing: 10px;
+                    Text { text: s.ch; font-size: 18px; vertical-alignment: center; }
+                    Text { text: ":" + s.name; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: left; vertical-alignment: center; overflow: elide; }
+                }
+                sug-area := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.sug-index = i;
+                        root.accept-suggestion();
+                    }
+                }
+            }
+        }
+    }
+
     emoji-popup := PopupWindow {
-        x: parent.width - 380px;
-        y: parent.height - 300px;
-        width: 320px;
-        height: 220px;
+        x: parent.width - 420px;
+        y: parent.height - 530px;
+        width: 360px;
+        height: 440px;
+        close-policy: close-on-click-outside;
         Rectangle {
             background: #2b2b2b;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
-                padding: 8px;
-                for row in [["😀", "😂", "😊", "😍", "😎", "🤔", "😅", "😢"], ["😡", "👍", "👎", "👏", "🙏", "💪", "🎉", "🔥"], ["❤️", "💯", "✅", "❌", "👀", "🚀", "⭐", "☕"], ["😴", "🤝", "🙌", "😬", "🤯", "😇", "🥳", "💡"]]: HorizontalLayout {
-                    for e in row: Rectangle {
+                padding: 10px;
+                spacing: 8px;
+                Rectangle {
+                    height: 32px;
+                    border-radius: 4px;
+                    background: #1f1f1f;
+                    border-width: 1px;
+                    border-color: emoji-search.has-focus ? Theme.accent : Theme.border;
+                    emoji-search := TextInput {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        text <=> root.emoji-query;
+                        color: Theme.fg;
+                        font-size: 13px;
+                        single-line: true;
+                        vertical-alignment: center;
+                    }
+                    if root.emoji-query == "": Text {
+                        x: 10px;
+                        text: "Find something fun";
+                        color: Theme.fg-subtle;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.emoji-query == "": HorizontalLayout {
+                    height: 32px;
+                    spacing: 2px;
+                    for glyph[i] in ["😀", "🧑", "🐻", "🍔", "🚗", "⚽", "💡", "❤️", "🏁"]: Rectangle {
                         width: 36px;
-                        height: 44px;
                         border-radius: 4px;
-                        background: ea.has-hover ? Theme.surface-hover : transparent;
-                        Text { text: e; font-size: 20px; }
-                        ea := TouchArea {
+                        background: root.emoji-tab == i ? Theme.surface-hover : (emoji-tab-area.has-hover ? #333333 : transparent);
+                        Rectangle {
+                            y: parent.height - 2px;
+                            height: 2px;
+                            background: root.emoji-tab == i ? Theme.accent : transparent;
+                        }
+                        Text { text: glyph; font-size: 16px; }
+                        emoji-tab-area := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.emoji-tab = i; }
+                        }
+                    }
+                }
+                if root.emoji-query == "" && root.recent-emoji.length > 0: VerticalLayout {
+                    vertical-stretch: 0;
+                    alignment: start;
+                    Text { text: "Recent"; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
+                    EmojiGrid {
+                        items: root.recent-emoji;
+                        picked(ch) => { root.pick-emoji(ch); emoji-popup.close(); }
+                    }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        alignment: start;
+                        EmojiGrid {
+                            items: EmojiApi.list(root.emoji-tab, root.emoji-query, root.skin-tone);
+                            picked(ch) => { root.pick-emoji(ch); emoji-popup.close(); }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    height: 32px;
+                    spacing: 2px;
+                    Text { text: "Skin tone"; color: Theme.fg-muted; font-size: 11px; vertical-alignment: center; width: 70px; }
+                    for tone-glyph[i] in ["👍", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿"]: Rectangle {
+                        width: 36px;
+                        border-radius: 4px;
+                        background: root.skin-tone == i ? Theme.surface-hover : (tone.has-hover ? #333333 : transparent);
+                        Text { text: tone-glyph; font-size: 16px; }
+                        tone := TouchArea {
                             mouse-cursor: pointer;
                             clicked => {
-                                root.draft = root.draft + e;
-                                root.focus-tick += 1;
+                                root.skin-tone = i;
+                                root.skin-tone-changed(i);
                             }
                         }
                     }

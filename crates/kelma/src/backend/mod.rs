@@ -49,6 +49,9 @@ pub enum Cmd {
     DraftEdited(String),
     /// The window is closing: write what is pending.
     Flush,
+    /// An emoji was inserted from the panel or the `:name` popup.
+    EmojiUsed(String),
+    SetSkinTone(u8),
 }
 
 #[derive(Default)]
@@ -100,6 +103,8 @@ pub struct Engine {
 }
 
 const PAGE: usize = 60;
+/// Emoji kept in the panel's recent row.
+const RECENT_EMOJI: usize = 16;
 
 impl Engine {
     pub fn new(
@@ -345,14 +350,35 @@ impl Engine {
                 self.cfg.lock().unwrap().enter_sends = on;
                 self.save_cfg();
             }
+            Cmd::EmojiUsed(ch) => {
+                {
+                    let mut cfg = self.cfg.lock().unwrap();
+                    cfg.recent_emoji.retain(|e| e != &ch);
+                    cfg.recent_emoji.insert(0, ch);
+                    cfg.recent_emoji.truncate(RECENT_EMOJI);
+                }
+                self.save_cfg();
+                self.push_prefs();
+            }
+            Cmd::SetSkinTone(tone) => {
+                self.cfg.lock().unwrap().skin_tone = tone;
+                self.save_cfg();
+                self.push_prefs();
+            }
         }
         Ok(())
     }
 
     /// Tells the UI the saved composer preferences.
     fn push_prefs(&self) {
-        let enter_sends = self.cfg.lock().unwrap().enter_sends;
-        self.ui.enter_sends(enter_sends);
+        let cfg = self.cfg.lock().unwrap();
+        self.ui
+            .prefs(cfg.enter_sends, cfg.skin_tone, cfg.recent_emoji.clone());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn config(&self) -> session::Config {
+        self.cfg.lock().unwrap().clone()
     }
 
     /// Writes the config file. Demo mode has no config of its own, so it never touches the real one.

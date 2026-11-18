@@ -15,6 +15,10 @@ export struct ChatRow {
     draft: bool, // preview is an unsent draft
 }
 
+export struct EmojiItem { ch: string, name: string }
+// Result of inserting text into the composer: the new text and where the cursor goes (byte offset).
+export struct Edited { text: string, cursor: int }
+
 export struct ReactionItem { key: string, emoji: string, count: int, mine: bool }
 export struct FileItem { name: string, url: string, ext: string }
 export struct ImageItem { url: string, img: image, loaded: bool, w: length, h: length }
