@@ -5,6 +5,7 @@
 
 pub mod ams;
 pub mod auth;
+pub mod broker;
 pub mod cards;
 pub mod chatsvc;
 pub mod client;

@@ -3017,6 +3017,7 @@ dependencies = [
  "teams-proto",
  "tokio",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

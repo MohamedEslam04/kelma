@@ -7,6 +7,7 @@
 //! kelma-cli read <conv> [n]       print the last n messages
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
+//! kelma-cli audiences             mint a token for every audience (prints no tokens)
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
 //! ```
@@ -274,7 +275,8 @@ async fn main() -> Result<()> {
             println!("image sent ({id})");
         }
         Some("post") => {
-            let (Some(channel), Some(subject), Some(text)) = (args.get(1), args.get(2), args.get(3))
+            let (Some(channel), Some(subject), Some(text)) =
+                (args.get(1), args.get(2), args.get(3))
             else {
                 bail!("usage: post <channel id> <subject> <text>")
             };
@@ -313,6 +315,39 @@ async fn main() -> Result<()> {
             client.add_reaction(conv, msg, key).await?;
             println!("reacted");
         }
+        Some("audiences") => {
+            // Mints a token for every audience through the auth broker. Prints no token values.
+            let (client, cfg) = connect(&paths).await?;
+            for aud in teams_proto::broker::Audience::FIXED {
+                match client.token_for(&aud).await {
+                    Ok(_) => println!("ok    {}", aud.resource()),
+                    Err(e) => println!("fail  {}: {e}", aud.resource()),
+                }
+            }
+            // SharePoint is per host: use the host of the user's own OneDrive.
+            let drive = client
+                .json_as(
+                    "drive",
+                    &teams_proto::broker::Audience::Graph,
+                    reqwest::Method::GET,
+                    "https://graph.microsoft.com/v1.0/me/drive?$select=webUrl",
+                    None,
+                )
+                .await?;
+            let host = drive["webUrl"]
+                .as_str()
+                .and_then(|u| url::Url::parse(u).ok())
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_default();
+            match teams_proto::broker::Audience::sharepoint(&host) {
+                Some(sp) => match client.token_for(&sp).await {
+                    Ok(_) => println!("ok    SharePoint (OneDrive host)"),
+                    Err(e) => println!("fail  SharePoint (OneDrive host): {e}"),
+                },
+                None => println!("skip  SharePoint: OneDrive host not found"),
+            }
+            session::persist(&cfg, &client).await?;
+        }
         Some("tail") => {
             let (client, _) = connect(&paths).await?;
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -337,7 +372,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             println!(
-                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|tail>"
+                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|audiences|tail>"
             );
         }
     }

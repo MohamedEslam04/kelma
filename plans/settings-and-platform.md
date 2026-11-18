@@ -67,7 +67,7 @@ rest of Teams' settings plus app-wide platform work.
     - One process on demand, with a separate profile.
     - Closed when idle so kelma's memory stays near its baseline.
   - **How.** ADR 0003 decides between CEF (cef-rs), a Chromium `--app` window, and wry/WebKitGTK (unsupported by Teams and ACS for media, but fine for some tabs).
-- [ ] **X3.2 Auth broker.** Impact 4, effort 2.
+- [x] **X3.2 Auth broker.** Impact 4, effort 2.
   - **What.** One place mints and caches tokens per audience: spaces, chatsvcagg, presence, Graph, substrate, sydney, outlook, SharePoint (per host), yammer, flow, tasks, onenote, ic3. Each has a wall-clock expiry and lazy refresh, and the rotated refresh token is persisted.
   - **How.** Extend `teams_proto::client` (Graph is already there) into a generic per-audience cache.
 - [ ] **X3.3 Tray, autostart and badge.** Shared with the chat plan 9.2.

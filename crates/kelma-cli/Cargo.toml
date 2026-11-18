@@ -16,3 +16,4 @@ session = { version = "0.0.0", path = "../session" }
 teams-proto = { version = "0.0.0", path = "../teams-proto" }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "signal"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"

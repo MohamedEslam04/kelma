@@ -2,6 +2,7 @@
 //! with the right headers for each backend.
 
 use crate::auth::{self, DeviceCode, SkypeToken};
+use crate::broker::{Audience, TokenCache};
 use crate::client_info::{RESOURCE_CSA, RESOURCE_GRAPH, RESOURCE_PRESENCE, RESOURCE_SPACES};
 use crate::error::{Error, Result};
 use crate::http::{Tokens, headers_for};
@@ -45,6 +46,8 @@ struct State {
     chat_service: String,
     middle_tier: String,
     region: Option<String>,
+    /// Tokens for every other audience, minted on first use.
+    cache: TokenCache,
 }
 
 /// Authenticated Teams client. Cheap to clone.
@@ -76,6 +79,16 @@ const REFRESH_MARGIN: Duration = Duration::from_secs(300);
 /// True when tokens expiring at `expires_at` must be refreshed at wall-clock time `now`.
 fn refresh_due(expires_at: SystemTime, now: SystemTime) -> bool {
     expires_at <= now + REFRESH_MARGIN
+}
+
+/// True when `url` is an https URL on the host of `aud`.
+fn audience_owns(aud: &Audience, url: &Url) -> bool {
+    let Ok(res) = Url::parse(&aud.resource()) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str().map(str::to_ascii_lowercase)
+            == res.host_str().map(str::to_ascii_lowercase)
 }
 
 impl Client {
@@ -118,6 +131,7 @@ impl Client {
             chat_service: String::new(),
             middle_tier: String::new(),
             region: None,
+            cache: TokenCache::default(),
         };
         let client = Client {
             http,
@@ -138,6 +152,7 @@ impl Client {
             chat_service: "https://offline.invalid".into(),
             middle_tier: "https://offline.invalid".into(),
             region: None,
+            cache: TokenCache::default(),
         };
         Ok(Client {
             http: build_http()?,
@@ -173,8 +188,38 @@ impl Client {
         .flatten()
         .min()
         .unwrap_or(3600);
+        let now = SystemTime::now();
         let mut st = self.state.lock().await;
         st.refresh_token = csa.refresh_token.clone().unwrap_or(rt);
+        st.cache.clear();
+        st.cache.put(
+            &Audience::Spaces,
+            spaces.access_token.clone(),
+            now,
+            spaces.expires_in_s,
+        );
+        st.cache.put(
+            &Audience::Csa,
+            csa.access_token.clone(),
+            now,
+            csa.expires_in_s,
+        );
+        if let Some(p) = &presence {
+            st.cache.put(
+                &Audience::Presence,
+                p.access_token.clone(),
+                now,
+                p.expires_in_s,
+            );
+        }
+        if let Some(g) = &graph {
+            st.cache.put(
+                &Audience::Graph,
+                g.access_token.clone(),
+                now,
+                g.expires_in_s,
+            );
+        }
         st.tokens = Tokens {
             skype: Some(sky.token),
             spaces: Some(spaces.access_token),
@@ -197,6 +242,98 @@ impl Client {
             self.refresh_all().await
         } else {
             Ok(())
+        }
+    }
+
+    /// An access token for `aud`, minted with the refresh token on first use and again shortly
+    /// before it expires (wall clock). The rotated refresh token replaces the stored one.
+    pub async fn token_for(&self, aud: &Audience) -> Result<String> {
+        let rt = {
+            let st = self.state.lock().await;
+            if let Some(t) = st.cache.get(aud, SystemTime::now()) {
+                return Ok(t);
+            }
+            st.refresh_token.clone()
+        };
+        let tok = auth::refresh(&self.http, &self.tenant, &rt, &aud.resource()).await?;
+        let mut st = self.state.lock().await;
+        if let Some(new_rt) = tok.refresh_token {
+            st.refresh_token = new_rt;
+        }
+        st.cache.put(
+            aud,
+            tok.access_token.clone(),
+            SystemTime::now(),
+            tok.expires_in_s,
+        );
+        tracing::debug!(audience = %aud.resource(), ttl_s = tok.expires_in_s, "token minted");
+        Ok(tok.access_token)
+    }
+
+    /// Sends a request with a bearer token for `aud`. The token is only attached when `url` is
+    /// an https URL on the audience's own host, so it can never leak elsewhere. Retries once
+    /// with a fresh token after a 401.
+    pub async fn request_as(
+        &self,
+        aud: &Audience,
+        method: Method,
+        url: &str,
+        body: Option<&Value>,
+        extra: &[(&str, &str)],
+    ) -> Result<(u16, String)> {
+        let parsed = Url::parse(url).map_err(|e| Error::Protocol(format!("bad url {url}: {e}")))?;
+        if !audience_owns(aud, &parsed) {
+            return Err(Error::Protocol(format!(
+                "{url} is not a host of {}",
+                aud.resource()
+            )));
+        }
+        for attempt in 0..2 {
+            let token = self.token_for(aud).await?;
+            let mut req = self
+                .http
+                .request(method.clone(), parsed.clone())
+                .header("User-Agent", crate::client_info::USER_AGENT)
+                .header("Authorization", format!("Bearer {token}"));
+            for (k, v) in extra {
+                req = req.header(*k, *v);
+            }
+            req = match body {
+                Some(b) => req.json(b),
+                None if method == Method::POST || method == Method::PUT => {
+                    req.header("Content-Length", "0")
+                }
+                None => req,
+            };
+            let resp = req.send().await?;
+            let status = resp.status().as_u16();
+            if status == 401 && attempt == 0 {
+                tracing::warn!(audience = %aud.resource(), "401, minting a new token");
+                self.state.lock().await.cache.invalidate(aud);
+                continue;
+            }
+            return Ok((status, resp.text().await?));
+        }
+        unreachable!("loop returns on second attempt")
+    }
+
+    /// [`Client::request_as`] that parses a JSON response; non-2xx statuses become errors.
+    pub async fn json_as(
+        &self,
+        context: &'static str,
+        aud: &Audience,
+        method: Method,
+        url: &str,
+        body: Option<&Value>,
+    ) -> Result<Value> {
+        let (status, text) = self.request_as(aud, method, url, body, &[]).await?;
+        if !(200..300).contains(&status) {
+            return Err(Error::status(context, status, &text));
+        }
+        if text.trim().is_empty() {
+            Ok(Value::Null)
+        } else {
+            Ok(serde_json::from_str(&text)?)
         }
     }
 
@@ -327,6 +464,40 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bearer_only_goes_to_the_audience_host() {
+        let u = |s: &str| Url::parse(s).unwrap();
+        assert!(audience_owns(
+            &Audience::Graph,
+            &u("https://graph.microsoft.com/v1.0/me")
+        ));
+        assert!(audience_owns(
+            &Audience::Sydney,
+            &u("https://substrate.office.com/m365Copilot/x")
+        ));
+        assert!(!audience_owns(
+            &Audience::Graph,
+            &u("http://graph.microsoft.com/v1.0/me")
+        ));
+        assert!(!audience_owns(
+            &Audience::Graph,
+            &u("https://graph.microsoft.com.evil.com/")
+        ));
+        assert!(!audience_owns(
+            &Audience::Outlook,
+            &u("https://graph.microsoft.com/")
+        ));
+        let sp = Audience::sharepoint("contoso-my.sharepoint.com").unwrap();
+        assert!(audience_owns(
+            &sp,
+            &u("https://contoso-my.sharepoint.com/_api/web")
+        ));
+        assert!(!audience_owns(
+            &sp,
+            &u("https://contoso.sharepoint.com/_api/web")
+        ));
+    }
 
     #[test]
     fn refresh_due_uses_wall_clock_margin() {
