@@ -1,0 +1,34 @@
+{
+  "value": [
+    {
+      "id": "AAA-online",
+      "iCalUId": "uid-online",
+      "subject": "Sprint planning",
+      "start": { "dateTime": "2026-11-19T14:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-11-19T15:30:00.0000000", "timeZone": "UTC" },
+      "isAllDay": false,
+      "showAs": "busy",
+      "responseStatus": { "response": "notResponded" },
+      "isCancelled": false,
+      "sensitivity": "normal",
+      "categories": [],
+      "organizer": { "emailAddress": { "name": "Pat Planner", "address": "pat@example.com" } },
+      "location": { "displayName": "Microsoft Teams Meeting" },
+      "isOnlineMeeting": true,
+      "onlineMeeting": { "joinUrl": "https://teams.example.com/l/meetup-join/19%3ameeting_EXAMPLE%40thread.v2/0" },
+      "webLink": "https://outlook.example.com/calendar/item/AAA-online",
+      "type": "seriesMaster",
+      "bodyPreview": "Agenda inside",
+      "attendees": [
+        { "type": "required", "status": { "response": "accepted", "time": "0001-01-01T00:00:00Z" },
+          "emailAddress": { "name": "Sam Sample", "address": "sam@example.com" } },
+        { "type": "optional", "status": { "response": "none" },
+          "emailAddress": { "name": "Robin Reviewer", "address": "robin@example.com" } },
+        { "type": "resource", "status": { "response": "tentativelyAccepted" },
+          "emailAddress": { "name": "Room 4", "address": "room4@example.com" } }
+      ]
+    },
+    { "subject": "item without an id is skipped" }
+  ],
+  "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/calendarView/delta?$deltatoken=abc"
+}
