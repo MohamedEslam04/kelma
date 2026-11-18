@@ -230,20 +230,20 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
         spawn_capture_encoder(Paced::new(ToneSource::endless(440.0)))
     };
     let sender = media.audio_sender();
+    let sent = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let sent_count = sent.clone();
     let send_task = tokio::spawn(async move {
-        let mut n = 0u64;
         while let Some(p) = encoded.recv().await {
             if sender.send(p).await.is_ok() {
-                n += 1;
+                sent_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
-        n
     });
     let (fwd_tx, fwd_rx) = tokio::sync::mpsc::channel(256);
     let received = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let rx_count = received.clone();
     let mut incoming = events.audio;
-    tokio::spawn(async move {
+    let forward_task = tokio::spawn(async move {
         while let Some(p) = incoming.recv().await {
             rx_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if fwd_tx.send(p).await.is_err() {
@@ -368,8 +368,14 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     }
     media.close().await?;
     drop(media);
-    let sent = send_task.await.unwrap_or(0);
-    let _ = playback.await;
+    // The tone source never ends: stop the sender, then let the playback drain and finish.
+    send_task.abort();
+    // Dropping the forwarder closes the playback's input, so the WAV is finalised.
+    forward_task.abort();
+    let sent = sent.load(std::sync::atomic::Ordering::Relaxed);
+    if tokio::time::timeout(Duration::from_secs(5), playback).await.is_err() {
+        println!("playback did not finish in 5 s");
+    }
     println!(
         "audio packets: sent {sent}, received {}",
         received.load(std::sync::atomic::Ordering::Relaxed)

@@ -376,7 +376,15 @@ impl PeerConnectionEventHandler for Handler {
     }
 
     async fn on_track(&self, track: Arc<dyn TrackRemote>) {
-        if track.kind().await != RtpCodecKind::Audio {
+        // Teams' SDP names no SSRCs (only `a=x-ssrc-range`), so a remote track can arrive before
+        // its kind is known. Only audio is negotiated, so every track is drained as audio; a
+        // track nobody polls fills webrtc-rs's queue and its packets are dropped.
+        let kind = track.kind().await;
+        let id = track.track_id().await.to_string();
+        tracing::info!(?kind, track = %id, "remote track");
+        if kind == RtpCodecKind::Video {
+            // Still drain it, or the driver logs a full queue for every packet.
+            tokio::spawn(async move { while track.poll().await.is_some() {} });
             return;
         }
         let audio = self.audio.clone();
