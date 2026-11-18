@@ -33,7 +33,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
 ## Phase 5: everyday messaging
 
 ### 5.1 Paste and drag-drop
-- [ ] Impact 5, effort 2. Seen: composer (Ctrl+V, drop zone).
+- [x] Impact 5, effort 2. Seen: composer (Ctrl+V, drop zone).
   - **What.**
     - Ctrl+V with an image on the clipboard attaches it as an inline image, with a preview chip above the composer before sending.
     - Dropping files on the chat attaches them: images inline, other files as file cards.
@@ -102,7 +102,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - Unit tests cover each construct.
 
 ### 5.5 Emoji like Teams
-- [ ] Impact 4, effort 2. Seen: emoji panel.
+- [x] Impact 4, effort 2. Seen: emoji panel.
   - **What.**
     - The panel has an Emoji tab with categories, recent emoji and search ("Find something fun").
     - Typing `:name:` autocompletes, for example `:heart:` or `:like:`. A popup appears after `:` plus two letters.
@@ -128,7 +128,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built and unit/UI tested. The setting is `open_chat_at` in `config.json` (`first_unread`, the default, or `newest`); there is no settings page for it yet (9.x). A manual "Mark as unread" is remembered locally (`kv unread_mark:<conv>`) because the conversations list does not return the bookmark. Not run live: Mark all as read (it changes the real read state of every chat), so "Teams web agrees" is still open.
 
 ### 5.7 Drafts
-- [ ] Impact 4, effort 2. Seen: quick view "Drafts".
+- [x] Impact 4, effort 2. Seen: quick view "Drafts".
   - **What.**
     - Each chat keeps its unsent text (and reply target) when you switch chats or restart.
     - The chat list shows "Draft:" in the preview.
@@ -179,7 +179,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Done when.** A UI test covers each shortcut's effect.
 
 ### 5.10 Enter behavior setting
-- [ ] Impact 2, effort 1. Seen: settings › Chats ("When writing a message, press Enter to").
+- [x] Impact 2, effort 1. Seen: settings › Chats ("When writing a message, press Enter to").
   - **What.** "Send the message" (default), or "Start a new line", where Ctrl+Enter sends.
   - **Done when.** A UI test covers both modes.
 

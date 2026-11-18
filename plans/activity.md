@@ -17,7 +17,7 @@ the rail.
 
 ## Phase A1
 
-- [ ] **A1.1 Activity feed.** Impact 5, effort 3.
+- [x] **A1.1 Activity feed.** Impact 5, effort 3.
   - **What.**
     - A rail item with an unread badge.
     - The list shows each item's avatar with a type badge (mention @, reaction emoji, reply, post), a bold title when unread, a preview line, the time, and where it happened.
