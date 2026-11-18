@@ -3010,6 +3010,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arboard",
+ "calendar",
  "chrono",
  "emoji",
  "i-slint-backend-testing",
@@ -3017,6 +3018,7 @@ dependencies = [
  "notify-rust",
  "open",
  "render",
+ "reqwest",
  "rfd",
  "serde_json",
  "session",

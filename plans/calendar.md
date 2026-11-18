@@ -42,6 +42,12 @@ are the same as in `plans/chat.md`.
     - Remember the view and saved views.
   - **How.** `GET /me/calendarView?startDateTime&endDateTime` for the visible range plus one range ahead; cache in the store.
   - **Done when.** The same week shows the same events as Teams, including recurring and all-day events.
+  - **Status.** Built in `crates/kelma/ui/calendar.slint` and `crates/kelma/src/backend/cal/`: Day (1 to 7 days),
+    Work week (default), Week and Month; 15, 30 or 60 minute scale; current-time line and today marker; all-day
+    row; overlapping events side by side; Today, ‹ ›; mini month; the last view and scale are saved in
+    `config.json`. Events are cached in memory and synced by delta on start and every 2 minutes. Still open: the
+    date-range picker (the range label is not clickable yet), saved views, the store `events` table, and the
+    check against Teams for a real week.
 - [ ] **C1.2 Event look.**
   - **What.**
     - Show as Busy, Tentative (hatched), Free, Out of office and Working elsewhere.
@@ -50,6 +56,10 @@ are the same as in `plans/chat.md`.
     - A Teams meeting icon and a series icon.
     - The organizer's name under the title.
   - **Done when.** It matches Teams for the user's real week.
+  - **Status.** Built: Busy, Tentative (hatched, also for a tentative reply), Free (outline), Out of office
+    (purple) and Working elsewhere; declined and cancelled events struck through; lock, Teams meeting and
+    series icons; the organizer under the title. Category colors use Outlook's preset names, and a stable color
+    from the name for custom ones; the real colors live in the mailbox master list (not read yet).
 - [ ] **C1.3 Event peek** (click an event).
   - **What.**
     - Title and expand.
@@ -131,6 +141,11 @@ are the same as in `plans/chat.md`.
     - Local timers from the cached events.
     - `POST …/snoozeReminder|dismissReminder`.
     - The start event comes from the meeting chat thread over trouter.
+  - **Status.** Built: a 15 second tick over the cached events fires a desktop notification at
+    `reminderMinutesBeforeStart` (default 15) with Join, Snooze 5 min and Dismiss actions, and an in-app Join
+    banner from 5 minutes before a Teams meeting until it ends. Snooze and Dismiss call Graph
+    (`snoozeReminder`, `dismissReminder`) and have not been run against a live account. Still open: the
+    "Meeting started" notification.
 - [ ] **C3.2 Meet now and Join with an ID.** Impact 4, effort 2.
   - **What.**
     - Meet now creates an instant meeting with a share link.

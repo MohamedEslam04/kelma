@@ -12,9 +12,11 @@ import { ReactionPicker } from "reaction_picker.slint";
 import { ForwardDialog } from "forward_dialog.slint";
 import { SelectBar } from "select_bar.slint";
 import { LoginView } from "login.slint";
+import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
 
 export { Theme } from "theme.slint";
 export { ChatRow, ReactionItem, EmojiItem, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
+export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
 
 export component AppWindow inherits Window {
     title: "kelma";
@@ -206,6 +208,8 @@ export component AppWindow inherits Window {
             }
         }
 
+        if CalStore.join-text != "": JoinBanner { }
+
         HorizontalLayout {
             // Left rail
             Rectangle {
@@ -215,7 +219,7 @@ export component AppWindow inherits Window {
                     padding-top: 8px;
                     spacing: 4px;
                     alignment: start;
-                    for item in [{key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}]: Rectangle {
+                    for item in [{key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}, {key: "calendar", label: "Calendar", icon: @image-url("icons/calendar.svg")}]: Rectangle {
                         height: 56px;
                         Rectangle {
                             x: 0;
@@ -237,7 +241,7 @@ export component AppWindow inherits Window {
             }
 
             // Sidebar
-            Sidebar {
+            if root.view != "calendar": Sidebar {
                 view: root.view;
                 filter <=> root.filter;
                 chats-favorites: root.chats-favorites;
@@ -254,8 +258,10 @@ export component AppWindow inherits Window {
                 set-filter(f) => { root.set-filter(f); }
             }
 
+            if root.view == "calendar": CalendarView { horizontal-stretch: 1; }
+
             // Conversation
-            Rectangle {
+            if root.view != "calendar": Rectangle {
                 background: Theme.main;
                 if root.current-id == "": VerticalLayout {
                     alignment: center;

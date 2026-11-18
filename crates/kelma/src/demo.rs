@@ -310,3 +310,99 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
     )?;
     Ok(())
 }
+
+/// Invented events for the demo calendar, as a Graph `calendarView` page. `week_start_ms` is local
+/// Monday 00:00 this week; one event starts three minutes after `now_ms` so the Join banner shows.
+pub fn calendar_events(week_start_ms: i64, now_ms: i64) -> serde_json::Value {
+    let min = 60_000;
+    let day = 24 * 60 * min;
+    let at = |d: i64, h: i64, m: i64| week_start_ms + d * day + (h * 60 + m) * min;
+    let join = "https://teams.microsoft.com/l/meetup-join/demo";
+    let mut n = 0;
+    let mut ev = |subject: &str, from: i64, to: i64, extra: serde_json::Value| {
+        n += 1;
+        let t = |ms| json!({"dateTime": calendar::format_iso_ms(ms), "timeZone": "UTC"});
+        let mut v = json!({"id": format!("demo-{n}"), "subject": subject,
+            "start": t(from), "end": t(to),
+            "organizer": {"emailAddress": {"name": "Sara Hassan", "address": "sara@example.com"}}});
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    };
+    let online = json!({"isOnlineMeeting": true, "onlineMeeting": {"joinUrl": join}});
+    let mut items = Vec::new();
+    for d in 0..5 {
+        let mut extra = online.as_object().unwrap().clone();
+        extra.insert("type".into(), "occurrence".into());
+        items.push(ev("Team standup", at(d, 9, 30), at(d, 9, 45), extra.into()));
+    }
+    let mut design = online.as_object().unwrap().clone();
+    design.insert(
+        "organizer".into(),
+        json!({"emailAddress": {"name": "Ahmed Ali", "address": "ahmed@example.com"}}),
+    );
+    items.push(ev(
+        "Design review",
+        at(1, 10, 0),
+        at(1, 11, 0),
+        design.into(),
+    ));
+    items.push(ev(
+        "1:1 with Omar",
+        at(1, 10, 30),
+        at(1, 11, 30),
+        json!({"organizer": {"emailAddress": {"name": "Omar Khaled", "address": "omar@example.com"}}}),
+    ));
+    items.push(ev(
+        "Vendor call",
+        at(1, 10, 45),
+        at(1, 11, 15),
+        json!({"showAs": "tentative", "location": {"displayName": "Phone"}}),
+    ));
+    items.push(ev(
+        "Sprint review",
+        at(2, 11, 0),
+        at(2, 12, 0),
+        json!({"showAs": "tentative", "categories": ["Green category"]}),
+    ));
+    items.push(ev(
+        "Lunch with Mona",
+        at(2, 12, 30),
+        at(2, 13, 30),
+        json!({"showAs": "free", "location": {"displayName": "Cafe"}}),
+    ));
+    items.push(ev(
+        "Quarterly planning",
+        at(2, 14, 0),
+        at(2, 15, 0),
+        json!({"responseStatus": {"response": "declined"}}),
+    ));
+    items.push(ev(
+        "Interview: backend engineer",
+        at(0, 16, 0),
+        at(0, 17, 0),
+        json!({"sensitivity": "private", "categories": ["Purple category"]}),
+    ));
+    items.push(ev(
+        "Product conference",
+        at(0, 0, 0),
+        at(2, 0, 0),
+        json!({"isAllDay": true, "categories": ["Blue category"]}),
+    ));
+    items.push(ev(
+        "Working from home",
+        at(3, 0, 0),
+        at(4, 0, 0),
+        json!({"isAllDay": true, "showAs": "workingElsewhere"}),
+    ));
+    items.push(ev(
+        "Annual leave",
+        at(4, 0, 0),
+        at(5, 0, 0),
+        json!({"isAllDay": true, "showAs": "oof"}),
+    ));
+    let soon = now_ms / min * min + 3 * min;
+    items.push(ev("Customer sync", soon, soon + 30 * min, online));
+    json!({ "value": items })
+}
