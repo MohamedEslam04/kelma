@@ -13,11 +13,16 @@ use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
 use teams_proto::Client;
 
+mod cal;
 mod live;
 mod render;
 mod send;
 mod sync;
 mod util;
+
+pub use cal::{CalCmd, CalData};
+#[cfg(test)]
+pub use cal::{Ctx, build, parse_view};
 
 /// Commands sent by the UI.
 #[derive(Debug, Clone)]
@@ -42,6 +47,7 @@ pub enum Cmd {
     CloseThread,
     AttachImage,
     AttachFile,
+    Calendar(CalCmd),
 }
 
 #[derive(Default)]
@@ -75,6 +81,7 @@ pub struct Engine {
     client: Client,
     store: Mutex<Store>,
     cfg: Mutex<session::Config>,
+    cal: cal::CalState,
     ui: UiHandle,
     me: String,
     my_name: String,
@@ -101,6 +108,7 @@ impl Engine {
         Arc::new(Engine {
             client,
             store: Mutex::new(store),
+            cal: cal::CalState::new(&cfg),
             cfg: Mutex::new(cfg),
             ui,
             me,
@@ -129,6 +137,7 @@ impl Engine {
     /// Starts only the render loop (demo mode: no network).
     pub fn start_offline(self: &Arc<Self>) {
         self.offline.store(true, Ordering::Relaxed);
+        self.start_calendar_offline();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
     }
@@ -139,6 +148,7 @@ impl Engine {
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
         tokio::spawn(async move { e.live_loop().await });
+        self.start_calendar();
         let e = self.clone();
         tokio::spawn(async move {
             loop {
@@ -314,6 +324,7 @@ impl Engine {
             }
             Cmd::AttachImage => self.attach_image().await?,
             Cmd::AttachFile => self.attach_file().await?,
+            Cmd::Calendar(c) => self.calendar_cmd(c).await?,
         }
         Ok(())
     }

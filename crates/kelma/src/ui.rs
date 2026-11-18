@@ -1,5 +1,7 @@
 //! UI-thread side: turns view data into Slint models.
 
+mod cal;
+
 use crate::data::{ChatData, HeaderData, MsgData, Pixels, TeamData};
 use crate::{AppWindow, ChannelRow, ChatRow, FileItem, ImageItem, Msg, ReactionItem, TeamRow};
 use slint::{

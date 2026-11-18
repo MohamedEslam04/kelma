@@ -259,6 +259,14 @@ fn main() -> anyhow::Result<()> {
         });
     }
     {
+        let tx = tx.clone();
+        window.global::<CalStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::CalCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Calendar(c));
+            }
+        });
+    }
+    {
         let weak = window.as_weak();
         window.on_dismiss_banner(move || {
             if let Some(w) = weak.upgrade() {
