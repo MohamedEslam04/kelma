@@ -21,6 +21,10 @@ pub struct ChatData {
     pub favorite: bool,
     /// `preview` is an unsent draft, not the last message.
     pub draft: bool,
+    /// An unread message mentions me (the list shows "@").
+    pub mention: bool,
+    /// A group chat, which can be left from the item menu.
+    pub group: bool,
 }
 
 /// A chip above the composer.
@@ -87,6 +91,46 @@ pub struct MsgData {
     pub failed: bool,
     /// The "New messages" divider is drawn above this row.
     pub new_above: bool,
+    /// MRI of the sender (opens the profile card).
+    pub sender_id: String,
+    /// The message @mentions me or everyone.
+    pub mentions_me: bool,
+    /// On my newest message: `""`, `"sent"` or `"seen"`.
+    pub receipt: String,
+    /// Who has seen it (`"seen"` only).
+    pub receipt_names: String,
+    /// The row a jump from the pinned banner landed on.
+    pub flash: bool,
+}
+
+/// A person, or a team, channel or "everyone" entry, in a people list.
+#[derive(Clone, Default)]
+pub struct PersonData {
+    pub id: String,
+    pub name: String,
+    pub subtitle: String,
+    pub avatar: Option<Pixels>,
+    /// `person`, `team`, `channel` or `everyone`.
+    pub kind: &'static str,
+}
+
+/// One pinned message of the open chat.
+#[derive(Clone, Default)]
+pub struct PinnedData {
+    pub id: String,
+    pub sender: String,
+    pub preview: String,
+}
+
+/// What the profile card shows.
+#[derive(Clone, Default)]
+pub struct CardData {
+    pub person: PersonData,
+    pub loading: bool,
+    pub email: String,
+    pub work: String,
+    pub location: String,
+    pub time: String,
 }
 
 /// A forward target: an existing chat or channel.

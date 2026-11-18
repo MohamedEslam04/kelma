@@ -1,0 +1,47 @@
+// State and commands shared by the people-and-conversations pieces (plan 6.1 to 6.7): the @mention
+// picker, the New chat pane, the participants popover, the profile card, the pinned messages
+// banner and read receipts. Rust fills the properties; the UI sends `command(name, argument)`.
+import { PersonItem, PinnedItem } from "types.slint";
+
+export global PeopleStore {
+    // @mention picker: candidates for the `@query` before the composer cursor.
+    in property <[PersonItem]> mention-items;
+
+    // New chat pane (Alt+Shift+N): who is addressed, the search suggestions and a hint such as
+    // "A chat with these people already exists".
+    in-out property <bool> new-chat-open: false;
+    in property <[PersonItem]> new-chat-to;
+    in property <[PersonItem]> new-chat-results;
+    in property <string> new-chat-hint;
+
+    // Group chat header: the pencil (rename) and the participants button.
+    in property <bool> header-group: false;
+    in property <int> member-count: 0;
+    in-out property <bool> participants-open: false;
+    in property <[PersonItem]> members;
+    in property <[PersonItem]> add-results;
+    // Chat id waiting for a "Leave this chat?" confirmation; empty when none.
+    in-out property <string> leave-confirm;
+
+    // Profile card.
+    in-out property <bool> card-open: false;
+    in property <bool> card-loading: false;
+    in property <PersonItem> card;
+    in property <string> card-email;
+    in property <string> card-work;
+    in property <string> card-location;
+    in property <string> card-time;
+
+    // Pinned messages banner: the pins of the open chat and the one shown.
+    in property <[PinnedItem]> pinned;
+    in-out property <int> pinned-index: 0;
+
+    // Read receipts on (shown on your newest message).
+    in property <bool> receipts-on: true;
+
+    // (name, argument). Names: mention-query, mention-pick, new-chat-open, new-chat-close,
+    // new-chat-query, new-chat-add, new-chat-remove, new-chat-name, new-chat-send, rename,
+    // participants-open, add-query, add-pick, add-history, leave, profile, profile-copy-email,
+    // profile-chat, pin-jump, pin-unpin, receipts.
+    callback command(string, string);
+}

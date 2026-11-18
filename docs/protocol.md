@@ -276,3 +276,137 @@ accepts those two API hosts as well, and still refuses every other host.
 **Team notebooks.** A team's notebook lives under its Microsoft 365 group, so `/me/onenote`
 alone finds none. Sections can sit in nested section groups, so kelma follows `sectionGroupsUrl`
 up to 4 levels.
+
+## Teams and channels (`teams_proto::teams`, `tags`, `engage`) 2026-11-19
+
+Code: `crates/teams-proto/src/{teams,tags,engage}.rs`, CLI `kelma-cli team …`. Plan:
+`plans/teams-and-channels.md` (T0.1 to T3.1).
+
+**How T0.1 was done without a browser.** The web client's JavaScript is public. The shell
+`https://teams.microsoft.com/v2/` (fetched with a desktop user agent) lists `runtime-<hash>.js`,
+which maps lazy chunk ids to a name and a hash (`a.un`, `a.uh`). The chunk
+`services-teams-and-channels-<hash>.js` (22 KB) holds every middle-tier teams and channels call
+(url, method, headers); `services-people-targeting` holds the tag calls. Bodies came from the same
+chunks and from the open-source clients, then each call was run against a test team. The GraphQL
+layer of the web client maps to these calls: for example `showChannel` is two property writes and
+`editChannel` is a `PATCH`.
+
+Legend: ✅ run live against the test team (the only team the writes touched), 🧪 body and parser
+unit-tested only (not run), ❌ failed live.
+
+`MT` = `regionGtms.middleTier` (`https://teams.microsoft.com/api/mt/<region>`), same auth as the
+profile calls. Team and channel ids go in the path percent-encoded. `CSA` = the aggregator.
+`chat` = the chat service. `TID` = team thread id (`19:…@thread.tacv2`, also the id of its General
+channel), `GID` = the AAD group id (`teamSiteInformation.groupId`).
+
+### T1.1 List
+| Call | Notes | Live |
+|---|---|---|
+| `GET CSA/api/v3/teams/users/me?isPrefetch=false&enableMembershipSummary=true&supportsAdditionalSystemGeneratedFolders=true&supportsSliceItems=true&enableEngageCommunities=false` | `teams[]{id, displayName, description, accessType (3 public), isTenantWide, isFavorite (= shown), isCollapsed, isArchived, isDeleted, memberRoleString (Admin/User/Guest), teamSiteInformation.groupId, membershipSummary{totalMemberCount, adminRoleCount, botCount}, smtpAddress, teamSettings, teamGuestSettings, channels[]}`. `channels[]{id, displayName, channelType (0 standard, 1 private), isShared, isGeneral, isFavorite (= shown), isPinned, isMuted, isArchived, isDeleted, isMember, isModerator, memberRoleString, interest, creationTime, parentTeamId}`. `totalMemberCount` counts the 3 bots every team has, so kelma subtracts `botCount`. Channels carry no description and no substrate group id. Pending invites are not in this answer | ✅ |
+
+### T1.2 Discover and join
+| Call | Notes | Live |
+|---|---|---|
+| `GET MT/beta/teams/suggested?accessType=<n>&enableFallback=true` | `accessType` None 0, Private 1, Secret 2, Public 3. `{type, value:[{groupId, displayName, description, accessType:"Public", membersCount, relevantMembers[{smtpAddress}]}]}` | ✅ lists |
+| `GET MT/beta/teams/find?keywords=<k>&accessType=<n>&enableKeywordSearch=false&top=100&skipToken=` | same shape. Returned 0 for a one-letter keyword | ✅ lists |
+| `POST MT/beta/teams/joinRequest/<GID>` | join a public team, or ask to join a private one | 🧪 (rule: no joins of real teams) |
+| `POST MT/beta/teams/cancelJoinRequest/<GID>` | | 🧪 |
+| `POST MT/beta/teams/joinByCode?restrictJoinToPublicTeam=<bool>` | body is the code as a JSON string (`"abc1234"`). `{"joinCode":…}` answers `400 Invalid joinCode`. With `restrictJoinToPublicTeam=false` the service answered `400 restrictJoinToPublicTeam query parameter must be set to true` for a private team's code; with `true` it answered `JoinTeamInfo{value{accessType, description, displayName, isTeamOwnerApprovalRequired, …}}`. Tried only with the test team's own code (already a member) | ✅ (own code) |
+| `GET/PUT/DELETE MT/beta/teams/<TID>/joinCode` | GET: `204` without a code, else the plain-text code. PUT makes a new code and answers it as plain text. DELETE removes it | ✅ |
+
+### T1.3 Show, hide, pin
+| Call | Notes | Live |
+|---|---|---|
+| Hide a standard channel | `PUT chat/v1/threads/<channel>/members/<me>` `{"expiration":<now s + 14 days>,"interest":"NotInterested"}`, **then** `PUT chat/v1/users/ME/conversations/<channel>/properties?name=favorite` `{"favorite":"false"}`. Sending `favorite` first does nothing | ✅ CSA `isFavorite` flipped |
+| Show again | `{"expiration":0,"interest":"Interested"}` then `{"favorite":"true"}` | ✅ |
+| Private and shared channels | only the `favorite` property. General: also `isGeneralChannelFavorite` | ✅ private; General 🧪 |
+| Hide or show a team | `PUT chat/v1/users/ME/conversations/<TID>/properties?name=favorite` | ✅ |
+| `GET/POST/DELETE CSA/api/v1/teams/users/me/pinnedChannels` | GET `{orderVersion, pinChannelOrder[]}`. POST `{"newlyPinnedChannels":[id]}`, DELETE `{"channelIdsToUnpin":[id]}`, with `if-match: <orderVersion>` (retry once on 412) | ✅ pin, list, unpin |
+| `PUT/DELETE MT/beta/teams/<channelId>/setDefaultChannel` | "Show for everyone automatically" (the channel id sits where the team id usually goes). Thread property `favDefault` flips `False`/`True` | ✅ |
+| Leave a team | `PUT MT/beta/teams/<TID>/members` `{groupId, userMri:<me>, updateType:"Left"}` (same call as removing a member) | 🧪 |
+
+### T2.1 Create a channel
+| Call | Notes | Live |
+|---|---|---|
+| Standard: `POST MT/beta/teams/<TID>/channels` | `{displayName, description, groupId:<GID>, channelType:"Standard"}`; `chatModality:"Conversational"` makes a threaded-chat channel (`PostReply` is posts). Answer `{value:{objectId:<channel id>}}` | ✅ both layouts |
+| Private or shared: `POST https://teams.microsoft.com/fabric/<geo>/templates/api/teams/<GID>/channels?forceSync=false` | token audience `https://templates.teams.microsoft.com` (new `Audience::Templates`, only sent to `teams.microsoft.com/fabric/…`), header `X-AnchorMailbox: OID:<my oid>@<tenant id>`. Body `{spaceThreadId:<TID>, displayName, description, channelType:"Private"\|"Shared", sharedWithParentTeam:false}`. The answer has `groupId:"OID:<substrate guid>@<tenant>"`, `hostTeamId`, `hostTenantId`, `chatModalityType`, `createdTime` but **not the thread id**, so kelma finds the new channel in the list by name | ✅ private; shared 🧪 |
+| `<geo>` | the last segment of the middle-tier URL without its `-NN` (`…/mt/emea` gives `emea`) | ✅ |
+
+### T2.2 Edit, delete, archive, moderation
+| Call | Notes | Live |
+|---|---|---|
+| Edit a standard channel `PATCH MT/beta/teams/<TID>/channels/<c>` | `{displayName?, description?}` | ✅ |
+| Edit a private channel `PATCH …/fabric/<geo>/templates/api/teams/<GID>/channels/OID:<substrateGroupId>@<tenant>?forceSync=false` | same body. The substrate id is `properties.substrateGroupId` of `GET chat/v1/threads/<channel>` | ✅ |
+| Delete a standard channel `DELETE MT/beta/teams/<TID>/channels/<c>` | body `{id, hostTeamId, isGeneral:false}`. Restorable | ✅ |
+| Delete a private channel | `DELETE` the fabric path above | ✅ (it does not appear in the deleted list) |
+| Restore `PATCH MT/beta/teams/<TID>/channels/<c>/restore` | no body | ✅ |
+| Deleted or archived list `PUT MT/beta/teams/<TID>/allchannels` | `{"Channels":[{"Type":"standard","State":["deleted"]},{"Type":"private",…},{"Type":"shared",…}]}` answers `[{objectId, displayName, description, groupId, channelState, createdDateTime, deleteTime (ms as string)}]` | ✅ |
+| Archive `POST MT/beta/teams/<TID>/channels/<c>/archive` | ❌ `404` (also with the group id, an unencoded channel id and a body). The web client's own flag is the thread property: `PUT chat/v1/threads/<channel>/properties?name=archivalLevel` `{"archivalLevel":"Topic"}` archives (CSA `isArchived` turns true), `"None"` unarchives (an empty string is refused). Right after archiving a private channel the unarchive answered one transient `500`, then worked | ✅ property route |
+| Moderation (who posts, replies, pins; bots; connectors) | thread property `channelSettings`: `PUT chat/v1/threads/<channel>/properties?name=channelSettings` `{"channelSettings":"{\"channelPostPermissions\":\"Moderators\",\"allowReplies\":\"Everyone\",\"allowPinPosts\":\"Everyone\",\"allowBotsPost\":true,\"allowConnectorsPost\":true}"}` (a JSON **string**). Read it back from `properties.channelSettings` of `GET chat/v1/threads/<channel>`. `PATCH …/channels/<c>` with `channelSettings` answers `500 updateChannelContract cannot be null`. Values: `Everyone`, `Moderators`. The service stores it; enforcement was not tried with a second account | ✅ stored and read back (standard and private) |
+
+### T2.3 Members
+| Call | Notes | Live |
+|---|---|---|
+| Roster `GET chat/v1/threads/<TID or channel>/members?view=msnp24Equivalent&pageSize=100&selectMemberRoles=Admin\|User\|Guest` | `{members:[{id (mri), role:"Admin"\|"User"\|"Guest"}], totalMemberCount}`. Bots have `28:` ids. `GET …/threads/<id>` alone lists only the first member | ✅ |
+| Add or change role `PUT MT/beta/teams/<TID>/bulkUpdateRoledMembers?allowAsyncAddition=true` | `{users:[{mri, role: 0 member, 1 guest, 2 owner}], groupId:<GID>}` | ✅ add (member). Role to owner and back answered `200`; the roster did not show the owner within 4 s and the owner count was not re-read before reverting, so 2 = owner comes from the open-source clients |
+| Remove or leave `PUT MT/beta/teams/<TID>/members` | `{groupId, userMri, updateType:"Left"}` | 🧪 |
+| Private channel members `POST fabric …/channels/OID:<substrate>@<tenant>/users?forceSync=false` | `{users:[{id:"OID:<user oid>@<tenant>", role: 1 member, 2 owner}]}`; `DELETE …/users/OID:<oid>@<tenant>?forceSync=false` | 🧪 (would notify a colleague) |
+| Pending requests, guests | `POST MT/beta/teams/findJoinRequests`, `joinRequestAdminAction`, `…/inviteAndAddGuest` exist in the web client; not wired | not done |
+
+### T2.4 Tags (CSA `teams/<TID>/tags`)
+| Call | Notes | Live |
+|---|---|---|
+| List `GET CSA/api/v1/teams/<TID>/tags?tagType=Team&includeTeamTagSettings=true` | array of `{tagId, tagName, tagDescription, memberCount, memberIds[], currentMemberIsPartOfTag, scheduledMembers, tagType:"team", version}` | ✅ |
+| All teams `GET CSA/api/v1/teams/users/me/teams/tagCards?tagType=Team&pageSize=500` | `{continuationToken, teamTagCards:[{teamId, teamName, tagCards[]}]}` | ✅ |
+| Create `POST CSA/api/v1/teams/<TID>/tags` | `{tagName, tagDescription, memberIds:[mri], showInSection:false}`; the answer is the tag | ✅ |
+| Rename `PATCH CSA/api/v2/teams/<TID>/tags/<id>` | **v2**, `if-match: <version>`, `{tagName?, tagDescription?}`. On v1 it answers `400 Unexpected character … '{'` | ✅ |
+| Delete `DELETE CSA/api/v1/teams/<TID>/tags/<id>` | | ✅ |
+| Members `GET …/tags/<id>/members?pageSize=200` | `{members:[{memberId}], totalMembersCount}` | ✅ |
+| Add people `POST …/memberTags?tagType=Team&action=add` | `{memberIds, tagNames}` (by tag **name**) | ✅ (myself) |
+| Remove people `POST …/memberTags?tagType=Team&action=delete` | `{memberIds, tagIds}`. Removing the last member deletes the tag | ✅ |
+| Mention | mri `tag:<tagId>`, `mentionType:"tag"` (`Tag::mention`, see `mentions.rs`) | 🧪 |
+
+### T2.5 Channel email address
+`GET MT/beta/channels/<c>/email` answers `404` until an address exists, then
+`{allowedSenders:{allowedSenderType:"members"}, emailAddressDetails:{emailId:"<id>.<tenant domain>@amer.teams.ms"}}`.
+`POST` creates it (`{"allowedSenderType":"Anyone"}`) and answers that object. `PUT` changes who may
+write (`Anyone`, `Members`, `Domains` with `allowedDomains:[…]`; other names answer `500 Error
+converting value`) and answers empty. `DELETE` removes it. ✅ all four.
+
+### T2.6 / T2.7 Team
+| Call | Notes | Live |
+|---|---|---|
+| Name check `POST MT/beta/teams/validateNaming` | `{displayName, displayNamePrefix:null, displayNameSuffix:null, mailNicknamePrefix:null, mailNicknameSuffix:null, groupId:null}` gives `{value:{mailNickname}}` | ✅ |
+| Create `POST MT/beta/teams/create` | `{displayName, description, accessType:1, isTenantWide:false, validationRequired:false}` gives `{value:{siteInfo:{groupId}, skypeThreadId, …}}`. Public is `accessType:3`. "From a group, team or template" is not wired (`createTeamFromTemplate`, `migrateGroup`, `clone` exist) | ✅ private |
+| Edit `PATCH MT/beta/teams/<TID>` | `{displayName?, description?, isDiscoverable?}` gives `true`. Needs the thread id (a group id answers `400 Invalid thread id`). An empty body answers `400 Request should have atleast one of the properties set` | ✅ |
+| Settings `PATCH MT/beta/teams/<TID>/teamSettings` | `{"spaceAdminSettings":"<JSON string>"}` where the string is a partial `{"userSettings":{…},"guestSettings":{…}}` merged into the stored settings. Keys are the stored ones: `createTopic`, `updateTopic`, `deleteTopic`, `editEnabled`, `deleteEnabled`, `giphyEnabled`, `giphyRating`, `teamMention`, `channelMention`, `installApp`, `uploadCustomApp`, `createPrivateSpace`, … (the GraphQL names such as `createAndUpdateChannel` answer `AdminSettingsParseFailed`). Read: `GET chat/v1/threads/<TID>` → `properties.spaceAdminSettings` (JSON string) | ✅ set and read back |
+| Archive `POST MT/beta/teams/<TID>/archive` (`/unarchive`) | ❌ `500 ArchiveUnarchiveEnqueuePsOperationFailed`, with and without `setSpoSiteReadOnlyForMembers`, on a team minutes old and again later. The thread property `archivalLevel` = `Space` flips CSA `isArchived` for the team (`None` back), but that is only the chat-level flag and does not archive the Microsoft 365 group | ❌ middle tier; property ✅ |
+| Delete `DELETE MT/beta/teams/<TID>/delete` | | 🧪 (the test team stays) |
+| Discoverable, picture, retention labels, renew | `PUT teams/<t>/discoverable`, `POST teams/<t>/profilepicture?threadId=`, `GET teams/<t>/retentionlabels`, `POST teams/<t>/renew` exist in the web client; not wired (`isDiscoverable` also goes through the team `PATCH`) | not done |
+
+### T2.8 Channel notifications
+Write: `PUT chat/v1/users/ME/conversations/<channel>/properties?name=channelNotificationSettings`
+`{"channelNotificationSettings":"{\"allNewPosts\":\"On\",\"dskNotif\":\"On\",\"includeReplies\":true}"}`
+(JSON string; `On` + `dskNotif` = banner and feed, `On` = feed, `Off` = off). Read it back from
+`properties.channelNotificationSettings` of `GET chat/v1/users/ME/conversations/<channel>?view=msnp24Equivalent`
+(also `isfollowed`). ✅ all three levels. The batch read on `uis.teams.microsoft.com` needs one more
+audience and was not needed. Muting a channel uses the chat `alerts` property of `actions.rs`.
+
+### T2.9 Storyline, T3.1 Communities (Viva Engage, `Audience::Yammer`, `https://api.yammer.com/api/v1`)
+| Call | Notes | Live |
+|---|---|---|
+| `GET groups.json?mine=1` | communities: `{id, name, full_name, description, privacy, company_group, stats{members, last_message_at}, web_url}` | ✅ 1 community (the company-wide one) |
+| `GET messages/in_group/<id>.json?limit=<n>&older_than=<id>` | `{messages:[{id, thread_id, sender_id, replied_to_id, created_at ("2026/09/20 08:53:00 +0000"), body{plain, rich}, liked_by{count}, attachments[], web_url}], references:[users and threads], meta}`; sender names come from `references` | ✅ |
+| Storyline post `POST messages.json` | body `{"body":"…","is_storyline_post":true}` is a guess, not verified. A storyline post is public to the company, so it was not sent. The CLI needs `--yes` | 🧪 |
+| `engageCommunities[]` in the CSA v3 list | empty for this account, so the web client's own list is not used | ✅ |
+
+Communities are read-only in kelma; replying or reacting is not wired.
+
+### Test team
+The writes ran against one private team created by `kelma-cli team sandbox create`; its ids live
+outside the repo (`KELMA_SANDBOX_FILE`). One colleague was added to it, as a member. Everything
+else created for the tests (channels, tags, addresses) was removed again except one standard
+channel named "tests". The CLI refuses to write anywhere else: every write targets the sandbox
+unless `--team <thread id> --group <group id>` is given, and a channel id must belong to that team.
+
+Docs synced to commit 39efb18 ("feat(kelma-cli): team commands for teams, channels, tags and communities", 2026-11-19)

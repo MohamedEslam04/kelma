@@ -1,0 +1,52 @@
+# Maintainer: kelma contributors
+pkgname=kelma-git
+_pkgname=kelma
+pkgver=r0.0000000
+pkgrel=1
+pkgdesc='Lightweight native client for Microsoft Teams chat (unofficial)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/MohamedEslam04/kelma'
+license=('GPL-3.0-or-later')
+depends=('fontconfig' 'libxkbcommon' 'dbus' 'gcc-libs' 'glibc')
+makedepends=('cargo' 'git' 'pkgconf')
+optdepends=(
+  'noto-fonts-emoji: emoji rendering'
+  'gnome-keyring: Secret Service for the stored sign-in (or kwallet)'
+  'xdg-desktop-portal: file chooser and open-link portals'
+)
+provides=("${_pkgname}")
+conflicts=("${_pkgname}")
+source=("${_pkgname}::git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_pkgname}"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "${_pkgname}"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "${_pkgname}"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p kelma
+}
+
+check() {
+  cd "${_pkgname}"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen -p diag
+}
+
+package() {
+  cd "${_pkgname}"
+  install -Dm755 target/release/kelma "${pkgdir}/usr/bin/kelma"
+  install -Dm644 packaging/kelma.desktop "${pkgdir}/usr/share/applications/kelma.desktop"
+  install -Dm644 packaging/kelma.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/kelma.svg"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

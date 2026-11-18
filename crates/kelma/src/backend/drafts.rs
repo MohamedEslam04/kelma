@@ -20,6 +20,7 @@ pub(super) fn reply_preview(r: &MessageRow) -> String {
 impl Engine {
     /// The composer text changed. Edits to a sent message and thread replies are not drafts.
     pub(super) fn draft_edited(self: &Arc<Self>, text: String) {
+        self.prune_mentions(&text);
         {
             let mut v = self.view.lock().unwrap();
             if v.editing.is_some() || v.thread_root.is_some() || v.current.is_none() {

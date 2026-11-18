@@ -20,7 +20,11 @@ mod attach;
 mod cal;
 mod drafts;
 mod live;
+mod mentions;
 mod outbox;
+mod people;
+#[cfg(test)]
+mod people_live;
 mod render;
 mod send;
 mod sync;
@@ -33,6 +37,7 @@ pub(crate) use activity::{State as ActivityState, row_data as activity_row_data}
 pub use cal::{CalCmd, CalData};
 #[cfg(test)]
 pub use cal::{Ctx, build, parse_view};
+pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
 #[derive(Debug, Clone)]
@@ -82,6 +87,7 @@ pub enum Cmd {
     MarkAllRead,
     Calendar(CalCmd),
     Activity(ActivityCmd),
+    People(PeopleCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -170,6 +176,7 @@ pub struct Engine {
     view: Mutex<View>,
     dirty: Mutex<Dirty>,
     activity: Mutex<activity::State>,
+    people: Mutex<people::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -220,6 +227,7 @@ impl Engine {
                 ..Default::default()
             }),
             activity: Mutex::new(activity::State::default()),
+            people: Mutex::new(people::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -241,6 +249,7 @@ impl Engine {
         self.offline.store(true, Ordering::Relaxed);
         self.start_calendar_offline();
         self.push_prefs();
+        self.start_people();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
     }
@@ -248,6 +257,7 @@ impl Engine {
     /// Starts background loops: render, live events, periodic token persistence.
     pub fn start(self: &Arc<Self>) {
         self.push_prefs();
+        self.start_people();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -369,6 +379,7 @@ impl Engine {
                 let row = self.store.lock().unwrap().message(&id)?;
                 if let Some(r) = row.filter(|r| r.sender_mri == self.me) {
                     let text = ::render::plain_text(&::render::parse_teams_html(&r.content_html));
+                    let text = self.restore_edit_mentions(&r, text);
                     self.ui
                         .reply_bar(String::new(), text.chars().take(120).collect(), true);
                     self.ui.set_draft(text);
@@ -480,6 +491,7 @@ impl Engine {
             Cmd::MarkAllRead => self.mark_all_read().await?,
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
             Cmd::Activity(c) => self.activity_cmd(c).await?,
+            Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

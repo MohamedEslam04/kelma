@@ -1225,6 +1225,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "diag"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "directories",
+ "flate2",
+ "regex",
+ "serde_json",
+ "session",
+ "tar",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3012,6 +3026,7 @@ dependencies = [
  "arboard",
  "calendar",
  "chrono",
+ "diag",
  "emoji",
  "i-slint-backend-testing",
  "image",
@@ -3037,6 +3052,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "calendar",
+ "diag",
  "onedrive",
  "render",
  "reqwest",

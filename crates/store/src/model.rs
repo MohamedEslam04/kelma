@@ -174,6 +174,8 @@ pub struct OutboxItem {
     /// For a quote reply, the `qtdMsgs` property naming the quoted message (the quote block
     /// itself is in `html`); `None` for a plain message.
     pub reply_to: Option<String>,
+    /// The `properties.mentions` value (a JSON array string) when the text mentions people.
+    pub mentions: Option<String>,
     pub kind: OutboxKind,
     /// Local file to upload for `Image` and `File` items.
     pub payload_path: Option<String>,
