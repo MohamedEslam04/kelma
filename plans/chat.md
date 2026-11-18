@@ -202,7 +202,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built and tested. `@` in the composer opens a picker (group: members and Everyone; 1:1: the other person; channel: channel, team and org people; notes: you). A picked name is plain `@Name` text that one Backspace removes whole; the engine keeps who each token is and turns them into the mention spans and `properties.mentions` when sent. Mentions go through the store outbox (migration v4, `outbox.mentions`) and an edit resends them. Incoming mentions of you (or `@Everyone`) tint the bubble and put `@` in the chat list. Live: a self-mention sent through the outbox to the sandbox channel came back parsed as a mention of me and one new Mention item reached the Activity feed (`cargo test -p kelma live_people_mention -- --ignored`, message deleted afterwards). The chip is text, not a drawn pill: Slint's `TextInput` cannot style a span. A restored draft or a new chat loses the picked mentions, so they go out as plain text.
 
 ### 6.2 New chat
-- [ ] Impact 5, effort 3. Seen: Alt+Shift+N, "New message".
+- [ ] DEFERRED: needs test tenant (the remaining live checks message a colleague's 1:1; built and tested offline). Impact 5, effort 3. Seen: Alt+Shift+N, "New message".
   - **What.**
     - The "To:" field searches people, chats, channels, emails and tags, with suggestions as you type.
     - Adding several people creates a group chat, with "Add group name".
@@ -216,7 +216,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built, not ticked. Alt+Shift+N or the compose button opens the pane: To: suggestions (people search), chips, "Add group name" from two people, and a hint when a group with exactly that roster exists (it is opened instead of creating one). One person gives the deterministic 1:1 id, you alone gives `48:notes`, and the thread is created when the first message is sent. Tested offline for existing roster, new roster, 1:1 and notes. Live, with the one allowed test group, only `create_group_chat` with one colleague was run; sending to a never-used 1:1 id (which would message a colleague) and the UI path for a new 2+ person group were not. Matching the roster needs the members of every group, which come from the aggregator snapshot at sync.
 
 ### 6.3 Group chat management
-- [ ] Impact 4, effort 3. Seen: chat header (pencil, photo), the participants button ("20").
+- [ ] DEFERRED: needs test tenant (Add people would add a real person to a chat; built and tested offline, group photo endpoint unknown). Impact 4, effort 3. Seen: chat header (pencil, photo), the participants button ("20").
   - **What.**
     - Rename with the pencil.
     - Change the group photo.
@@ -231,7 +231,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built, not ticked. Pencil renames in place; the people button opens the participants popover (members, Add people with an "Include chat history" switch, Leave with a confirmation); Leave is also in the chat item menu of groups. Live in the one test group: rename and leave worked. Add people was not run live (it would add a person to a chat). The group photo is not built: no endpoint is known, it needs a capture from Teams web first.
 
 ### 6.4 Presence
-- [ ] Impact 5, effort 3. Seen: profile menu, participants list, avatars everywhere.
+- [ ] DEFERRED: needs test tenant (presence and status are not allowed on the work account). Impact 5, effort 3. Seen: profile menu, participants list, avatars everywhere.
   - **What.**
     - Status dots on every avatar: green Available, red Busy or Do not disturb, yellow Away or Be right back, grey Offline, with an out-of-office marker.
     - The profile menu changes your status: Available, Busy, Do not disturb, Be right back, Appear away, Appear offline, Reset status.
@@ -248,7 +248,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Not built, on purpose. The presence endpoint answers 401 on the work account and presence experiments are not allowed on it, so this stays open until a token that works is available. `crates/teams-proto/src/presence.rs` is unused.
 
 ### 6.5 Profile card
-- [ ] Impact 4, effort 3. Seen: avatars and names.
+- [ ] DEFERRED: needs test tenant (comparing the card needs a second account; built and tested offline). Impact 4, effort 3. Seen: avatars and names.
   - **What.** Clicking an avatar or name opens a card with:
     - a large photo, name and title
     - presence and status message
@@ -259,7 +259,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built, not ticked. Clicking an avatar or a sender name opens a card with photo, name, title and department, email (click to copy), company, office, and the Chat and Email buttons; Chat opens the 1:1. Live (read-only): 3 cards read, all with an email, none with a job title, so the title row stays empty on this tenant until Delve answers. Local time is not shown (no source for a person's time zone), and presence needs 6.4. The comparison with Teams for 3 colleagues was not done.
 
 ### 6.6 Pinned messages banner
-- [ ] Impact 3, effort 2. Seen: the group chat banner ("📌 <sender> … 9/6" with "…").
+- [ ] DEFERRED: needs test tenant (comparing the banner needs a real group with a second account; built and tested offline). Impact 3, effort 2. Seen: the group chat banner ("📌 <sender> … 9/6" with "…").
   - **What.**
     - A strip under the header shows the current pinned message.
     - It cycles through all of them with a counter and click-to-jump.
@@ -269,7 +269,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built, not ticked. A strip under the header shows the newest pin with `k/N`, arrows to cycle, a click jumps to the message (loading older history when needed) and moves to the next pin, and "…" has Unpin. Pins come from `Client::pinned` and are resolved from the store or up to 3 older pages. Live: in the test group, pin then unpin worked (1 then 0 pins) and 1 of 8 real chats has pins (read-only). Not compared with the Teams banner on a real group.
 
 ### 6.7 Read receipts
-- [ ] Impact 3, effort 2. Seen: settings › Chats "Read receipts".
+- [ ] DEFERRED: needs test tenant (Seen needs a second account that reads; built and tested offline). Impact 3, effort 2. Seen: settings › Chats "Read receipts".
   - **What.** On your newest message in 1:1 and small groups: ✓ for sent, an eye icon for "Seen by …". The setting turns it off, which also stops sending your receipts.
   - **How.** Probably `GET /v1/threads/{id}/consumptionhorizons` (discover or verify) to compare each member's horizon with your message.
   - **Done when.** "Seen" appears after a colleague reads (observed naturally).
