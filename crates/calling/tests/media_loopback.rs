@@ -83,3 +83,91 @@ async fn loopback_carries_opus_both_ways() {
     wait_for(&mut caller_events, MediaState::Closed).await;
     callee.close().await.unwrap();
 }
+
+/// Turns a webrtc-rs re-offer (already in the Teams dialect) into what the media servers send:
+/// the same audio line plus a `sendonly` screen-sharing video line and an `x-data` line, all on
+/// the audio line's transport.
+fn as_service_reoffer(offer: &str) -> String {
+    let find = |prefix: &str| {
+        offer
+            .split("\r\n")
+            .find(|l| l.starts_with(prefix))
+            .unwrap_or_else(|| panic!("{prefix} in {offer}"))
+            .to_owned()
+    };
+    let (ufrag, pwd, fingerprint) = (
+        find("a=ice-ufrag:"),
+        find("a=ice-pwd:"),
+        find("a=fingerprint:"),
+    );
+    let transport =
+        format!("a=setup:actpass\r\n{ufrag}\r\n{pwd}\r\n{fingerprint}\r\na=rtcp-mux\r\n");
+    let bundle = find("a=group:BUNDLE ");
+    let mut out = offer.replace(&bundle, &format!("{bundle} 3 4"));
+    out.push_str(&format!(
+        "m=video 9 RTP/SAVP 107\r\nc=IN IP4 0.0.0.0\r\n{transport}a=mid:3\r\na=sendonly\r\n\
+         a=rtpmap:107 H264/90000\r\na=label:applicationsharing-video\r\na=x-ssrc-range:3001-3100\r\n\
+         m=x-data 9 RTP/SAVP 127\r\nc=IN IP4 0.0.0.0\r\n{transport}a=mid:4\r\n\
+         a=rtpmap:127 x-data/90000\r\na=label:data\r\na=x-ssrc-range:4001-4100\r\n\
+         a=x-data-protocol:sctp\r\n"
+    ));
+    out
+}
+
+/// Our answer cut back to the audio line: the stand-in service only offered that for real.
+fn audio_only(answer: &str) -> String {
+    let mut out = String::new();
+    let mut sections = 0;
+    for line in answer.split("\r\n").filter(|l| !l.is_empty()) {
+        if line.starts_with("m=") {
+            sections += 1;
+        }
+        if sections > 1 {
+            break;
+        }
+        let line = if line.starts_with("a=group:BUNDLE ") {
+            "a=group:BUNDLE 0"
+        } else {
+            line
+        };
+        out.push_str(line);
+        out.push_str("\r\n");
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn service_renegotiation_on_a_connected_call_keeps_audio_flowing() {
+    let (kelma, mut kelma_events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    let (service, mut service_events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    let offer = kelma.create_offer().await.unwrap();
+    let answer = service.accept_offer(&offer).await.unwrap();
+    kelma.set_answer(&answer).await.unwrap();
+    wait_for(&mut kelma_events, MediaState::Connected).await;
+    wait_for(&mut service_events, MediaState::Connected).await;
+
+    for _ in 0..2 {
+        let reoffer = as_service_reoffer(&service.create_offer().await.unwrap());
+        let reanswer = kelma.accept_offer(&reoffer).await.unwrap();
+        let m: Vec<&str> = reanswer
+            .split("\r\n")
+            .filter(|l| l.starts_with("m="))
+            .collect();
+        assert_eq!(m.len(), 3, "{reanswer}");
+        assert_eq!(&m[1..], ["m=video 0 RTP/SAVP 34", "m=x-data 0 RTP/SAVP 34"]);
+        service.set_answer(&audio_only(&reanswer)).await.unwrap();
+    }
+
+    let (to_service, to_kelma) = tokio::join!(
+        pump(&kelma, &mut service_events, 0x00),
+        pump(&service, &mut kelma_events, 0x80),
+    );
+    assert!(to_service.len() >= 20, "service got {}", to_service.len());
+    assert!(to_kelma.len() >= 20, "kelma got {}", to_kelma.len());
+    // Nothing but Connected was reported through the renegotiations.
+    while let Ok(state) = kelma_events.state.try_recv() {
+        assert_eq!(state, MediaState::Connected);
+    }
+    kelma.close().await.unwrap();
+    service.close().await.unwrap();
+}

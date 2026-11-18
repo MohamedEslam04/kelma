@@ -298,3 +298,81 @@ fn to_teams_offer_states_msid_semantic_when_missing() {
         .expect("added");
     assert!(at < l.iter().position(|x| x.starts_with("m=")).unwrap());
 }
+
+const REOFFER: &str = include_str!("fixtures/media/teams_meeting_reoffer.sdp");
+
+fn m_lines(sdp: &str) -> Vec<&str> {
+    lines(sdp)
+        .into_iter()
+        .filter(|l| l.starts_with("m="))
+        .collect()
+}
+
+#[test]
+fn from_teams_removes_sections_webrtc_cannot_parse() {
+    let out = from_teams(REOFFER).unwrap();
+    assert!(!out.contains("m=x-data"), "{out}");
+    assert!(!out.contains("x-data-protocol"));
+    assert!(!out.contains("a=mid:4"));
+    assert!(lines(&out).contains(&"a=group:BUNDLE 0 3"), "{out}");
+    assert_eq!(m_lines(&out).len(), 2);
+}
+
+/// What webrtc-rs answers to the re-offer once `x-data` is gone: audio, and the video line it
+/// has no codec for, rejected.
+const LOCAL_REANSWER: &str = "v=0\r\n\
+o=- 1 3 IN IP4 0.0.0.0\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 0\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=setup:active\r\n\
+a=mid:0\r\n\
+a=ice-ufrag:abcd\r\n\
+a=ice-pwd:efghefghefghefghefghefgh\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:111 opus/48000/2\r\n\
+a=ssrc:4242 cname:abc\r\n\
+a=sendrecv\r\n\
+a=fingerprint:sha-256 AA:BB\r\n\
+a=candidate:1 1 udp 2130706431 192.0.2.30 40000 typ host\r\n\
+m=video 0 UDP/TLS/RTP/SAVPF 0\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:3\r\n\
+a=rtpmap:0 PCMU/8000\r\n\
+a=inactive\r\n";
+
+#[test]
+fn to_teams_answer_stubs_removed_and_rejected_sections_in_offer_order() {
+    let out = to_teams_answer(LOCAL_REANSWER, REOFFER);
+    assert_eq!(
+        m_lines(&out),
+        vec![
+            "m=audio 40000 RTP/SAVP 111",
+            "m=video 0 RTP/SAVP 34",
+            "m=x-data 0 RTP/SAVP 34"
+        ],
+        "{out}"
+    );
+    // A stub is the kind, port 0, profile, payload 34, a placeholder c= (the session has none),
+    // the mid and the label: nothing else (SdpParsingFailure otherwise).
+    let l = lines(&out);
+    let video = l
+        .iter()
+        .position(|x| *x == "m=video 0 RTP/SAVP 34")
+        .unwrap();
+    assert_eq!(
+        &l[video..],
+        &[
+            "m=video 0 RTP/SAVP 34",
+            "c=IN IP4 0.0.0.0",
+            "a=mid:3",
+            "a=label:applicationsharing-video",
+            "m=x-data 0 RTP/SAVP 34",
+            "c=IN IP4 0.0.0.0",
+            "a=mid:4",
+            "a=label:data",
+        ]
+    );
+}

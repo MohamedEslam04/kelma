@@ -6,6 +6,7 @@ use calling::media::{MediaOptions, MediaSession};
 const P2P_OFFER: &str = include_str!("fixtures/media/teams_p2p_offer.sdp");
 const WEB_OFFER: &str = include_str!("fixtures/media/teams_web_offer.sdp");
 const MEETING_ANSWER: &str = include_str!("fixtures/media/teams_meeting_answer.sdp");
+const MEETING_REOFFER: &str = include_str!("fixtures/media/teams_meeting_reoffer.sdp");
 
 fn local() -> MediaOptions {
     MediaOptions {
@@ -87,5 +88,30 @@ async fn takes_a_teams_media_server_answer() {
 async fn rejects_garbage() {
     let (session, _events) = MediaSession::with_options(vec![], local()).await.unwrap();
     assert!(session.accept_offer("hello").await.is_err());
+    session.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn answers_repeated_service_renegotiations_with_stubs() {
+    let (session, _events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    session.create_offer().await.unwrap();
+    session.set_answer(MEETING_ANSWER).await.unwrap();
+    // The service renegotiates every few seconds on the running call.
+    for _ in 0..3 {
+        let answer = session.accept_offer(MEETING_REOFFER).await.unwrap();
+        let m: Vec<&str> = section_lines(&answer)
+            .into_iter()
+            .filter(|l| l.starts_with("m="))
+            .collect();
+        assert_eq!(m.len(), 3, "{answer}");
+        assert!(
+            m[0].starts_with("m=audio ") && !m[0].starts_with("m=audio 0 "),
+            "{answer}"
+        );
+        assert_eq!(m[1], "m=video 0 RTP/SAVP 34");
+        assert_eq!(m[2], "m=x-data 0 RTP/SAVP 34");
+        assert!(answer.contains("a=mid:4\r\na=label:data\r\n"), "{answer}");
+        assert!(answer.contains("a=candidate:"), "{answer}");
+    }
     session.close().await.unwrap();
 }

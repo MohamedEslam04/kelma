@@ -65,6 +65,8 @@ const TCP_TYPES: [(&str, &str); 3] = [
 const CANDIDATE_EXTRAS: [&str; 3] = ["generation", "network-id", "network-cost"];
 const MAX_INFLATED: usize = 1 << 20;
 const DIRECTIONS: [&str; 4] = ["sendrecv", "sendonly", "recvonly", "inactive"];
+/// The media kinds webrtc-rs parses; any other (Teams' `x-data`) fails the whole description.
+const WEBRTC_KINDS: [&str; 3] = ["audio", "video", "application"];
 
 impl SdpBlob {
     /// A blob of plain SDP labelled `application/sdp`.
@@ -230,8 +232,28 @@ pub fn from_teams(sdp: &str) -> Result<String> {
             "remote SDP has no DTLS fingerprint (SDES-only keying); webrtc-rs supports DTLS-SRTP only",
         ));
     }
-    let mut out: Vec<String> = parsed.session.iter().filter_map(|l| inbound(l)).collect();
-    for section in &parsed.sections {
+    // Sections webrtc-rs cannot parse go, mids and all; `to_teams_answer` writes them back as
+    // stubs from the offer.
+    let removed: Vec<&str> = parsed
+        .sections
+        .iter()
+        .filter(|s| !webrtc_kind(s))
+        .filter_map(|s| s.iter().find_map(|l| attr(l, "mid")))
+        .collect();
+    let mut out = Vec::new();
+    for line in &parsed.session {
+        match line.strip_prefix("a=group:BUNDLE") {
+            Some(mids) => {
+                let kept: Vec<&str> = mids
+                    .split_whitespace()
+                    .filter(|mid| !removed.contains(mid))
+                    .collect();
+                out.push(format!("a=group:BUNDLE {}", kept.join(" ")));
+            }
+            None => out.extend(inbound(line)),
+        }
+    }
+    for section in parsed.sections.iter().filter(|s| webrtc_kind(s)) {
         let m = MediaLine::parse(&section[0]).ok_or_else(|| media("malformed m= line"))?;
         let profile = section[0].split(' ').nth(2).unwrap_or_default();
         if profile == MS_PROFILE || profile == "RTP/SAVPF" {
@@ -250,6 +272,10 @@ pub fn from_teams(sdp: &str) -> Result<String> {
         }
     }
     Ok(join(out))
+}
+
+fn webrtc_kind(section: &[String]) -> bool {
+    MediaLine::parse(&section[0]).is_some_and(|m| WEBRTC_KINDS.contains(&m.kind))
 }
 
 fn inbound(line: &str) -> Option<String> {
@@ -286,17 +312,35 @@ fn candidate_from_teams(value: &str) -> Option<String> {
 
 /// Our (webrtc-rs) offer rewritten into the dialect the Teams calling service reads.
 pub fn to_teams_offer(sdp: &str) -> String {
-    to_teams(sdp, true, &HashMap::new())
+    to_teams(sdp, None)
 }
 
-/// Our (webrtc-rs) answer to `remote_offer` rewritten into the Teams dialect; each section keeps
-/// the `a=label` the offer gave it.
+/// Our (webrtc-rs) answer to `remote_offer` rewritten into the Teams dialect: one section per
+/// offered section, in the offer's order (those [`from_teams`] removed come back as stubs), each
+/// keeping the `a=label` the offer gave it.
 pub fn to_teams_answer(sdp: &str, remote_offer: &str) -> String {
-    to_teams(sdp, false, &labels_by_mid(remote_offer))
+    to_teams(sdp, Some(remote_offer))
 }
 
-fn labels_by_mid(sdp: &str) -> HashMap<String, String> {
-    Parsed::new(sdp)
+/// Our answer's sections with a port-0 stand-in for each offered section webrtc-rs never saw.
+fn in_offer_order(ours: Vec<Vec<String>>, remote_offer: &Parsed) -> Vec<Vec<String>> {
+    let mut ours = ours.into_iter();
+    let mut out = Vec::new();
+    for theirs in &remote_offer.sections {
+        if webrtc_kind(theirs) {
+            out.extend(ours.next());
+        } else if let Some(m) = MediaLine::parse(&theirs[0]) {
+            let mut stub = vec![format!("m={} 0 {MS_PROFILE} {STUB_PAYLOAD}", m.kind)];
+            stub.extend(theirs.iter().filter(|l| attr(l, "mid").is_some()).cloned());
+            out.push(stub);
+        }
+    }
+    out.extend(ours);
+    out
+}
+
+fn labels_by_mid(parsed: &Parsed) -> HashMap<String, String> {
+    parsed
         .sections
         .iter()
         .filter_map(|s| {
@@ -332,8 +376,16 @@ fn bundle_transport(sections: &[Vec<String>]) -> Option<(String, String)> {
     Some((best[5].to_owned(), format!("IN {family} {}", best[4])))
 }
 
-fn to_teams(sdp: &str, offer: bool, labels: &HashMap<String, String>) -> String {
-    let parsed = Parsed::new(sdp);
+fn to_teams(sdp: &str, remote_offer: Option<&str>) -> String {
+    let offer = remote_offer.is_none();
+    let mut parsed = Parsed::new(sdp);
+    let labels = match remote_offer.map(Parsed::new) {
+        Some(theirs) => {
+            parsed.sections = in_offer_order(parsed.sections, &theirs);
+            labels_by_mid(&theirs)
+        }
+        None => HashMap::new(),
+    };
     let fingerprint = parsed
         .session
         .iter()
@@ -371,7 +423,10 @@ fn to_teams(sdp: &str, offer: bool, labels: &HashMap<String, String>) -> String 
         let label = mid
             .and_then(|mid| labels.get(mid).map(String::as_str))
             .or_else(|| default_label(m.kind));
-        if offer && m.port == "0" {
+        // A declined section is a stub, offer or answer: the web client keeps the kind, port,
+        // profile, mid and label, names payload 34, and the service refuses anything more
+        // (`SdpParsingFailure`). `c=` because the session level has none.
+        if m.port == "0" {
             out.push(format!("m={} 0 {MS_PROFILE} {STUB_PAYLOAD}", m.kind));
             out.push("c=IN IP4 0.0.0.0".to_owned());
             out.extend(mid.map(|mid| format!("a=mid:{mid}")));
