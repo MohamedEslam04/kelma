@@ -115,7 +115,18 @@ fn audience_owns(aud: &Audience, url: &Url) -> bool {
     };
     let (host, want) = (host.to_ascii_lowercase(), want.to_ascii_lowercase());
     url.scheme() == "https"
-        && (host == want || (*aud == Audience::Loki && host.ends_with(&format!(".{want}"))))
+        && (host == want
+            || (*aud == Audience::Loki && host.ends_with(&format!(".{want}")))
+            || api_host(aud) == Some(host.as_str()))
+}
+
+/// The API host of an audience whose token resource is not the host that serves the API.
+fn api_host(aud: &Audience) -> Option<&'static str> {
+    match aud {
+        Audience::Flow => Some("api.flow.microsoft.com"),
+        Audience::OneNote => Some("www.onenote.com"),
+        _ => None,
+    }
 }
 
 impl Client {
@@ -555,6 +566,23 @@ mod tests {
         assert!(!audience_owns(
             &Audience::Outlook,
             &u("https://graph.microsoft.com/")
+        ));
+        // Flow and OneNote mint for one host and are served from another.
+        assert!(audience_owns(
+            &Audience::Flow,
+            &u("https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments")
+        ));
+        assert!(audience_owns(
+            &Audience::OneNote,
+            &u("https://www.onenote.com/api/v1.0/me/notes/notebooks")
+        ));
+        assert!(!audience_owns(
+            &Audience::Graph,
+            &u("https://api.flow.microsoft.com/")
+        ));
+        assert!(!audience_owns(
+            &Audience::Flow,
+            &u("https://www.onenote.com/")
         ));
         // Loki is regional, and only its own domain counts.
         assert!(audience_owns(
