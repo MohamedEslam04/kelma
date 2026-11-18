@@ -99,6 +99,14 @@ fn refresh_due(expires_at: SystemTime, now: SystemTime) -> bool {
 /// True when `url` is an https URL on the host of `aud`. Loki also runs per region, as
 /// `nam.loki.delve.office.com`, and takes the same token.
 fn audience_owns(aud: &Audience, url: &Url) -> bool {
+    // The provisioning token is minted for `templates.teams.microsoft.com` but sent to the
+    // `/fabric/` path of the main Teams host.
+    if *aud == Audience::Templates {
+        return url.scheme() == "https"
+            && url.host_str().map(str::to_ascii_lowercase).as_deref()
+                == Some("teams.microsoft.com")
+            && url.path().starts_with("/fabric/");
+    }
     let Ok(res) = Url::parse(&aud.resource()) else {
         return false;
     };
@@ -564,6 +572,27 @@ mod tests {
         assert!(!audience_owns(
             &Audience::Graph,
             &u("https://nam.graph.microsoft.com/")
+        ));
+        // The provisioning token only goes to the /fabric/ path of the Teams host.
+        assert!(audience_owns(
+            &Audience::Templates,
+            &u("https://teams.microsoft.com/fabric/emea/templates/api/teams/g/channels")
+        ));
+        assert!(!audience_owns(
+            &Audience::Templates,
+            &u("https://teams.microsoft.com/api/mt/emea/beta/teams")
+        ));
+        assert!(!audience_owns(
+            &Audience::Templates,
+            &u("https://teams.microsoft.com.evil.com/fabric/x")
+        ));
+        assert!(!audience_owns(
+            &Audience::Templates,
+            &u("http://teams.microsoft.com/fabric/x")
+        ));
+        assert!(!audience_owns(
+            &Audience::Teams,
+            &u("https://templates.teams.microsoft.com/fabric/x")
         ));
         let sp = Audience::sharepoint("contoso-my.sharepoint.com").unwrap();
         assert!(audience_owns(
