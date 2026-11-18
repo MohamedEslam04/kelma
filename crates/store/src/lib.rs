@@ -1,0 +1,469 @@
+//! On-disk SQLite cache for kelma.
+//!
+//! The UI only keeps the visible window of messages in memory; everything
+//! else lives here. Rows are plain structs so this crate does not depend on
+//! the protocol crates; the app maps protocol types to rows.
+
+mod migrations;
+mod model;
+
+use std::path::Path;
+
+use rusqlite::{Connection, OptionalExtension, Row, params};
+
+pub use model::{ConvFilter, ConvKind, ConversationRow, MessageRow, TeamRow, UserRow};
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("sqlite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("i/o error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("unknown conversation kind in database: {0:?}")]
+    UnknownKind(String),
+    #[error("database schema version {found} is newer than supported version {supported}")]
+    SchemaTooNew { found: i64, supported: i64 },
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// Handle to the on-disk cache.
+pub struct Store {
+    conn: Connection,
+}
+
+const CONV_COLS: &str = "id, kind, title, team_id, team_name, last_activity_ms, last_preview, \
+                         unread, favorite, read_horizon_ms";
+const MSG_COLS: &str = "id, conversation_id, parent_id, sender_mri, sender_name, compose_ms, \
+                        edited_ms, deleted, message_type, content_html, client_message_id, \
+                        reactions_json";
+
+fn conv_from_row(r: &Row<'_>) -> Result<ConversationRow> {
+    let kind: String = r.get(1)?;
+    Ok(ConversationRow {
+        id: r.get(0)?,
+        kind: ConvKind::from_db(&kind).ok_or(Error::UnknownKind(kind))?,
+        title: r.get(2)?,
+        team_id: r.get(3)?,
+        team_name: r.get(4)?,
+        last_activity_ms: r.get(5)?,
+        last_preview: r.get(6)?,
+        unread: r.get(7)?,
+        favorite: r.get(8)?,
+        read_horizon_ms: r.get(9)?,
+    })
+}
+
+fn msg_from_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
+    Ok(MessageRow {
+        id: r.get(0)?,
+        conversation_id: r.get(1)?,
+        parent_id: r.get(2)?,
+        sender_mri: r.get(3)?,
+        sender_name: r.get(4)?,
+        compose_ms: r.get(5)?,
+        edited_ms: r.get(6)?,
+        deleted: r.get(7)?,
+        message_type: r.get(8)?,
+        content_html: r.get(9)?,
+        client_message_id: r.get(10)?,
+        reactions_json: r.get(11)?,
+    })
+}
+
+fn user_from_row(r: &Row<'_>) -> rusqlite::Result<UserRow> {
+    Ok(UserRow {
+        mri: r.get(0)?,
+        display_name: r.get(1)?,
+        email: r.get(2)?,
+        avatar: r.get(3)?,
+        updated_ms: r.get(4)?,
+    })
+}
+
+fn limit_i64(limit: usize) -> i64 {
+    i64::try_from(limit).unwrap_or(i64::MAX)
+}
+
+impl Store {
+    /// Opens (creating if needed) the database at `path`, creating parent
+    /// directories, enabling WAL and foreign keys, and running migrations.
+    pub fn open(path: &Path) -> Result<Store> {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        let conn = Connection::open(path)?;
+        conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        Self::init(conn)
+    }
+
+    pub fn open_in_memory() -> Result<Store> {
+        Self::init(Connection::open_in_memory()?)
+    }
+
+    fn init(conn: Connection) -> Result<Store> {
+        conn.pragma_update(None, "foreign_keys", true)?;
+        let mut store = Store { conn };
+        migrations::run(&mut store.conn)?;
+        Ok(store)
+    }
+
+    // ---- conversations -------------------------------------------------
+
+    /// Inserts or updates a conversation. On update every field except
+    /// `favorite` is overwritten (favorite is a local user choice).
+    pub fn upsert_conversation(&self, c: &ConversationRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO conversations (id, kind, title, team_id, team_name, \
+                     last_activity_ms, last_preview, unread, favorite, read_horizon_ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+                 ON CONFLICT(id) DO UPDATE SET \
+                     kind = excluded.kind, title = excluded.title, \
+                     team_id = excluded.team_id, team_name = excluded.team_name, \
+                     last_activity_ms = excluded.last_activity_ms, \
+                     last_preview = excluded.last_preview, unread = excluded.unread, \
+                     read_horizon_ms = excluded.read_horizon_ms",
+            )?
+            .execute(params![
+                c.id,
+                c.kind.as_db(),
+                c.title,
+                c.team_id,
+                c.team_name,
+                c.last_activity_ms,
+                c.last_preview,
+                c.unread,
+                c.favorite,
+                c.read_horizon_ms
+            ])?;
+        Ok(())
+    }
+
+    pub fn set_favorite(&self, id: &str, fav: bool) -> Result<()> {
+        self.conn
+            .prepare_cached("UPDATE conversations SET favorite = ?2 WHERE id = ?1")?
+            .execute(params![id, fav])?;
+        Ok(())
+    }
+
+    /// Raises the read horizon to `max(old, horizon_ms)` and clears `unread`.
+    pub fn mark_read(&self, id: &str, horizon_ms: i64) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE conversations SET unread = 0, \
+                     read_horizon_ms = max(read_horizon_ms, ?2) WHERE id = ?1",
+            )?
+            .execute(params![id, horizon_ms])?;
+        Ok(())
+    }
+
+    /// Conversations ordered by `last_activity_ms` descending (id breaks ties).
+    pub fn conversations(&self, filter: ConvFilter, limit: usize) -> Result<Vec<ConversationRow>> {
+        let wher = match filter {
+            ConvFilter::All => "1",
+            ConvFilter::Unread => "unread = 1",
+            ConvFilter::Chats => "kind <> 'channel'",
+            ConvFilter::Channels => "kind = 'channel'",
+            ConvFilter::Favorites => "favorite = 1",
+        };
+        let sql = format!(
+            "SELECT {CONV_COLS} FROM conversations WHERE {wher} \
+             ORDER BY last_activity_ms DESC, id LIMIT ?1"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let mut rows = stmt.query([limit_i64(limit)])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push(conv_from_row(r)?);
+        }
+        Ok(out)
+    }
+
+    pub fn conversation(&self, id: &str) -> Result<Option<ConversationRow>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {CONV_COLS} FROM conversations WHERE id = ?1"
+        ))?;
+        let mut rows = stmt.query([id])?;
+        rows.next()?.map(conv_from_row).transpose()
+    }
+
+    /// Case-insensitive substring match on the title, newest activity first.
+    /// Folding is done with Unicode lowercasing (SQLite's `LIKE` only folds
+    /// ASCII); conversation lists are small enough to scan.
+    pub fn search_conversations(&self, query: &str, limit: usize) -> Result<Vec<ConversationRow>> {
+        let needle = query.to_lowercase();
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {CONV_COLS} FROM conversations ORDER BY last_activity_ms DESC, id"
+        ))?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while out.len() < limit {
+            let Some(r) = rows.next()? else { break };
+            let title: String = r.get(2)?;
+            if title.to_lowercase().contains(&needle) {
+                out.push(conv_from_row(r)?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Moves a conversation's activity forward. Does nothing unless
+    /// `activity_ms` is newer than the stored value. When it is, the preview
+    /// is replaced and `unread` is only ever raised (use [`Store::mark_read`]
+    /// to clear it).
+    pub fn touch_conversation(
+        &self,
+        id: &str,
+        activity_ms: i64,
+        preview: &str,
+        unread: bool,
+    ) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE conversations SET last_activity_ms = ?2, last_preview = ?3, \
+                     unread = (unread OR ?4) \
+                 WHERE id = ?1 AND ?2 > last_activity_ms",
+            )?
+            .execute(params![id, activity_ms, preview, unread])?;
+        Ok(())
+    }
+
+    // ---- messages ------------------------------------------------------
+
+    /// Inserts a message, or on id conflict updates content, edit time,
+    /// deleted flag and reactions in place. Does not touch the conversation
+    /// row; call [`Store::touch_conversation`] for that.
+    pub fn upsert_message(&self, m: &MessageRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO messages (id, conversation_id, parent_id, sender_mri, sender_name, \
+                     compose_ms, edited_ms, deleted, message_type, content_html, \
+                     client_message_id, reactions_json) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+                 ON CONFLICT(id) DO UPDATE SET \
+                     content_html = excluded.content_html, edited_ms = excluded.edited_ms, \
+                     deleted = excluded.deleted, reactions_json = excluded.reactions_json",
+            )?
+            .execute(params![
+                m.id,
+                m.conversation_id,
+                m.parent_id,
+                m.sender_mri,
+                m.sender_name,
+                m.compose_ms,
+                m.edited_ms,
+                m.deleted,
+                m.message_type,
+                m.content_html,
+                m.client_message_id,
+                m.reactions_json
+            ])?;
+        Ok(())
+    }
+
+    /// Marks a message deleted and drops its content, keeping the row so
+    /// threads and paging stay stable.
+    pub fn delete_message_local(&self, id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached("UPDATE messages SET deleted = 1, content_html = '' WHERE id = ?1")?
+            .execute([id])?;
+        Ok(())
+    }
+
+    /// Top-level messages (no `parent_id`): the newest `limit` strictly older
+    /// than `before_ms` (or the newest overall when `None`), returned in
+    /// ascending compose order.
+    pub fn messages_before(
+        &self,
+        conversation_id: &str,
+        before_ms: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<MessageRow>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {MSG_COLS} FROM messages \
+             WHERE conversation_id = ?1 AND parent_id IS NULL AND compose_ms < ?2 \
+             ORDER BY compose_ms DESC, id DESC LIMIT ?3"
+        ))?;
+        let mut out = stmt
+            .query_map(
+                params![
+                    conversation_id,
+                    before_ms.unwrap_or(i64::MAX),
+                    limit_i64(limit)
+                ],
+                msg_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        out.reverse();
+        Ok(out)
+    }
+
+    /// Replies to a channel thread root, oldest first, at most `limit`.
+    pub fn thread_replies(&self, root_id: &str, limit: usize) -> Result<Vec<MessageRow>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {MSG_COLS} FROM messages WHERE parent_id = ?1 \
+             ORDER BY compose_ms, id LIMIT ?2"
+        ))?;
+        let out = stmt
+            .query_map(params![root_id, limit_i64(limit)], msg_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
+    }
+
+    pub fn reply_count(&self, root_id: &str) -> Result<usize> {
+        let n: i64 = self
+            .conn
+            .prepare_cached("SELECT COUNT(*) FROM messages WHERE parent_id = ?1")?
+            .query_row([root_id], |r| r.get(0))?;
+        Ok(usize::try_from(n).unwrap_or(0))
+    }
+
+    /// Newest top-level compose time in a conversation (for sync cursors).
+    pub fn latest_compose_ms(&self, conversation_id: &str) -> Result<Option<i64>> {
+        let v: Option<i64> = self
+            .conn
+            .prepare_cached(
+                "SELECT MAX(compose_ms) FROM messages \
+                 WHERE conversation_id = ?1 AND parent_id IS NULL",
+            )?
+            .query_row([conversation_id], |r| r.get(0))?;
+        Ok(v)
+    }
+
+    pub fn message(&self, id: &str) -> Result<Option<MessageRow>> {
+        Ok(self
+            .conn
+            .prepare_cached(&format!("SELECT {MSG_COLS} FROM messages WHERE id = ?1"))?
+            .query_row([id], msg_from_row)
+            .optional()?)
+    }
+
+    // ---- users ---------------------------------------------------------
+
+    /// Inserts or updates a user. An existing avatar is kept when the new
+    /// row has none.
+    pub fn upsert_user(&self, u: &UserRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO users (mri, display_name, email, avatar, updated_ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5) \
+                 ON CONFLICT(mri) DO UPDATE SET \
+                     display_name = excluded.display_name, email = excluded.email, \
+                     avatar = COALESCE(excluded.avatar, users.avatar), \
+                     updated_ms = excluded.updated_ms",
+            )?
+            .execute(params![
+                u.mri,
+                u.display_name,
+                u.email,
+                u.avatar,
+                u.updated_ms
+            ])?;
+        Ok(())
+    }
+
+    pub fn user(&self, mri: &str) -> Result<Option<UserRow>> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT mri, display_name, email, avatar, updated_ms FROM users WHERE mri = ?1",
+            )?
+            .query_row([mri], user_from_row)
+            .optional()?)
+    }
+
+    /// The subset of `mris` with no cached profile (no row, or an empty
+    /// display name), deduplicated, in input order.
+    pub fn users_missing_profile(&self, mris: &[String]) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT display_name <> '' FROM users WHERE mri = ?1")?;
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for mri in mris {
+            if !seen.insert(mri.as_str()) {
+                continue;
+            }
+            let has: Option<bool> = stmt.query_row([mri], |r| r.get(0)).optional()?;
+            if !has.unwrap_or(false) {
+                out.push(mri.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    // ---- teams / channels ---------------------------------------------
+
+    pub fn upsert_team(&self, t: &TeamRow) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO teams (id, name) VALUES (?1, ?2) \
+                 ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+            )?
+            .execute(params![t.id, t.name])?;
+        Ok(())
+    }
+
+    /// All teams, ordered by name.
+    pub fn teams(&self) -> Result<Vec<TeamRow>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT id, name FROM teams ORDER BY name COLLATE NOCASE, id")?;
+        let out = stmt
+            .query_map([], |r| {
+                Ok(TeamRow {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
+    }
+
+    /// Channel conversations of a team, ordered by title.
+    pub fn channels(&self, team_id: &str) -> Result<Vec<ConversationRow>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {CONV_COLS} FROM conversations \
+             WHERE kind = 'channel' AND team_id = ?1 ORDER BY title COLLATE NOCASE, id"
+        ))?;
+        let mut rows = stmt.query([team_id])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push(conv_from_row(r)?);
+        }
+        Ok(out)
+    }
+
+    // ---- kv ------------------------------------------------------------
+
+    /// Reads a small setting (epid, last sync time, ...).
+    ///
+    /// This table is plain, unencrypted SQLite. NEVER store tokens or other
+    /// secrets here; those belong in the OS keyring.
+    pub fn get_kv(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT value FROM kv WHERE key = ?1")?
+            .query_row([key], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// Writes a small setting. NEVER use for tokens or other secrets; see
+    /// [`Store::get_kv`].
+    pub fn set_kv(&self, key: &str, value: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO kv (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            )?
+            .execute(params![key, value])?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests;
