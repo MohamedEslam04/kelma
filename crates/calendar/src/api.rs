@@ -16,7 +16,7 @@ const BASE: &str = "https://graph.microsoft.com/v1.0/me/calendarView";
 /// carry along so the full view needs no second request.
 const SELECT: &str = "id,iCalUId,seriesMasterId,subject,start,end,isAllDay,showAs,responseStatus,\
 isCancelled,sensitivity,categories,organizer,location,isOnlineMeeting,onlineMeeting,webLink,\
-type,bodyPreview,attendees";
+type,bodyPreview,attendees,isReminderOn,reminderMinutesBeforeStart";
 
 /// Times come back in UTC and ids stay the same when an event moves between folders.
 const PREFER: (&str, &str) = ("Prefer", "outlook.timezone=\"UTC\", IdType=\"ImmutableId\"");
