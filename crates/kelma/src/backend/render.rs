@@ -24,6 +24,8 @@ pub(super) struct MsgMarks<'a> {
     pub failed: Option<&'a HashSet<String>>,
     /// Index (among the non-control rows) where the unread divider sits.
     pub divider: Option<usize>,
+    /// My newest message and its read receipt: `(id, "sent" | "seen", names)`.
+    pub receipt: Option<&'a (String, String, String)>,
 }
 
 impl Engine {
@@ -225,7 +227,13 @@ impl Engine {
             };
             let draft = drafts.get(&r.id);
             let preview_text = draft.unwrap_or(&r.last_preview);
+            let unread = r.unread
+                && (current.as_deref() != Some(r.id.as_str())
+                    || keep_unread.as_deref() == Some(r.id.as_str()));
+            let mention = unread && self.has_unread_mention(&r.id, r.read_horizon_ms);
             let data = ChatData {
+                mention,
+                group: r.kind == ConvKind::Group,
                 draft: draft.is_some(),
                 initials: initials(&r.title),
                 color: color_for(&r.id),
@@ -234,9 +242,7 @@ impl Engine {
                 rtl_preview: render::base_direction(preview_text) == render::Dir::Rtl,
                 preview: preview_text.replace('\n', " ").chars().take(120).collect(),
                 time: chat_time(r.last_activity_ms),
-                unread: r.unread
-                    && (current.as_deref() != Some(r.id.as_str())
-                        || keep_unread.as_deref() == Some(r.id.as_str())),
+                unread,
                 favorite: r.favorite,
                 section: if r.favorite {
                     "favorites"
@@ -314,6 +320,7 @@ impl Engine {
             ),
             None => (title_override.clone(), ConvKind::Group),
         };
+        self.push_group_header(&id);
         let avatar_mri = match kind {
             ConvKind::OneOnOne => self.other_member(&id),
             ConvKind::Notes => Some(self.me.clone()),
@@ -419,7 +426,12 @@ impl Engine {
         } else {
             None
         };
-        let out = self.build_msgs(
+        let receipt = if thread.is_none() {
+            self.receipt_mark(&conv, &visible)
+        } else {
+            None
+        };
+        let mut out = self.build_msgs(
             &rows,
             is_channel,
             &thread,
@@ -429,11 +441,16 @@ impl Engine {
                 selected: &selected,
                 failed: Some(&failed),
                 divider,
+                receipt: receipt.as_ref(),
             },
         );
+        // A jump from the pinned banner scrolls to its row like the unread divider does.
+        let jump = self.take_jump(&mut out);
         let mode = {
             let mut v = self.view.lock().unwrap();
-            let mode = if !scroll {
+            let mode = if let Some(i) = jump {
+                Scroll::Divider(i)
+            } else if !scroll {
                 Scroll::Keep
             } else if let Some(i) =
                 divider.filter(|_| v.opening && open_at_divider(v.open_at, divider))
@@ -447,7 +464,9 @@ impl Engine {
             if scroll && v.loaded {
                 v.opening = false;
             }
-            if let Scroll::Divider(i) = mode {
+            if let Scroll::Divider(i) = mode
+                && jump.is_none()
+            {
                 v.new_count = unread_after(&info, i);
                 self.ui.new_count(v.new_count);
             }
@@ -470,6 +489,7 @@ impl Engine {
         let selected = marks.selected;
         let failed = marks.failed.unwrap_or(&none);
         let divider = marks.divider;
+        let receipt = marks.receipt;
         let visible: Vec<&MessageRow> = rows
             .iter()
             .filter(|r| !r.message_type.starts_with("Control/"))
@@ -610,6 +630,17 @@ impl Engine {
                 selected: selected.contains(&r.id),
                 failed: failed.contains(&r.id),
                 new_above: divider == Some(i),
+                sender_id: r.sender_mri.clone(),
+                mentions_me: super::mentions::mentions_me(&props, &self.me),
+                receipt: receipt
+                    .filter(|x| x.0 == r.id)
+                    .map(|x| x.1.clone())
+                    .unwrap_or_default(),
+                receipt_names: receipt
+                    .filter(|x| x.0 == r.id)
+                    .map(|x| x.2.clone())
+                    .unwrap_or_default(),
+                flash: false,
             });
             prev = Some(r);
         }

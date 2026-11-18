@@ -1,0 +1,112 @@
+//! UI-thread side of the people and conversation pieces: fills the `PeopleStore` global.
+
+use super::{UiHandle, img, model, rgb};
+use crate::data::{CardData, PersonData, PinnedData, color_for, initials};
+use crate::{AppWindow, PeopleStore, PersonItem, PinnedItem};
+use slint::{ComponentHandle, ModelRc};
+
+fn person(d: PersonData) -> PersonItem {
+    let (avatar, has_avatar) = img(&d.avatar);
+    PersonItem {
+        initials: initials(&d.name).into(),
+        color: rgb(color_for(&d.id)),
+        id: d.id.into(),
+        name: d.name.into(),
+        subtitle: d.subtitle.into(),
+        avatar,
+        has_avatar,
+        kind: d.kind.into(),
+    }
+}
+
+fn people(v: Vec<PersonData>) -> ModelRc<PersonItem> {
+    model(v.into_iter().map(person).collect())
+}
+
+impl UiHandle {
+    fn store(&self, f: impl FnOnce(PeopleStore<'_>) + Send + 'static) {
+        self.run(move |w: AppWindow| f(w.global::<PeopleStore>()));
+    }
+
+    /// Candidates of the @mention picker.
+    pub fn mention_items(&self, items: Vec<PersonData>) {
+        self.store(move |s| s.set_mention_items(people(items)));
+    }
+
+    /// The New chat pane: open or closed, who is addressed, the suggestions and a hint.
+    pub fn new_chat(
+        &self,
+        open: bool,
+        to: Vec<PersonData>,
+        results: Vec<PersonData>,
+        hint: String,
+    ) {
+        self.store(move |s| {
+            s.set_new_chat_open(open);
+            s.set_new_chat_to(people(to));
+            s.set_new_chat_results(people(results));
+            s.set_new_chat_hint(hint.into());
+        });
+    }
+
+    /// Group chat header state: whether the pencil and participants button show, and the count.
+    pub fn group_header(&self, group: bool, count: usize) {
+        self.store(move |s| {
+            s.set_header_group(group);
+            s.set_member_count(count as i32);
+            if !group {
+                s.set_participants_open(false);
+            }
+        });
+    }
+
+    /// The participants popover: members, and the suggestions of "Add people".
+    pub fn members(&self, members: Vec<PersonData>, add_results: Vec<PersonData>) {
+        self.store(move |s| {
+            s.set_member_count(members.len() as i32);
+            s.set_members(people(members));
+            s.set_add_results(people(add_results));
+        });
+    }
+
+    pub fn leave_confirm(&self, chat: String) {
+        self.store(move |s| s.set_leave_confirm(chat.into()));
+    }
+
+    /// Opens the profile card (or fills the open one).
+    pub fn card(&self, open: bool, c: CardData) {
+        self.store(move |s| {
+            s.set_card_open(open);
+            s.set_card_loading(c.loading);
+            s.set_card(person(c.person));
+            s.set_card_email(c.email.into());
+            s.set_card_work(c.work.into());
+            s.set_card_location(c.location.into());
+            s.set_card_time(c.time.into());
+        });
+    }
+
+    /// The pins of the open chat for the banner.
+    pub fn pinned(&self, items: Vec<PinnedData>) {
+        self.store(move |s| {
+            let n = items.len() as i32;
+            if s.get_pinned_index() >= n {
+                s.set_pinned_index(0);
+            }
+            s.set_pinned(model(
+                items
+                    .into_iter()
+                    .map(|p| PinnedItem {
+                        id: p.id.into(),
+                        sender: p.sender.into(),
+                        preview: p.preview.into(),
+                    })
+                    .collect(),
+            ));
+        });
+    }
+
+    pub fn receipts_on(&self, on: bool) {
+        self.store(move |s| s.set_receipts_on(on));
+    }
+}

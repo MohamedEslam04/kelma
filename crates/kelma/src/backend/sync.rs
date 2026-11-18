@@ -13,6 +13,7 @@ impl Engine {
     pub async fn sync(self: &Arc<Self>) -> anyhow::Result<()> {
         let convs = self.client.conversations(0, 200).await?;
         let snap = self.client.snapshot().await.unwrap_or_default();
+        self.remember_members(&snap.chats);
         let meta: HashMap<&str, &teams_proto::csa::ChatMeta> =
             snap.chats.iter().map(|c| (c.id.as_str(), c)).collect();
         let mut channel_info: HashMap<String, (String, String, String)> = HashMap::new();
@@ -234,6 +235,7 @@ impl Engine {
         // Shows the chat's stored draft and reply target (or clears the reply bar).
         self.restore_draft(&id);
         self.push_attachments();
+        self.on_chat_opened(&id);
         self.mark(|d| {
             d.header = true;
             d.messages = true;

@@ -106,6 +106,9 @@ pub(crate) const MIGRATIONS: &[&str] = &[
          PRIMARY KEY (conversation_id, message_id)
      );
      CREATE INDEX idx_saved_ms ON saved_messages(saved_ms);",
+    // v4: the mentions property of a queued message (a JSON array string), so an @mention
+    // survives the outbox like a quote reply's `reply_to` does.
+    "ALTER TABLE outbox ADD COLUMN mentions TEXT;",
 ];
 
 pub(crate) fn run(conn: &mut Connection) -> Result<()> {

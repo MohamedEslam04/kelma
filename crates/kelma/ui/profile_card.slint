@@ -1,0 +1,117 @@
+// Profile card: opened by clicking an avatar or a name. Photo, name, title, email (click to
+// copy), work location and the Chat and Email buttons.
+import { Theme } from "theme.slint";
+import { PersonItem } from "types.slint";
+import { Avatar, IconButton } from "widgets.slint";
+
+export component ProfileCard inherits Rectangle {
+    in property <PersonItem> person;
+    in property <bool> loading;
+    in property <string> email;
+    in property <string> work;
+    in property <string> location;
+    in property <string> local-time;
+    callback copy-email();
+    callback chat(string);
+    callback send-email(string);
+    callback close();
+
+    width: 320px;
+    height: content.preferred-height;
+    border-radius: 8px;
+    background: #2b2b2b;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #000000a0;
+    accessible-role: groupbox;
+    accessible-label: "Profile card";
+
+    content := VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 14px;
+            Avatar {
+                initials: root.person.initials;
+                tone: root.person.color;
+                img: root.person.avatar;
+                has-img: root.person.has-avatar;
+                size: 72px;
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                card-name := Text { text: root.person.name; color: Theme.fg; font-size: 17px; font-weight: 700; wrap: word-wrap; accessible-role: text; accessible-label: root.person.name; }
+                if root.person.subtitle != "": card-title := Text { text: root.person.subtitle; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; accessible-role: text; accessible-label: root.person.subtitle; }
+                if root.loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 12px; }
+            }
+            IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; size: 28px; clicked => { root.close(); } }
+        }
+
+        if root.email != "": card-email := Rectangle {
+            height: 30px;
+            border-radius: 4px;
+            background: email-touch.has-hover ? Theme.surface-hover : transparent;
+            accessible-role: button;
+            accessible-label: "Copy email " + root.email;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Email"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                Text { text: root.email; color: Theme.accent; font-size: 13px; vertical-alignment: center; overflow: elide; }
+            }
+            email-touch := TouchArea { mouse-cursor: pointer; clicked => { root.copy-email(); } }
+        }
+        if root.work != "": Rectangle {
+            height: 24px;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Company"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-work := Text { text: root.work; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        if root.location != "": Rectangle {
+            height: 24px;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Location"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-location := Text { text: root.location; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        if root.local-time != "": Rectangle {
+            height: 24px;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Local time"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-time := Text { text: root.local-time; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            height: 32px;
+            card-chat := Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 4px;
+                background: chat-touch.has-hover ? Theme.accent : Theme.accent-strong;
+                accessible-role: button;
+                accessible-label: "Chat";
+                Text { text: "Chat"; color: #ffffff; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                chat-touch := TouchArea { mouse-cursor: pointer; clicked => { root.chat(root.person.id); } }
+            }
+            if root.email != "": card-mail := Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 4px;
+                background: mail-touch.has-hover ? Theme.surface-hover : #333333;
+                accessible-role: button;
+                accessible-label: "Email";
+                Text { text: "Email"; color: Theme.fg; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                mail-touch := TouchArea { mouse-cursor: pointer; clicked => { root.send-email(root.email); } }
+            }
+        }
+    }
+}

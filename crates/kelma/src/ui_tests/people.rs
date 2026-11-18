@@ -1,0 +1,983 @@
+//! People and conversations (plan 6.1 to 6.3 and 6.5 to 6.7) driven through the real window: the
+//! @mention picker and token, the New chat pane, the group header and participants popover, the
+//! profile card, the pinned banner and read receipts. The window's `PeopleStore` commands are
+//! wired to the engine the way `main.rs` wires them; the engine has no network.
+
+use super::*;
+use crate::backend::PeopleCmd;
+use crate::data::PinnedData;
+use crate::{PeopleStore, demo};
+use serde_json::json;
+use store::{MessageRow, UserRow};
+use teams_proto::mentions::{Mention, MentionKind, mentions_property, parse_mentions};
+use teams_proto::people::Person;
+use teams_proto::receipts::Horizon;
+
+const ONE_ON_ONE: &str =
+    "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000002@unq.gbl.spaces";
+
+fn mri(n: u8) -> String {
+    format!("8:orgid:00000000-0000-0000-0000-0000000000{n:02}")
+}
+
+fn person(n: u8, name: &str) -> Person {
+    Person {
+        mri: mri(n),
+        display_name: name.into(),
+        email: Some(format!(
+            "{}@example.com",
+            name.to_lowercase().replace(' ', ".")
+        )),
+        job_title: Some("Engineer".into()),
+        department: None,
+    }
+}
+
+/// Sends every `PeopleStore` command to the engine, and records `"<name> <argument>"`. Commands
+/// named in `skip` are only recorded (clipboard access must not run in tests).
+fn wire_skipping(h: &Harness, skip: &'static [&'static str]) -> Log {
+    let log = Log::default();
+    let run = h.runner();
+    let l = log.clone();
+    h.app.global::<PeopleStore>().on_command(move |name, arg| {
+        l.borrow_mut().push(format!("{name} {arg}"));
+        if skip.contains(&name.as_str()) {
+            return;
+        }
+        if let Some(c) = PeopleCmd::parse(&name, &arg) {
+            run(Cmd::People(c));
+        }
+    });
+    let run = h.runner();
+    h.app
+        .on_send(move |t| run(Cmd::Send(t.into(), String::new())));
+    log
+}
+
+fn wire(h: &Harness) -> Log {
+    wire_skipping(h, &[])
+}
+
+/// Records the commands of a window without an engine.
+fn record(app: &AppWindow) -> Log {
+    let log = Log::default();
+    let l = log.clone();
+    app.global::<PeopleStore>()
+        .on_command(move |name, arg| l.borrow_mut().push(format!("{name} {arg}")));
+    log
+}
+
+fn ps(app: &AppWindow) -> PeopleStore<'_> {
+    app.global::<PeopleStore>()
+}
+
+fn names(items: slint::ModelRc<crate::PersonItem>) -> Vec<String> {
+    items.iter().map(|p| p.name.to_string()).collect()
+}
+
+fn mention_names(app: &AppWindow) -> Vec<String> {
+    names(ps(app).get_mention_items())
+}
+
+fn touch(app: &AppWindow, id: &str) -> ElementHandle {
+    ids(app, id)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("element {id}"))
+}
+
+fn alt_shift_n(app: &AppWindow) {
+    key(app, Key::Alt, true);
+    key(app, Key::Shift, true);
+    key(app, "N", true);
+    key(app, "N", false);
+    key(app, Key::Shift, false);
+    key(app, Key::Alt, false);
+}
+
+fn backspace(app: &AppWindow) {
+    key(app, Key::Backspace, true);
+    key(app, Key::Backspace, false);
+}
+
+// ---- 6.1 @mentions -----------------------------------------------------------
+
+#[test]
+fn picking_a_mention_inserts_the_name_and_one_backspace_removes_it() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    h.select(BACKEND);
+
+    h.type_in_composer("hi @sa");
+    assert_eq!(mention_names(&h.app), vec!["Sara Hassan"]);
+    assert!(
+        !find_label(&h.app, "Mention").is_empty(),
+        "the picker is open"
+    );
+
+    enter(&h.app);
+    assert_eq!(h.app.get_draft(), "hi @Sara Hassan ");
+    assert!(log.borrow().contains(&format!("mention-pick {}", mri(3))));
+    assert!(
+        find_label(&h.app, "Mention").is_empty(),
+        "the picker closes after a pick"
+    );
+
+    backspace(&h.app);
+    assert_eq!(
+        h.app.get_draft(),
+        "hi ",
+        "one Backspace removes the whole token"
+    );
+    // An ordinary Backspace elsewhere still deletes one character.
+    type_text(&h.app, "ab");
+    backspace(&h.app);
+    assert_eq!(h.app.get_draft(), "hi a");
+}
+
+#[test]
+fn arrow_keys_choose_and_escape_closes_the_picker() {
+    let h = Harness::new();
+    wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    h.select(BACKEND);
+    h.type_in_composer("@");
+    assert_eq!(
+        mention_names(&h.app),
+        vec!["Everyone", "Me", "Sara Hassan", "Omar Khaled"]
+    );
+    key(&h.app, Key::DownArrow, true);
+    key(&h.app, Key::DownArrow, false);
+    key(&h.app, Key::DownArrow, true);
+    key(&h.app, Key::DownArrow, false);
+    enter(&h.app);
+    assert_eq!(h.app.get_draft(), "@Sara Hassan ");
+
+    type_text(&h.app, "@");
+    assert!(!find_label(&h.app, "Mention").is_empty());
+    key(&h.app, Key::Escape, true);
+    key(&h.app, Key::Escape, false);
+    assert!(find_label(&h.app, "Mention").is_empty());
+    assert_eq!(h.app.get_draft(), "@Sara Hassan @", "Escape keeps the text");
+}
+
+#[test]
+fn everyone_is_offered_in_groups_and_a_one_on_one_lists_only_the_other_person() {
+    let h = Harness::new();
+    wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    h.select(BACKEND);
+    h.type_in_composer("@");
+    assert_eq!(mention_names(&h.app)[0], "Everyone");
+
+    h.select(ONE_ON_ONE);
+    h.type_in_composer("@");
+    assert_eq!(mention_names(&h.app), vec!["Ahmed Ali"]);
+}
+
+#[test]
+fn a_picked_mention_goes_through_the_outbox_with_its_span_and_property() {
+    let h = Harness::new();
+    wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    h.select(BACKEND);
+    h.type_in_composer("@sa");
+    enter(&h.app);
+    type_text(&h.app, "please look");
+    enter(&h.app);
+
+    let queued = h.engine.test_store(|s| s.outbox_for(BACKEND).unwrap());
+    assert_eq!(queued.len(), 1, "the message is stored before it is sent");
+    let item = &queued[0];
+    assert!(
+        item.html
+            .contains(r#"itemtype="http://schema.skype.com/Mention""#),
+        "{}",
+        item.html
+    );
+    assert!(item.html.contains(">Sara Hassan</span>"));
+    assert!(item.html.contains("please look"));
+    let ms = parse_mentions(Some(&json!({"mentions": item.mentions.clone().unwrap()})));
+    assert_eq!(ms.len(), 1);
+    assert_eq!(ms[0].mri, mri(3));
+    assert_eq!(ms[0].kind, MentionKind::Person);
+    assert_eq!(ms[0].item_id, 0);
+}
+
+#[test]
+fn text_without_a_picked_mention_carries_no_mentions_property() {
+    let h = Harness::new();
+    wire(&h);
+    h.select(BACKEND);
+    h.type_in_composer("hello @nobody");
+    enter(&h.app);
+    let queued = h.engine.test_store(|s| s.outbox_for(BACKEND).unwrap());
+    assert_eq!(queued.len(), 1);
+    assert!(queued[0].mentions.is_none());
+    assert!(!queued[0].html.contains("Mention"));
+}
+
+fn incoming_mention(id: &str, ms: i64, kind: MentionKind, target: &str) -> MessageRow {
+    let m = Mention {
+        item_id: 0,
+        mri: target.into(),
+        display_name: "Me".into(),
+        kind,
+    };
+    let props: serde_json::Value =
+        json!({"m": serde_json::from_str::<serde_json::Value>(&mentions_property(&[m])).unwrap()});
+    MessageRow {
+        id: id.into(),
+        conversation_id: BACKEND.into(),
+        parent_id: None,
+        sender_mri: mri(3),
+        sender_name: "Sara Hassan".into(),
+        compose_ms: ms,
+        edited_ms: None,
+        deleted: false,
+        message_type: "RichText/Html".into(),
+        content_html: "<p>ping</p>".into(),
+        client_message_id: None,
+        reactions_json: props.to_string(),
+    }
+}
+
+#[test]
+fn an_incoming_mention_of_me_is_highlighted_and_marks_the_chat_with_an_at() {
+    let h = Harness::new();
+    let now = teams_proto::time::now_ms();
+    h.engine.test_store(|s| {
+        s.upsert_message(&incoming_mention(
+            "9001",
+            now + 1,
+            MentionKind::Person,
+            demo::ME,
+        ))
+        .unwrap();
+        s.upsert_message(&incoming_mention(
+            "9002",
+            now + 2,
+            MentionKind::Person,
+            &mri(4),
+        ))
+        .unwrap();
+    });
+    h.runner()(Cmd::SetFilter("all".into()));
+    let row = h.chats().into_iter().find(|c| c.id == BACKEND).unwrap();
+    assert!(row.unread);
+    assert!(row.mention, "an unread message mentions me");
+    let other = h.chats().into_iter().find(|c| c.id == NOTES).unwrap();
+    assert!(!other.mention);
+    // The marker is drawn in the chat list.
+    assert_eq!(find_label(&h.app, "You were mentioned").len(), 1);
+
+    h.select(BACKEND);
+    let msgs: Vec<_> = h.app.get_messages().iter().collect();
+    let flagged: Vec<_> = msgs
+        .iter()
+        .filter(|m| m.mentions_me)
+        .map(|m| m.id.to_string())
+        .collect();
+    assert_eq!(
+        flagged,
+        vec!["9001"],
+        "only the mention of me is highlighted"
+    );
+    let everyone = incoming_mention("9003", now + 3, MentionKind::Everyone, BACKEND);
+    h.engine
+        .test_store(|s| s.upsert_message(&everyone).unwrap());
+    h.runner()(Cmd::LoadOlder);
+    assert!(
+        h.app
+            .get_messages()
+            .iter()
+            .any(|m| m.id == "9003" && m.mentions_me),
+        "@Everyone counts as a mention of me"
+    );
+}
+
+// ---- 6.2 New chat ------------------------------------------------------------
+
+#[test]
+fn alt_shift_n_opens_the_new_chat_pane_and_escape_closes_it() {
+    let app = app_with_messages(vec![]);
+    let log = record(&app);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    alt_shift_n(&app);
+    assert!(ps(&app).get_new_chat_open());
+    assert_eq!(*log.borrow(), vec!["new-chat-open "]);
+    assert!(!find_label(&app, "New message").is_empty());
+
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+    assert!(!ps(&app).get_new_chat_open());
+    assert_eq!(log.borrow().last().unwrap(), "new-chat-close ");
+}
+
+#[test]
+fn the_compose_button_in_the_chat_list_opens_new_chat() {
+    let app = app_with_messages(vec![]);
+    let log = record(&app);
+    let btn = find_label(&app, "New chat");
+    assert_eq!(btn.len(), 1);
+    click(&btn[0]);
+    assert!(ps(&app).get_new_chat_open());
+    assert_eq!(*log.borrow(), vec!["new-chat-open "]);
+}
+
+/// Opens the pane and adds `who` to the To: field through the suggestions list.
+fn address(h: &Harness, who: &[(u8, &str)]) {
+    h.runner()(Cmd::People(PeopleCmd::NewChatOpen));
+    for (n, name) in who {
+        new_chat_results(h, vec![person(*n, name)]);
+        let rows = ids(&h.app, "NewChatPane::result-row");
+        assert_eq!(rows.len(), 1, "one suggestion");
+        click(&rows[0]);
+    }
+}
+
+/// The engine looks avatars up in the background, which needs a runtime.
+fn new_chat_results(h: &Harness, found: Vec<Person>) {
+    h.rt.block_on(async { h.engine.test_new_chat_results(found) });
+}
+
+fn add_results(h: &Harness, found: Vec<Person>) {
+    h.rt.block_on(async { h.engine.test_add_results(found) });
+}
+
+fn to_names(app: &AppWindow) -> Vec<String> {
+    names(ps(app).get_new_chat_to())
+}
+
+fn type_first_message(h: &Harness, text: &str) {
+    click(&touch(&h.app, "NewChatPane::msg-input"));
+    type_text(&h.app, text);
+    enter(&h.app);
+}
+
+#[test]
+fn the_to_field_collects_people_and_a_second_one_adds_the_group_name_field() {
+    let h = Harness::new();
+    wire(&h);
+    h.runner()(Cmd::People(PeopleCmd::NewChatOpen));
+    new_chat_results(&h, vec![person(7, "Nour Samy"), person(8, "Hana Fawzy")]);
+    assert_eq!(ids(&h.app, "NewChatPane::result-row").len(), 2);
+    click(&ids(&h.app, "NewChatPane::result-row")[0]);
+    assert_eq!(to_names(&h.app), vec!["Nour Samy"]);
+    assert!(
+        ids(&h.app, "NewChatPane::group-input").is_empty(),
+        "one person is a 1:1 chat"
+    );
+
+    new_chat_results(&h, vec![person(8, "Hana Fawzy")]);
+    click(&ids(&h.app, "NewChatPane::result-row")[0]);
+    assert_eq!(to_names(&h.app), vec!["Nour Samy", "Hana Fawzy"]);
+    assert_eq!(
+        ids(&h.app, "NewChatPane::group-input").len(),
+        1,
+        "two people give a group, which can be named"
+    );
+
+    // Clicking a chip removes the person.
+    click(&ids(&h.app, "NewChatPane::chip")[0]);
+    assert_eq!(to_names(&h.app), vec!["Hana Fawzy"]);
+}
+
+#[test]
+fn a_group_roster_that_already_exists_opens_that_chat_instead_of_creating_one() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    address(&h, &[(4, "Omar Khaled"), (3, "Sara Hassan")]);
+    assert_eq!(
+        ps(&h.app).get_new_chat_hint(),
+        "A chat with these people already exists."
+    );
+    type_first_message(&h, "hello team");
+
+    assert!(log.borrow().iter().any(|c| c == "new-chat-send hello team"));
+    assert_eq!(h.app.get_current_id(), BACKEND, "the existing chat is open");
+    assert!(!ps(&h.app).get_new_chat_open(), "the pane closed");
+    let queued = h.engine.test_store(|s| s.outbox_for(BACKEND).unwrap());
+    assert_eq!(queued.len(), 1);
+    assert!(queued[0].html.contains("hello team"));
+}
+
+#[test]
+fn a_new_roster_is_not_opened_as_an_existing_chat_and_nothing_is_sent_when_it_cannot_be_created() {
+    let h = Harness::new();
+    wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    h.select(NOTES);
+    // Two of the three members plus a stranger: not the backend group.
+    address(&h, &[(4, "Omar Khaled"), (7, "Nour Samy")]);
+    assert_eq!(ps(&h.app).get_new_chat_hint(), "");
+    type_first_message(&h, "hello");
+    // Creating the thread needs the network: the pane stays, and no chat was opened or queued.
+    assert!(ps(&h.app).get_new_chat_open());
+    assert_eq!(h.app.get_current_id(), NOTES);
+    assert!(
+        h.engine
+            .test_store(|s| s.outbox_for(BACKEND).unwrap().is_empty())
+    );
+}
+
+#[test]
+fn one_person_opens_the_one_on_one_with_its_deterministic_id() {
+    let h = Harness::new();
+    wire(&h);
+    address(&h, &[(7, "Nour Samy")]);
+    type_first_message(&h, "hi Nour");
+
+    let id = "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000007@unq.gbl.spaces";
+    assert_eq!(h.app.get_current_id(), id);
+    assert!(!ps(&h.app).get_new_chat_open());
+    // The chat is listed with the person's name and the first message waits to be sent: the
+    // thread is created by that send.
+    assert!(
+        h.chats()
+            .iter()
+            .any(|c| c.id == id && c.title == "Nour Samy")
+    );
+    let queued = h.engine.test_store(|s| s.outbox_for(id).unwrap());
+    assert_eq!(queued.len(), 1);
+    assert!(queued[0].html.contains("hi Nour"));
+}
+
+#[test]
+fn only_yourself_in_the_to_field_opens_your_notes() {
+    let h = Harness::new();
+    wire(&h);
+    address(&h, &[(1, "Me")]);
+    type_first_message(&h, "note to self");
+    assert_eq!(h.app.get_current_id(), NOTES);
+    assert_eq!(
+        h.engine.test_store(|s| s.outbox_for(NOTES).unwrap().len()),
+        1
+    );
+}
+
+#[test]
+fn enter_in_the_to_field_takes_the_first_suggestion_and_backspace_removes_the_last_person() {
+    let h = Harness::new();
+    wire(&h);
+    h.runner()(Cmd::People(PeopleCmd::NewChatOpen));
+    new_chat_results(&h, vec![person(7, "Nour Samy")]);
+    enter(&h.app);
+    assert_eq!(to_names(&h.app), vec!["Nour Samy"]);
+    backspace(&h.app);
+    assert!(to_names(&h.app).is_empty());
+}
+
+// ---- 6.3 group chat management -----------------------------------------------
+
+#[test]
+fn the_pencil_renames_a_group_and_is_not_offered_elsewhere() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.select(NOTES);
+    assert!(ids(&h.app, "AppWindow::rename-btn").is_empty());
+    h.select(ONE_ON_ONE);
+    assert!(ids(&h.app, "AppWindow::rename-btn").is_empty());
+
+    h.select(BACKEND);
+    assert!(ps(&h.app).get_header_group());
+    click(&touch(&h.app, "AppWindow::rename-btn"));
+    assert!(h.app.get_renaming());
+    assert_eq!(
+        h.app.get_rename_text(),
+        "Backend Team",
+        "the name is editable"
+    );
+    type_text(&h.app, "Platform");
+    enter(&h.app);
+    assert!(!h.app.get_renaming());
+    assert!(
+        log.borrow().contains(&"rename Platform".to_string()),
+        "{:?}",
+        log.borrow()
+    );
+}
+
+#[test]
+fn escape_cancels_a_rename() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.select(BACKEND);
+    click(&touch(&h.app, "AppWindow::rename-btn"));
+    type_text(&h.app, "x");
+    key(&h.app, Key::Escape, true);
+    key(&h.app, Key::Escape, false);
+    assert!(!h.app.get_renaming());
+    assert!(!log.borrow().iter().any(|c| c.starts_with("rename")));
+}
+
+#[test]
+fn the_participants_popover_lists_members_and_adds_people_with_or_without_history() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    h.select(BACKEND);
+    assert_eq!(ps(&h.app).get_member_count(), 3);
+
+    click(&touch(&h.app, "AppWindow::people-touch"));
+    assert!(ps(&h.app).get_participants_open());
+    assert!(log.borrow().contains(&"participants-open ".to_string()));
+    assert_eq!(
+        names(ps(&h.app).get_members()),
+        vec!["Me (You)", "Sara Hassan", "Omar Khaled"]
+    );
+    assert_eq!(ids(&h.app, "ParticipantsPanel::member-row").len(), 3);
+    assert!(!ids(&h.app, "ParticipantsPanel::leave-btn").is_empty());
+
+    click(&touch(&h.app, "ParticipantsPanel::add-btn"));
+    add_results(&h, vec![person(5, "Mona Adel")]);
+    click(&touch(&h.app, "ParticipantsPanel::history-toggle"));
+    assert_eq!(log.borrow().last().unwrap(), "add-history on");
+    click(&touch(&h.app, "ParticipantsPanel::add-hit"));
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        &format!("add-pick {}", mri(5))
+    );
+}
+
+#[test]
+fn clicking_a_participant_opens_their_profile_card() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    h.select(BACKEND);
+    click(&touch(&h.app, "AppWindow::people-touch"));
+    click(&ids(&h.app, "ParticipantsPanel::member-hit")[1]);
+    assert!(!ps(&h.app).get_participants_open());
+    assert_eq!(log.borrow().last().unwrap(), &format!("profile {}", mri(3)));
+    assert!(ps(&h.app).get_card_open());
+}
+
+#[test]
+fn leave_asks_first_and_then_leaves() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.select(BACKEND);
+    click(&touch(&h.app, "AppWindow::people-touch"));
+    click(&touch(&h.app, "ParticipantsPanel::leave-touch"));
+    assert_eq!(ps(&h.app).get_leave_confirm(), BACKEND);
+    assert!(!find_label(&h.app, "Leave this chat?").is_empty());
+    assert!(
+        !log.borrow().iter().any(|c| c.starts_with("leave ")),
+        "nothing yet"
+    );
+
+    click(&touch(&h.app, "LeaveConfirm::cancel-touch"));
+    assert_eq!(ps(&h.app).get_leave_confirm(), "");
+    assert!(!log.borrow().iter().any(|c| c.starts_with("leave ")));
+
+    click(&touch(&h.app, "AppWindow::people-touch"));
+    click(&touch(&h.app, "ParticipantsPanel::leave-touch"));
+    click(&touch(&h.app, "LeaveConfirm::confirm-touch"));
+    assert_eq!(log.borrow().last().unwrap(), &format!("leave {BACKEND}"));
+    assert_eq!(ps(&h.app).get_leave_confirm(), "");
+}
+
+fn right_click(app: &AppWindow, label: &str) {
+    let item = find_label(app, label);
+    assert_eq!(item.len(), 1, "one row labelled {label}");
+    let p = item[0].absolute_position();
+    let s = item[0].size();
+    let at = LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.);
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    for pressed in [true, false] {
+        app.window().dispatch_event(if pressed {
+            WindowEvent::PointerPressed {
+                position: at,
+                button: PointerEventButton::Right,
+            }
+        } else {
+            WindowEvent::PointerReleased {
+                position: at,
+                button: PointerEventButton::Right,
+            }
+        });
+    }
+}
+
+#[test]
+fn only_group_chats_have_leave_in_the_chat_item_menu() {
+    let app = app_with_messages(vec![]);
+    record(&app);
+    let mut group = chat_row("g", "Backend");
+    group.group = true;
+    app.set_chats_main(ModelRc::new(VecModel::from(vec![
+        group,
+        chat_row("c", "Sara"),
+    ])));
+
+    right_click(&app, "Sara");
+    assert!(
+        find_label(&app, "Leave").is_empty(),
+        "a 1:1 chat cannot be left"
+    );
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+
+    right_click(&app, "Backend");
+    let leave = find_label(&app, "Leave");
+    assert_eq!(leave.len(), 1);
+    click(&leave[0]);
+    assert_eq!(ps(&app).get_leave_confirm(), "g");
+}
+
+// ---- 6.5 profile card --------------------------------------------------------
+
+fn harness_with_sara_email() -> Harness {
+    let store = Store::open_in_memory().unwrap();
+    demo::seed(&store, teams_proto::time::now_ms()).unwrap();
+    store
+        .upsert_user(&UserRow {
+            mri: mri(3),
+            display_name: "Sara Hassan".into(),
+            email: Some("sara@example.com".into()),
+            avatar: None,
+            updated_ms: 1,
+        })
+        .unwrap();
+    Harness::with_store(store)
+}
+
+#[test]
+fn clicking_a_senders_name_opens_a_card_with_name_email_and_the_chat_and_email_buttons() {
+    let h = harness_with_sara_email();
+    let log = wire_skipping(&h, &["profile-copy-email"]);
+    let opened = Log::default();
+    {
+        let o = opened.clone();
+        h.app
+            .on_open_url(move |u| o.borrow_mut().push(u.to_string()));
+    }
+    h.select(BACKEND);
+    let sara = h
+        .app
+        .get_messages()
+        .iter()
+        .find(|m| m.sender == "Sara Hassan")
+        .expect("a message from Sara");
+    assert_eq!(sara.sender_id, mri(3));
+
+    // The name and the avatar are buttons; the accessibility default action is their click.
+    assert!(
+        ids(&h.app, "MessageRow::sender-text")
+            .iter()
+            .any(|e| label(e) == "Sara Hassan")
+    );
+    let open = find_label(&h.app, "Open profile of Sara Hassan");
+    assert!(
+        open.len() >= 2,
+        "the avatar and the name both open the card"
+    );
+    open[0].invoke_accessible_default_action();
+    assert_eq!(log.borrow().last().unwrap(), &format!("profile {}", mri(3)));
+    assert!(ps(&h.app).get_card_open());
+    assert_eq!(ps(&h.app).get_card().name, "Sara Hassan");
+    assert_eq!(ps(&h.app).get_card_email(), "sara@example.com");
+    assert_eq!(
+        touch(&h.app, "ProfileCard::card-name")
+            .accessible_label()
+            .unwrap(),
+        "Sara Hassan"
+    );
+    assert!(!ids(&h.app, "ProfileCard::card-email").is_empty());
+
+    // Click the email to copy it.
+    click(&touch(&h.app, "ProfileCard::email-touch"));
+    assert_eq!(log.borrow().last().unwrap(), "profile-copy-email ");
+    // The Email button opens a mailto link.
+    click(&touch(&h.app, "ProfileCard::mail-touch"));
+    assert_eq!(*opened.borrow(), vec!["mailto:sara@example.com"]);
+    // Chat opens the 1:1 with her.
+    click(&touch(&h.app, "ProfileCard::chat-touch"));
+    assert!(!ps(&h.app).get_card_open(), "the card closes");
+    assert_eq!(
+        h.app.get_current_id(),
+        "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000003@unq.gbl.spaces"
+    );
+}
+
+#[test]
+fn clicking_the_avatar_also_opens_the_card_and_a_card_without_an_email_has_no_email_row() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.select(BACKEND);
+    // The avatar of a header row from someone else.
+    let avatar = ids(&h.app, "MessageRow::avatar-touch")
+        .into_iter()
+        .next()
+        .expect("an avatar");
+    avatar.invoke_accessible_default_action();
+    assert!(log.borrow().last().unwrap().starts_with("profile 8:orgid:"));
+    assert!(ps(&h.app).get_card_open());
+    assert_eq!(ps(&h.app).get_card_email(), "");
+    assert!(ids(&h.app, "ProfileCard::card-email").is_empty());
+    assert!(ids(&h.app, "ProfileCard::mail-touch").is_empty());
+}
+
+// ---- 6.6 pinned messages banner ----------------------------------------------
+
+fn pins() -> Vec<PinnedData> {
+    ["a", "b", "c"]
+        .iter()
+        .zip(["Sara", "Omar", "Me"])
+        .zip(["fix prod", "deploy at 5", "notes"])
+        .map(|((id, who), text)| PinnedData {
+            id: id.to_string(),
+            sender: who.to_string(),
+            preview: text.to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn the_pinned_banner_shows_one_pin_with_a_counter_and_cycles() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.select(BACKEND);
+    assert!(
+        find_label(&h.app, "Pinned messages").is_empty(),
+        "no pins, no banner"
+    );
+    h.engine.test_set_pins(BACKEND, pins());
+    assert_eq!(find_label(&h.app, "Pinned messages").len(), 1);
+    assert_eq!(find_label(&h.app, "1/3").len(), 1);
+    assert_eq!(find_label(&h.app, "fix prod").len(), 1);
+
+    click(&find_label(&h.app, "Next pinned message")[0]);
+    assert_eq!(find_label(&h.app, "2/3").len(), 1);
+    assert_eq!(find_label(&h.app, "deploy at 5").len(), 1);
+    click(&find_label(&h.app, "Next pinned message")[0]);
+    click(&find_label(&h.app, "Next pinned message")[0]);
+    assert_eq!(find_label(&h.app, "1/3").len(), 1, "wraps around");
+    click(&find_label(&h.app, "Previous pinned message")[0]);
+    assert_eq!(find_label(&h.app, "3/3").len(), 1);
+    assert!(log.borrow().is_empty(), "cycling does not jump");
+}
+
+#[test]
+fn clicking_the_banner_jumps_to_the_message_and_moves_on_and_the_menu_unpins() {
+    let h = Harness::new();
+    let log = wire(&h);
+    h.select(BACKEND);
+    h.engine.test_set_pins(BACKEND, pins());
+
+    click(&touch(&h.app, "PinnedBanner::pin-body"));
+    assert_eq!(log.borrow().last().unwrap(), "pin-jump a");
+    assert_eq!(find_label(&h.app, "2/3").len(), 1, "the next pin is shown");
+
+    click(&find_label(&h.app, "Pinned message options")[0]);
+    let unpin = find_label(&h.app, "Unpin");
+    assert!(!unpin.is_empty());
+    click(&unpin[0]);
+    assert_eq!(log.borrow().last().unwrap(), "pin-unpin b");
+}
+
+#[test]
+fn a_single_pin_has_no_arrows() {
+    let h = Harness::new();
+    wire(&h);
+    h.select(BACKEND);
+    h.engine.test_set_pins(BACKEND, pins()[..1].to_vec());
+    assert_eq!(find_label(&h.app, "1/1").len(), 1);
+    assert!(find_label(&h.app, "Next pinned message").is_empty());
+}
+
+#[test]
+fn jumping_to_a_pinned_message_scrolls_there_and_flashes_the_row() {
+    let h = Harness::new();
+    wire(&h);
+    h.select(BACKEND);
+    let first = h
+        .engine
+        .test_store(|s| s.messages_before(BACKEND, None, 100).unwrap())
+        .first()
+        .unwrap()
+        .id
+        .clone();
+    let ticks = h.app.get_divider_tick();
+    h.runner()(Cmd::People(PeopleCmd::PinJump(first.clone())));
+    assert!(h.app.get_divider_tick() > ticks, "the list scrolls");
+    let rows: Vec<_> = h.app.get_messages().iter().collect();
+    let flashed: Vec<_> = rows
+        .iter()
+        .filter(|m| m.flash)
+        .map(|m| m.id.to_string())
+        .collect();
+    assert_eq!(flashed, vec![first]);
+}
+
+// ---- 6.7 read receipts -------------------------------------------------------
+
+fn my_message(conv: &str, id: &str, ms: i64) -> MessageRow {
+    MessageRow {
+        id: id.into(),
+        conversation_id: conv.into(),
+        parent_id: None,
+        sender_mri: demo::ME.into(),
+        sender_name: "Me".into(),
+        compose_ms: ms,
+        edited_ms: None,
+        deleted: false,
+        message_type: "RichText/Html".into(),
+        content_html: "<p>from me</p>".into(),
+        client_message_id: None,
+        reactions_json: "{}".into(),
+    }
+}
+
+fn horizon(who: &str, id: &str) -> Horizon {
+    Horizon {
+        mri: who.into(),
+        last_read_id: id.into(),
+        read_ms: 0,
+    }
+}
+
+fn receipts(app: &AppWindow) -> Vec<(String, String)> {
+    app.get_messages()
+        .iter()
+        .filter(|m| !m.receipt.is_empty())
+        .map(|m| (m.id.to_string(), m.receipt.to_string()))
+        .collect()
+}
+
+#[test]
+fn my_newest_message_shows_a_check_then_an_eye_when_the_other_person_has_read_it() {
+    let h = Harness::new();
+    wire(&h);
+    let now = teams_proto::time::now_ms();
+    h.engine.test_store(|s| {
+        s.upsert_message(&my_message(
+            ONE_ON_ONE,
+            &(now - 2000).to_string(),
+            now - 2000,
+        ))
+        .unwrap();
+        s.upsert_message(&my_message(
+            ONE_ON_ONE,
+            &(now - 1000).to_string(),
+            now - 1000,
+        ))
+        .unwrap();
+    });
+    h.select(ONE_ON_ONE);
+    let newest = (now - 1000).to_string();
+    assert_eq!(
+        receipts(&h.app),
+        vec![(newest.clone(), "sent".to_string())],
+        "only my newest message has a receipt"
+    );
+    assert_eq!(
+        touch(&h.app, "MessageRow::receipt-mark")
+            .accessible_label()
+            .unwrap(),
+        "Sent"
+    );
+
+    // The other person read up to an older message: still just sent.
+    h.engine.test_set_horizons(
+        ONE_ON_ONE,
+        vec![horizon(&mri(2), &(now - 2000).to_string())],
+    );
+    h.runner()(Cmd::People(PeopleCmd::Receipts(true)));
+    assert_eq!(receipts(&h.app), vec![(newest.clone(), "sent".to_string())]);
+
+    h.engine
+        .test_set_horizons(ONE_ON_ONE, vec![horizon(&mri(2), &newest)]);
+    h.runner()(Cmd::People(PeopleCmd::Receipts(true)));
+    assert_eq!(receipts(&h.app), vec![(newest, "seen".to_string())]);
+    assert_eq!(
+        touch(&h.app, "MessageRow::receipt-mark")
+            .accessible_label()
+            .unwrap(),
+        "Seen"
+    );
+}
+
+#[test]
+fn a_group_receipt_names_who_has_seen_it() {
+    let h = Harness::new();
+    wire(&h);
+    h.engine
+        .test_set_members(BACKEND, &[demo::ME, &mri(3), &mri(4)]);
+    h.select(BACKEND);
+    let all: Vec<_> = h.app.get_messages().iter().collect();
+    let mine = all.iter().rfind(|m| m.mine).unwrap().id.to_string();
+    h.engine.test_set_horizons(
+        BACKEND,
+        vec![horizon(&mri(3), &mine), horizon(&mri(4), &mine)],
+    );
+    h.runner()(Cmd::People(PeopleCmd::Receipts(true)));
+    assert_eq!(receipts(&h.app), vec![(mine, "seen".to_string())]);
+    let row = h
+        .app
+        .get_messages()
+        .iter()
+        .find(|m| m.receipt == "seen")
+        .unwrap();
+    assert_eq!(row.receipt_names, "Sara Hassan, Omar Khaled");
+    assert_eq!(
+        touch(&h.app, "MessageRow::receipt-mark")
+            .accessible_label()
+            .unwrap(),
+        "Seen by Sara Hassan, Omar Khaled"
+    );
+}
+
+#[test]
+fn the_read_receipts_setting_turns_the_marks_off_and_on() {
+    let h = Harness::new();
+    wire(&h);
+    let now = teams_proto::time::now_ms();
+    h.engine.test_store(|s| {
+        s.upsert_message(&my_message(ONE_ON_ONE, &(now - 500).to_string(), now - 500))
+            .unwrap();
+    });
+    h.select(ONE_ON_ONE);
+    assert!(ps(&h.app).get_receipts_on());
+    assert_eq!(receipts(&h.app).len(), 1);
+
+    h.runner()(Cmd::People(PeopleCmd::Receipts(false)));
+    assert!(!ps(&h.app).get_receipts_on());
+    assert!(receipts(&h.app).is_empty());
+    h.runner()(Cmd::People(PeopleCmd::Receipts(true)));
+    assert!(ps(&h.app).get_receipts_on());
+    assert_eq!(receipts(&h.app).len(), 1);
+}
+
+#[test]
+fn the_composer_menu_has_the_read_receipts_switch() {
+    let app = app_with_messages(vec![]);
+    let log = record(&app);
+    click(&toolbar(&app)[3]); // the "…" button
+    let on = find_label(&app, "Read receipts");
+    assert!(!on.is_empty());
+    click(&on[0]);
+    assert_eq!(*log.borrow(), vec!["receipts off"]);
+}
+
+#[test]
+fn notes_and_channels_get_no_receipts() {
+    let h = Harness::new();
+    wire(&h);
+    h.select(NOTES);
+    assert!(receipts(&h.app).is_empty());
+    h.select("19:team1@thread.tacv2");
+    assert!(receipts(&h.app).is_empty());
+}

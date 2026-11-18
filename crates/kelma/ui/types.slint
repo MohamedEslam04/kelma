@@ -13,6 +13,8 @@ export struct ChatRow {
     rtl-preview: bool,
     favorite: bool,
     draft: bool, // preview is an unsent draft
+    mention: bool, // an unread message mentions me
+    group: bool,   // a group chat (the item menu offers Leave)
 }
 
 export struct ReactionItem { key: string, emoji: string, count: int, mine: bool, names: string }
@@ -57,7 +59,27 @@ export struct Msg {
     selected: bool,        // ticked in multi-select mode
     failed: bool,          // could not be sent: show Retry and Delete
     new-above: bool,       // draw the "New messages" divider above this row
+    sender-id: string,     // MRI of the sender, for the profile card
+    mentions-me: bool,     // the message @mentions me (or everyone)
+    receipt: string,       // on my newest message: "" | "sent" | "seen"
+    receipt-names: string, // who has seen it
+    flash: bool,           // the row a jump (pinned banner) landed on
 }
+
+// A person (or, for the @mention picker, a team, channel or "Everyone" entry) in a people list.
+export struct PersonItem {
+    id: string,
+    name: string,
+    subtitle: string,
+    initials: string,
+    color: color,
+    avatar: image,
+    has-avatar: bool,
+    kind: string, // "person" | "team" | "channel" | "everyone"
+}
+
+// One pinned message of the open chat, for the banner.
+export struct PinnedItem { id: string, sender: string, preview: string }
 
 export struct ChannelRow { id: string, name: string, unread: bool }
 export struct TeamRow { id: string, name: string, initials: string, color: color, expanded: bool, channels: [ChannelRow] }

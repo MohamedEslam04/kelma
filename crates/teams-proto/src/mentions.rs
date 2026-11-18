@@ -110,6 +110,26 @@ pub fn send_body_with_mentions(
     b
 }
 
+/// Body for a send that may carry mentions and the `qtdMsgs` of a quote reply, with a
+/// caller-chosen client message id (the outbox retries with the same id).
+pub fn outgoing_body(
+    html: &str,
+    display_name: &str,
+    client_message_id: &str,
+    subject: Option<&str>,
+    mentions: &[Mention],
+    qtd_msgs: Option<&str>,
+) -> Value {
+    let mut b = send_body_with_mentions(html, display_name, client_message_id, subject, mentions);
+    if let Some(q) = qtd_msgs {
+        if !b["properties"].is_object() {
+            b["properties"] = json!({});
+        }
+        b["properties"]["qtdMsgs"] = Value::String(q.to_string());
+    }
+    b
+}
+
 /// Request body for editing a message that has mentions. The edit replaces `properties`.
 pub fn edit_body_with_mentions(html: &str, display_name: &str, mentions: &[Mention]) -> Value {
     let mut b = json!({
@@ -191,6 +211,37 @@ impl Client {
         Ok(cmid)
     }
 
+    /// Like [`Client::send_message_with_mentions`] with a caller-chosen client message id, and
+    /// optionally the `qtdMsgs` of a quote reply. Used by the outbox, which retries by id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_message_with_mentions_as(
+        &self,
+        conversation_id: &str,
+        html: &str,
+        display_name: &str,
+        subject: Option<&str>,
+        mentions: &[Mention],
+        qtd_msgs: Option<&str>,
+        client_message_id: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/v1/users/ME/conversations/{}/messages",
+            self.chat_service().await,
+            encode_conversation(conversation_id)
+        );
+        let body = outgoing_body(
+            html,
+            display_name,
+            client_message_id,
+            subject,
+            mentions,
+            qtd_msgs,
+        );
+        self.json("send", Method::POST, &url, Some(&body))
+            .await
+            .map(|_| ())
+    }
+
     /// Edits one of our messages and resends its mentions (an edit would otherwise drop them).
     pub async fn edit_message_with_mentions(
         &self,
@@ -268,6 +319,18 @@ mod tests {
         assert!(b["properties"]["mentions"].is_string());
         let none = send_body_with_mentions("x", "Me", "1", None, &[]);
         assert!(none.get("properties").is_none());
+    }
+
+    #[test]
+    fn outgoing_body_keeps_the_client_id_and_adds_the_quote_property() {
+        let ms = [mention(0, "8:orgid:aaa", "Sara", MentionKind::Person)];
+        let b = outgoing_body("<p>x</p>", "Me", "77", None, &ms, Some(r#"[{"id":"1"}]"#));
+        assert_eq!(b["clientmessageid"], "77");
+        assert!(b["properties"]["mentions"].is_string());
+        assert_eq!(b["properties"]["qtdMsgs"], r#"[{"id":"1"}]"#);
+        let quote_only = outgoing_body("x", "Me", "1", None, &[], Some("q"));
+        assert_eq!(quote_only["properties"]["qtdMsgs"], "q");
+        assert!(quote_only["properties"].get("mentions").is_none());
     }
 
     #[test]

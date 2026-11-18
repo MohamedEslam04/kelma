@@ -2,6 +2,8 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Edited, ComposerEmoji, PendingAttachment } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
+import { PeopleStore } from "people.slint";
+import { MentionApi, MentionPicker } from "mention_picker.slint";
 
 // Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
 export global EmojiApi {
@@ -70,8 +72,32 @@ export component Composer inherits Rectangle {
     property <string> sug-dismissed; // the draft for which Escape closed the popup
     property <bool> sug-open: root.suggestions.length > 0 && root.sug-dismissed != root.draft;
 
+    // @mentions: the names picked so far (one per line), the `@query` before the cursor and the
+    // picker. A picked name is plain `@Name` text; one Backspace after it removes it whole.
+    property <string> mention-names;
+    property <int> mention-index: 0;
+    property <string> mention-dismissed; // the draft for which Escape closed the picker
+    property <bool> mention-active: MentionApi.active(root.draft, composer-input.cursor-position-byte-offset);
+    property <string> mention-query: MentionApi.query(root.draft, composer-input.cursor-position-byte-offset);
+    property <bool> mention-open: root.mention-active && PeopleStore.mention-items.length > 0 && root.mention-dismissed != root.draft;
+
     changed cursor-tick => { composer-input.set-selection-offsets(2000000000, 2000000000); }
     changed suggestions => { root.sug-index = 0; }
+    changed mention-active => { if root.mention-active { PeopleStore.command("mention-query", root.mention-query); } }
+    changed mention-query => { if root.mention-active { PeopleStore.command("mention-query", root.mention-query); } }
+    changed draft => { if root.draft == "" { root.mention-names = ""; } }
+    property <int> mention-count: PeopleStore.mention-items.length;
+    changed mention-count => { root.mention-index = 0; }
+
+    function pick-mention(i: int) {
+        if i >= 0 && i < PeopleStore.mention-items.length {
+            root.put(MentionApi.complete(root.draft, composer-input.cursor-position-byte-offset, "@" + PeopleStore.mention-items[i].name + " "));
+            root.mention-names += PeopleStore.mention-items[i].name + "\n";
+            // The text now ends with the name and a space: keep the picker closed until it changes.
+            root.mention-dismissed = root.draft;
+            PeopleStore.command("mention-pick", PeopleStore.mention-items[i].id);
+        }
+    }
 
     function put(e: Edited) {
         composer-input.text = e.text;
@@ -194,6 +220,30 @@ export component Composer inherits Rectangle {
                             if event.text == "v" && (event.modifiers.control || event.modifiers.meta) {
                                 root.paste-image();
                             }
+                            if root.mention-open {
+                                if event.text == Key.DownArrow {
+                                    root.mention-index = min(root.mention-index + 1, PeopleStore.mention-items.length - 1);
+                                    return accept;
+                                }
+                                if event.text == Key.UpArrow {
+                                    root.mention-index = max(root.mention-index - 1, 0);
+                                    return accept;
+                                }
+                                if event.text == Key.Escape {
+                                    root.mention-dismissed = root.draft;
+                                    return accept;
+                                }
+                                if event.text == Key.Tab || (event.text == Key.Return && !event.modifiers.shift) {
+                                    root.pick-mention(root.mention-index);
+                                    return accept;
+                                }
+                            }
+                            if event.text == Key.Backspace && root.mention-names != "" && composer-input.anchor-position-byte-offset == composer-input.cursor-position-byte-offset {
+                                if MentionApi.backspace(root.draft, composer-input.cursor-position-byte-offset, root.mention-names).cursor >= 0 {
+                                    root.put(MentionApi.backspace(root.draft, composer-input.cursor-position-byte-offset, root.mention-names));
+                                    return accept;
+                                }
+                            }
                             if root.sug-open {
                                 if event.text == Key.DownArrow {
                                     root.sug-index = min(root.sug-index + 1, root.suggestions.length - 1);
@@ -266,6 +316,15 @@ export component Composer inherits Rectangle {
                 background: composer-input.has-focus ? Theme.accent : transparent;
             }
         }
+    }
+
+    if root.mention-open: MentionPicker {
+        z: 100;
+        x: 20px;
+        y: -self.height - 4px;
+        items: PeopleStore.mention-items;
+        index: root.mention-index;
+        picked(i) => { root.pick-mention(i); }
     }
 
     if root.sug-open: Rectangle {
@@ -402,7 +461,7 @@ export component Composer inherits Rectangle {
         x: parent.width - 330px;
         y: parent.height - 190px;
         width: 260px;
-        height: 110px;
+        height: 150px;
         Rectangle {
             background: #2b2b2b;
             border-radius: 6px;
@@ -428,6 +487,26 @@ export component Composer inherits Rectangle {
                             root.enter-sends = i == 0;
                             root.set-enter-sends(i == 0);
                         }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                receipts-opt := Rectangle {
+                    height: 32px;
+                    border-radius: 4px;
+                    background: receipts-touch.has-hover ? Theme.surface-hover : transparent;
+                    accessible-role: checkbox;
+                    accessible-label: "Read receipts";
+                    accessible-checkable: true;
+                    accessible-checked: PeopleStore.receipts-on;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        spacing: 8px;
+                        Text { text: PeopleStore.receipts-on ? "☑" : "☐"; color: Theme.accent; vertical-alignment: center; }
+                        Text { text: "Read receipts"; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+                    }
+                    receipts-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { PeopleStore.command("receipts", PeopleStore.receipts-on ? "off" : "on"); }
                     }
                 }
             }

@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(crate) mod activity;
+mod people;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
@@ -54,6 +55,8 @@ fn chat_row(c: ChatData) -> ChatRow {
         rtl_preview: c.rtl_preview,
         favorite: c.favorite,
         draft: c.draft,
+        mention: c.mention,
+        group: c.group,
     }
 }
 
@@ -126,6 +129,11 @@ fn msg(m: MsgData) -> Msg {
         selected: m.selected,
         failed: m.failed,
         new_above: m.new_above,
+        sender_id: m.sender_id.into(),
+        mentions_me: m.mentions_me,
+        receipt: m.receipt.into(),
+        receipt_names: m.receipt_names.into(),
+        flash: m.flash,
     }
 }
 
