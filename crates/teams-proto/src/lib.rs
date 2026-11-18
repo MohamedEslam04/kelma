@@ -21,6 +21,7 @@ pub mod model;
 pub mod mt;
 pub mod people;
 pub mod presence;
+pub mod receipts;
 pub mod threads;
 pub mod time;
 pub mod trouter;
