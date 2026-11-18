@@ -17,6 +17,7 @@
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
 //! kelma-cli drive <ls [path]|search q|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir name|rm id|selftest>
 //! kelma-cli tail                  print live events until Ctrl+C
+//! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
@@ -335,6 +336,14 @@ async fn main() -> Result<()> {
             );
             cfg.self_mri = Some(me);
             paths.save_config(&cfg)?;
+        }
+        Some("diag") => {
+            let out = diag::report_from_args(&paths, env!("CARGO_PKG_VERSION"), &args[1..])?;
+            println!(
+                "Wrote {}\nIt was made locally and nothing was uploaded. Tokens, emails, ids and \
+                 tenant details are redacted; skim it before you share it.",
+                out.display()
+            );
         }
         Some("logout") => {
             let cfg = paths.load_config()?;
@@ -826,6 +835,7 @@ async fn main() -> Result<()> {
                 "usage: kelma-cli <command>\n\
                    login\n\
                    logout\n\
+                   diag [--log FILE] [--out PATH]\n\
                    chats [n]\n\
                    teams\n\
                    calendar [days]\n\

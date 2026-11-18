@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mohamedeslam04.kelma</id>
+  <name>kelma</name>
+  <summary>Lightweight native client for Microsoft Teams chat (unofficial)</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.mohamedeslam04">
+    <name>kelma contributors</name>
+  </developer>
+  <description>
+    <p>
+      kelma is a small, fast Linux client for Microsoft Teams chat, channels, activity, calendar
+      and files. It is built with Rust and Slint and does not embed a browser.
+    </p>
+    <p>
+      It is not affiliated with or endorsed by Microsoft. kelma collects no telemetry: the
+      "Report a problem" action writes a local, redacted file and never uploads it.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.mohamedeslam04.kelma.desktop</launchable>
+  <url type="homepage">https://github.com/MohamedEslam04/kelma</url>
+  <url type="bugtracker">https://github.com/MohamedEslam04/kelma/issues</url>
+  <categories>
+    <category>Network</category>
+    <category>InstantMessaging</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>kelma</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-11-19"/>
+  </releases>
+</component>

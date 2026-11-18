@@ -191,7 +191,30 @@ fn configure_fonts() {
     }
 }
 
+/// `kelma --report-problem [--log FILE] [--out PATH]`: writes the local, redacted problem
+/// bundle (nothing is uploaded), prints where it is and shows a desktop notification. It runs
+/// before any window exists so it works even when the UI is what is broken.
+fn report_problem(args: &[String]) -> anyhow::Result<()> {
+    let paths = session::Paths::new()?;
+    let out = diag::report_from_args(&paths, env!("CARGO_PKG_VERSION"), args)?;
+    println!("Wrote {}", out.display());
+    let _ = notify_rust::Notification::new()
+        .appname("kelma")
+        .summary("Problem report saved")
+        .body(&format!(
+            "{}\nStored on this computer only. Tokens and ids are redacted.",
+            out.display()
+        ))
+        .icon("dialog-information")
+        .show();
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--report-problem") {
+        return report_problem(&args[1..]);
+    }
     configure_fonts();
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -207,7 +230,8 @@ fn main() -> anyhow::Result<()> {
         .backend_name("winit".into())
         .renderer_name(renderer)
         .select()?;
-    let _ = slint::set_xdg_app_id("kelma");
+    // Inside Flatpak the desktop file is named after the app id, so the window must use it.
+    let _ = slint::set_xdg_app_id(std::env::var("FLATPAK_ID").unwrap_or_else(|_| "kelma".into()));
 
     let window = AppWindow::new()?;
     composer::wire(&window);
