@@ -188,6 +188,35 @@ fn mark_read_is_monotonic_and_clears_unread() {
 }
 
 #[test]
+fn mark_unread_lowers_the_horizon_and_survives_until_read() {
+    let s = Store::open_in_memory().unwrap();
+    let mut c = conv("c", ConvKind::Group, "t", 1);
+    c.read_horizon_ms = 500;
+    s.upsert_conversation(&c).unwrap();
+    assert_eq!(s.unread_mark("c").unwrap(), None);
+
+    s.mark_unread("c", 300).unwrap();
+    let got = s.conversation("c").unwrap().unwrap();
+    assert!(got.unread);
+    assert_eq!(
+        got.read_horizon_ms, 300,
+        "horizon moves back to before the message"
+    );
+    assert_eq!(s.unread_mark("c").unwrap(), Some(300));
+
+    // Reading clears the mark.
+    s.mark_read("c", 600).unwrap();
+    assert_eq!(s.unread_mark("c").unwrap(), None);
+    let got = s.conversation("c").unwrap().unwrap();
+    assert!(!got.unread);
+    assert_eq!(got.read_horizon_ms, 600);
+
+    // Unknown conversation: no row to change, and no mark left behind.
+    s.mark_unread("missing", 1).unwrap();
+    assert_eq!(s.unread_mark("missing").unwrap(), None);
+}
+
+#[test]
 fn touch_conversation_only_moves_forward() {
     let s = Store::open_in_memory().unwrap();
     s.upsert_conversation(&conv("c", ConvKind::Group, "t", 100))
@@ -710,6 +739,28 @@ fn outbox_retry_requeues_failed_and_keeps_attempts() {
     s.mark_sending("a").unwrap();
     s.retry("a").unwrap();
     assert_eq!(s.outbox_for("c").unwrap()[0].state, OutboxState::Sending);
+}
+
+#[test]
+fn outbox_requeue_returns_a_sending_item_without_counting_an_attempt() {
+    let s = Store::open_in_memory().unwrap();
+    s.enqueue(&item("a", "c", 1)).unwrap();
+    s.enqueue(&item("b", "c", 2)).unwrap();
+    s.mark_sending("a").unwrap();
+    assert_eq!(outbox_ids(&s.outbox_due().unwrap()), ["b"]);
+
+    s.requeue("a").unwrap();
+    assert_eq!(
+        outbox_ids(&s.outbox_due().unwrap()),
+        ["a", "b"],
+        "keeps its place"
+    );
+    assert_eq!(s.outbox_for("c").unwrap()[0].attempts, 0);
+
+    // Failed items stay failed: only Retry brings them back.
+    s.mark_failed("b", "boom").unwrap();
+    s.requeue("b").unwrap();
+    assert_eq!(s.outbox_for("c").unwrap()[1].state, OutboxState::Failed);
 }
 
 #[test]

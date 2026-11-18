@@ -47,6 +47,8 @@ export struct Msg {
     pending: bool,
     saved: bool,           // in the local saved list
     selected: bool,        // ticked in multi-select mode
+    failed: bool,          // could not be sent: show Retry and Delete
+    new-above: bool,       // draw the "New messages" divider above this row
 }
 
 export struct ChannelRow { id: string, name: string, unread: bool }

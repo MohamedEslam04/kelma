@@ -34,7 +34,7 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 |---|---|---|
 | Conversations | `GET /v1/users/ME/conversations?view=msnp24Equivalent&pageSize=200&startTime=1&targetType=…` | ✅ |
 | History | `GET /v1/users/ME/conversations/{id}/messages?view=msnp24Equivalent\|supportsMessageProperties&pageSize=N&startTime=1[&endTime=ms]` | ✅ |
-| Send | `POST …/{id}/messages` `{clientmessageid, content, messagetype:"RichText/Html", contenttype:"text", imdisplayname[, properties.subject]}` | ✅ (self notes) |
+| Send | `POST …/{id}/messages` `{clientmessageid, content, messagetype:"RichText/Html", contenttype:"text", imdisplayname[, properties.subject]}` | ✅ (self notes). Sending the same `clientmessageid` twice posts two messages (checked live in `48:notes`), so a retry must first look for the echo |
 | Edit | `PUT …/{id}/messages/{msgId}` `{content, messagetype, contenttype, imdisplayname}` | ✅ (self notes) |
 | Delete | `DELETE …/{id}/messages/{msgId}?behavior=softDelete` | ✅ (self notes) |
 | React | `PUT …/{id}/messages/{msgId}/properties?name=emotions` `{"emotions":{"key":"like","value":<ms>}}` | ✅ (self notes) |

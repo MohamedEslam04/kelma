@@ -25,6 +25,17 @@ pub enum Error {
 /// Result alias.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Where a chat opens ("When I open a chat, take me to" in Teams settings).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenChatAt {
+    /// The first unread message (at the "New messages" divider); the newest when all is read.
+    #[default]
+    FirstUnread,
+    /// Always the newest message.
+    Newest,
+}
+
 /// Non-secret settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
@@ -40,6 +51,9 @@ pub struct Config {
     /// Our display name once known.
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Where a chat opens. Missing in older config files.
+    #[serde(default)]
+    pub open_chat_at: OpenChatAt,
 }
 
 impl Default for Config {
@@ -50,6 +64,7 @@ impl Default for Config {
             epid: teams_proto::client::new_epid(),
             self_mri: None,
             display_name: None,
+            open_chat_at: OpenChatAt::default(),
         }
     }
 }
@@ -176,5 +191,18 @@ mod tests {
         let raw = std::fs::read_to_string(dir.join("config/config.json")).unwrap();
         assert!(!raw.contains("refresh"), "config must not contain tokens");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn open_chat_at_defaults_for_old_config_files_and_roundtrips() {
+        let old = r#"{"account":"default","tenant":"organizations","epid":"e"}"#;
+        let c: Config = serde_json::from_str(old).unwrap();
+        assert_eq!(c.open_chat_at, OpenChatAt::FirstUnread);
+
+        let c: Config =
+            serde_json::from_str(&old.replace('}', r#","open_chat_at":"newest"}"#)).unwrap();
+        assert_eq!(c.open_chat_at, OpenChatAt::Newest);
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
     }
 }

@@ -124,6 +124,10 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn unread_mark_key(conversation_id: &str) -> String {
+    format!("unread_mark:{conversation_id}")
+}
+
 fn limit_i64(limit: usize) -> i64 {
     i64::try_from(limit).unwrap_or(i64::MAX)
 }
@@ -198,7 +202,8 @@ impl Store {
         Ok(())
     }
 
-    /// Raises the read horizon to `max(old, horizon_ms)` and clears `unread`.
+    /// Raises the read horizon to `max(old, horizon_ms)`, clears `unread` and
+    /// any manual unread mark.
     pub fn mark_read(&self, id: &str, horizon_ms: i64) -> Result<()> {
         self.conn
             .prepare_cached(
@@ -206,7 +211,34 @@ impl Store {
                      read_horizon_ms = max(read_horizon_ms, ?2) WHERE id = ?1",
             )?
             .execute(params![id, horizon_ms])?;
+        self.conn
+            .prepare_cached("DELETE FROM kv WHERE key = ?1")?
+            .execute([unread_mark_key(id)])?;
         Ok(())
+    }
+
+    /// Manual "Mark as unread": sets `unread` and moves the read horizon back
+    /// to `horizon_ms` (the message before the first unread one). The mark is
+    /// remembered so a sync does not undo it; [`Store::mark_read`] clears it.
+    /// Does nothing for an unknown conversation.
+    pub fn mark_unread(&self, id: &str, horizon_ms: i64) -> Result<()> {
+        let changed = self
+            .conn
+            .prepare_cached(
+                "UPDATE conversations SET unread = 1, read_horizon_ms = ?2 WHERE id = ?1",
+            )?
+            .execute(params![id, horizon_ms])?;
+        if changed > 0 {
+            self.set_kv(&unread_mark_key(id), &horizon_ms.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// The horizon of a manual unread mark, if the conversation has one.
+    pub fn unread_mark(&self, id: &str) -> Result<Option<i64>> {
+        Ok(self
+            .get_kv(&unread_mark_key(id))?
+            .and_then(|v| v.parse().ok()))
     }
 
     /// Conversations ordered by `last_activity_ms` descending (id breaks ties).
@@ -697,6 +729,18 @@ impl Store {
             .prepare_cached(
                 "UPDATE outbox SET state = 'sending' \
                  WHERE client_message_id = ?1 AND state = 'queued'",
+            )?
+            .execute([client_message_id])?;
+        Ok(())
+    }
+
+    /// `Sending` back to `Queued` after a network error: the send did not fail, it never
+    /// happened, so the attempt is not counted. Other states are left alone.
+    pub fn requeue(&self, client_message_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "UPDATE outbox SET state = 'queued' \
+                 WHERE client_message_id = ?1 AND state = 'sending'",
             )?
             .execute([client_message_id])?;
         Ok(())

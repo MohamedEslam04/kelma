@@ -3,8 +3,7 @@
 use super::Engine;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::time::Duration;
-use store::MessageRow;
+use store::OutboxKind;
 use teams_proto::time::now_ms;
 
 impl Engine {
@@ -17,17 +16,16 @@ impl Engine {
         if text.is_empty() {
             return Ok(());
         }
-        let (target, reply, editing, current) = {
+        let (target, reply, editing) = {
             let mut v = self.view.lock().unwrap();
             (
                 self.current_target_locked(&v),
                 v.reply_to.take(),
                 v.editing.take(),
-                v.current.clone(),
             )
         };
         self.ui.reply_bar(String::new(), String::new(), false);
-        let (Some(target), Some(current)) = (target, current) else {
+        let Some(target) = target else {
             return Ok(());
         };
         if let Some(id) = editing {
@@ -63,88 +61,21 @@ impl Engine {
             }
             None => render::text_to_teams_html(&text),
         };
-        let pending_id = format!("pending-{}", now_ms());
-        let thread_root = self.view.lock().unwrap().thread_root.clone();
-        let row = MessageRow {
-            id: pending_id.clone(),
-            conversation_id: current.clone(),
-            parent_id: thread_root,
-            sender_mri: self.me.clone(),
-            sender_name: self.my_name.clone(),
-            compose_ms: now_ms(),
-            edited_ms: None,
-            deleted: false,
-            message_type: "RichText/Html".into(),
-            content_html: html.clone(),
-            client_message_id: None,
-            reactions_json: json!({"s": if subject.is_empty() { Value::Null } else { Value::String(subject.clone()) }}).to_string(),
-        };
-        self.view
-            .lock()
-            .unwrap()
-            .pending
-            .push((pending_id.clone(), row));
-        self.mark(|d| {
-            d.messages = true;
-            d.scroll = true;
-        });
-        let subj = (!subject.is_empty()).then_some(subject.as_str());
-        let sent = match &reply {
-            Some(r) => {
-                let qtd = teams_proto::chatsvc::quoted_messages_property(
-                    &r.id,
-                    &r.sender_mri,
-                    r.compose_ms,
-                );
-                self.client
-                    .send_quote_reply(&target, &html, &self.my_name, &qtd)
-                    .await
-            }
-            None => {
-                self.client
-                    .send_message(&target, &html, &self.my_name, subj)
-                    .await
-            }
-        };
-        match sent {
-            Ok(cmid) => {
-                let mut v = self.view.lock().unwrap();
-                if let Some(p) = v.pending.iter_mut().find(|(id, _)| id == &pending_id) {
-                    p.0 = cmid;
-                }
-                drop(v);
-                self.ui.clear_subject();
-                let st = self.store.lock().unwrap();
-                let _ = st.touch_conversation(&current, now_ms(), &format!("You: {text}"), false);
-                drop(st);
-                self.mark(|d| d.chats = true);
-                // Fallback in case the live echo never arrives.
-                let e = self.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(8)).await;
-                    let stale = e.view.lock().unwrap().pending.iter().any(|(c, r)| {
-                        r.conversation_id == current && c.chars().all(|ch| ch.is_ascii_digit())
-                    });
-                    if stale {
-                        e.fetch_latest(&target).await;
-                        e.view.lock().unwrap().pending.retain(|(c, r)| {
-                            !(r.conversation_id == current
-                                && c.chars().all(|ch| ch.is_ascii_digit()))
-                        });
-                        e.mark(|d| d.messages = true);
-                    }
-                });
-            }
-            Err(err) => {
-                self.view
-                    .lock()
-                    .unwrap()
-                    .pending
-                    .retain(|(id, _)| id != &pending_id);
-                self.ui.set_draft(text);
-                self.mark(|d| d.messages = true);
-                return Err(err.into());
-            }
+        let item = self.new_outbox_item(
+            target,
+            OutboxKind::Text,
+            html,
+            (!subject.is_empty()).then(|| subject.clone()),
+            reply.map(|r| {
+                // The quote block is in the html; this property links it to the original.
+                teams_proto::chatsvc::quoted_messages_property(&r.id, &r.sender_mri, r.compose_ms)
+            }),
+            None,
+        );
+        self.ui.clear_subject();
+        if let Err(err) = self.enqueue_and_flush(item).await {
+            self.ui.set_draft(text);
+            return Err(err);
         }
         Ok(())
     }
@@ -226,10 +157,44 @@ impl Engine {
         Ok(())
     }
 
-    pub(super) async fn attach_image(self: &Arc<Self>) -> anyhow::Result<()> {
+    /// Copies a picked file into the cache (so it outlives the file dialog, and a restart) and
+    /// queues it in the outbox.
+    async fn queue_attachment(
+        self: &Arc<Self>,
+        kind: OutboxKind,
+        name: &str,
+        data: Vec<u8>,
+    ) -> anyhow::Result<()> {
         let Some(target) = self.current_target() else {
             return Ok(());
         };
+        let item = self.new_outbox_item(target, kind, String::new(), None, None, None);
+        let dir = session::Paths::new()?
+            .cache_dir
+            .join("outbox")
+            .join(&item.client_message_id);
+        std::fs::create_dir_all(&dir)?;
+        // Keep only the file name: it is shown in the row and used as the upload name.
+        let name = std::path::Path::new(name)
+            .file_name()
+            .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
+        let path = dir.join(name);
+        std::fs::write(&path, data)?;
+        let item = store::OutboxItem {
+            payload_path: Some(path.to_string_lossy().into_owned()),
+            ..item
+        };
+        if let Err(err) = self.enqueue_and_flush(item).await {
+            let _ = std::fs::remove_dir_all(dir);
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    pub(super) async fn attach_image(self: &Arc<Self>) -> anyhow::Result<()> {
+        if self.current_target().is_none() {
+            return Ok(());
+        }
         let Some(file) = rfd::AsyncFileDialog::new()
             .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
             .pick_file()
@@ -238,46 +203,20 @@ impl Engine {
             return Ok(());
         };
         let data = file.read().await;
-        let (w, h) = image::load_from_memory(&data)
-            .map(|i| (i.width(), i.height()))
-            .unwrap_or((400, 300));
-        let (w, h) = if w > 400 {
-            (400, h * 400 / w.max(1))
-        } else {
-            (w, h)
-        };
-        let conv_only = target
-            .split(";messageid=")
-            .next()
-            .unwrap_or(&target)
-            .to_string();
-        let id = self
-            .client
-            .upload_image(&conv_only, &file.file_name(), data)
-            .await?;
-        let html = teams_proto::ams::image_html(&id, w, h);
-        self.client
-            .send_message(&target, &html, &self.my_name, None)
-            .await?;
-        self.ui.banner(String::new());
-        Ok(())
+        self.queue_attachment(OutboxKind::Image, &file.file_name(), data)
+            .await
     }
 
-    /// Picks a file, uploads it to OneDrive, shares it with the chat and posts it.
+    /// Picks a file; it is uploaded to OneDrive, shared with the chat and posted from the outbox.
     pub(super) async fn attach_file(self: &Arc<Self>) -> anyhow::Result<()> {
-        let Some(target) = self.current_target() else {
+        if self.current_target().is_none() {
             return Ok(());
-        };
+        }
         let Some(file) = rfd::AsyncFileDialog::new().pick_file().await else {
             return Ok(());
         };
-        let name = file.file_name();
-        self.ui.banner(format!("Uploading {name}…"));
         let data = file.read().await;
-        self.client
-            .send_file(&target, &name, data, &self.my_name)
-            .await?;
-        self.ui.banner(String::new());
-        Ok(())
+        self.queue_attachment(OutboxKind::File, &file.file_name(), data)
+            .await
     }
 }

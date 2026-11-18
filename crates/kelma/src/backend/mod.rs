@@ -7,7 +7,7 @@
 use crate::data::Pixels;
 use crate::ui::UiHandle;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
@@ -15,9 +15,11 @@ use teams_proto::Client;
 
 mod actions;
 mod live;
+mod outbox;
 mod render;
 mod send;
 mod sync;
+mod unread;
 mod util;
 
 /// Commands sent by the UI.
@@ -46,6 +48,7 @@ pub enum Cmd {
     CopyLink(String),
     ToggleSave(String),
     Pin(String),
+    /// Message menu "Mark as unread": the chat turns unread from this message on.
     MarkUnread(String),
     /// Forward dialog opened for one message, or for the multi-select ticks when `None`.
     ForwardBegin(Option<String>),
@@ -56,6 +59,15 @@ pub enum Cmd {
     SelectBegin(String),
     ToggleSelect(String),
     SelectCancel,
+    /// The list reports whether it sits at the newest message.
+    AtBottom(bool),
+    /// Failed row: send it again (the row id).
+    RetrySend(String),
+    /// Failed row: forget it (the row id).
+    DiscardSend(String),
+    /// Chat list "Mark as unread": the chat turns unread from its newest message on.
+    MarkChatUnread(String),
+    MarkAllRead,
 }
 
 #[derive(Default)]
@@ -68,6 +80,7 @@ struct View {
     limit: usize,
     reply_to: Option<MessageRow>,
     editing: Option<String>,
+    /// Sent messages (client message id, optimistic row) waiting for their echo.
     pending: Vec<(String, MessageRow)>,
     typing: HashMap<String, (String, Instant)>,
     last_typing_sent: Option<Instant>,
@@ -79,6 +92,19 @@ struct View {
     forward: Option<ForwardState>,
     /// Chat marked unread while open; the list shows it until another chat is opened.
     keep_unread: Option<String>,
+    /// Read horizon when the open chat was opened, kept so the "New messages" divider stays
+    /// where it was while the chat is read.
+    unread_marker: Option<i64>,
+    /// Where the open chat opens (from the config when it was opened).
+    open_at: session::OpenChatAt,
+    /// True from opening a chat until its first full render, which may scroll to the divider.
+    opening: bool,
+    /// Set once the newest page of the opened chat is in the store.
+    loaded: bool,
+    /// The list is at (or about to follow) the newest message.
+    at_bottom: bool,
+    /// New messages that arrived while scrolled up; shown on the jump button.
+    new_count: usize,
 }
 
 #[derive(Default)]
@@ -114,6 +140,14 @@ pub struct Engine {
     pub focused: Arc<AtomicBool>,
     /// Demo mode: no network, so network errors are not shown.
     pub offline: AtomicBool,
+    /// The live connection is up; while it is not, the outbox waits.
+    connected: AtomicBool,
+    /// One outbox flush at a time keeps messages in order.
+    flush_lock: tokio::sync::Mutex<()>,
+    /// A delayed outbox retry is already scheduled.
+    retry_pending: AtomicBool,
+    /// Last client message id handed out.
+    last_cmid: AtomicI64,
 }
 
 const PAGE: usize = 60;
@@ -137,6 +171,7 @@ impl Engine {
             view: Mutex::new(View {
                 filter: "all".into(),
                 limit: PAGE,
+                at_bottom: true,
                 ..Default::default()
             }),
             dirty: Mutex::new(Dirty {
@@ -149,6 +184,10 @@ impl Engine {
             name_requests: Mutex::new(HashSet::new()),
             focused: Arc::new(AtomicBool::new(true)),
             offline: AtomicBool::new(false),
+            connected: AtomicBool::new(true),
+            flush_lock: tokio::sync::Mutex::new(()),
+            retry_pending: AtomicBool::new(false),
+            last_cmid: AtomicI64::new(0),
         })
     }
 
@@ -183,6 +222,8 @@ impl Engine {
         });
         let e = self.clone();
         tokio::spawn(async move {
+            // Messages left in the outbox by the last run go out first.
+            e.flush_outbox(true).await;
             if let Err(err) = e.sync().await {
                 tracing::error!(%err, "initial sync failed");
                 e.ui.banner(format!("Sync failed: {err}"));
@@ -308,6 +349,7 @@ impl Engine {
                     let mut v = self.view.lock().unwrap();
                     v.thread_root = Some(root.clone());
                     v.limit = PAGE;
+                    v.at_bottom = true;
                 }
                 self.mark(|d| {
                     d.header = true;
@@ -335,7 +377,11 @@ impl Engine {
                 }
             }
             Cmd::CloseThread => {
-                self.view.lock().unwrap().thread_root = None;
+                {
+                    let mut v = self.view.lock().unwrap();
+                    v.thread_root = None;
+                    v.at_bottom = true;
+                }
                 self.mark(|d| {
                     d.header = true;
                     d.messages = true;
@@ -347,7 +393,7 @@ impl Engine {
             Cmd::CopyLink(id) => self.copy_link(&id)?,
             Cmd::ToggleSave(id) => self.toggle_save(&id).await?,
             Cmd::Pin(id) => self.pin(&id).await?,
-            Cmd::MarkUnread(id) => self.mark_unread(&id).await?,
+            Cmd::MarkUnread(id) => self.mark_unread_from(&id).await?,
             Cmd::ForwardBegin(id) => self.forward_begin(id)?,
             Cmd::ForwardSearch(q) => self.forward_search(q)?,
             Cmd::ForwardToggle(id) => self.forward_toggle(&id)?,
@@ -356,6 +402,19 @@ impl Engine {
             Cmd::SelectBegin(id) => self.select_begin(&id),
             Cmd::ToggleSelect(id) => self.toggle_select(&id),
             Cmd::SelectCancel => self.select_cancel(),
+            Cmd::AtBottom(at_bottom) => {
+                let mut v = self.view.lock().unwrap();
+                v.at_bottom = at_bottom;
+                if at_bottom && v.new_count > 0 {
+                    v.new_count = 0;
+                    drop(v);
+                    self.ui.new_count(0);
+                }
+            }
+            Cmd::RetrySend(id) => self.retry_send(&id).await?,
+            Cmd::DiscardSend(id) => self.discard_send(&id)?,
+            Cmd::MarkChatUnread(id) => self.mark_chat_unread(&id).await?,
+            Cmd::MarkAllRead => self.mark_all_read().await?,
         }
         Ok(())
     }

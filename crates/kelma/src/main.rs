@@ -261,6 +261,11 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_select_begin, |id| Cmd::SelectBegin(id.into()));
     cmd!(on_toggle_select, |id| Cmd::ToggleSelect(id.into()));
     cmd!(on_select_cancel, || Cmd::SelectCancel);
+    cmd!(on_at_bottom_changed, |b| Cmd::AtBottom(b));
+    cmd!(on_retry_send, |id| Cmd::RetrySend(id.into()));
+    cmd!(on_discard_send, |id| Cmd::DiscardSend(id.into()));
+    cmd!(on_mark_chat_unread, |id| Cmd::MarkChatUnread(id.into()));
+    cmd!(on_mark_all_read, || Cmd::MarkAllRead);
     ui::install_local(&window);
     {
         let tx = tx.clone();

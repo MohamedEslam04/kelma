@@ -128,26 +128,31 @@ impl Engine {
         Ok(())
     }
 
-    /// Marks the chat unread from this message on (the bookmark is the message before it).
-    pub(super) async fn mark_unread(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+    /// Message menu "Mark as unread": the chat turns unread from this message on (the bookmark is
+    /// the message before it). The open chat keeps showing as unread until another is opened.
+    pub(super) async fn mark_unread_from(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
         let Some(row) = self.message_row(id)? else {
             return Ok(());
         };
-        let previous = self
-            .store
+        let (previous, horizon) = {
+            let st = self.store.lock().unwrap();
+            match st.message_before(&row.conversation_id, row.compose_ms)? {
+                Some(prev) => {
+                    let ms = st.message(&prev)?.map_or(0, |m| m.compose_ms);
+                    (prev, ms)
+                }
+                None => ("0".into(), 0),
+            }
+        };
+        self.store
             .lock()
             .unwrap()
-            .message_before(&row.conversation_id, row.compose_ms)?
-            .unwrap_or_else(|| "0".into());
-        {
-            let st = self.store.lock().unwrap();
-            if let Some(mut c) = st.conversation(&row.conversation_id)? {
-                c.unread = true;
-                st.upsert_conversation(&c)?;
-            }
-        }
+            .mark_unread(&row.conversation_id, horizon)?;
         self.view.lock().unwrap().keep_unread = Some(row.conversation_id.clone());
-        self.mark(|d| d.chats = true);
+        self.mark(|d| {
+            d.chats = true;
+            d.teams = true;
+        });
         self.client
             .mark_unread(&row.conversation_id, &previous, &now_ms().to_string())
             .await?;

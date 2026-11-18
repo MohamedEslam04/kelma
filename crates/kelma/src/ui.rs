@@ -1,6 +1,6 @@
 //! UI-thread side: turns view data into Slint models.
 
-use crate::data::{ChatData, HeaderData, MsgData, Pixels, RecipientData, TeamData};
+use crate::data::{ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData};
 use crate::reactions;
 use crate::{
     AppWindow, ChannelRow, ChatRow, EmojiItem, FileItem, ImageItem, Msg, ReactionItem, Recipient,
@@ -117,6 +117,8 @@ fn msg(m: MsgData) -> Msg {
         pending: m.pending,
         saved: m.saved,
         selected: m.selected,
+        failed: m.failed,
+        new_above: m.new_above,
     }
 }
 
@@ -323,7 +325,7 @@ impl UiHandle {
 
     /// Replaces the message list, updating rows in place when the ids are unchanged so the
     /// scroll position is kept.
-    pub fn messages(&self, msgs: Vec<MsgData>, scroll: bool) {
+    pub fn messages(&self, msgs: Vec<MsgData>, scroll: Scroll) {
         self.run(move |w| {
             MESSAGES.with(|cell| {
                 let mut cell = cell.borrow_mut();
@@ -345,16 +347,29 @@ impl UiHandle {
                     m.set_vec(msgs.into_iter().map(msg).collect::<Vec<_>>());
                 }
             });
-            if scroll {
-                // Two ticks: one now, one after layout settles with images.
-                w.set_scroll_tick(w.get_scroll_tick() + 1);
-                let weak = w.as_weak();
-                slint::Timer::single_shot(std::time::Duration::from_millis(150), move || {
-                    if let Some(w) = weak.upgrade() {
-                        w.set_scroll_tick(w.get_scroll_tick() + 1);
-                    }
-                });
+            match scroll {
+                Scroll::Keep => {}
+                // The list corrects its own estimate from the divider row's real position.
+                Scroll::Divider(i) => {
+                    w.set_divider_index(i as i32);
+                    w.set_divider_tick(w.get_divider_tick() + 1);
+                }
+                Scroll::Bottom => {
+                    // Two ticks: one now, one after layout settles with images.
+                    w.set_scroll_tick(w.get_scroll_tick() + 1);
+                    let weak = w.as_weak();
+                    slint::Timer::single_shot(std::time::Duration::from_millis(150), move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_scroll_tick(w.get_scroll_tick() + 1);
+                        }
+                    });
+                }
             }
         });
+    }
+
+    /// Count shown on the "Jump to newest" button.
+    pub fn new_count(&self, n: usize) {
+        self.run(move |w| w.set_new_count(n as i32));
     }
 }

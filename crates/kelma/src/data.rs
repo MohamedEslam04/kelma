@@ -73,6 +73,10 @@ pub struct MsgData {
     pub pending: bool,
     pub saved: bool,
     pub selected: bool,
+    /// Could not be sent: the row offers Retry and Delete.
+    pub failed: bool,
+    /// The "New messages" divider is drawn above this row.
+    pub new_above: bool,
 }
 
 /// A forward target: an existing chat or channel.
@@ -83,6 +87,18 @@ pub struct RecipientData {
     pub initials: String,
     pub color: u32,
     pub picked: bool,
+}
+
+/// How a message list update moves the scroll position.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scroll {
+    /// Leave it where it is.
+    #[default]
+    Keep,
+    /// Follow the newest message.
+    Bottom,
+    /// Put the row at this index (the "New messages" divider) near the top.
+    Divider(usize),
 }
 
 #[derive(Clone)]

@@ -171,7 +171,8 @@ pub struct OutboxItem {
     pub conversation_id: String,
     pub html: String,
     pub subject: Option<String>,
-    /// Message id being replied to, if any.
+    /// For a quote reply, the `qtdMsgs` property naming the quoted message (the quote block
+    /// itself is in `html`); `None` for a plain message.
     pub reply_to: Option<String>,
     pub kind: OutboxKind,
     /// Local file to upload for `Image` and `File` items.
