@@ -8,6 +8,7 @@
 //! kelma-cli read <conv> [n]       print the last n messages
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
+//! kelma-cli calendar [days]       count upcoming events per day and per show-as (read-only)
 //! kelma-cli audiences             mint a token for every audience (prints no tokens)
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
@@ -428,6 +429,33 @@ async fn main() -> Result<()> {
             }
             session::persist(&cfg, &client).await?;
         }
+        Some("calendar") => {
+            // Read-only: prints only counts (per UTC day and per show-as), never event details.
+            let days: u32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(7);
+            let (client, cfg) = connect(&paths).await?;
+            let today = calendar::Date::from_ms(teams_proto::time::now_ms());
+            let (start, end) =
+                calendar::week_range(today, calendar::View::Day(days), calendar::Weekday::Monday);
+            let events = calendar::Calendar::view(&client, start, end).await?;
+            let mut per_day = std::collections::BTreeMap::new();
+            let mut per_show_as = std::collections::BTreeMap::new();
+            for e in &events {
+                *per_day
+                    .entry(calendar::Date::from_ms(e.start_ms))
+                    .or_insert(0usize) += 1;
+                *per_show_as
+                    .entry(format!("{:?}", e.show_as))
+                    .or_insert(0usize) += 1;
+            }
+            println!("{} events from {today} for {days} day(s)", events.len());
+            for (day, n) in &per_day {
+                println!("  {day}  {n}");
+            }
+            for (show_as, n) in &per_show_as {
+                println!("  {show_as:<18} {n}");
+            }
+            session::persist(&cfg, &client).await?;
+        }
         Some("tail") => {
             let (client, _) = connect(&paths).await?;
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -452,7 +480,26 @@ async fn main() -> Result<()> {
         }
         _ => {
             println!(
-                "usage: kelma-cli <login|logout|chats [n]|teams|activity [n]|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|forward <src> <msg> <target> [note]|save/unsave/pin/unpin/unread <conv> <msg>|mute/unmute/hide/unhide <conv>|saved|pins <chat>|audiences|tail>"
+                "usage: kelma-cli <command>\n\
+                   login\n\
+                   logout\n\
+                   chats [n]\n\
+                   teams\n\
+                   calendar [days]\n\
+                   activity [n]\n\
+                   read <conv> [n]\n\
+                   send <conv> <text>\n\
+                   send-image <conv> <file>\n\
+                   send-file <conv> <file>\n\
+                   post <channel> <subject> <text>\n\
+                   react <conv> <msg> <key>\n\
+                   forward <src> <msg> <target> [note]\n\
+                   save/unsave/pin/unpin/unread <conv> <msg>\n\
+                   mute/unmute/hide/unhide <conv>\n\
+                   saved\n\
+                   pins <chat>\n\
+                   audiences\n\
+                   tail"
             );
         }
     }
