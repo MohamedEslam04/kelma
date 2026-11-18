@@ -15,6 +15,7 @@ pub mod csa;
 pub mod error;
 pub mod files;
 pub mod http;
+pub mod mentions;
 pub mod model;
 pub mod mt;
 pub mod time;
