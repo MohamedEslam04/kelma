@@ -776,3 +776,90 @@ fn migrates_from_previous_schema_version() {
     assert_eq!(s.outbox_due().unwrap().len(), 1);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+// ---- saved messages ----------------------------------------------------
+
+fn saved(conv: &str, id: &str, at: i64) -> SavedMessage {
+    SavedMessage {
+        conversation_id: conv.into(),
+        message_id: id.into(),
+        root_id: id.into(),
+        sender_name: "Sara".into(),
+        preview: format!("preview {id}"),
+        saved_ms: at,
+    }
+}
+
+#[test]
+fn saved_roundtrip_and_newest_first() {
+    let s = Store::open_in_memory().unwrap();
+    assert!(s.saved_messages().unwrap().is_empty());
+    s.save_message(&saved("c1", "1", 10)).unwrap();
+    s.save_message(&saved("c2", "2", 30)).unwrap();
+    s.save_message(&saved("c1", "3", 20)).unwrap();
+    let all = s.saved_messages().unwrap();
+    let ids: Vec<_> = all.iter().map(|m| m.message_id.as_str()).collect();
+    assert_eq!(ids, ["2", "3", "1"]);
+    assert_eq!(all[0], saved("c2", "2", 30));
+    assert!(s.is_saved("c1", "1").unwrap());
+    assert!(!s.is_saved("c1", "2").unwrap(), "same id in another chat");
+}
+
+#[test]
+fn saving_twice_keeps_one_row_and_refreshes_it() {
+    let s = Store::open_in_memory().unwrap();
+    s.save_message(&saved("c1", "1", 10)).unwrap();
+    let mut again = saved("c1", "1", 99);
+    again.preview = "new".into();
+    s.save_message(&again).unwrap();
+    let all = s.saved_messages().unwrap();
+    assert_eq!(all, vec![again]);
+}
+
+#[test]
+fn unsave_removes_only_that_message() {
+    let s = Store::open_in_memory().unwrap();
+    s.save_message(&saved("c1", "1", 10)).unwrap();
+    s.save_message(&saved("c1", "2", 20)).unwrap();
+    s.unsave_message("c1", "1").unwrap();
+    s.unsave_message("c1", "missing").unwrap();
+    assert!(!s.is_saved("c1", "1").unwrap());
+    assert!(s.is_saved("c1", "2").unwrap());
+}
+
+#[test]
+fn saved_ids_lists_one_conversation() {
+    let s = Store::open_in_memory().unwrap();
+    s.save_message(&saved("c1", "1", 10)).unwrap();
+    s.save_message(&saved("c2", "9", 20)).unwrap();
+    assert_eq!(s.saved_ids("c1").unwrap(), vec!["1".to_string()]);
+}
+
+#[test]
+fn previous_message_id_is_the_one_before_in_time() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_message(&msg("10", "c", 100)).unwrap();
+    s.upsert_message(&msg("20", "c", 200)).unwrap();
+    s.upsert_message(&msg("30", "c", 300)).unwrap();
+    s.upsert_message(&msg("99", "other", 250)).unwrap();
+    assert_eq!(s.message_before("c", 300).unwrap().as_deref(), Some("20"));
+    assert_eq!(s.message_before("c", 100).unwrap(), None);
+}
+
+#[test]
+fn v2_database_gains_the_saved_table() {
+    let dir = temp_db_dir("migrate-saved");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cache.db");
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(migrations::MIGRATIONS[0]).unwrap();
+        conn.execute_batch(migrations::MIGRATIONS[1]).unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    s.save_message(&saved("c", "1", 1)).unwrap();
+    assert_eq!(s.saved_messages().unwrap().len(), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

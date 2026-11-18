@@ -91,6 +91,21 @@ pub(crate) const MIGRATIONS: &[&str] = &[
      );
      CREATE INDEX idx_outbox_state_created ON outbox(state, created_ms);
      CREATE INDEX idx_outbox_conv ON outbox(conversation_id, created_ms);",
+    // v3: messages saved with "Save this message".
+    //
+    // The server list (`48:saved`) is not available for every tenant, so kelma keeps its own
+    // list. The sender and a text preview are copied so a Saved view needs no join and still
+    // works after the message scrolls out of the cache.
+    "CREATE TABLE saved_messages (
+         conversation_id TEXT NOT NULL,
+         message_id      TEXT NOT NULL,
+         root_id         TEXT NOT NULL,
+         sender_name     TEXT NOT NULL,
+         preview         TEXT NOT NULL,
+         saved_ms        INTEGER NOT NULL,
+         PRIMARY KEY (conversation_id, message_id)
+     );
+     CREATE INDEX idx_saved_ms ON saved_messages(saved_ms);",
 ];
 
 pub(crate) fn run(conn: &mut Connection) -> Result<()> {
