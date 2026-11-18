@@ -273,6 +273,22 @@ async fn main() -> Result<()> {
                 .await?;
             println!("image sent ({id})");
         }
+        Some("post") => {
+            let (Some(channel), Some(subject), Some(text)) = (args.get(1), args.get(2), args.get(3))
+            else {
+                bail!("usage: post <channel id> <subject> <text>")
+            };
+            let (client, cfg) = connect(&paths).await?;
+            let cmid = client
+                .send_message(
+                    channel,
+                    &render::text_to_teams_html(text),
+                    &cfg.display_name.unwrap_or_default(),
+                    Some(subject),
+                )
+                .await?;
+            println!("posted (clientmessageid {cmid})");
+        }
         Some("send-file") => {
             let (Some(conv), Some(file)) = (args.get(1), args.get(2)) else {
                 bail!("usage: send-file <conv> <file>")
@@ -321,7 +337,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             println!(
-                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|react <conv> <msg> <key>|tail>"
+                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|tail>"
             );
         }
     }
