@@ -133,7 +133,7 @@ fn parse_attendee(a: &Value) -> Attendee {
 }
 
 /// Parses one Graph event. `None` when it has no id.
-fn parse_event(v: &Value) -> Option<Event> {
+pub(crate) fn parse_event(v: &Value) -> Option<Event> {
     let id = opt_str(v, "id")?;
     let start_ms = date_time_ms(v, "start").unwrap_or(0);
     let end_ms = date_time_ms(v, "end").unwrap_or(start_ms);

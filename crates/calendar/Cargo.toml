@@ -8,6 +8,7 @@ description = "Read the Outlook calendar over Microsoft Graph"
 publish = false
 
 [dependencies]
+base64 = "0.23.1"
 reqwest = "0.13.5"
 serde_json = "1.0.154"
 teams-proto = { version = "0.0.0", path = "../teams-proto" }
