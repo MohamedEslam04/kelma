@@ -19,6 +19,16 @@ teams-proto = { version = "0.0.0", path = "../teams-proto" }
 
 # --- media (media.rs) ---
 
-# --- audio (audio.rs) ---
+# --- audio (audio/) ---
+# `opus` bundles libopus via opusic-sys (cmake), so no system opus-devel is needed.
+opus = "0.4.0"
+cpal = { version = "0.18.2", optional = true }
+hound = "3.5.1"
 
 [dev-dependencies]
+
+[features]
+default = ["devices"]
+# Microphone/speaker I/O through cpal (needs alsa-lib-devel on Linux). The Opus codec, WAV and tone
+# endpoints build without it.
+devices = ["dep:cpal"]
