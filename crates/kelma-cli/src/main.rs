@@ -9,9 +9,12 @@
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
 //! kelma-cli audiences             mint a token for every audience (prints no tokens)
+//! kelma-cli drive <ls [path]|search q|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir name|rm id|selftest>
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
 //! ```
+
+mod drive;
 
 use anyhow::{Context, Result, bail};
 use session::Paths;
@@ -395,6 +398,12 @@ async fn main() -> Result<()> {
             client.add_reaction(conv, msg, key).await?;
             println!("reacted");
         }
+        Some("drive") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = drive::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("audiences") => {
             // Mints a token for every audience through the auth broker. Prints no token values.
             let (client, cfg) = connect(&paths).await?;
@@ -452,7 +461,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             println!(
-                "usage: kelma-cli <login|logout|chats [n]|teams|activity [n]|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|forward <src> <msg> <target> [note]|save/unsave/pin/unpin/unread <conv> <msg>|mute/unmute/hide/unhide <conv>|saved|pins <chat>|audiences|tail>"
+                "usage: kelma-cli <login|logout|chats [n]|teams|activity [n]|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|forward <src> <msg> <target> [note]|save/unsave/pin/unpin/unread <conv> <msg>|mute/unmute/hide/unhide <conv>|saved|pins <chat>|audiences|drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest>|tail>"
             );
         }
     }
