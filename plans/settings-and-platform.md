@@ -73,7 +73,10 @@ rest of Teams' settings plus app-wide platform work.
 - [ ] **X3.3 Tray, autostart and badge.** Shared with the chat plan 9.2.
 - [ ] **X3.4 Global search** across apps: chats, files, people, calendar (substrate). Shared with the chat plan 7.1.
 - [ ] **X3.5 Packaging.** Flatpak (with the PipeWire and portal permissions the meeting host needs), AUR/RPM, and auto-update notices.
-- [ ] **X3.6 Telemetry-free diagnostics.** A "Report a problem" that writes a local log bundle with tokens and content scrubbed.
+  - **Done so far.** Manifests exist in `packaging/`: Flatpak (`flatpak/`, with network, Wayland/X11, PipeWire, notification and Secret Service permissions), an AUR `PKGBUILD` and `.SRCINFO` (`aur/`), and an RPM spec (`rpm/`), plus AppStream metadata. The desktop file has a "Report a problem" action. The README documents them. Checked: `desktop-file-validate`, `appstreamcli validate --pedantic`, `bash -n` on the PKGBUILD and `rpmspec -P`.
+  - **Still open.** (1) None of the three packages has been built, because `flatpak-builder`, `makepkg` and `rpmbuild` sources were not available here. (2) The Flatpak needs a generated `cargo-sources.json`. (3) Auto-update notices: an in-app "new version" check needs a decision, because it would contact a server (the package managers update the Flatpak, AUR and RPM installs).
+- [x] **X3.6 Telemetry-free diagnostics.** A "Report a problem" that writes a local log bundle with tokens and content scrubbed.
+  - **Done.** The `diag` crate redacts bearer, skype and refresh tokens, cookies, emails, MRIs, conversation ids, GUIDs (tenant ids) and tenant domains, with unit tests. `kelma-cli diag` and `kelma --report-problem` (also a desktop action) write a private `.tar.gz` to Downloads. Nothing is uploaded. The app has no log file of its own yet, so logs come from `--log FILE` or `<data_dir>/logs/`. A Settings > About button comes with X1.1.
 
 ## Order
 

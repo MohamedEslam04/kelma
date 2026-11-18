@@ -11,6 +11,7 @@ publish = false
 anyhow = "1.0.104"
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 calendar = { version = "0.0.0", path = "../calendar" }
+diag = { version = "0.0.0", path = "../diag" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 emoji = { version = "0.0.0", path = "../emoji" }
 iana-time-zone = "0.1.65"

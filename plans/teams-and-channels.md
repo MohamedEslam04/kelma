@@ -18,7 +18,8 @@ channels (posts, replies, files, cards) is in `plans/chat.md` phase 8. This file
 
 ## Phase T0: discovery
 
-- [ ] **T0.1** Capture the web client creating a team (in a throwaway private team the user then deletes), joining with a code, editing, archiving and deleting a channel, moderation, tags, the channel email address, hide and show, and team settings. Document all of it.
+- [x] **T0.1** Capture the web client creating a team (in a throwaway private team the user then deletes), joining with a code, editing, archiving and deleting a channel, moderation, tags, the channel email address, hide and show, and team settings. Document all of it.
+  - **Evidence.** Taken from the web client's own JS service chunks instead of a HAR, then every call run live in the sandbox team. Documented in `docs/protocol.md` § Teams and channels, with live status per endpoint. Team archive (MT 500) and storyline post are not verified.
 
 ## Phase T1: see and join
 

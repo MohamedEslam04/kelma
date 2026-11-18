@@ -18,6 +18,7 @@ use store::Store;
 use teams_proto::Client;
 
 mod activity;
+mod people;
 
 type Log = Rc<RefCell<Vec<String>>>;
 
@@ -904,7 +905,8 @@ fn chat_list_menus_fire_mark_unread_and_mark_all_read() {
 
     // The "…" button of the list offers Mark all as read.
     let more = ElementHandle::find_by_element_id(&app, "IconButton::touch")
-        .find(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
+        .filter(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
+        .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
         .expect("list menu button");
     more.mock_single_click(PointerEventButton::Left);
     let all = find_label(&app, "Mark all as read");

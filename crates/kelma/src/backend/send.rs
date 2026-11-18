@@ -1,6 +1,7 @@
 //! Outgoing actions: send/edit/delete, reactions, attachments and media playback.
 
 use super::Engine;
+use super::mentions;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use store::OutboxKind;
@@ -30,6 +31,13 @@ impl Engine {
             self.flush_outbox(false).await;
             return Ok(());
         }
+        // The @Name tokens the user picked become mention spans; the entries are used up.
+        let prepared = {
+            let mut p = self.people.lock().unwrap();
+            let prepared = mentions::prepare(&text, &p.entries);
+            p.entries.clear();
+            prepared
+        };
         let (target, reply, editing) = {
             let mut v = self.view.lock().unwrap();
             (
@@ -46,10 +54,23 @@ impl Engine {
             // The composer shows the draft that was there before the edit again.
             let draft = self.view.lock().unwrap().draft_text.clone();
             self.ui.set_draft(draft);
-            let html = render::text_to_teams_html(&text);
-            self.client
-                .edit_message(&target, &id, &html, &self.my_name)
-                .await?;
+            let html = mentions::finish(&render::text_to_teams_html(&prepared.text), &prepared);
+            if prepared.mentions.is_empty() {
+                self.client
+                    .edit_message(&target, &id, &html, &self.my_name)
+                    .await?;
+            } else {
+                // An edit replaces the message properties, so the mentions are sent again.
+                self.client
+                    .edit_message_with_mentions(
+                        &target,
+                        &id,
+                        &html,
+                        &self.my_name,
+                        &prepared.mentions,
+                    )
+                    .await?;
+            }
             let st = self.store.lock().unwrap();
             if let Some(mut r) = st.message(&id)? {
                 r.content_html = html;
@@ -73,11 +94,12 @@ impl Engine {
                     &r.sender_name,
                     r.compose_ms,
                     &preview,
-                    &text,
+                    &prepared.text,
                 )
             }
-            None => render::text_to_teams_html(&text),
+            None => render::text_to_teams_html(&prepared.text),
         };
+        let html = mentions::finish(&html, &prepared);
         // The draft is sent: forget it. It comes back if the message cannot even be queued.
         let current = self
             .view
@@ -87,7 +109,7 @@ impl Engine {
             .clone()
             .unwrap_or_default();
         self.clear_draft(&current);
-        let item = self.new_outbox_item(
+        let mut item = self.new_outbox_item(
             target,
             OutboxKind::Text,
             html,
@@ -98,6 +120,7 @@ impl Engine {
             }),
             None,
         );
+        item.mentions = mentions::property(&prepared);
         self.ui.clear_subject();
         if let Err(err) = self.enqueue(item) {
             self.ui.set_draft(text.clone());

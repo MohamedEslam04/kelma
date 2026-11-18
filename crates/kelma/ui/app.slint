@@ -14,10 +14,17 @@ import { SelectBar } from "select_bar.slint";
 import { LoginView } from "login.slint";
 import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
 import { ActivityView } from "activity.slint";
+import { PeopleStore } from "people.slint";
+import { NewChatPane } from "new_chat.slint";
+import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
+import { PinnedBanner } from "pinned_banner.slint";
+import { ProfileCard } from "profile_card.slint";
 
 export { Theme } from "theme.slint";
-export { ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
+export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
 export { EmojiApi } from "composer.slint";
+export { MentionApi } from "mention_picker.slint";
+export { PeopleStore } from "people.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 
 export component AppWindow inherits Window {
@@ -172,6 +179,10 @@ export component AppWindow inherits Window {
     callback activity-reply(string);
     callback activity-settings();
 
+    // Group chat header: renaming in place (the pencil).
+    in-out property <bool> renaming: false;
+    in-out property <string> rename-text;
+
     // Rust bumps these counters to request a scroll to the bottom / composer focus.
     in-out property <int> scroll-tick;
     in-out property <int> focus-tick;
@@ -194,6 +205,13 @@ export component AppWindow inherits Window {
         capture-key-pressed(event) => {
             if (event.text == Key.Escape && event.modifiers.shift && root.view != "activity") {
                 root.mark-all-read();
+                return accept;
+            }
+            // Alt+Shift+N: New chat.
+            if ((event.text == "N" || event.text == "n") && event.modifiers.alt && event.modifiers.shift) {
+                root.view = "chat";
+                PeopleStore.new-chat-open = true;
+                PeopleStore.command("new-chat-open", "");
                 return accept;
             }
             reject
@@ -314,6 +332,11 @@ export component AppWindow inherits Window {
                 current-id: root.current-id;
                 mark-unread(id) => { root.mark-chat-unread(id); }
                 mark-all-read => { root.mark-all-read(); }
+                leave-chat(id) => { PeopleStore.leave-confirm = id; }
+                new-chat => {
+                    PeopleStore.new-chat-open = true;
+                    PeopleStore.command("new-chat-open", "");
+                }
                 select-chat(id) => { root.select-chat(id); }
                 select-channel(id, title) => { root.select-channel(id, title); }
                 toggle-team(i) => { root.toggle-team(i); }
@@ -352,6 +375,23 @@ export component AppWindow inherits Window {
                     open-url(u) => { root.open-url(u); }
                     notification-settings => { root.activity-settings(); }
                     dismiss-banner => { root.dismiss-banner(); }
+                }
+                if PeopleStore.new-chat-open && root.view != "activity": NewChatPane {
+                    z: 30;
+                    width: parent.width;
+                    height: parent.height;
+                    to: PeopleStore.new-chat-to;
+                    results: PeopleStore.new-chat-results;
+                    hint: PeopleStore.new-chat-hint;
+                    query(q) => { PeopleStore.command("new-chat-query", q); }
+                    add(id) => { PeopleStore.command("new-chat-add", id); }
+                    remove(id) => { PeopleStore.command("new-chat-remove", id); }
+                    name(n) => { PeopleStore.command("new-chat-name", n); }
+                    send(t) => { PeopleStore.command("new-chat-send", t); }
+                    close => {
+                        PeopleStore.new-chat-open = false;
+                        PeopleStore.command("new-chat-close", "");
+                    }
                 }
                 if root.current-id == "": VerticalLayout {
                     alignment: center;
@@ -394,7 +434,7 @@ export component AppWindow inherits Window {
                                 has-img: root.current-has-avatar;
                                 size: 36px;
                             }
-                            Text {
+                            if !root.renaming || root.thread-root != "": Text {
                                 text: root.thread-root != "" ? "Thread" : root.current-title;
                                 color: Theme.fg;
                                 font-size: 17px;
@@ -402,6 +442,52 @@ export component AppWindow inherits Window {
                                 vertical-alignment: center;
                                 overflow: elide;
                                 horizontal-stretch: 0;
+                            }
+                            if root.renaming && root.thread-root == "": Rectangle {
+                                y: 14px;
+                                height: 32px;
+                                width: 260px;
+                                horizontal-stretch: 0;
+                                border-radius: 4px;
+                                background: #1f1f1f;
+                                border-width: 1px;
+                                border-color: Theme.accent;
+                                FocusScope {
+                                    capture-key-pressed(event) => {
+                                        if event.text == Key.Escape {
+                                            root.renaming = false;
+                                            return accept;
+                                        }
+                                        if event.text == Key.Return {
+                                            root.renaming = false;
+                                            PeopleStore.command("rename", rename-input.text);
+                                            return accept;
+                                        }
+                                        reject
+                                    }
+                                    rename-input := TextInput {
+                                        x: 10px;
+                                        width: parent.width - 20px;
+                                        text <=> root.rename-text;
+                                        color: Theme.fg;
+                                        font-size: 15px;
+                                        single-line: true;
+                                        vertical-alignment: center;
+                                        accessible-role: text-input;
+                                        accessible-label: "Group name";
+                                        init => { self.focus(); self.select-all(); }
+                                    }
+                                }
+                            }
+                            if PeopleStore.header-group && root.thread-root == "" && !root.renaming: rename-btn := IconButton {
+                                icon: @image-url("icons/edit.svg");
+                                tooltip: "Rename chat";
+                                size: 28px;
+                                y: 16px;
+                                clicked => {
+                                    root.rename-text = root.current-title;
+                                    root.renaming = true;
+                                }
                             }
                             for tab in (root.current-is-channel ? ["Posts", "Files"] : ["Chat", "Shared"]): VerticalLayout {
                                 alignment: center;
@@ -415,8 +501,34 @@ export component AppWindow inherits Window {
                                 clicked => { root.schedule-meeting(root.current-id); }
                             }
                             Rectangle { horizontal-stretch: 1; }
+                            if PeopleStore.header-group && root.thread-root == "": people-btn := Rectangle {
+                                width: people-count.preferred-width + 40px;
+                                height: 32px;
+                                y: 14px;
+                                horizontal-stretch: 0;
+                                border-radius: 4px;
+                                background: people-touch.has-hover || PeopleStore.participants-open ? Theme.surface-hover : transparent;
+                                accessible-role: button;
+                                accessible-label: "Participants";
+                                Icon { source: @image-url("icons/people.svg"); x: 8px; y: 8px; width: 16px; height: 16px; tint: Theme.fg-muted; }
+                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px; vertical-alignment: center; }
+                                people-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        PeopleStore.participants-open = true;
+                                        PeopleStore.command("participants-open", "");
+                                    }
+                                }
+                            }
                         }
                         Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+                    }
+
+                    if PeopleStore.pinned.length > 0 && root.thread-root == "": PinnedBanner {
+                        items: PeopleStore.pinned;
+                        index <=> PeopleStore.pinned-index;
+                        jump(id) => { PeopleStore.command("pin-jump", id); }
+                        unpin(id) => { PeopleStore.command("pin-unpin", id); }
                     }
 
                     // Messages
@@ -459,7 +571,7 @@ export component AppWindow inherits Window {
                                     in-channel: root.current-is-channel && root.thread-root == "";
                                     select-mode: root.select-mode;
                                     changed y => {
-                                        if msg-list.aligning && m.new-above {
+                                        if msg-list.aligning && (m.new-above || m.flash) {
                                             msg-list.content-y = min(0px, 24px - self.y);
                                         }
                                     }
@@ -485,6 +597,11 @@ export component AppWindow inherits Window {
                                     open-url(u) => { root.open-url(u); }
                                     open-thread => { root.open-thread(m.id); }
                                     open-image(u) => { root.open-url(u); }
+                                    profile(id) => {
+                                        if id != "" {
+                                            PeopleStore.command("profile", id);
+                                        }
+                                    }
                                 }
                         }
                         Timer {
@@ -664,6 +781,81 @@ export component AppWindow inherits Window {
                 root.forward-open = false;
                 root.forward-cancel();
             }
+        }
+    }
+
+    if root.login-state == "ready" && PeopleStore.participants-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    PeopleStore.participants-open = false;
+                }
+            }
+        }
+        ParticipantsPanel {
+            x: root.width - self.width - 16px;
+            y: 108px;
+            members: PeopleStore.members;
+            add-results: PeopleStore.add-results;
+            open-profile(id) => {
+                PeopleStore.participants-open = false;
+                PeopleStore.command("profile", id);
+            }
+            add-query(q) => { PeopleStore.command("add-query", q); }
+            add-pick(id) => { PeopleStore.command("add-pick", id); }
+            history-changed(on) => { PeopleStore.command("add-history", on ? "on" : "off"); }
+            leave => {
+                PeopleStore.participants-open = false;
+                PeopleStore.leave-confirm = root.current-id;
+            }
+            close => { PeopleStore.participants-open = false; }
+        }
+    }
+
+    if root.login-state == "ready" && PeopleStore.leave-confirm != "": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        LeaveConfirm {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            confirm => {
+                PeopleStore.command("leave", PeopleStore.leave-confirm);
+                PeopleStore.leave-confirm = "";
+            }
+            cancel => { PeopleStore.leave-confirm = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && PeopleStore.card-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    PeopleStore.card-open = false;
+                }
+            }
+        }
+        ProfileCard {
+            x: (root.width - self.width) / 2;
+            y: max(8px, min(160px, root.height - self.height - 8px));
+            person: PeopleStore.card;
+            loading: PeopleStore.card-loading;
+            email: PeopleStore.card-email;
+            work: PeopleStore.card-work;
+            location: PeopleStore.card-location;
+            local-time: PeopleStore.card-time;
+            copy-email => { PeopleStore.command("profile-copy-email", ""); }
+            chat(id) => {
+                PeopleStore.card-open = false;
+                PeopleStore.command("profile-chat", id);
+            }
+            send-email(e) => { root.open-url("mailto:" + e); }
+            close => { PeopleStore.card-open = false; }
         }
     }
 }

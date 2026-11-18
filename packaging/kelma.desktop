@@ -9,3 +9,8 @@ Terminal=false
 Categories=Network;InstantMessaging;Chat;
 Keywords=teams;chat;microsoft;messaging;
 StartupWMClass=kelma
+Actions=ReportProblem;
+
+[Desktop Action ReportProblem]
+Name=Report a problem
+Exec=kelma --report-problem

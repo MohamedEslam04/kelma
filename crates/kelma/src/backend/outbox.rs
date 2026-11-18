@@ -162,6 +162,7 @@ impl Engine {
             html,
             subject,
             reply_to,
+            mentions: None,
             kind,
             payload_path,
             created_ms: now,
@@ -260,6 +261,23 @@ impl Engine {
         let (chat, _) = split_target(target);
         let subject = item.subject.as_deref();
         match item.kind {
+            OutboxKind::Text if item.mentions.is_some() => {
+                // The mentions property makes the people named in the text get notified; a
+                // quote reply carries its `qtdMsgs` next to it.
+                let mentions =
+                    super::mentions::from_property(item.mentions.as_deref().unwrap_or(""));
+                self.client
+                    .send_message_with_mentions_as(
+                        target,
+                        &item.html,
+                        &self.my_name,
+                        subject,
+                        &mentions,
+                        item.reply_to.as_deref(),
+                        cmid,
+                    )
+                    .await
+            }
             OutboxKind::Text => match item.reply_to.as_deref() {
                 // "Reply with quote": the property links the quote block to its original.
                 Some(qtd) => {
@@ -399,6 +417,7 @@ mod tests {
             html: format!("<p>{id}</p>"),
             subject: None,
             reply_to: None,
+            mentions: None,
             kind,
             payload_path: None,
             created_ms: 100,

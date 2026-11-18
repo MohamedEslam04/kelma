@@ -23,6 +23,7 @@ fn props_json(m: &Message) -> String {
         "r": m.reactions.iter().map(|r| json!({"key": r.key, "users": r.users})).collect::<Vec<_>>(),
         "f": m.files.iter().map(|f| json!({"name": f.name, "url": f.url, "type": f.file_type})).collect::<Vec<_>>(),
         "s": m.subject,
+        "m": super::mentions::store_value(&m.mentions),
     })
     .to_string()
 }
