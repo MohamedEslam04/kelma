@@ -5,9 +5,11 @@
 //! the other way for the composer.
 
 mod compose;
+mod markdown_out;
 mod parse;
 
 pub use compose::{reply_html, text_to_teams_html};
+pub use markdown_out::markdown_to_teams_html;
 pub use parse::parse_teams_html;
 
 use unicode_bidi::BidiClass;

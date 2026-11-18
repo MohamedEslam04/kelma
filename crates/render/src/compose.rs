@@ -1,6 +1,6 @@
 //! Composer text -> Teams HTML.
 
-fn escape(s: &str, out: &mut String) {
+pub(crate) fn escape(s: &str, out: &mut String) {
     for c in s.chars() {
         match c {
             '&' => out.push_str("&amp;"),
