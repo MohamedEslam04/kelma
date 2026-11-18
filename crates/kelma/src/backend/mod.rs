@@ -19,6 +19,7 @@ mod activity;
 mod attach;
 mod cal;
 mod drafts;
+pub(crate) mod drive;
 mod live;
 mod outbox;
 mod render;
@@ -33,6 +34,7 @@ pub(crate) use activity::{State as ActivityState, row_data as activity_row_data}
 pub use cal::{CalCmd, CalData};
 #[cfg(test)]
 pub use cal::{Ctx, build, parse_view};
+pub use drive::DriveCmd;
 
 /// Commands sent by the UI.
 #[derive(Debug, Clone)]
@@ -82,6 +84,7 @@ pub enum Cmd {
     MarkAllRead,
     Calendar(CalCmd),
     Activity(ActivityCmd),
+    Drive(DriveCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -170,6 +173,7 @@ pub struct Engine {
     view: Mutex<View>,
     dirty: Mutex<Dirty>,
     activity: Mutex<activity::State>,
+    drive: Mutex<drive::Drive>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -220,6 +224,7 @@ impl Engine {
                 ..Default::default()
             }),
             activity: Mutex::new(activity::State::default()),
+            drive: Mutex::new(drive::Drive::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -288,6 +293,8 @@ impl Engine {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
             Cmd::Flush => self.flush_draft(),
+            // Selection and view changes run in order with the command that follows them.
+            Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             cmd => {
                 tokio::spawn(self.clone().handle(cmd));
             }
@@ -480,6 +487,7 @@ impl Engine {
             Cmd::MarkAllRead => self.mark_all_read().await?,
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
             Cmd::Activity(c) => self.activity_cmd(c).await?,
+            Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

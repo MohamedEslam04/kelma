@@ -521,3 +521,363 @@ pub fn activity(st: &Store, now: i64) -> Vec<ActivityItem> {
         ),
     ]
 }
+
+// -- OneDrive demo data ------------------------------------------------------------------------
+
+/// The libraries under Quick access: `(drive id, name)`.
+pub fn drive_libraries() -> Vec<(String, String)> {
+    vec![
+        ("b!sales".into(), "Sales team".into()),
+        ("b!design".into(), "Design system".into()),
+        ("b!ops".into(), "Operations".into()),
+    ]
+}
+
+/// Ids of the demo items that start as favorites.
+pub fn drive_favorites() -> std::collections::HashSet<String> {
+    ["demo-budget", "demo-projects", "demo-brand"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+
+fn drive_file(
+    id: &str,
+    name: &str,
+    size: u64,
+    ago_min: i64,
+    by: &str,
+    dir: &str,
+    now: i64,
+) -> onedrive::DriveItem {
+    onedrive::DriveItem {
+        id: id.into(),
+        drive_id: "b!demo".into(),
+        name: name.into(),
+        size,
+        modified_ms: now - ago_min * 60_000,
+        modified_by: by.into(),
+        created_by: by.into(),
+        parent_path: dir.into(),
+        web_url: format!("https://contoso-my.example/personal/demo/Documents{dir}/{name}"),
+        ..Default::default()
+    }
+}
+
+fn drive_dir(
+    id: &str,
+    name: &str,
+    kids: u32,
+    ago_min: i64,
+    by: &str,
+    now: i64,
+) -> onedrive::DriveItem {
+    onedrive::DriveItem {
+        is_folder: true,
+        child_count: kids,
+        ..drive_file(id, name, 0, ago_min, by, "", now)
+    }
+}
+
+/// A folder created in demo mode.
+pub fn drive_new_folder(name: &str) -> onedrive::DriveItem {
+    drive_dir(
+        &format!("demo-new-{name}"),
+        name,
+        0,
+        0,
+        "Mohamed Eslam",
+        teams_proto::time::now_ms(),
+    )
+}
+
+/// What a demo section or folder lists. `key` is a section key (`home`, `files`, `shared`,
+/// `favorites`, `libraries`, `bin`, `meetings`, `drive:<id>`, `search`) and `folder` the open
+/// folder id of `files` (`root` or empty for the top).
+pub fn drive_listing(key: &str, folder: &str, now: i64) -> Vec<onedrive::DriveItem> {
+    let f = |id, name, size, ago, by, dir| drive_file(id, name, size, ago, by, dir, now);
+    let d = |id, name, kids, ago, by| drive_dir(id, name, kids, ago, by, now);
+    let me = "Mohamed Eslam";
+    match (key, folder) {
+        ("files", "" | "root") => vec![
+            d("demo-projects", "Projects", 4, 60 * 30, me),
+            d("demo-pictures", "Pictures", 12, 60 * 24 * 6, me),
+            d("demo-brand", "Brand assets", 7, 60 * 24 * 20, me),
+            f("demo-budget", "Budget 2026.xlsx", 3_400_000, 45, me, ""),
+            f("demo-q4", "Q4 plan.docx", 84_000, 60 * 3, me, ""),
+            f(
+                "demo-offsite",
+                "Team offsite.pptx",
+                12_600_000,
+                60 * 30,
+                "Sara Hassan",
+                "",
+            ),
+            f("demo-notes", "Meeting notes.md", 1_800, 60 * 26, me, ""),
+            f("demo-readme", "README.txt", 640, 60 * 24 * 40, me, ""),
+            f(
+                "demo-contract",
+                "Vendor contract.pdf",
+                640_000,
+                60 * 24 * 8,
+                "Omar Khaled",
+                "",
+            ),
+            f("demo-logo", "logo.png", 38_000, 60 * 24 * 90, me, ""),
+        ],
+        ("files", "demo-projects") => vec![
+            d("demo-alpha", "Alpha", 3, 60 * 5, me),
+            d("demo-beta", "Beta", 0, 60 * 24 * 12, me),
+            f(
+                "demo-kickoff",
+                "Kickoff.pptx",
+                4_200_000,
+                60 * 24 * 3,
+                "Ahmed Ali",
+                "/Projects",
+            ),
+        ],
+        ("files", "demo-alpha") => vec![
+            f(
+                "demo-spec",
+                "Spec.docx",
+                56_000,
+                60 * 5,
+                me,
+                "/Projects/Alpha",
+            ),
+            f(
+                "demo-timeline",
+                "Timeline.xlsx",
+                98_000,
+                60 * 9,
+                "Mona Adel",
+                "/Projects/Alpha",
+            ),
+            f(
+                "demo-script",
+                "build.sh",
+                920,
+                60 * 24 * 2,
+                me,
+                "/Projects/Alpha",
+            ),
+        ],
+        ("files", _) => Vec::new(),
+        ("home", _) => vec![
+            f("demo-budget", "Budget 2026.xlsx", 3_400_000, 45, me, "/"),
+            f(
+                "demo-pitch",
+                "Customer pitch.pptx",
+                9_800_000,
+                60 * 2,
+                "Sara Hassan",
+                "/Sales",
+            ),
+            f("demo-q4", "Q4 plan.docx", 84_000, 60 * 3, me, "/"),
+            f(
+                "demo-contract",
+                "Vendor contract.pdf",
+                640_000,
+                60 * 24,
+                "Omar Khaled",
+                "/Legal",
+            ),
+            f(
+                "demo-roadmap",
+                "Roadmap.xlsx",
+                210_000,
+                60 * 26,
+                "Youssef Samir",
+                "/Product",
+            ),
+            f("demo-notes", "Meeting notes.md", 1_800, 60 * 28, me, "/"),
+            f(
+                "demo-spec",
+                "Spec.docx",
+                56_000,
+                60 * 24 * 3,
+                me,
+                "/Projects/Alpha",
+            ),
+            f(
+                "demo-demo",
+                "Demo recording.mp4",
+                48_000_000,
+                60 * 24 * 5,
+                "Mona Adel",
+                "/Recordings",
+            ),
+        ],
+        ("shared", _) => vec![
+            f(
+                "demo-pitch",
+                "Customer pitch.pptx",
+                9_800_000,
+                60 * 2,
+                "Sara Hassan",
+                "",
+            ),
+            f(
+                "demo-roadmap",
+                "Roadmap.xlsx",
+                210_000,
+                60 * 26,
+                "Youssef Samir",
+                "",
+            ),
+            f(
+                "demo-contract",
+                "Vendor contract.pdf",
+                640_000,
+                60 * 24,
+                "Omar Khaled",
+                "",
+            ),
+            d(
+                "demo-handbook",
+                "Team handbook",
+                9,
+                60 * 24 * 14,
+                "Mona Adel",
+            ),
+        ],
+        ("favorites", _) => vec![
+            f("demo-budget", "Budget 2026.xlsx", 3_400_000, 45, me, "/"),
+            d("demo-projects", "Projects", 4, 60 * 30, me),
+            d("demo-brand", "Brand assets", 7, 60 * 24 * 20, me),
+        ],
+        ("libraries", _) => drive_libraries()
+            .into_iter()
+            .map(|(id, name)| onedrive::DriveItem {
+                id: "root".into(),
+                drive_id: id,
+                name,
+                is_folder: true,
+                ..Default::default()
+            })
+            .collect(),
+        ("bin", _) => vec![
+            f("bin-1", "Old draft.docx", 31_000, 60 * 24, me, "/Documents"),
+            f("bin-2", "Scratch.txt", 200, 60 * 24 * 2, me, "/Documents"),
+            d("bin-3", "Archive 2024", 14, 60 * 24 * 9, me),
+        ],
+        ("meetings", _) => vec![
+            f(
+                "demo-rec-1",
+                "Weekly sync-20261112.mp4",
+                212_000_000,
+                60 * 24 * 6,
+                me,
+                "/Recordings",
+            ),
+            f(
+                "demo-rec-2",
+                "Design review-20261105.mp4",
+                156_000_000,
+                60 * 24 * 13,
+                me,
+                "/Recordings",
+            ),
+        ],
+        ("search", _) => ["home", "shared"]
+            .into_iter()
+            .flat_map(|k| drive_listing(k, "", now))
+            .collect(),
+        (k, _) if k.starts_with("drive:") => vec![
+            d("demo-lib-docs", "Documents", 6, 60 * 24, "Ahmed Ali"),
+            f(
+                "demo-lib-price",
+                "Price list.xlsx",
+                74_000,
+                60 * 48,
+                "Sara Hassan",
+                "",
+            ),
+            f(
+                "demo-lib-brief",
+                "Brief.docx",
+                33_000,
+                60 * 72,
+                "Ahmed Ali",
+                "",
+            ),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// Text shown when a demo text or markdown file is opened.
+pub fn drive_file_text(name: &str) -> String {
+    if name.to_lowercase().ends_with(".md") {
+        "# Meeting notes\n\n**Date:** Wednesday\n\n- Review the Q4 plan\n- Confirm the vendor contract\n- Decide the offsite date\n\nThe next sync is on Monday.".into()
+    } else {
+        format!("{name}\n\nThis is demo text. Nothing here is stored.")
+    }
+}
+
+pub fn drive_versions(now: i64) -> Vec<onedrive::Version> {
+    [
+        (0, "Mohamed Eslam", 84_000),
+        (60 * 26, "Mona Adel", 82_500),
+        (60 * 24 * 9, "Mohamed Eslam", 61_000),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(n, (ago, by, size))| onedrive::Version {
+        id: format!("{}.0", 3 - n),
+        modified_ms: now - ago * 60_000,
+        modified_by: by.into(),
+        size,
+    })
+    .collect()
+}
+
+pub fn drive_permissions() -> Vec<onedrive::Permission> {
+    vec![
+        onedrive::Permission {
+            id: "perm-owner".into(),
+            roles: vec!["owner".into()],
+            granted_to: vec!["Mohamed Eslam".into()],
+            ..Default::default()
+        },
+        onedrive::Permission {
+            id: "perm-sara".into(),
+            roles: vec!["write".into()],
+            granted_to: vec!["Sara Hassan".into()],
+            ..Default::default()
+        },
+        onedrive::Permission {
+            id: "perm-link".into(),
+            roles: vec!["read".into()],
+            link_scope: Some("organization".into()),
+            link_type: Some("view".into()),
+            ..Default::default()
+        },
+    ]
+}
+
+/// Directory people matching `q`, for the Share dialog's picker.
+pub fn drive_people(q: &str) -> Vec<teams_proto::people::Person> {
+    let q = q.to_lowercase();
+    [
+        ("Ahmed Ali", 2, "Engineering manager"),
+        ("Sara Hassan", 3, "Sales lead"),
+        ("Omar Khaled", 4, "Legal counsel"),
+        ("Mona Adel", 5, "Designer"),
+        ("Youssef Samir", 6, "Product manager"),
+    ]
+    .into_iter()
+    .filter(|(name, _, _)| name.to_lowercase().contains(&q))
+    .map(|(name, n, title)| teams_proto::people::Person {
+        mri: user(n),
+        display_name: name.into(),
+        email: Some(format!(
+            "{}@contoso.example",
+            name.to_lowercase().replace(' ', ".")
+        )),
+        job_title: Some(title.into()),
+        department: None,
+    })
+    .collect()
+}

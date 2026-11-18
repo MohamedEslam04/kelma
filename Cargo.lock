@@ -3016,6 +3016,7 @@ dependencies = [
  "i-slint-backend-testing",
  "image",
  "notify-rust",
+ "onedrive",
  "open",
  "render",
  "reqwest",
