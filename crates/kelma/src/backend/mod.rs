@@ -42,6 +42,7 @@ pub enum Cmd {
     CloseThread,
     AttachImage,
     AttachFile,
+    SetEnterSends(bool),
 }
 
 #[derive(Default)]
@@ -129,12 +130,14 @@ impl Engine {
     /// Starts only the render loop (demo mode: no network).
     pub fn start_offline(self: &Arc<Self>) {
         self.offline.store(true, Ordering::Relaxed);
+        self.push_prefs();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
     }
 
     /// Starts background loops: render, live events, periodic token persistence.
     pub fn start(self: &Arc<Self>) {
+        self.push_prefs();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -313,8 +316,30 @@ impl Engine {
             }
             Cmd::AttachImage => self.attach_image().await?,
             Cmd::AttachFile => self.attach_file().await?,
+            Cmd::SetEnterSends(on) => {
+                self.cfg.lock().unwrap().enter_sends = on;
+                self.save_cfg();
+            }
         }
         Ok(())
+    }
+
+    /// Tells the UI the saved composer preferences.
+    fn push_prefs(&self) {
+        let enter_sends = self.cfg.lock().unwrap().enter_sends;
+        self.ui.enter_sends(enter_sends);
+    }
+
+    /// Writes the config file. Demo mode has no config of its own, so it never touches the real one.
+    fn save_cfg(&self) {
+        if self.offline.load(Ordering::Relaxed) {
+            return;
+        }
+        let cfg = self.cfg.lock().unwrap().clone();
+        let saved = session::Paths::new().and_then(|p| p.save_config(&cfg));
+        if let Err(err) = saved {
+            tracing::warn!(%err, "saving config failed");
+        }
     }
 
     /// Conversation id messages are sent to (channel thread aware).

@@ -190,6 +190,10 @@ impl UiHandle {
         self.run(move |w| w.set_draft(text.into()));
     }
 
+    pub fn enter_sends(&self, on: bool) {
+        self.run(move |w| w.set_enter_sends(on));
+    }
+
     pub fn clear_subject(&self) {
         self.run(|w| w.set_post_subject(SharedString::new()));
     }

@@ -221,7 +221,7 @@ fn toolbar_emoji_picker_and_attach_buttons() {
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 4, "emoji, image, file, send");
+    assert_eq!(tb.len(), 5, "emoji, image, file, more, send");
 
     app.set_draft("hi ".into());
     assert_eq!(
@@ -311,4 +311,63 @@ fn arabic_cursor_selection_copy_paste() {
     key(&app, Key::Shift, false);
     type_text(&app, "there");
     assert_eq!(app.get_draft(), "hi there");
+}
+
+fn ctrl_enter(app: &AppWindow) {
+    key(app, Key::Control, true);
+    enter(app);
+    key(app, Key::Control, false);
+}
+
+#[test]
+fn start_a_new_line_mode_sends_on_ctrl_enter() {
+    let app = app_with_messages(vec![]);
+    let sent = record_send(&app);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    assert!(app.get_enter_sends(), "Enter sends by default");
+
+    app.set_enter_sends(false);
+    type_text(&app, "one");
+    enter(&app);
+    type_text(&app, "two");
+    assert!(
+        sent.borrow().is_empty(),
+        "Enter does not send in new-line mode"
+    );
+    assert_eq!(app.get_draft(), "one\ntwo");
+
+    ctrl_enter(&app);
+    assert_eq!(*sent.borrow(), vec!["one\ntwo".to_string()]);
+    assert_eq!(app.get_draft(), "");
+
+    app.set_enter_sends(true);
+    type_text(&app, "x");
+    enter(&app);
+    assert_eq!(
+        sent.borrow().len(),
+        2,
+        "Enter sends again once switched back"
+    );
+}
+
+#[test]
+fn composer_more_menu_switches_the_enter_behavior() {
+    let app = app_with_messages(vec![]);
+    let log = Log::default();
+    {
+        let l = log.clone();
+        app.on_set_enter_sends(move |on| l.borrow_mut().push(format!("enter-sends {on}")));
+    }
+    let more = &toolbar(&app)[3];
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "Composer::enter-opt").count(),
+        0
+    );
+    more.mock_single_click(PointerEventButton::Left);
+    let opts: Vec<_> = ElementHandle::find_by_element_id(&app, "Composer::enter-opt").collect();
+    assert_eq!(opts.len(), 2, "send the message, start a new line");
+
+    opts[1].mock_single_click(PointerEventButton::Left);
+    assert!(!app.get_enter_sends());
+    assert_eq!(*log.borrow(), vec!["enter-sends false"]);
 }

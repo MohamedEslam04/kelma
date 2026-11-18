@@ -53,6 +53,7 @@ export component AppWindow inherits Window {
     in-out property <string> editing-id;
     in-out property <string> draft;
     in-out property <string> post-subject;
+    in-out property <bool> enter-sends: true;
 
     // --- callbacks to Rust ---
     callback retry-login();
@@ -76,6 +77,7 @@ export component AppWindow inherits Window {
     callback close-thread();
     callback attach-image();
     callback attach-file();
+    callback set-enter-sends(bool);
     callback dismiss-banner();
 
     // Rust bumps these counters to request a scroll to the bottom / composer focus.
@@ -316,6 +318,8 @@ export component AppWindow inherits Window {
                         draft <=> root.draft;
                         post-subject <=> root.post-subject;
                         focus-tick <=> root.focus-tick;
+                        enter-sends <=> root.enter-sends;
+                        set-enter-sends(on) => { root.set-enter-sends(on); }
                         send(text) => { root.send(text); }
                         typing-tick => { root.typing-tick(); }
                         cancel-reply => { root.cancel-reply(); }
