@@ -5,3 +5,4 @@ fixtures/raw/
 *.har
 *.token
 .env
+.claude/worktrees/
