@@ -199,6 +199,7 @@ impl Engine {
             v.editing = None;
         }
         self.restore_draft(&id);
+        self.push_attachments();
         self.mark(|d| {
             d.header = true;
             d.messages = true;

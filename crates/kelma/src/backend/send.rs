@@ -14,8 +14,28 @@ impl Engine {
         subject: String,
     ) -> anyhow::Result<()> {
         let text = text.trim().to_string();
+        let editing_now = self.view.lock().unwrap().editing.is_some();
+        // Chips go first: files as file cards, images as HTML for this message.
+        let images = if editing_now {
+            String::new()
+        } else {
+            match self.upload_attachments().await {
+                Ok(images) => images,
+                Err(err) => {
+                    if !text.is_empty() {
+                        self.ui.set_draft(text.clone());
+                        self.view.lock().unwrap().draft_text = text;
+                        self.schedule_draft_save();
+                    }
+                    return Err(err);
+                }
+            }
+        };
         if text.is_empty() {
-            return Ok(());
+            // Nothing but file cards (already sent) or images.
+            if images.is_empty() {
+                return Ok(());
+            }
         }
         let (target, reply, editing, current) = {
             let mut v = self.view.lock().unwrap();
@@ -64,8 +84,10 @@ impl Engine {
                     &text,
                 )
             }
+            None if text.is_empty() => String::new(),
             None => render::text_to_teams_html(&text),
         };
+        let html = format!("{html}{images}");
         self.clear_draft(&current);
         let pending_id = format!("pending-{}", now_ms());
         let thread_root = self.view.lock().unwrap().thread_root.clone();
@@ -106,7 +128,8 @@ impl Engine {
                 drop(v);
                 self.ui.clear_subject();
                 let st = self.store.lock().unwrap();
-                let _ = st.touch_conversation(&current, now_ms(), &format!("You: {text}"), false);
+                let shown = if text.is_empty() { "📷 Image" } else { &text };
+                let _ = st.touch_conversation(&current, now_ms(), &format!("You: {shown}"), false);
                 drop(st);
                 self.mark(|d| d.chats = true);
                 // Fallback in case the live echo never arrives.
@@ -219,10 +242,8 @@ impl Engine {
         Ok(())
     }
 
+    /// Picks an image and adds it as a chip; it is uploaded when the message is sent.
     pub(super) async fn attach_image(self: &Arc<Self>) -> anyhow::Result<()> {
-        let Some(target) = self.current_target() else {
-            return Ok(());
-        };
         let Some(file) = rfd::AsyncFileDialog::new()
             .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
             .pick_file()
@@ -230,47 +251,16 @@ impl Engine {
         else {
             return Ok(());
         };
-        let data = file.read().await;
-        let (w, h) = image::load_from_memory(&data)
-            .map(|i| (i.width(), i.height()))
-            .unwrap_or((400, 300));
-        let (w, h) = if w > 400 {
-            (400, h * 400 / w.max(1))
-        } else {
-            (w, h)
-        };
-        let conv_only = target
-            .split(";messageid=")
-            .next()
-            .unwrap_or(&target)
-            .to_string();
-        let id = self
-            .client
-            .upload_image(&conv_only, &file.file_name(), data)
-            .await?;
-        let html = teams_proto::ams::image_html(&id, w, h);
-        self.client
-            .send_message(&target, &html, &self.my_name, None)
-            .await?;
-        self.ui.banner(String::new());
-        Ok(())
+        self.add_attachment(file.file_name(), file.read().await)
+            .await
     }
 
-    /// Picks a file, uploads it to OneDrive, shares it with the chat and posts it.
+    /// Picks a file and adds it as a chip; it is uploaded to OneDrive when the message is sent.
     pub(super) async fn attach_file(self: &Arc<Self>) -> anyhow::Result<()> {
-        let Some(target) = self.current_target() else {
-            return Ok(());
-        };
         let Some(file) = rfd::AsyncFileDialog::new().pick_file().await else {
             return Ok(());
         };
-        let name = file.file_name();
-        self.ui.banner(format!("Uploading {name}…"));
-        let data = file.read().await;
-        self.client
-            .send_file(&target, &name, data, &self.my_name)
-            .await?;
-        self.ui.banner(String::new());
-        Ok(())
+        self.add_attachment(file.file_name(), file.read().await)
+            .await
     }
 }

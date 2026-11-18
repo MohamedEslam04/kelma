@@ -23,6 +23,14 @@ pub struct ChatData {
     pub draft: bool,
 }
 
+/// A chip above the composer.
+pub struct AttachmentData {
+    pub name: String,
+    pub detail: String,
+    pub is_image: bool,
+    pub thumb: Option<Pixels>,
+}
+
 #[derive(Clone)]
 pub struct ImgData {
     pub url: String,

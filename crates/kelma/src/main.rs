@@ -252,6 +252,10 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
     cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
     cmd!(on_emoji_used, |e| Cmd::EmojiUsed(e.into()));
+    cmd!(on_paste_image, || Cmd::PasteImage);
+    cmd!(on_remove_attachment, |i| Cmd::RemoveAttachment(
+        i.max(0) as usize
+    ));
     cmd!(on_skin_tone_changed, |t| Cmd::SetSkinTone(
         t.clamp(0, 5) as u8
     ));
@@ -282,6 +286,19 @@ fn main() -> anyhow::Result<()> {
             {
                 let _ = cb.set_text(w.get_user_code().to_string());
             }
+        });
+    }
+
+    // Files dropped on the window become attachments. winit reports one event per file. Wayland has
+    // no drop events in winit 0.30, so this only fires on X11, Windows and macOS.
+    {
+        use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
+        let tx = tx.clone();
+        window.window().on_winit_window_event(move |_, event| {
+            if let WindowEvent::DroppedFile(path) = event {
+                let _ = tx.send(Cmd::AddFile(path.clone()));
+            }
+            EventResult::Propagate
         });
     }
 

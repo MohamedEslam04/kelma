@@ -827,3 +827,147 @@ fn restored_draft_has_the_cursor_at_the_end() {
     type_text(&h.app, " it");
     assert_eq!(h.app.get_draft(), "remember it");
 }
+
+fn chips(app: &AppWindow) -> Vec<String> {
+    app.get_pending_attachments()
+        .iter()
+        .map(|a| a.name.to_string())
+        .collect()
+}
+
+/// A PNG and a text file in a scratch directory.
+fn sample_files(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("kelma-attach-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = dir.join("shot.png");
+    image::RgbaImage::from_pixel(64, 32, image::Rgba([200, 30, 30, 255]))
+        .save(&png)
+        .unwrap();
+    let txt = dir.join("notes.txt");
+    std::fs::write(&txt, "hello").unwrap();
+    (png, txt)
+}
+
+#[test]
+fn chip_row_has_a_remove_button_per_attachment() {
+    use crate::PendingAttachment;
+    let app = app_with_messages(vec![]);
+    let removed = Log::default();
+    {
+        let l = removed.clone();
+        app.on_remove_attachment(move |i| l.borrow_mut().push(format!("remove {i}")));
+    }
+    assert_eq!(
+        ids(&app, "Composer::chip").len(),
+        0,
+        "no row without attachments"
+    );
+
+    app.set_pending_attachments(ModelRc::new(VecModel::from(vec![
+        PendingAttachment {
+            name: "screenshot.png".into(),
+            detail: "412 KB".into(),
+            is_image: true,
+            ..Default::default()
+        },
+        PendingAttachment {
+            name: "report.pdf".into(),
+            detail: "1.2 MB".into(),
+            ..Default::default()
+        },
+    ])));
+    assert_eq!(ids(&app, "Composer::chip").len(), 2);
+    let xs = ids(&app, "Composer::chip-x");
+    assert_eq!(xs.len(), 2, "each chip has an X");
+    xs[1].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*removed.borrow(), vec!["remove 1"]);
+}
+
+#[test]
+fn attachments_alone_can_be_sent_with_enter_and_the_button() {
+    use crate::PendingAttachment;
+    let app = app_with_messages(vec![]);
+    let sent = record_send(&app);
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    enter(&app);
+    assert!(sent.borrow().is_empty(), "nothing to send");
+
+    app.set_pending_attachments(ModelRc::new(VecModel::from(vec![PendingAttachment {
+        name: "a.png".into(),
+        ..Default::default()
+    }])));
+    enter(&app);
+    assert_eq!(
+        *sent.borrow(),
+        vec![String::new()],
+        "an empty text still sends the chips"
+    );
+}
+
+#[test]
+fn ctrl_v_asks_for_the_clipboard_image_and_still_pastes_text() {
+    let app = app_with_messages(vec![]);
+    let asked = Rc::new(RefCell::new(0));
+    {
+        let a = asked.clone();
+        app.on_paste_image(move || *a.borrow_mut() += 1);
+    }
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    type_text(&app, "x");
+    combo(&app, Key::Control, 'a');
+    combo(&app, Key::Control, 'c');
+    combo(&app, Key::Control, 'v');
+    assert_eq!(*asked.borrow(), 1);
+    assert_eq!(app.get_draft(), "x", "the text paste still happens");
+    type_text(&app, "v");
+    assert_eq!(*asked.borrow(), 1, "a plain v is not a paste");
+}
+
+#[test]
+fn files_become_chips_per_chat_and_each_can_be_removed() {
+    let h = Harness::new();
+    h.select(NOTES);
+    let (png, txt) = sample_files("chips");
+    let run = h.runner();
+    run(Cmd::AddFile(png));
+    run(Cmd::AddFile(txt));
+    assert_eq!(chips(&h.app), vec!["shot.png", "notes.txt"]);
+    let model = h.app.get_pending_attachments();
+    let first = model.row_data(0).unwrap();
+    assert!(
+        first.is_image && first.has_preview,
+        "images get a thumbnail"
+    );
+    let second = model.row_data(1).unwrap();
+    assert!(!second.is_image && !second.has_preview);
+    assert_eq!(second.detail, "5 B");
+    assert_eq!(ids(&h.app, "Composer::chip").len(), 2);
+
+    h.select(BACKEND);
+    assert!(chips(&h.app).is_empty(), "attachments belong to their chat");
+    h.select(NOTES);
+    assert_eq!(chips(&h.app).len(), 2);
+
+    h.app.on_remove_attachment({
+        let run = run.clone();
+        move |i| run(Cmd::RemoveAttachment(i as usize))
+    });
+    ids(&h.app, "Composer::chip-x")[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(chips(&h.app), vec!["notes.txt"]);
+}
+
+#[test]
+fn a_failed_upload_keeps_the_chips_and_the_text() {
+    let h = Harness::new();
+    h.select(NOTES);
+    let (png, _) = sample_files("fail");
+    let run = h.runner();
+    run(Cmd::AddFile(png));
+    run(Cmd::Send("with a picture".into(), String::new()));
+    assert_eq!(
+        chips(&h.app),
+        vec!["shot.png"],
+        "the offline upload fails, so it stays"
+    );
+    assert_eq!(h.app.get_draft(), "with a picture");
+}

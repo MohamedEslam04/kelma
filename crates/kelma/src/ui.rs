@@ -1,8 +1,9 @@
 //! UI-thread side: turns view data into Slint models.
 
-use crate::data::{ChatData, HeaderData, MsgData, Pixels, TeamData};
+use crate::data::{AttachmentData, ChatData, HeaderData, MsgData, Pixels, TeamData};
 use crate::{
-    AppWindow, ChannelRow, ChatRow, EmojiItem, FileItem, ImageItem, Msg, ReactionItem, TeamRow,
+    AppWindow, ChannelRow, ChatRow, EmojiItem, FileItem, ImageItem, Msg, PendingAttachment,
+    ReactionItem, TeamRow,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -192,6 +193,27 @@ impl UiHandle {
 
     pub fn focus(&self) {
         self.run(|w| w.set_focus_tick(w.get_focus_tick() + 1));
+    }
+
+    /// The chips above the composer.
+    pub fn attachments(&self, chips: Vec<AttachmentData>) {
+        self.run(move |w| {
+            w.set_pending_attachments(model(
+                chips
+                    .into_iter()
+                    .map(|c| {
+                        let (preview, has_preview) = img(&c.thumb);
+                        PendingAttachment {
+                            name: c.name.into(),
+                            detail: c.detail.into(),
+                            is_image: c.is_image,
+                            preview,
+                            has_preview,
+                        }
+                    })
+                    .collect(),
+            ));
+        });
     }
 
     /// Replaces the composer text, with the cursor at its end.

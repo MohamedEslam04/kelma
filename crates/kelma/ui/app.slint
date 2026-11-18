@@ -2,7 +2,7 @@
 // The pieces live in sibling modules; this file keeps the AppWindow state, callbacks and wiring.
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ChatRow, EmojiItem, Msg, TeamRow } from "types.slint";
+import { ChatRow, EmojiItem, Msg, PendingAttachment, TeamRow } from "types.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { MessageRow } from "message_row.slint";
@@ -10,7 +10,7 @@ import { Composer, EmojiApi } from "composer.slint";
 import { LoginView } from "login.slint";
 
 export { Theme } from "theme.slint";
-export { ChatRow, ReactionItem, FileItem, ImageItem, Msg, ChannelRow, TeamRow, EmojiItem, Edited } from "types.slint";
+export { ChatRow, ReactionItem, FileItem, ImageItem, Msg, ChannelRow, TeamRow, EmojiItem, Edited, PendingAttachment } from "types.slint";
 export { EmojiApi } from "composer.slint";
 
 export component AppWindow inherits Window {
@@ -57,6 +57,7 @@ export component AppWindow inherits Window {
     in-out property <bool> enter-sends: true;
     in-out property <int> skin-tone: 0;
     in property <[EmojiItem]> recent-emoji;
+    in property <[PendingAttachment]> pending-attachments;
     in property <int> cursor-tick; // Rust bumps it to put the composer cursor at the end
 
     // --- callbacks to Rust ---
@@ -84,6 +85,8 @@ export component AppWindow inherits Window {
     callback attach-file();
     callback set-enter-sends(bool);
     callback emoji-used(string);
+    callback paste-image();
+    callback remove-attachment(int);
     callback skin-tone-changed(int);
     callback dismiss-banner();
 
@@ -329,6 +332,9 @@ export component AppWindow inherits Window {
                         set-enter-sends(on) => { root.set-enter-sends(on); }
                         skin-tone <=> root.skin-tone;
                         recent-emoji: root.recent-emoji;
+                        pending-attachments: root.pending-attachments;
+                        paste-image => { root.paste-image(); }
+                        remove-attachment(i) => { root.remove-attachment(i); }
                         cursor-tick: root.cursor-tick;
                         emoji-used(e) => { root.emoji-used(e); }
                         skin-tone-changed(t) => { root.skin-tone-changed(t); }

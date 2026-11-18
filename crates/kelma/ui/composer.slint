@@ -1,7 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Edited, EmojiItem } from "types.slint";
-import { IconButton } from "widgets.slint";
+import { Edited, EmojiItem, PendingAttachment } from "types.slint";
+import { Icon, IconButton } from "widgets.slint";
 
 // Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
 export global EmojiApi {
@@ -48,11 +48,14 @@ export component Composer inherits Rectangle {
     // Request to put the cursor at the end of the text (a draft was restored).
     in property <int> cursor-tick;
     in property <[EmojiItem]> recent-emoji;
+    in property <[PendingAttachment]> pending-attachments;
     in-out property <int> skin-tone: 0; // 0 default, 1..5 light to dark
 
     callback send(string);
     callback set-enter-sends(bool);
     callback emoji-used(string);
+    callback paste-image();
+    callback remove-attachment(int);
     callback skin-tone-changed(int);
     callback typing-tick();
     callback draft-edited(string);
@@ -88,7 +91,7 @@ export component Composer inherits Rectangle {
     }
 
     function submit() {
-        if composer-input.text != "" {
+        if composer-input.text != "" || root.pending-attachments.length > 0 {
             root.send(composer-input.text);
             composer-input.text = "";
         }
@@ -127,6 +130,49 @@ export component Composer inherits Rectangle {
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; clicked => { root.cancel-reply(); } }
                     }
                 }
+                if root.pending-attachments.length > 0: Flickable {
+                    height: 62px;
+                    content-width: root.pending-attachments.length * 208px + 16px;
+                    for a[i] in root.pending-attachments: chip := Rectangle {
+                        x: 8px + i * 208px;
+                        y: 8px;
+                        width: 200px;
+                        height: 48px;
+                        border-radius: 6px;
+                        background: #1f1f1f;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        HorizontalLayout {
+                            padding: 6px;
+                            spacing: 8px;
+                            Rectangle {
+                                width: 36px;
+                                border-radius: 4px;
+                                background: a.has-preview ? transparent : #333333;
+                                clip: true;
+                                if a.has-preview: Image { source: a.preview; image-fit: cover; width: parent.width; height: parent.height; }
+                                if !a.has-preview: Icon { source: @image-url("icons/file.svg"); width: 18px; height: 18px; x: 9px; y: 9px; }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Text { text: a.name; color: Theme.fg; font-size: 12px; font-weight: 600; overflow: elide; }
+                                Text { text: a.detail; color: Theme.fg-muted; font-size: 11px; }
+                            }
+                            Rectangle {
+                                width: 22px;
+                                height: 22px;
+                                y: 0px;
+                                border-radius: 4px;
+                                background: chip-x.has-hover ? Theme.surface-hover : transparent;
+                                Icon { source: @image-url("icons/close.svg"); width: 12px; height: 12px; x: 5px; y: 5px; }
+                                chip-x := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.remove-attachment(i); }
+                                }
+                            }
+                        }
+                    }
+                }
                 if root.current-is-channel && root.thread-root == "": HorizontalLayout {
                     padding-left: 14px;
                     padding-right: 14px;
@@ -144,6 +190,10 @@ export component Composer inherits Rectangle {
                     height: max(44px, min(220px, composer-input.preferred-height + 20px));
                     composer-scope := FocusScope {
                         capture-key-pressed(event) => {
+                            // Not consumed: a text paste still happens. Rust adds an image if the clipboard holds one.
+                            if event.text == "v" && (event.modifiers.control || event.modifiers.meta) {
+                                root.paste-image();
+                            }
                             if root.sug-open {
                                 if event.text == Key.DownArrow {
                                     root.sug-index = min(root.sug-index + 1, root.suggestions.length - 1);
@@ -205,7 +255,7 @@ export component Composer inherits Rectangle {
                     Rectangle { width: 1px; background: Theme.border; }
                     IconButton {
                         icon: @image-url("icons/send.svg");
-                        tint: composer-input.text != "" ? Theme.accent : Theme.fg-subtle;
+                        tint: composer-input.text != "" || root.pending-attachments.length > 0 ? Theme.accent : Theme.fg-subtle;
                         clicked => { root.submit(); }
                     }
                 }
@@ -237,7 +287,7 @@ export component Composer inherits Rectangle {
                 HorizontalLayout {
                     padding-left: 8px;
                     spacing: 10px;
-                    Text { text: s.ch; font-size: 18px; vertical-alignment: center; }
+                    Text { text: s.ch; font-size: 18px; vertical-alignment: center; horizontal-stretch: 0; width: 30px; }
                     Text { text: ":" + s.name; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: left; vertical-alignment: center; overflow: elide; }
                 }
                 sug-area := TouchArea {

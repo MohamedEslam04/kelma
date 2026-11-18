@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
 use teams_proto::Client;
 
+mod attach;
 mod drafts;
 mod live;
 mod render;
@@ -52,6 +53,11 @@ pub enum Cmd {
     /// An emoji was inserted from the panel or the `:name` popup.
     EmojiUsed(String),
     SetSkinTone(u8),
+    /// Ctrl+V: attach the clipboard image, if there is one.
+    PasteImage,
+    /// A file dropped on the window.
+    AddFile(std::path::PathBuf),
+    RemoveAttachment(usize),
 }
 
 #[derive(Default)]
@@ -74,6 +80,8 @@ struct View {
     /// `draft_text` (or the reply target) changed since it was last written to the store.
     draft_dirty: bool,
     draft_gen: u64,
+    /// Attachments waiting to be sent, by chat.
+    attachments: HashMap<String, Vec<attach::Attachment>>,
 }
 
 #[derive(Default)]
@@ -344,6 +352,9 @@ impl Engine {
             }
             Cmd::AttachImage => self.attach_image().await?,
             Cmd::AttachFile => self.attach_file().await?,
+            Cmd::PasteImage => self.paste_image().await?,
+            Cmd::AddFile(path) => self.add_file(path).await?,
+            Cmd::RemoveAttachment(i) => self.remove_attachment(i),
             Cmd::DraftEdited(text) => self.draft_edited(text),
             Cmd::Flush => self.flush_draft(),
             Cmd::SetEnterSends(on) => {
