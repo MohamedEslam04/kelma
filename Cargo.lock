@@ -688,12 +688,19 @@ dependencies = [
 name = "calling"
 version = "0.0.0"
 dependencies = [
+ "base64",
+ "flate2",
+ "futures-util",
+ "reqwest",
  "serde",
  "serde_json",
  "teams-proto",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]

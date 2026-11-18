@@ -1,0 +1,11 @@
+{
+  "conversationController": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-example.conv.skype.com/conv/00000000-0000-0000-0000-0000000000c3?i=4",
+  "state": {"conversationType": "twoParty", "isMultiParty": false},
+  "links": {
+    "leave": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-example.conv.skype.com/conv/00000000-0000-0000-0000-0000000000c3/leave?i=4",
+    "keepAlive": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-example.conv.skype.com/conv/00000000-0000-0000-0000-0000000000c3/keepAlive?i=4",
+    "mute": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-example.conv.skype.com/conv/00000000-0000-0000-0000-0000000000c3/mute?i=4",
+    "addParticipant": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-example.conv.skype.com/conv/00000000-0000-0000-0000-0000000000c3/addParticipant?i=4",
+    "notALink": 42
+  }
+}

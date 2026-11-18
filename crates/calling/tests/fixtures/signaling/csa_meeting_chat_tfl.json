@@ -1,0 +1,32 @@
+{
+  "id": "19:meeting_U3ludGhldGljTWVldGluZ0lkMDAx@thread.v2",
+  "chatType": "meeting",
+  "productContext": "TFL",
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "title": "Synthetic meet now",
+  "activeMeetup": {
+    "callMeetingType": -1,
+    "conversationId": "00000000-0000-0000-0000-0000000000c7",
+    "conversationType": "scheduledMeeting",
+    "conversationUrl": "https://api.flightproxy.skype.com/api/v2/cp/conv-example-prod-aks.conv.skype.com/conv/SyntheticConversationId?i=10-0-0-1&e=638000000000000000",
+    "expiration": "2099-01-01T00:00:00Z",
+    "groupCallInitiator": "8:live:.cid.0123456789abcdef",
+    "isHostless": true,
+    "meetingData": {"meetingCode": "1234567890123"},
+    "messageId": "0",
+    "status": "Active"
+  },
+  "meetingInformation": {
+    "meetingType": 5,
+    "organizerId": "0123456789ABCDEF",
+    "meetingJoinUrl": "https://teams.live.com/meet/1234567890123?p=SyntheticPass01",
+    "meetingData": {"meetingCode": "1234567890123"},
+    "subject": "Synthetic meet now",
+    "startTime": "2099-01-01T00:00:00Z",
+    "endTime": "2099-01-01T01:00:00Z"
+  },
+  "members": [
+    {"mri": "8:live:.cid.0123456789abcdef", "role": "Admin"},
+    {"mri": "8:orgid:00000000-0000-0000-0000-0000000000b2", "tenantId": "00000000-0000-0000-0000-0000000000f1", "role": "Guest"}
+  ]
+}
