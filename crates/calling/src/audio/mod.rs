@@ -13,6 +13,9 @@
 //! [`AudioProcessor`] (echo cancellation, noise suppression, AGC) and hands back the
 //! [`EchoReference`] that [`Playback::start_with_tap`] feeds with what the speaker plays.
 //!
+//! The delay it is told to bridge follows the latency the devices report ([`device_latency`],
+//! [`DelayEstimator`]), starting from [`DEFAULT_STREAM_DELAY_MS`].
+//!
 //! Endpoints are [`FrameSource`]/[`FrameSink`]s: [`Capture`]/[`Playback`] for real devices
 //! (feature `devices`), [`ToneSource`], [`WavSource`] and [`WavSink`] for headless tests.
 
@@ -22,18 +25,20 @@ mod codec;
 #[cfg(feature = "devices")]
 mod device;
 mod jitter;
+mod latency;
 mod pipeline;
 mod resample;
 mod source;
 
 #[cfg(feature = "aec")]
-pub use aec::{
-    AudioProcessor, DEFAULT_STREAM_DELAY_MS, EchoCancelled, EchoReference, echo_cancelled,
-};
+pub use aec::{AudioProcessor, EchoCancelled, EchoReference, echo_cancelled};
 pub use codec::{OpusDecoder, OpusEncoder};
 #[cfg(feature = "devices")]
 pub use device::{Capture, DeviceInfo, Playback, list_input_devices, list_output_devices};
 pub use jitter::JitterBuffer;
+pub use latency::{
+    DEFAULT_STREAM_DELAY_MS, DelayEstimator, DelaySample, DeviceLatency, device_latency,
+};
 pub use pipeline::{spawn_capture_encoder, spawn_decoder_playback};
 pub use resample::InputConverter;
 pub use source::{FrameSink, FrameSource, Paced, ToneSource, WavSink, WavSource};

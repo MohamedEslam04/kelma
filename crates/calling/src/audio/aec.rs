@@ -7,21 +7,21 @@
 //! [`echo_cancelled`] wires that up: it wraps the microphone [`FrameSource`] and returns an
 //! [`EchoReference`] for the playback side to report every frame it hands the speaker.
 
+use super::latency::{DelayEstimator, DelaySample, device_latency};
 use super::{Frame, FrameSource};
 use crate::{Error, FRAME_SAMPLES, Result, SAMPLE_RATE};
 use sonora::config::{
     AdaptiveDigital, EchoCanceller, GainController2, HighPassFilter, NoiseSuppression,
 };
 use sonora::{AudioProcessing, Config, StreamConfig};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// WebRTC processes 10 ms at a time.
 const CHUNK: usize = FRAME_SAMPLES / 2;
 /// Render frames queued between the playback callback and the capture side: one second.
 const REFERENCE_DEPTH: usize = 50;
-/// Starting guess for the render-to-capture delay (device output + input latency). AEC3 finds
-/// the actual delay itself; this is only its starting point.
-pub const DEFAULT_STREAM_DELAY_MS: u32 = 40;
+pub use super::latency::DEFAULT_STREAM_DELAY_MS;
 
 /// AEC + noise suppression + AGC on 48 kHz mono frames of 10 ms or 20 ms.
 ///
@@ -121,6 +121,10 @@ fn check_len(frame: &[i16]) -> Result<()> {
 ///
 /// Render frames travel over a bounded queue and are analysed on the capture side, just before
 /// the next microphone frame, so the playback callback never waits on the processor.
+///
+/// The processor's stream delay is kept at the latency the devices report (see
+/// [`device_latency`]) plus the queueing around the processor, replacing whatever it was set to
+/// once the devices have reported; until then it stays as given.
 pub fn echo_cancelled<S: FrameSource>(
     source: S,
     processor: AudioProcessor,
@@ -131,6 +135,7 @@ pub fn echo_cancelled<S: FrameSource>(
             inner: source,
             processor,
             reference: rx,
+            delay: DelayEstimator::new(),
         },
         EchoReference { tx },
     )
@@ -140,17 +145,48 @@ pub fn echo_cancelled<S: FrameSource>(
 pub struct EchoCancelled<S> {
     inner: S,
     processor: AudioProcessor,
-    reference: mpsc::Receiver<Frame>,
+    reference: mpsc::Receiver<Played>,
+    delay: DelayEstimator,
+}
+
+impl<S> EchoCancelled<S> {
+    /// The stream delay the processor currently works with.
+    pub fn stream_delay_ms(&self) -> u32 {
+        self.processor.stream_delay_ms()
+    }
+
+    /// Hand the queued render frames to the processor, and retune its stream delay if the
+    /// measured device latency has moved.
+    fn drain_reference(&mut self) {
+        let (mut waited, mut frames) = (Duration::ZERO, 0u32);
+        while let Ok(played) = self.reference.try_recv() {
+            waited += played.at.elapsed();
+            frames += 1;
+            if let Err(e) = self.processor.process_render(&played.frame) {
+                tracing::warn!("audio processing: {e}");
+            }
+        }
+        if frames == 0 {
+            return;
+        }
+        let devices = device_latency();
+        let sample = DelaySample {
+            output: devices.output(),
+            input: devices.input(),
+            mic_backlog: devices.mic_backlog(),
+            render_wait: waited / frames,
+        };
+        if let Some(ms) = self.delay.observe(sample) {
+            self.processor.set_stream_delay_ms(ms);
+            tracing::info!("audio aec delay: {ms} ms");
+        }
+    }
 }
 
 impl<S: FrameSource> FrameSource for EchoCancelled<S> {
     async fn next_frame(&mut self) -> Option<Frame> {
         let frame = self.inner.next_frame().await?;
-        while let Ok(played) = self.reference.try_recv() {
-            if let Err(e) = self.processor.process_render(&played) {
-                tracing::warn!("audio processing: {e}");
-            }
-        }
+        self.drain_reference();
         match self.processor.process_capture(&frame) {
             Ok(clean) => Some(clean),
             Err(e) => {
@@ -165,11 +201,20 @@ impl<S: FrameSource> FrameSource for EchoCancelled<S> {
 /// Never blocks; if the capture side stops draining, frames are dropped.
 #[derive(Clone)]
 pub struct EchoReference {
-    tx: mpsc::Sender<Frame>,
+    tx: mpsc::Sender<Played>,
+}
+
+/// A frame handed to the speaker and when.
+struct Played {
+    frame: Frame,
+    at: Instant,
 }
 
 impl EchoReference {
     pub fn push(&self, frame: &[i16]) {
-        let _ = self.tx.try_send(frame.to_vec());
+        let _ = self.tx.try_send(Played {
+            frame: frame.to_vec(),
+            at: Instant::now(),
+        });
     }
 }

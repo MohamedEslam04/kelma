@@ -1,11 +1,13 @@
 //! Real microphone/speaker I/O through cpal (ALSA on Linux; PipeWire serves ALSA clients).
 
+use super::latency::device_latency;
 use super::resample::OutputConverter;
 use super::{Frame, FrameSink, FrameSource, InputConverter, JitterBuffer};
 use crate::{Error, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, FromSample, Sample, SampleFormat, SizedSample, Stream, StreamConfig};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// Frames queued between the capture callback and the consumer: one second.
@@ -177,7 +179,9 @@ where
     device
         .build_input_stream(
             config,
-            move |data: &[T], _| {
+            move |data: &[T], info| {
+                let ts = info.timestamp();
+                device_latency().set_input(ts.callback.checked_duration_since(ts.capture));
                 scratch.clear();
                 scratch.extend(data.iter().map(|&s| i16::from_sample(s)));
                 for frame in conv.push(&scratch) {
@@ -191,9 +195,19 @@ where
         .map_err(|e| dev_err("build input stream", e))
 }
 
+impl Drop for Capture {
+    fn drop(&mut self) {
+        device_latency().set_input(None);
+        device_latency().set_mic_backlog(Duration::ZERO);
+    }
+}
+
 impl FrameSource for Capture {
     async fn next_frame(&mut self) -> Option<Frame> {
-        self.rx.recv().await
+        let frame = self.rx.recv().await?;
+        // What is still queued behind this frame reaches the consumer that much later.
+        device_latency().set_mic_backlog(Duration::from_millis(20) * self.rx.len() as u32);
+        Some(frame)
     }
 }
 
@@ -270,6 +284,12 @@ impl Playback {
     }
 }
 
+impl Drop for Playback {
+    fn drop(&mut self) {
+        device_latency().set_output(None);
+    }
+}
+
 /// Receives played 48 kHz mono frames on the audio thread.
 type Tap = Box<dyn FnMut(&[i16]) + Send>;
 
@@ -308,7 +328,9 @@ where
     device
         .build_output_stream(
             config,
-            move |data: &mut [T], _| {
+            move |data: &mut [T], info| {
+                let ts = info.timestamp();
+                device_latency().set_output(ts.playback.checked_duration_since(ts.callback));
                 scratch.resize(data.len(), 0);
                 match buffer.lock() {
                     Ok(mut b) => b.pop_into(&mut scratch),
@@ -349,6 +371,27 @@ mod tests {
         let outs = list_output_devices().unwrap();
         println!("{outs:#?}");
         println!("{:#?}", list_input_devices().unwrap());
+    }
+
+    /// Opens both streams briefly (the speaker plays silence) and prints the latencies the
+    /// backend reports, which is what the echo canceller's stream delay is derived from.
+    #[test]
+    #[ignore = "needs real audio devices"]
+    fn reports_device_latency() {
+        let _mic = Capture::start(None).unwrap();
+        let _speaker = Playback::start(None).unwrap();
+        for _ in 0..6 {
+            std::thread::sleep(Duration::from_millis(250));
+            let l = device_latency();
+            println!(
+                "output {:?}, input {:?}, mic backlog {:?}",
+                l.output(),
+                l.input(),
+                l.mic_backlog()
+            );
+        }
+        let l = device_latency();
+        assert!(l.output().is_some() && l.input().is_some());
     }
 
     #[test]
