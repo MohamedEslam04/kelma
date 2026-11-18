@@ -16,6 +16,13 @@ tracing = "0.1.44"
 
 # --- signalling (signaling.rs, invitation.rs, relay.rs, ngc_trouter.rs) ---
 teams-proto = { version = "0.0.0", path = "../teams-proto" }
+base64 = "0.23.1"
+flate2 = "1.1.11"
+futures-util = "0.3.34"
+reqwest = { version = "0.13.5", features = ["json"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+url = "2.5.8"
+uuid = { version = "1.29.3", features = ["v4"] }
 
 # --- media (media.rs) ---
 
