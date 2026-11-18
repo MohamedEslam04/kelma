@@ -10,6 +10,8 @@ use slint::{ComponentHandle, LogicalPosition, LogicalSize, ModelRc, SharedString
 
 use crate::{AppWindow, Msg};
 
+mod activity;
+
 type Log = Rc<RefCell<Vec<String>>>;
 
 fn app_with_messages(msgs: Vec<Msg>) -> AppWindow {
