@@ -73,7 +73,7 @@ Checks (workspace root): `cargo fmt --all --check`, `cargo clippy --workspace --
 
 ### Phase 4: hardening
 - [x] Reconnect after network loss or sleep, with history catch-up — process frozen for 3 min (SIGSTOP, like suspend): the server reset the socket, kelma reconnected, the message sent during the freeze was caught up and the next one arrived live. Token expiry now uses wall-clock time so it survives suspend
-- [ ] Skypetoken re-mint before expiry; the rotated refresh token is persisted
+- [x] Skypetoken re-mint before expiry; the rotated refresh token is persisted (verified live 2026-11-18: the installed app re-minted at 2h10m and kept receiving messages; the keyring entry changed after the refresh. The tick is now 240 s, under the 300 s margin, so an idle app refreshes before expiry)
 - [x] Memory: after 10 min idle with about 20 chats, under 120 MB PSS (`portstat -a kelma`). Record the result in the README. — ~29 MB PSS idle, ~62 MB PSS+swap with an image chat open
 - [x] `.desktop` file, an original icon (not Microsoft's), and release build and install instructions
 - [x] README: features, install, screenshots, disclaimer; roadmap ticked

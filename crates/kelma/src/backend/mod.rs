@@ -142,7 +142,8 @@ impl Engine {
         let e = self.clone();
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(600)).await;
+                // Shorter than the 300 s refresh margin, so tokens never lapse while idle.
+                tokio::time::sleep(Duration::from_secs(240)).await;
                 if e.client.ensure_fresh().await.is_ok() {
                     let cfg = e.cfg.lock().unwrap().clone();
                     let _ = session::persist(&cfg, &e.client).await;
