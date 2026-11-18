@@ -136,9 +136,10 @@ are the same as in `plans/chat.md`.
     never / on a date / after N), Scheduler, Rooms, location, Show as, reminder, category, Private, response
     options and a body (the chat formatter's markdown). It says what is wrong before sending. Not built: a
     side day preview (the Scheduler's grid shows the day), a rich-text body, a time zone picker (local only),
-    and the channel pick for channel meetings only sets the location. A private appointment made through the
-    form's code was created, read back, moved and deleted live; no meeting with attendees or a Teams link was
-    made (live rules), so the Done-when is open.
+    and the channel pick for channel meetings only sets the location. Not run live: an
+    ignored test (`live_form_round_trip` in `backend/cal/forms.rs`) makes, moves and deletes private
+    appointments through the form's code, but it has not been run yet; no meeting with attendees or a Teams
+    link is made from tests (live rules), so the Done-when is open.
 - [ ] **C2.2 Edit, cancel and other organizer actions.** Impact 4, effort 3.
   - **What.**
     - Edit sends an update.
@@ -151,8 +152,8 @@ are the same as in `plans/chat.md`.
   - **Status.** Built: the peek's … menu has Edit (this occurrence), Edit series, Duplicate, Forward, Cancel
     meeting (with a message and a whole-series choice) and Delete, each asking first; dragging a block moves
     it (snapped to 15 minutes, across days) and dragging its bottom edge resizes it, asking first when it is a
-    meeting with attendees. Tested offline end to end. Live: a private appointment was created, moved and
-    deleted; cancel and forward were not run (live rules).
+    meeting with attendees. Tested offline end to end. Not run live (cancel and forward never are, per the
+    live rules; the ignored `live_form_round_trip` covers create, move and delete of a private appointment).
 - [ ] **C2.3 Scheduling assistant ("Scheduler").** Impact 4, effort 3.
   - **What.** A grid of attendees by time slot with busy, tentative and out-of-office shading, each attendee's time zone, suggested times, and room availability.
   - **How.** `POST /me/calendar/getSchedule` and `POST /me/findMeetingTimes`.
@@ -202,8 +203,8 @@ are the same as in `plans/chat.md`.
     - Join by ID resolves through the Teams web join page (`https://teams.microsoft.com/meet/<id>?p=<passcode>`).
   - **Status.** Built: Meet now asks for an optional title, creates the meeting through the middle tier and shows
     its link with Copy link and Join now; Join with an ID takes the ID and passcode and opens the Teams join
-    page (it rejects an ID with odd characters). Not run live: Meet now and meetings are never exercised on
-    this account.
+    page (it rejects an ID with odd characters). DEFERRED: needs test tenant (Meet now and meetings are never exercised on the
+    work account).
 - [ ] **C3.3 Share, Print, Calendar settings.** Impact 2, effort 2.
   - **What.**
     - Share: calendar permissions (free/busy, titles, all details, edit, delegate).
@@ -221,7 +222,8 @@ are the same as in `plans/chat.md`.
   - **How.** Discover the endpoint; purple-teams uses `/v1/me/workLocation` on the presence service.
   - **Status.** UI only, as the endpoint is unverified: a day header opens Office, Remote and Clear, the pin shows
     in the header, and ⋯ has the same for today. The pin is kept in memory; the call to the presence service
-    is made but never run live (live rules), and a refusal leaves a note. The profile menu and colleagues'
+    is made but never run. DEFERRED: needs test tenant (work location is never exercised on the work account);
+    a refusal leaves a note. The profile menu and colleagues'
     pins are not built.
 - [ ] **C3.5 Calendar in chat.** Impact 3, effort 1.
   - **What.** "Schedule a meeting" from a chat's header pre-fills its members.
