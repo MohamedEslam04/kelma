@@ -317,14 +317,7 @@ fn main() -> anyhow::Result<()> {
             let _ = tx.send(Cmd::Send(text.into(), subject));
         });
     }
-    {
-        let tx = tx.clone();
-        window.global::<CalStore>().on_command(move |name, arg| {
-            if let Some(c) = backend::CalCmd::parse(&name, &arg) {
-                let _ = tx.send(Cmd::Calendar(c));
-            }
-        });
-    }
+    ui::install_calendar(&window, tx.clone());
     {
         let weak = window.as_weak();
         window.on_dismiss_banner(move || {

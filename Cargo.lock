@@ -3014,6 +3014,7 @@ dependencies = [
  "chrono",
  "emoji",
  "i-slint-backend-testing",
+ "iana-time-zone",
  "image",
  "notify-rust",
  "open",

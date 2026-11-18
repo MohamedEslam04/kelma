@@ -5,6 +5,7 @@
 //! pass as a function of the UTC instant so daylight saving is honored.
 
 use calendar::{Date, Event, Response, ShowAs, View, Weekday, layout_columns, week_range};
+use std::collections::BTreeMap;
 
 pub const DAY_MS: i64 = 86_400_000;
 const MIN_MS: i64 = 60_000;
@@ -25,7 +26,7 @@ pub fn local_date(ms: i64, off: Offset) -> Date {
     Date::from_ms(ms + off(ms))
 }
 
-fn local_minutes(ms: i64, off: Offset) -> i64 {
+pub(super) fn local_minutes(ms: i64, off: Offset) -> i64 {
     (ms + off(ms)).rem_euclid(DAY_MS) / MIN_MS
 }
 
@@ -111,13 +112,13 @@ const MONTHS: [&str; 12] = [
     "November",
     "December",
 ];
-const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+pub(super) const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 fn month_name(d: Date) -> &'static str {
     MONTHS[d.month as usize - 1]
 }
 
-fn month_short(d: Date) -> &'static str {
+pub(super) fn month_short(d: Date) -> &'static str {
     &month_name(d)[..3]
 }
 
@@ -256,6 +257,8 @@ pub struct DayHead {
     pub number: u32,
     pub today: bool,
     pub weekend: bool,
+    /// The work location pinned to the day: `office`, `remote` or empty.
+    pub pin: String,
 }
 
 /// A timed event segment in one day column of the day, work week and week views.
@@ -287,6 +290,7 @@ pub struct AllDay {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonthItem {
+    pub id: String,
     pub title: String,
     pub time: String,
     pub look: Look,
@@ -326,6 +330,22 @@ pub struct CalData {
     pub month: Vec<MonthCell>,
     pub mini_title: String,
     pub mini: Vec<MiniCell>,
+    /// The weekday letters over the mini calendar, from the first day of the week.
+    pub mini_heads: Vec<String>,
+    /// Columns of the month grid: 7, or 5 without weekends.
+    pub month_cols: usize,
+    /// ISO week numbers, one per row of the month grid and of the mini calendar.
+    pub month_weeks: Vec<u32>,
+    pub mini_weeks: Vec<u32>,
+    pub week_numbers: bool,
+    /// "Week 47" over the day and week views when week numbers are on.
+    pub week_label: String,
+    /// Work hours in minutes after midnight.
+    pub work_start: i32,
+    pub work_end: i32,
+    /// The second time zone's title (`UTC+05:00`) and its 24 hour labels, empty when off.
+    pub second_title: String,
+    pub second_labels: Vec<String>,
     /// Minutes since local midnight and the day column of today, when today is shown.
     pub now_min: Option<i32>,
     pub now_col: Option<usize>,
@@ -342,6 +362,92 @@ pub struct Ctx<'a> {
     /// Any date in the month the mini calendar shows.
     pub mini_anchor: Date,
     pub off: Offset<'a>,
+    pub prefs: &'a Prefs,
+}
+
+/// Display settings the grid honors (Calendar settings), and the work-location pins by day.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Prefs {
+    pub show_weekends: bool,
+    pub week_numbers: bool,
+    pub work_start: i32,
+    pub work_end: i32,
+    /// A second time column, as a fixed UTC offset in minutes.
+    pub second_tz_min: Option<i32>,
+    pub pins: BTreeMap<Date, &'static str>,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Prefs {
+            show_weekends: true,
+            week_numbers: false,
+            work_start: 9 * 60,
+            work_end: 17 * 60,
+            second_tz_min: None,
+            pins: BTreeMap::new(),
+        }
+    }
+}
+
+/// Prefs with everything at its default, for tests.
+#[cfg(test)]
+pub static DEFAULT_PREFS: Prefs = Prefs {
+    show_weekends: true,
+    week_numbers: false,
+    work_start: 9 * 60,
+    work_end: 17 * 60,
+    second_tz_min: None,
+    pins: BTreeMap::new(),
+};
+
+fn days_in_year_weeks(year: i32) -> u32 {
+    let jan1 = Date::new(year, 1, 1).weekday();
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    if jan1 == Weekday::Thursday || (leap && jan1 == Weekday::Wednesday) {
+        53
+    } else {
+        52
+    }
+}
+
+/// The ISO 8601 week number of a date (weeks start on Monday, week 1 has the year's first
+/// Thursday).
+pub fn iso_week(d: Date) -> u32 {
+    let ordinal = ((d.midnight_ms() - Date::new(d.year, 1, 1).midnight_ms()) / DAY_MS) as i64 + 1;
+    let weekday = match d.weekday() {
+        Weekday::Sunday => 7,
+        w => w as i64,
+    };
+    let week = (ordinal - weekday + 10) / 7;
+    if week < 1 {
+        days_in_year_weeks(d.year - 1)
+    } else if week as u32 > days_in_year_weeks(d.year) {
+        1
+    } else {
+        week as u32
+    }
+}
+
+const LETTERS: [&str; 7] = ["S", "M", "T", "W", "T", "F", "S"];
+
+fn tz_title(min: i32) -> String {
+    format!(
+        "UTC{}{:02}:{:02}",
+        if min < 0 { '-' } else { '+' },
+        min.abs() / 60,
+        min.abs() % 60
+    )
+}
+
+/// 24 labels for the hours of the local day as the second zone reads them.
+fn second_labels(second_min: i32, local_min: i32) -> Vec<String> {
+    (0..24)
+        .map(|h| {
+            let m = (h * 60 + second_min - local_min).rem_euclid(24 * 60);
+            format!("{:02}:{:02}", m / 60, m % 60)
+        })
+        .collect()
 }
 
 fn dates(first: Date, last_excl: Date) -> Vec<Date> {
@@ -358,7 +464,7 @@ fn is_weekend(d: Date) -> bool {
     matches!(d.weekday(), Weekday::Saturday | Weekday::Sunday)
 }
 
-fn hhmm(ms: i64, off: Offset) -> String {
+pub(super) fn hhmm(ms: i64, off: Offset) -> String {
     let m = local_minutes(ms, off);
     format!("{:02}:{:02}", m / 60, m % 60)
 }
@@ -406,7 +512,13 @@ fn covers(e: &Event, d: Date, off: Offset) -> bool {
 pub fn build(events: &[&Event], c: &Ctx) -> CalData {
     let (s, e) = week_range(c.date, c.view, c.first_day);
     let (first, last_excl) = (Date::from_ms(s), Date::from_ms(e));
-    let days = dates(first, last_excl);
+    let mut days = dates(first, last_excl);
+    // Without weekends the week and month views drop Saturday and Sunday; a Day view that
+    // names its days, and the work week, show what they were asked for.
+    let hide_weekends = !c.prefs.show_weekends && matches!(c.view, View::Week | View::Month);
+    if hide_weekends {
+        days.retain(|&d| !is_weekend(d));
+    }
     let now_date = local_date(c.now_ms, c.off);
     let mut out = CalData {
         title: range_label(first, last_excl.add_days(-1), c.view),
@@ -414,6 +526,10 @@ pub fn build(events: &[&Event], c: &Ctx) -> CalData {
         view_kind: view_kind(c.view).into(),
         day_count: if let View::Day(n) = c.view { n } else { 1 },
         scale: c.scale,
+        month_cols: 7,
+        week_numbers: c.prefs.week_numbers,
+        work_start: c.prefs.work_start,
+        work_end: c.prefs.work_end,
         ..Default::default()
     };
     let head = |d: Date| DayHead {
@@ -422,22 +538,59 @@ pub fn build(events: &[&Event], c: &Ctx) -> CalData {
         number: d.day,
         today: d == now_date,
         weekend: is_weekend(d),
+        pin: c.prefs.pins.get(&d).copied().unwrap_or("").into(),
     };
     if c.view == View::Month {
-        out.days = days.iter().take(7).copied().map(head).collect();
+        out.month_cols = if hide_weekends { 5 } else { 7 };
+        out.days = days
+            .iter()
+            .take(out.month_cols)
+            .copied()
+            .map(head)
+            .collect();
         out.month = days
             .iter()
             .map(|&d| month_cell(events, d, c, now_date))
             .collect();
+        out.month_weeks = days.chunks(out.month_cols).map(row_week).collect();
     } else {
         out.days = days.iter().copied().map(head).collect();
         time_grid(events, &days, c, &mut out);
         out.now_col = days.iter().position(|&d| d == now_date);
         out.now_min = out.now_col.map(|_| local_minutes(c.now_ms, c.off) as i32);
+        if c.prefs.week_numbers
+            && let Some(&d) = days.get(days.len() / 2)
+        {
+            out.week_label = format!("Week {}", iso_week(d));
+        }
+    }
+    if let Some(second) = c.prefs.second_tz_min {
+        out.second_title = tz_title(second);
+        out.second_labels = second_labels(second, ((c.off)(c.now_ms) / 60_000) as i32);
     }
     out.mini_title = format!("{} {}", month_name(c.mini_anchor), c.mini_anchor.year);
+    out.mini_heads = (0..7)
+        .map(|i| LETTERS[(c.first_day as usize + i) % 7].to_string())
+        .collect();
     out.mini = mini_cells(c, now_date, first, last_excl);
+    let (ms, me) = week_range(c.mini_anchor, View::Month, c.first_day);
+    out.mini_weeks = dates(Date::from_ms(ms), Date::from_ms(me))
+        .chunks(7)
+        .map(row_week)
+        .collect();
     out
+}
+
+/// The ISO week number of a row of days: the week of the row's Thursday (or its middle day
+/// when the row has none, as in a week without weekends starting elsewhere).
+fn row_week(row: &[Date]) -> u32 {
+    let d = row
+        .iter()
+        .find(|d| d.weekday() == Weekday::Thursday)
+        .or_else(|| row.get(row.len() / 2))
+        .copied()
+        .unwrap_or(Date::new(1970, 1, 1));
+    iso_week(d)
 }
 
 fn time_grid(events: &[&Event], days: &[Date], c: &Ctx, out: &mut CalData) {
@@ -529,6 +682,7 @@ fn month_cell(events: &[&Event], d: Date, c: &Ctx, now_date: Date) -> MonthCell 
             .into_iter()
             .take(MONTH_ITEMS)
             .map(|e| MonthItem {
+                id: e.id.clone(),
                 title: title_of(e),
                 time: if is_all_day_row(e) {
                     String::new()
@@ -610,6 +764,7 @@ mod tests {
             first_day: Weekday::Monday,
             mini_anchor: NOV_18,
             off,
+            prefs: &DEFAULT_PREFS,
         }
     }
 
@@ -925,5 +1080,136 @@ mod tests {
             .collect();
         assert_eq!(sel, [16, 17, 18, 19, 20]);
         assert!(data.mini.iter().any(|c| c.today && c.number == 18));
+    }
+
+    #[test]
+    fn iso_week_numbers_follow_iso_8601() {
+        assert_eq!(iso_week(NOV_18), 47);
+        assert_eq!(iso_week(Date::new(2026, 12, 28)), 53, "2026 has 53 weeks");
+        assert_eq!(iso_week(Date::new(2027, 1, 1)), 53, "a Friday in the last ISO week of 2026");
+        assert_eq!(iso_week(Date::new(2027, 1, 4)), 1);
+        assert_eq!(iso_week(Date::new(2025, 12, 29)), 1, "belongs to 2026 week 1");
+        assert_eq!(iso_week(Date::new(2024, 2, 29)), 9);
+    }
+
+    #[test]
+    fn week_numbers_label_the_week_and_number_the_month_and_mini_rows() {
+        let prefs = Prefs {
+            week_numbers: true,
+            ..Prefs::default()
+        };
+        let mut c = ctx(View::Week, &utc);
+        c.prefs = &prefs;
+        let d = build(&[], &c);
+        assert_eq!(d.week_label, "Week 47");
+        assert!(d.week_numbers);
+        assert_eq!(d.mini_weeks.len(), d.mini.len() / 7);
+        assert_eq!(d.mini_weeks[3], 47, "the mini calendar's fourth row is the 16th to the 22nd");
+        let mut c = ctx(View::Month, &utc);
+        c.prefs = &prefs;
+        let m = build(&[], &c);
+        assert_eq!(m.month_weeks.len(), m.month.len() / 7);
+        assert_eq!(m.month_weeks[0], 44, "Nov 2 is the first Monday");
+        assert_eq!(*m.month_weeks.last().unwrap(), 49, "the last row is Nov 30 to Dec 6");
+        assert_eq!(build(&[], &ctx(View::Week, &utc)).week_label, "", "off by default");
+    }
+
+    #[test]
+    fn without_weekends_the_week_and_month_views_drop_saturday_and_sunday() {
+        let prefs = Prefs {
+            show_weekends: false,
+            ..Prefs::default()
+        };
+        let mut c = ctx(View::Week, &utc);
+        c.prefs = &prefs;
+        let w = build(&[], &c);
+        assert_eq!(w.days.len(), 5);
+        assert!(w.days.iter().all(|d| !d.weekend));
+        let mut c = ctx(View::Month, &utc);
+        c.prefs = &prefs;
+        let m = build(&[], &c);
+        assert_eq!((m.month_cols, m.days.len()), (5, 5));
+        assert_eq!(m.month.len() % 5, 0);
+        assert!(m.month.len() >= 25);
+        // A Day view that spans a weekend still shows it.
+        let mut c = ctx(View::Day(7), &utc);
+        c.prefs = &prefs;
+        assert_eq!(build(&[], &c).days.len(), 7);
+        assert_eq!(build(&[], &ctx(View::Month, &utc)).month_cols, 7);
+    }
+
+    #[test]
+    fn events_land_in_the_right_column_when_weekends_are_hidden() {
+        let prefs = Prefs {
+            show_weekends: false,
+            ..Prefs::default()
+        };
+        let mut c = ctx(View::Week, &utc);
+        c.prefs = &prefs;
+        let thu = ev("T", 1, 9.0, 10.0, 0, json!({}));
+        let d = build(&[&thu], &c);
+        assert_eq!(d.blocks[0].col, 3, "Thursday is the fourth weekday column");
+    }
+
+    #[test]
+    fn the_first_day_of_the_week_sets_the_mini_heads_and_the_week() {
+        let mut c = ctx(View::Week, &utc);
+        c.first_day = Weekday::Sunday;
+        let d = build(&[], &c);
+        assert_eq!(d.mini_heads, ["S", "M", "T", "W", "T", "F", "S"]);
+        assert_eq!(d.days[0].label, "Sun");
+        assert_eq!(d.days[0].iso, "2026-11-15");
+        assert_eq!(build(&[], &ctx(View::Week, &utc)).mini_heads[0], "M");
+        let mut c = ctx(View::Week, &utc);
+        c.first_day = Weekday::Saturday;
+        assert_eq!(build(&[], &c).mini_heads[0], "S");
+    }
+
+    #[test]
+    fn a_second_time_zone_adds_shifted_hour_labels() {
+        let prefs = Prefs {
+            second_tz_min: Some(5 * 60),
+            ..Prefs::default()
+        };
+        let cairo = plus(2);
+        let mut c = ctx(View::Day(1), &cairo);
+        c.prefs = &prefs;
+        let d = build(&[], &c);
+        assert_eq!(d.second_title, "UTC+05:00");
+        assert_eq!(d.second_labels.len(), 24);
+        assert_eq!(d.second_labels[9], "12:00", "09:00 in UTC+2 is 12:00 in UTC+5");
+        assert_eq!(d.second_labels[22], "01:00", "wraps past midnight");
+        let neg = Prefs {
+            second_tz_min: Some(-(9 * 60 + 30)),
+            ..Prefs::default()
+        };
+        let mut c = ctx(View::Day(1), &utc);
+        c.prefs = &neg;
+        assert_eq!(build(&[], &c).second_title, "UTC-09:30");
+        assert!(build(&[], &ctx(View::Day(1), &utc)).second_labels.is_empty());
+    }
+
+    #[test]
+    fn work_hours_and_work_location_pins_reach_the_data() {
+        let mut prefs = Prefs {
+            work_start: 8 * 60,
+            work_end: 16 * 60,
+            ..Prefs::default()
+        };
+        prefs.pins.insert(NOV_18, "remote");
+        let mut c = ctx(View::WorkWeek, &utc);
+        c.prefs = &prefs;
+        let d = build(&[], &c);
+        assert_eq!((d.work_start, d.work_end), (480, 960));
+        let pins: Vec<_> = d.days.iter().map(|x| x.pin.as_str()).collect();
+        assert_eq!(pins, ["", "", "remote", "", ""]);
+    }
+
+    #[test]
+    fn month_items_carry_the_event_id_so_they_can_open_the_peek() {
+        let e = ev("M1", 0, 9.0, 10.0, 0, json!({}));
+        let d = build(&[&e], &ctx(View::Month, &utc));
+        let ids: Vec<_> = d.month.iter().flat_map(|c| c.items.iter()).map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["M1"]);
     }
 }

@@ -1,6 +1,9 @@
 //! UI-thread side: turns view data into Slint models.
 
 mod cal;
+pub use cal::wire as install_calendar;
+#[cfg(test)]
+pub use cal::read_form as read_form_for_test;
 
 use crate::data::{
     AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
