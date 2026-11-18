@@ -115,6 +115,32 @@ chunks. The sizes in OneDrive matched, and both came back as file cards. The inv
 is unit-tested only, because a live test would share a file with a colleague. Channel files live
 in the team's SharePoint site and are not supported: kelma says so instead of sending.
 
+## Auth broker ✅ 2026-11-18
+
+`teams_proto::broker` mints one bearer per audience from the refresh token on first use, caches it with
+a wall-clock expiry (refreshed 5 minutes early) and rotates the refresh token on every mint.
+`Client::request_as(audience, …)` only attaches the bearer to an https URL on that audience's own host.
+`kelma-cli audiences` minted all of these live: `api.spaces.skype.com`, `chatsvcagg`, `presence`,
+Graph, `substrate.office.com`, `substrate.office.com/sydney`, `outlook.office.com`, `api.yammer.com`,
+`service.flow.microsoft.com`, `tasks.office.com`, `onenote.com`, `ic3.teams.office.com`,
+`loki.delve.office.com`, `teams.microsoft.com`, and the user's own SharePoint (OneDrive) host.
+Access tokens live about 2 hours (`ttl_s` ≈ 7465 in the "tokens refreshed" log).
+
+## Message actions (`teams_proto::actions`) 2026-11-18
+
+All on the chat service unless noted. Verified live in `48:notes` and a private test channel; test
+messages were deleted afterwards.
+
+| Action | Request | Live |
+|---|---|---|
+| Forward | `POST /v1/users/ME/conversations/<src>/messages/forward` `{targetThreadIds, messageIds (≤5), additionalMessage, templateId:"basic_forward_message_template"}` → `[{statusCode, threadId, messageId}]`. The new message carries `<blockquote itemtype="http://schema.skype.com/Forward">` and `properties.forwardTemplateId`/`originalMessageContext` | ✅ 200 |
+| Save / unsave | `PUT …/conversations/<conv>/rcmetadata/<rootId>` `{"s":1\|0,"mid":<msgId>}` | ✅ 200 |
+| Saved list | `GET …/conversations/48:saved/messages` | ❌ 404 `LocationLookupFailed` for this tenant, and the Teams web app no longer shows a Saved view. kelma keeps its own saved list in the store and still sends the server flag |
+| Pin for everyone | CSA `POST/DELETE /api/csa/api/v1/chats/<chat>/pinbar` `{pinbarItemType:"pinmsg", pinbarOperation:"add"\|"remove", …}`; list `GET` same URL (`children[]`, folders nest) | ✅ pin, list, unpin |
+| Mark as unread | `PUT …/properties?name=consumptionHorizonBookmark` `"<prevId>;<nowMs>;<cmid>"`. `mark_read` now also writes `"0;<nowMs>;0"`, because a read horizon alone does not clear the bookmark | ✅ 200 |
+| Mute | `PUT …/properties?name=alerts` `{"alerts":"false"}` (`"true"` unmutes) | unit-tested |
+| Hide | `PUT …/properties?name=unpinnedTime` `{unpinnedTime:<ms>}` then `historyHiddenTime` `"<ms>"`; unhide `{unpinnedTime:null}`. A hidden chat comes back with its next message | unit-tested |
+
 ## Real-time (trouter) ✅
 
 1. `POST go.trouter.teams.microsoft.com/v4/a?epid=<epid>` → `socketio`, `surl`, `ccid`, `connectparams`.

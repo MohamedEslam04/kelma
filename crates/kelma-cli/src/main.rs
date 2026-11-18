@@ -236,6 +236,65 @@ async fn main() -> Result<()> {
                 .await?;
             println!("edited");
         }
+        Some("forward") => {
+            let (Some(src), Some(msg), Some(target)) = (args.get(1), args.get(2), args.get(3))
+            else {
+                bail!("usage: forward <source conv> <message id> <target conv> [note]")
+            };
+            let (client, cfg) = connect(&paths).await?;
+            let note = args.get(4).map(|t| render::text_to_teams_html(t));
+            let r = client
+                .forward(
+                    src,
+                    std::slice::from_ref(msg),
+                    std::slice::from_ref(target),
+                    note.as_deref(),
+                    &cfg.display_name.unwrap_or_default(),
+                )
+                .await?;
+            for f in r {
+                println!(
+                    "forwarded to {}: {} {:?}",
+                    f.thread_id, f.status, f.message_id
+                );
+            }
+        }
+        Some(
+            cmd @ ("save" | "unsave" | "pin" | "unpin" | "unread" | "clear-unread" | "mute"
+            | "unmute" | "hide" | "unhide"),
+        ) => {
+            let conv = args.get(1).context("usage: <action> <conv> [message id]")?;
+            let msg = args.get(2).cloned().unwrap_or_default();
+            let (client, _) = connect(&paths).await?;
+            match cmd {
+                "save" | "unsave" => client.set_saved(conv, &msg, &msg, cmd == "save").await?,
+                "pin" | "unpin" => client.set_pinned(conv, &msg, cmd == "pin").await?,
+                "unread" => client.mark_unread(conv, &msg, "").await?,
+                "clear-unread" => client.clear_unread_mark(conv).await?,
+                "mute" | "unmute" => client.set_muted(conv, cmd == "mute").await?,
+                _ => client.set_hidden(conv, cmd == "hide").await?,
+            }
+            println!("{cmd}: ok");
+        }
+        Some("saved") => {
+            let (client, _) = connect(&paths).await?;
+            for s in client.saved_messages().await? {
+                println!(
+                    "{} {} {}: {}",
+                    s.conversation_id, s.message_id, s.sender_name, s.preview
+                );
+            }
+        }
+        Some("pins") => {
+            let conv = args.get(1).context("usage: pins <chat id>")?;
+            let (client, _) = connect(&paths).await?;
+            for p in client.pinned(conv).await? {
+                println!(
+                    "{} folder={:?} at {}",
+                    p.message_id, p.folder_id, p.pinned_at
+                );
+            }
+        }
         Some("delete") => {
             let (Some(conv), Some(msg)) = (args.get(1), args.get(2)) else {
                 bail!("usage: delete <conv> <msg id>")
@@ -372,7 +431,7 @@ async fn main() -> Result<()> {
         }
         _ => {
             println!(
-                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|audiences|tail>"
+                "usage: kelma-cli <login|logout|chats [n]|teams|read <conv> [n]|send <conv> <text>|send-image <conv> <file>|send-file <conv> <file>|post <channel> <subject> <text>|react <conv> <msg> <key>|forward <src> <msg> <target> [note]|save/unsave/pin/unpin/unread <conv> <msg>|mute/unmute/hide/unhide <conv>|saved|pins <chat>|audiences|tail>"
             );
         }
     }
