@@ -19,6 +19,7 @@ pub mod mentions;
 pub mod model;
 pub mod mt;
 pub mod people;
+pub mod presence;
 pub mod threads;
 pub mod time;
 pub mod trouter;
