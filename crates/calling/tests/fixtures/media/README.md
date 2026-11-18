@@ -15,3 +15,7 @@ credentials, SDES keys, fingerprints and TURN ids are dummies.
   rewrite (`RTP/SAVP`, `b=CT:4000`, `a=x-ssrc-range`, `a=label`, m-line port and `c=` taken from
   the first host candidate). Written from the facts in teams-lite `NATIVE-CALLING.md` §2.5; no
   text copied, every value invented.
+- `teams_meeting_reoffer.sdp`: the media servers' renegotiation offer on a running meeting call,
+  on the transport of `teams_meeting_answer.sdp`: audio, a `sendonly` screen-sharing video line
+  (mid 3) and an `m=x-data` line (mid 4, `a=x-data-protocol:sctp`). Shape from rusty-teams (MIT)
+  `teams_answer.sdp` and teams-lite `NATIVE-CALLING.md` §10 (facts only), values invented.
