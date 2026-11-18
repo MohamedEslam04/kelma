@@ -1,0 +1,11 @@
+[package]
+name = "slint-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+slint = "1.19"
+
+[profile.release]
+strip = true

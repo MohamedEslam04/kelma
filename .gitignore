@@ -1,0 +1,7 @@
+/target
+spikes/*/target
+# Raw captures may contain tokens - never commit them
+fixtures/raw/
+*.har
+*.token
+.env
