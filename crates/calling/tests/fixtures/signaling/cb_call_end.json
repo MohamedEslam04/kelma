@@ -1,0 +1,3 @@
+{
+  "callEnd": {"code": 603, "subCode": 10003, "phrase": "CallEndReasonDeclined", "resultCategories": ["ExpectedError"]}
+}

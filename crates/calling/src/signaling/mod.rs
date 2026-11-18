@@ -1,0 +1,527 @@
+//! The NGC conversation service (`epconv`): place a call, join a meeting, take or decline an
+//! incoming call, and every later step by POSTing to a link the service handed back.
+//!
+//! Request and response bodies are pure functions in [`bodies`]; this module only sends them.
+//! Every request carries exactly one credential, the IC3 bearer, and goes through
+//! [`endpoints::routed_url`], which refuses hosts outside Microsoft's calling plane.
+
+pub mod bodies;
+pub mod callbacks;
+pub mod endpoints;
+pub mod meeting;
+
+pub use bodies::{Conversation, MeetingInfo};
+pub use callbacks::CallbackLinks;
+pub use endpoints::CallingEndpoints;
+pub use meeting::MeetingTarget;
+
+use crate::error::{Error, Result};
+use crate::invitation;
+use crate::types::{CallInvitation, Links, Modality, Participant, SdpBlob};
+use reqwest::Method;
+use serde_json::{Value, json};
+use teams_proto::Client;
+use teams_proto::broker::Audience;
+
+/// Our endpoint in one call, as `participants.from` / `sender` / `acceptedBy` name it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalEndpoint {
+    /// Our MRI (`8:orgid:<oid>`).
+    pub mri: String,
+    pub display_name: String,
+    /// A fresh id per call; also the session id of the call's callback links.
+    pub endpoint_id: String,
+    pub participant_id: String,
+    pub language_id: String,
+}
+
+impl LocalEndpoint {
+    pub fn wire(&self) -> Value {
+        json!({
+            "id": self.mri,
+            "displayName": self.display_name,
+            "endpointId": self.endpoint_id,
+            "participantId": self.participant_id,
+            "languageId": self.language_id,
+        })
+    }
+}
+
+/// The local state of one call: who we are in it, the callback links we publish for it, the
+/// chain id every request of the call shares, and the id of our media leg.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallSession {
+    pub me: LocalEndpoint,
+    pub callbacks: CallbackLinks,
+    pub chain_id: String,
+    pub media_leg_id: String,
+}
+
+fn new_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// A media leg id shaped like the web client's: 32 upper-case hex digits.
+fn new_media_leg_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string().to_uppercase()
+}
+
+impl CallSession {
+    /// A session for a call we place or a meeting we join. `surl` is the calling trouter's.
+    pub fn new(surl: &str, mri: &str, display_name: &str) -> Self {
+        let endpoint_id = new_id();
+        CallSession {
+            callbacks: CallbackLinks::new(surl, &endpoint_id),
+            me: LocalEndpoint {
+                mri: mri.to_owned(),
+                display_name: display_name.to_owned(),
+                endpoint_id,
+                participant_id: new_id(),
+                language_id: "en-US".into(),
+            },
+            chain_id: new_id(),
+            media_leg_id: new_media_leg_id(),
+        }
+    }
+
+    /// A session to answer `inv`: we take the participant id the invitation gave us, the call id
+    /// as chain id, and the caller's media leg id.
+    pub fn for_invitation(surl: &str, mri: &str, display_name: &str, inv: &CallInvitation) -> Self {
+        let mut s = Self::new(surl, mri, display_name);
+        if let Some(p) = invitation::own_participant_id(inv) {
+            s.me.participant_id = p.to_owned();
+        }
+        s.chain_id = inv.call_id.clone();
+        if let Some(leg) = invitation::media_leg_id(inv) {
+            s.media_leg_id = leg.to_owned();
+        }
+        s
+    }
+}
+
+/// A response of the conversation service.
+#[derive(Debug, Clone)]
+pub struct NgcResponse {
+    pub status: u16,
+    /// The `Location` header (some answers name the conversation controller only there).
+    pub location: Option<String>,
+    /// The JSON body, `Null` when empty.
+    pub body: Value,
+}
+
+/// Client for the NGC conversation service, on top of a signed-in [`teams_proto::Client`].
+#[derive(Clone)]
+pub struct NgcClient {
+    client: Client,
+    endpoints: CallingEndpoints,
+}
+
+impl NgcClient {
+    pub fn new(client: Client, endpoints: CallingEndpoints) -> Self {
+        NgcClient { client, endpoints }
+    }
+
+    /// Reads the calling endpoints from authz (teams-proto keeps only the chat ones), then builds
+    /// the client.
+    pub async fn discover(client: Client) -> Result<Self> {
+        let spaces = client.token_for(&Audience::Spaces).await?;
+        let resp = client
+            .http()
+            .post(endpoints::AUTHZ_URL)
+            .header("User-Agent", teams_proto::client_info::USER_AGENT)
+            .header("Authorization", format!("Bearer {spaces}"))
+            .header("Accept", "application/json; ver=1.0")
+            .header("Content-Length", "0")
+            .send()
+            .await
+            .map_err(teams_proto::Error::from)?;
+        let status = resp.status().as_u16();
+        let body = resp.text().await.map_err(teams_proto::Error::from)?;
+        if !(200..300).contains(&status) {
+            return Err(status_error("authz", status, &body));
+        }
+        Ok(Self::new(client, endpoints::parse_authz(&body)?))
+    }
+
+    pub fn endpoints(&self) -> &CallingEndpoints {
+        &self.endpoints
+    }
+
+    /// Sends one call-control request to `url` (routed through the flightproxy when it names a
+    /// backend). The IC3 token is minted here and sent by hand: `Client::request_as` only attaches
+    /// a bearer for the audience's own host.
+    pub async fn send(
+        &self,
+        op: &'static str,
+        s: &CallSession,
+        method: Method,
+        url: &str,
+        body: Option<&Value>,
+    ) -> Result<NgcResponse> {
+        let target = endpoints::routed_url(url)?;
+        let ic3 = self.client.token_for(&Audience::Ic3).await?;
+        let message_id = new_id();
+        let mut req = self.client.http().request(method.clone(), &target);
+        for (k, v) in endpoints::call_headers(&self.endpoints, &s.chain_id, &message_id, &ic3) {
+            req = req.header(k, v);
+        }
+        req = match body {
+            Some(b) => req.body(serde_json::to_vec(b)?),
+            None => req.header("Content-Length", "0"),
+        };
+        let resp = req.send().await.map_err(teams_proto::Error::from)?;
+        let status = resp.status().as_u16();
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let text = resp.text().await.map_err(teams_proto::Error::from)?;
+        tracing::debug!(op, %method, status, "ngc request");
+        if !(200..300).contains(&status) {
+            return Err(status_error(op, status, &text));
+        }
+        let body = if text.trim().is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&text)?
+        };
+        Ok(NgcResponse {
+            status,
+            location,
+            body,
+        })
+    }
+
+    async fn post(
+        &self,
+        op: &'static str,
+        s: &CallSession,
+        url: &str,
+        body: &Value,
+    ) -> Result<NgcResponse> {
+        self.send(op, s, Method::POST, url, Some(body)).await
+    }
+
+    fn link<'a>(links: &'a Links, name: &str) -> Result<&'a str> {
+        links
+            .get(name)
+            .ok_or_else(|| Error::Protocol(format!("no '{name}' link")))
+    }
+
+    /// Places a call to `to` (one person: a direct 1:1 call). The answer comes later on the
+    /// `call/acceptance` callback (see [`crate::invitation::CallEvent::Accepted`]).
+    pub async fn place_call(
+        &self,
+        s: &CallSession,
+        to: &[Participant],
+        thread_id: Option<&str>,
+        offer: &SdpBlob,
+        modalities: &[Modality],
+    ) -> Result<Conversation> {
+        let body = bodies::place_call_body(s, to, thread_id, offer, modalities);
+        let r = self
+            .post(
+                "place_call",
+                s,
+                &self.endpoints.conversation_service_url,
+                &body,
+            )
+            .await?;
+        bodies::parse_conversation(&r.body, r.location.as_deref())
+    }
+
+    /// Joins a meeting by thread + `meetingInfo`, in one POST. The media answer comes later on the
+    /// `call/mediaAnswer` or `call/acceptance` callback.
+    pub async fn join_meeting(
+        &self,
+        s: &CallSession,
+        meeting: &MeetingInfo,
+        offer: &SdpBlob,
+        modalities: &[Modality],
+    ) -> Result<Conversation> {
+        let body = bodies::join_meeting_body(s, meeting, offer, modalities);
+        let r = self
+            .post(
+                "join_meeting",
+                s,
+                &self.endpoints.conversation_service_url,
+                &body,
+            )
+            .await?;
+        bodies::parse_conversation(&r.body, r.location.as_deref())
+    }
+
+    /// Joins a meeting by code (mautrix-teams' two steps): open the conversation by
+    /// `meetingData`, then post the media to its controller with the `meetingData` the answer
+    /// returned (it carries the short passcode the media step needs). Works for a meeting outside
+    /// our tenant, such as a meet-now hosted by a personal account.
+    pub async fn join_meeting_by_code(
+        &self,
+        s: &CallSession,
+        meeting_data: &Value,
+        offer: &SdpBlob,
+        modalities: &[Modality],
+    ) -> Result<Conversation> {
+        let open = bodies::code_join_body(s, meeting_data, None);
+        let r = self
+            .post(
+                "join_by_code",
+                s,
+                &self.endpoints.conversation_service_url,
+                &open,
+            )
+            .await?;
+        let opened = bodies::parse_conversation(&r.body, r.location.as_deref())?;
+        let data = opened
+            .raw
+            .get("meetingData")
+            .filter(|d| d.as_object().is_some_and(|m| !m.is_empty()))
+            .unwrap_or(meeting_data);
+        let media = bodies::code_join_body(s, data, Some((offer, modalities)));
+        let r = self
+            .post("join_by_code_media", s, &opened.controller, &media)
+            .await?;
+        Ok(merge(opened, &r))
+    }
+
+    /// Joins a running conversation by its URL (`activeMeetup.conversationUrl`), posting the media
+    /// join to it the way a conversation controller takes it. UNVERIFIED: no reference joins an
+    /// active meetup by its URL; prefer [`Self::join_meeting_by_code`] when a code is known.
+    pub async fn join_conversation_url(
+        &self,
+        s: &CallSession,
+        conversation_url: &str,
+        meeting: &MeetingTarget,
+        offer: &SdpBlob,
+        modalities: &[Modality],
+    ) -> Result<Conversation> {
+        let body = match (meeting.meeting_data(), meeting.meeting_info()) {
+            (Some(data), _) => bodies::code_join_body(s, &data, Some((offer, modalities))),
+            (None, Some(info)) => bodies::join_meeting_body(s, &info, offer, modalities),
+            (None, None) => {
+                return Err(Error::Protocol(
+                    "meeting has neither a code nor a thread context".into(),
+                ));
+            }
+        };
+        let r = self
+            .post("join_conversation_url", s, conversation_url, &body)
+            .await?;
+        bodies::parse_conversation(&r.body, r.location.as_deref()).or_else(|_| {
+            Ok(Conversation {
+                controller: conversation_url.to_owned(),
+                links: bodies::parse_links(&r.body["links"]),
+                raw: r.body,
+            })
+        })
+    }
+
+    /// Joins `meeting` the best-supported way: by code when it has one (works across tenants),
+    /// else by thread + `meetingInfo`.
+    pub async fn join(
+        &self,
+        s: &CallSession,
+        meeting: &MeetingTarget,
+        offer: &SdpBlob,
+        modalities: &[Modality],
+    ) -> Result<Conversation> {
+        if let Some(data) = meeting.meeting_data() {
+            return self.join_meeting_by_code(s, &data, offer, modalities).await;
+        }
+        let info = meeting.meeting_info().ok_or_else(|| {
+            Error::Protocol("meeting has neither a code nor a thread context".into())
+        })?;
+        self.join_meeting(s, &info, offer, modalities).await
+    }
+
+    /// Claims a forked incoming call (`attach`) and joins its conversation. Returns the leg's links
+    /// (`acceptance`, `callLeg`, `mediaAnswer`, `progress`, ...).
+    pub async fn attach(&self, s: &CallSession, inv: &CallInvitation) -> Result<Links> {
+        let url = Self::link(&inv.links, "attach")?;
+        let body = bodies::attach_body(s, invitation::conversation_controller(inv));
+        let r = self.post("attach", s, url, &body).await?;
+        bodies::parse_attach_links(&r.body)
+    }
+
+    /// Tells the caller we ring (`progress`).
+    pub async fn send_ringing(&self, s: &CallSession, links: &Links) -> Result<()> {
+        let url = Self::link(links, "progress")?;
+        self.post("progress", s, url, &bodies::progress_body(s))
+            .await
+            .map(drop)
+    }
+
+    /// Accepts a call on its `acceptance` link with our SDP answer. Returns the established
+    /// leg's links (`callLeg`, `mediaRenegotiation`, ...).
+    pub async fn accept(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        modalities: &[Modality],
+        answer: &SdpBlob,
+    ) -> Result<Links> {
+        let url = Self::link(links, "acceptance")?;
+        let r = self
+            .post(
+                "accept",
+                s,
+                url,
+                &bodies::acceptance_body(s, modalities, answer),
+            )
+            .await?;
+        Ok(bodies::parse_acceptance_links(&r.body))
+    }
+
+    /// The whole incoming path: attach when the invitation has no `acceptance` of its own (a
+    /// forked invite), report ringing, then accept. Returns the established leg's links merged
+    /// over the attach links.
+    pub async fn accept_invitation(
+        &self,
+        s: &CallSession,
+        inv: &CallInvitation,
+        modalities: &[Modality],
+        answer: &SdpBlob,
+    ) -> Result<Links> {
+        let mut links = if inv.links.get("acceptance").is_some() {
+            inv.links.clone()
+        } else {
+            self.attach(s, inv).await?
+        };
+        if links.get("progress").is_some()
+            && let Err(e) = self.send_ringing(s, &links).await
+        {
+            tracing::warn!(%e, "reporting the call as ringing failed");
+        }
+        let accepted = self.accept(s, &links, modalities, answer).await?;
+        links.0.extend(accepted.0);
+        Ok(links)
+    }
+
+    /// Declines a ringing call (603) on its `reject`/`rejection` link, else its `callLeg`.
+    pub async fn reject(&self, s: &CallSession, links: &Links) -> Result<()> {
+        let (method, url, body) = bodies::reject_request(links)
+            .ok_or_else(|| Error::Protocol("no link to decline the call on".into()))?;
+        self.send("reject", s, method, &url, Some(&body))
+            .await
+            .map(drop)
+    }
+
+    /// Sends our answer to a media offer on its `mediaAnswer` link.
+    pub async fn send_media_answer(
+        &self,
+        s: &CallSession,
+        url: &str,
+        modalities: &[Modality],
+        answer: &SdpBlob,
+    ) -> Result<()> {
+        let body = bodies::media_answer_body(s, modalities, answer);
+        self.post("media_answer", s, url, &body).await.map(drop)
+    }
+
+    /// Leaves the call: the conversation's `leave` link when there is one, else ends the leg
+    /// (`DELETE callLeg`, the only leg-shaped link an incoming 1:1 call hands out).
+    pub async fn hang_up(&self, s: &CallSession, links: &Links) -> Result<()> {
+        if let Some(url) = links.get("leave") {
+            return self
+                .post("leave", s, url, &bodies::leave_body(s))
+                .await
+                .map(drop);
+        }
+        let url = Self::link(links, "callLeg")?;
+        self.send(
+            "end_call_leg",
+            s,
+            Method::DELETE,
+            url,
+            Some(&bodies::call_leg_end_body()),
+        )
+        .await
+        .map(drop)
+    }
+
+    /// Leaves via the conversation controller (`<controller>/leave`), for a conversation whose
+    /// answer named no `leave` link (mautrix-teams does this).
+    pub async fn leave_controller(&self, s: &CallSession, controller: &str) -> Result<()> {
+        let url = insert_path(controller, "/leave");
+        self.post("leave", s, &url, &bodies::leave_body(s))
+            .await
+            .map(drop)
+    }
+
+    /// One keep-alive (see [`bodies::keep_alive_request`]).
+    pub async fn keep_alive(&self, s: &CallSession, links: &Links) -> Result<()> {
+        let (url, body) = bodies::keep_alive_request(links)
+            .ok_or_else(|| Error::Protocol("no keep-alive link".into()))?;
+        self.post("keep_alive", s, &url, &body).await.map(drop)
+    }
+
+    /// Keeps the call alive until a keep-alive fails; abort the task to stop it.
+    pub async fn run_keep_alive(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        interval_s: Option<u64>,
+    ) -> Result<()> {
+        let period = bodies::keep_alive_period(interval_s);
+        loop {
+            tokio::time::sleep(period).await;
+            self.keep_alive(s, links).await?;
+        }
+    }
+}
+
+fn status_error(op: &'static str, status: u16, body: &str) -> Error {
+    Error::Status {
+        op,
+        status,
+        body: body.chars().take(400).collect(),
+    }
+}
+
+/// `<base><suffix>?<query>`, as mautrix-teams addresses controller operations.
+fn insert_path(url: &str, suffix: &str) -> String {
+    match url.split_once('?') {
+        Some((base, query)) => format!("{}{suffix}?{query}", base.trim_end_matches('/')),
+        None => format!("{}{suffix}", url.trim_end_matches('/')),
+    }
+}
+
+/// A join's second answer can name a new controller and more links.
+fn merge(opened: Conversation, joined: &NgcResponse) -> Conversation {
+    match bodies::parse_conversation(&joined.body, joined.location.as_deref()) {
+        Ok(j) => {
+            let mut links = opened.links;
+            links.0.extend(j.links.0);
+            Conversation {
+                controller: j.controller,
+                links,
+                raw: j.raw,
+            }
+        }
+        Err(_) => {
+            let mut c = opened;
+            c.links
+                .0
+                .extend(bodies::parse_links(&joined.body["links"]).0);
+            c
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn controller_operations_keep_the_query() {
+        assert_eq!(
+            insert_path("https://c/conv/1?i=3", "/leave"),
+            "https://c/conv/1/leave?i=3"
+        );
+        assert_eq!(
+            insert_path("https://c/conv/1/", "/leave"),
+            "https://c/conv/1/leave"
+        );
+    }
+}
