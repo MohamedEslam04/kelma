@@ -379,6 +379,19 @@ impl Client {
         body: Option<&Value>,
         extra: &[(&str, &str)],
     ) -> Result<(u16, String)> {
+        let (status, text, _) = self.request_location(method, url, body, extra).await?;
+        Ok((status, text))
+    }
+
+    /// [`Client::request`] that also returns the `Location` response header, which is where the
+    /// chat service reports the id of a thread it just created.
+    pub async fn request_location(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&Value>,
+        extra: &[(&str, &str)],
+    ) -> Result<(u16, String, Option<String>)> {
         self.ensure_fresh().await?;
         for attempt in 0..2 {
             let parsed =
@@ -405,7 +418,12 @@ impl Client {
                 self.refresh_all().await?;
                 continue;
             }
-            return Ok((status, resp.text().await?));
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            return Ok((status, resp.text().await?, location));
         }
         unreachable!("loop returns on second attempt")
     }
