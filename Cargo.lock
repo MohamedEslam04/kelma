@@ -685,6 +685,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "calling"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "teams-proto",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "calloop"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
