@@ -7,6 +7,8 @@
 //!     --link <url>   join this meeting link instead of the newest active meeting
 //!     --mic          send the microphone (default: a 440 Hz tone)
 //!     --speaker      play what arrives (default: write it to --out)
+//!     --no-aec       send the raw microphone (default with --mic: echo cancellation, noise
+//!                    suppression and AGC, fed by what --speaker plays)
 //!     --out <wav>    where received audio goes (default: kelma-call.wav)
 //!     --secs <n>     stay this long, then leave (default: 30)
 //!     --relay <host> TURN host (default: the relay crate's)
@@ -18,7 +20,8 @@
 
 use anyhow::{Context, Result, bail};
 use calling::audio::{
-    Capture, Paced, Playback, ToneSource, WavSink, spawn_capture_encoder, spawn_decoder_playback,
+    AudioProcessor, Capture, Paced, Playback, ToneSource, WavSink, echo_cancelled,
+    spawn_capture_encoder, spawn_decoder_playback,
 };
 use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::{MediaSession, MediaState};
@@ -226,9 +229,18 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
         }
     }
 
-    // Audio: source -> encoder -> media; media -> decoder -> sink.
+    // Audio: source -> encoder -> media; media -> decoder -> sink. The microphone goes through
+    // the echo canceller, whose reference is what the speaker plays.
+    let mut echo_reference = None;
     let mut encoded = if args.iter().any(|a| a == "--mic") {
-        spawn_capture_encoder(Capture::start(None)?)
+        let mic = Capture::start(None)?;
+        if args.iter().any(|a| a == "--no-aec") {
+            spawn_capture_encoder(mic)
+        } else {
+            let (mic, reference) = echo_cancelled(mic, AudioProcessor::new());
+            echo_reference = Some(reference);
+            spawn_capture_encoder(mic)
+        }
     } else {
         spawn_capture_encoder(Paced::new(ToneSource::endless(440.0)))
     };
@@ -262,7 +274,11 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     };
     let mut forwarders = vec![forward(events.audio)];
     let playback = if args.iter().any(|a| a == "--speaker") {
-        spawn_decoder_playback(fwd_rx, Playback::start(None)?)
+        let speaker = match echo_reference {
+            Some(reference) => Playback::start_with_tap(None, move |f| reference.push(f))?,
+            None => Playback::start(None)?,
+        };
+        spawn_decoder_playback(fwd_rx, speaker)
     } else {
         spawn_decoder_playback(fwd_rx, WavSink::create(&out)?)
     };
