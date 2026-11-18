@@ -7,13 +7,17 @@
 
 pub mod bodies;
 pub mod callbacks;
+pub mod controls;
 pub mod endpoints;
 pub mod meeting;
+pub mod roster;
 
 pub use bodies::{Conversation, MeetingInfo};
 pub use callbacks::CallbackLinks;
+pub use controls::{Controls, HandReceipt};
 pub use endpoints::CallingEndpoints;
 pub use meeting::MeetingTarget;
+pub use roster::Roster;
 
 use crate::error::{Error, Result};
 use crate::invitation;
@@ -447,6 +451,70 @@ impl NgcClient {
         self.post("leave", s, &url, &bodies::leave_body(s))
             .await
             .map(drop)
+    }
+
+    /// Mutes or unmutes us as the service sees it (`updateEndpointState`; see [`controls`]).
+    /// The caller stops or resumes sending microphone audio itself.
+    pub async fn set_muted(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        controls: &mut Controls,
+        muted: bool,
+    ) -> Result<()> {
+        let (url, body) = controls.mute_request(s, links, controller, muted);
+        self.post("update_endpoint_state", s, &url, &body)
+            .await
+            .map(drop)
+    }
+
+    /// Publishes our current mute state again (after joining, and after the lobby admits us).
+    pub async fn repeat_muted(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        controls: &mut Controls,
+    ) -> Result<()> {
+        let (url, body) = controls.repeat_mute_request(s, links, controller);
+        self.post("update_endpoint_state", s, &url, &body)
+            .await
+            .map(drop)
+    }
+
+    /// Raises our hand (`publishState`). Returns the service's receipt, also kept in `controls`.
+    pub async fn raise_hand(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        controls: &mut Controls,
+    ) -> Result<HandReceipt> {
+        let (url, body) = controls.raise_hand_request(s, links, controller);
+        let r = self.post("publish_state", s, &url, &body).await?;
+        let receipt = controls::parse_hand_receipt(&r.body);
+        controls.hand_raised(&receipt);
+        Ok(receipt)
+    }
+
+    /// Lowers our hand (`removeState`): the one we raised, else `roster_hand` (the `stateId` the
+    /// roster shows for us). Returns false when there was no hand to lower.
+    pub async fn lower_hand(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        controls: &mut Controls,
+        roster_hand: Option<&str>,
+    ) -> Result<bool> {
+        let Some((url, body)) = controls.lower_hand_request(s, links, controller, roster_hand)
+        else {
+            return Ok(false);
+        };
+        self.post("remove_state", s, &url, &body)
+            .await
+            .map(|_| true)
     }
 
     /// One keep-alive (see [`bodies::keep_alive_request`]).

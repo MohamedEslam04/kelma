@@ -1,0 +1,31 @@
+{
+  "type": "Delta",
+  "sequenceNumber": 12,
+  "participantCounts": {"lobbyParticipants": 0, "totalParticipants": 3},
+  "participants": {
+    "8:orgid:00000000-0000-0000-0000-0000000000a2": {
+      "version": 6,
+      "state": "active",
+      "meetingRole": "presenter",
+      "details": {"displayName": "Presenter Example"},
+      "endpoints": {
+        "00000000-0000-4000-8000-0000000000e2": {
+          "modalityJoined": "Call",
+          "endpointState": {"endpointStateSequenceNumber": 5, "state": {"isMuted": false}},
+          "call": {"mediaStreams": [{"type": "audio", "label": "main-audio", "sourceId": 301, "direction": "sendrecv", "serverMuted": false}]}
+        }
+      }
+    },
+    "8:orgid:00000000-0000-0000-0000-0000000000a1": {
+      "version": 2,
+      "state": "inactive",
+      "details": {"displayName": "Stale Name"},
+      "endpoints": {}
+    },
+    "8:teamsvisitor:00000000000000000000000000000c01": {
+      "version": 2,
+      "state": "inactive",
+      "endpoints": {}
+    }
+  }
+}
