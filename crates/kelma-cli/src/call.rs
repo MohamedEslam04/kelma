@@ -10,6 +10,7 @@
 //!     --out <wav>    where received audio goes (default: kelma-call.wav)
 //!     --secs <n>     stay this long, then leave (default: 30)
 //!     --relay <host> TURN host (default: the relay crate's)
+//!     --dump <dir>   write every SDP exchanged to this directory (keep it out of the repo)
 //! ```
 //!
 //! Live tests may only join meetings the user hosts on their own personal account; see the
@@ -149,7 +150,18 @@ fn find_blob(v: &Value) -> Option<SdpBlob> {
     }
 }
 
+fn dump(dir: Option<&str>, name: &str, sdp: &str) {
+    if let Some(d) = dir {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let _ = std::fs::write(format!("{d}/{n}-{name}.sdp"), sdp);
+    }
+}
+
 async fn join(client: &Client, args: &[String]) -> Result<()> {
+    let dump_dir = opt(args, "--dump");
     let secs: u64 = opt(args, "--secs").and_then(|s| s.parse().ok()).unwrap_or(30);
     let out = opt(args, "--out").unwrap_or("kelma-call.wav").to_owned();
     let target = match opt(args, "--link") {
@@ -186,6 +198,7 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     };
     let (media, mut events) = MediaSession::new(ice).await?;
     let offer = media.create_offer().await?;
+    dump(dump_dir, "our-offer", &offer);
     println!("offer ready ({} bytes)", offer.len());
 
     let me = client.self_mri().await?;
@@ -199,9 +212,15 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     let mut links: Links = conv.links.clone();
     let mut answered = false;
     if let Some(ans) = find_blob(&conv.raw) {
-        media.set_answer(&ans.decode()?).await?;
-        answered = true;
-        println!("media answer (inline in the join answer) applied");
+        let sdp = ans.decode()?;
+        dump(dump_dir, "service-answer-inline", &sdp);
+        match media.set_answer(&sdp).await {
+            Ok(()) => {
+                answered = true;
+                println!("media answer (inline in the join answer) applied");
+            }
+            Err(e) => println!("inline media answer refused: {e}"),
+        }
     }
 
     // Audio: source -> encoder -> media; media -> decoder -> sink.
@@ -264,9 +283,15 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                             println!("accepted");
                             links.0.extend(l.0);
                             if let (Some(a), false) = (answer, answered) {
-                                media.set_answer(&a.decode()?).await?;
-                                answered = true;
-                                println!("media answer applied");
+                                let sdp = a.decode().unwrap_or_else(|e| { println!("undecodable SDP: {e}"); String::new() });
+                                dump(dump_dir, "service-answer", &sdp);
+                                match media.set_answer(&sdp).await {
+                                    Ok(()) => {
+                                        answered = true;
+                                        println!("media answer applied");
+                                    }
+                                    Err(e) => println!("media answer refused: {e}"),
+                                }
                             }
                             if keep_alive.is_none() {
                                 let (ngc, s, l) = (ngc.clone(), s.clone(), links.clone());
@@ -280,17 +305,32 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                         CallEvent::MediaAnswer { answer, links: l } => {
                             links.0.extend(l.0);
                             if !answered {
-                                media.set_answer(&answer.decode()?).await?;
-                                answered = true;
-                                println!("media answer applied");
+                                let sdp = answer.decode().unwrap_or_else(|e| { println!("undecodable SDP: {e}"); String::new() });
+                                dump(dump_dir, "service-answer", &sdp);
+                                match media.set_answer(&sdp).await {
+                                    Ok(()) => {
+                                        answered = true;
+                                        println!("media answer applied");
+                                    }
+                                    Err(e) => println!("media answer refused: {e}"),
+                                }
                             }
                         }
                         CallEvent::MediaRenegotiation { offer, links: l } => {
                             println!("renegotiation offered");
-                            let ans = media.accept_offer(&offer.decode()?).await?;
-                            if let Some(url) = l.get("mediaAnswer") {
-                                ngc.send_media_answer(&s, url, &modalities, &SdpBlob::ngc(ans)).await?;
-                                println!("renegotiation answered");
+                            let sdp = offer.decode().unwrap_or_else(|e| { println!("undecodable SDP: {e}"); String::new() });
+                            dump(dump_dir, "service-reoffer", &sdp);
+                            match media.accept_offer(&sdp).await {
+                                Ok(ans) => {
+                                    dump(dump_dir, "our-reanswer", &ans);
+                                    if let Some(url) = l.get("mediaAnswer") {
+                                        match ngc.send_media_answer(&s, url, &modalities, &SdpBlob::ngc(ans)).await {
+                                            Ok(()) => println!("renegotiation answered"),
+                                            Err(e) => println!("renegotiation answer refused: {e}"),
+                                        }
+                                    }
+                                }
+                                Err(e) => println!("renegotiation not answered: {e}"),
                             }
                             links.0.extend(l.0);
                         }
