@@ -834,6 +834,7 @@ dependencies = [
  "hound",
  "opus",
  "rand 0.10.4",
+ "rcgen",
  "reqwest",
  "rtc",
  "serde",
@@ -842,10 +843,12 @@ dependencies = [
  "teams-proto",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tracing",
  "url",
  "uuid",
+ "webpki-roots 1.0.12",
  "webrtc",
 ]
 

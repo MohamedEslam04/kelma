@@ -32,6 +32,11 @@ async-trait = "0.1.89"
 bytes = "1.12.0"
 rand = "0.10.4"
 
+# --- TURN over TLS (relay/tls.rs) ---
+# Already in the tree through reqwest and tokio-tungstenite. The relays speak TLS 1.2 only.
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1.0.12"
+
 # --- audio (audio/) ---
 # `opus` bundles libopus via opusic-sys (cmake), so no system opus-devel is needed.
 opus = "0.4.0"
@@ -42,6 +47,8 @@ hound = "3.5.1"
 sonora = { version = "0.3.0", optional = true }
 
 [dev-dependencies]
+# Test certificates for the TURN-over-TLS shim (already in the tree through rtc).
+rcgen = "0.14.10"
 
 [features]
 default = ["devices", "aec"]

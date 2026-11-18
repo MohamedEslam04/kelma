@@ -7,17 +7,21 @@
 //! that kelma has not found yet, and rusty-teams uses `gateway-<geo>.az.relay.teams.cloud.microsoft`
 //! on udp 3478 and tcp/tls 443. Those gateways answer Allocate with `300 Try Alternate`, which
 //! webrtc-rs does not follow, so [`resolve_ice_servers`] follows it first ([`allocate`]) and names
-//! the relay that allocates by its address.
+//! the relay that allocates by its address. Where UDP is blocked, [`resolve_tls_ice_servers`] finds
+//! the relay over TLS on port 443 and points webrtc-rs at a loopback shim to it ([`tls`]).
 
 pub mod allocate;
+pub mod tls;
 
 use crate::error::{Error, Result};
 use crate::types::IceServer;
 use serde::Deserialize;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use teams_proto::Client;
 use teams_proto::broker::Audience;
+use tokio_rustls::rustls;
 
 pub const TOKENS_URL: &str = "https://teams.microsoft.com/trap/tokens";
 /// The relay rusty-teams defaults to (EU geo). Other geos are expected at
@@ -169,17 +173,38 @@ pub fn resolved_ice_servers(grant: &RelayGrant, relay: SocketAddr) -> Vec<IceSer
         .collect()
 }
 
-/// The relay `host` leads to: its first address of each family is probed (IPv4 first).
-async fn probe_host(host: &str, credentials: &RelayCredentials) -> Result<SocketAddr> {
-    let mut addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, RELAY_UDP_PORT))
+/// The first address of each family `host` resolves to on `port`, IPv4 first.
+async fn host_addrs(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
+    let mut addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
         .await
         .map_err(|e| Error::Protocol(format!("resolve {host}: {e}")))?
         .collect();
     addrs.sort_by_key(|a| a.is_ipv6());
     addrs.dedup_by_key(|a| a.is_ipv6());
+    Ok(addrs)
+}
+
+/// The relay `host` leads to: its first address of each family is probed (IPv4 first).
+async fn probe_host(host: &str, credentials: &RelayCredentials) -> Result<SocketAddr> {
     let mut last = Error::Protocol(format!("{host} has no address"));
-    for addr in addrs {
+    for addr in host_addrs(host, RELAY_UDP_PORT).await? {
         match allocate::find_relay(addr, credentials).await {
+            Ok(relay) => return Ok(relay),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+/// [`probe_host`] over TLS to port 443, the certificate checked for `host`.
+async fn probe_host_tls(
+    host: &str,
+    credentials: &RelayCredentials,
+    config: &Arc<rustls::ClientConfig>,
+) -> Result<tls::TlsRelay> {
+    let mut last = Error::Protocol(format!("{host} has no address"));
+    for addr in host_addrs(host, tls::RELAY_TLS_PORT).await? {
+        match tls::find_relay_tls(addr, host, credentials, Arc::clone(config)).await {
             Ok(relay) => return Ok(relay),
             Err(e) => last = e,
         }
@@ -215,4 +240,40 @@ pub async fn resolve_ice_servers(
         }
     }
     Ok((ice_servers(&grant, &hosts[0]), grant.expires_in))
+}
+
+/// [`resolve_ice_servers`] for a network that blocks UDP: finds the relay over TLS on port 443
+/// and starts a [`tls::TlsShim`] to it, which the ICE servers name. The shim must be kept for as
+/// long as any peer connection built from them. Fails when no gateway takes a TLS allocation.
+pub async fn resolve_tls_ice_servers(
+    client: &Client,
+    region: &str,
+    relay_host: Option<&str>,
+) -> Result<(Vec<IceServer>, Duration, tls::TlsShim)> {
+    let grant = fetch_grant(client).await?;
+    let hosts = match relay_host {
+        Some(h) => vec![h.to_owned()],
+        None => relay_hosts(region),
+    };
+    let credentials = grant
+        .credentials
+        .first()
+        .ok_or_else(|| Error::Protocol("relay grant holds no credentials".into()))?;
+    let config = tls::client_config();
+    let mut last = Error::Protocol("no TURN relay over TLS".into());
+    for host in &hosts {
+        match probe_host_tls(host, credentials, &config).await {
+            Ok(relay) => {
+                tracing::info!(%host, relay = %relay.addr, "TURN relay over TLS found");
+                let shim = tls::TlsShim::start(relay, config).await?;
+                let ice = resolved_ice_servers(&grant, shim.local_addr());
+                return Ok((ice, grant.expires_in, shim));
+            }
+            Err(e) => {
+                tracing::warn!(%host, "no TURN relay over TLS: {e}");
+                last = e;
+            }
+        }
+    }
+    Err(last)
 }
