@@ -264,7 +264,7 @@ fn from_teams_states_the_default_direction() {
     // media section at all.
     let out = from_teams(P2P_OFFER).unwrap();
     let sections: Vec<&str> = out.split("m=").skip(1).collect();
-    assert_eq!(sections.len(), 2);
+    assert_eq!(sections.len(), 1, "audio only");
     for s in sections {
         assert_eq!(s.matches("a=sendrecv\r\n").count(), 1, "{s}");
     }
@@ -314,8 +314,8 @@ fn from_teams_removes_sections_webrtc_cannot_parse() {
     assert!(!out.contains("m=x-data"), "{out}");
     assert!(!out.contains("x-data-protocol"));
     assert!(!out.contains("a=mid:4"));
-    assert!(lines(&out).contains(&"a=group:BUNDLE 0 3"), "{out}");
-    assert_eq!(m_lines(&out).len(), 2);
+    assert!(lines(&out).contains(&"a=group:BUNDLE 0"), "{out}");
+    assert_eq!(m_lines(&out).len(), 1);
 }
 
 /// What webrtc-rs answers to the re-offer once `x-data` is gone: audio, and the video line it
@@ -375,4 +375,53 @@ fn to_teams_answer_stubs_removed_and_rejected_sections_in_offer_order() {
             "a=label:data",
         ]
     );
+}
+
+const FULL_REOFFER: &str = include_str!("fixtures/media/teams_meeting_full_reoffer.sdp");
+
+fn mids(sdp: &str) -> Vec<&str> {
+    sdp.lines()
+        .filter_map(|l| l.strip_prefix("a=mid:"))
+        .collect()
+}
+
+#[test]
+fn from_teams_keeps_only_audio_and_its_ice_credentials() {
+    // Each kind has its own ufrag here; webrtc-rs refuses conflicting ice-ufrag values.
+    let out = from_teams(FULL_REOFFER).unwrap();
+    assert_eq!(
+        m_lines(&out),
+        [
+            "m=audio 3478 UDP/TLS/RTP/SAVPF 96 113 109 108 104 102 9 103 111 18 0 8 97 101 13 118 120"
+        ],
+        "RTP/AVP with a fingerprint is DTLS too"
+    );
+    assert!(lines(&out).contains(&"a=group:BUNDLE 1"));
+    let ufrags: Vec<_> = lines(&out)
+        .into_iter()
+        .filter(|l| l.starts_with("a=ice-ufrag:"))
+        .collect();
+    assert_eq!(ufrags, ["a=ice-ufrag:aUdI"]);
+    assert_eq!(mids(&out), ["1"]);
+}
+
+#[test]
+fn to_teams_answer_stubs_every_non_audio_section_of_a_full_offer() {
+    let local = LOCAL_REANSWER
+        .split("m=video")
+        .next()
+        .unwrap()
+        .replace("a=mid:0", "a=mid:1")
+        .replace("BUNDLE 0", "BUNDLE 1");
+    let out = to_teams_answer(&local, FULL_REOFFER);
+    assert_eq!(mids(&out), mids(FULL_REOFFER));
+    let m = m_lines(&out);
+    assert_eq!(m.len(), 13);
+    assert_eq!(m[0], "m=audio 40000 RTP/SAVP 111");
+    assert!(
+        m[1..12].iter().all(|l| *l == "m=video 0 RTP/SAVP 34"),
+        "{out}"
+    );
+    assert_eq!(m[12], "m=x-data 0 RTP/SAVP 34");
+    assert!(out.contains("a=mid:3\r\na=label:applicationsharing-video\r\n"));
 }

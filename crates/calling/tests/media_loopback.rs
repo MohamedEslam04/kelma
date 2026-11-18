@@ -171,3 +171,37 @@ async fn service_renegotiation_on_a_connected_call_keeps_audio_flowing() {
     kelma.close().await.unwrap();
     service.close().await.unwrap();
 }
+
+const FULL_REOFFER: &str = include_str!("fixtures/media/teams_meeting_full_reoffer.sdp");
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restarting_offer_on_a_connected_call_leaves_it_usable() {
+    let (kelma, mut kelma_events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    let (service, mut service_events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    let offer = kelma.create_offer().await.unwrap();
+    kelma
+        .set_answer(&service.accept_offer(&offer).await.unwrap())
+        .await
+        .unwrap();
+    wait_for(&mut kelma_events, MediaState::Connected).await;
+    wait_for(&mut service_events, MediaState::Connected).await;
+
+    assert!(kelma.offer_restarts(FULL_REOFFER).await);
+    // webrtc-rs would answer it with a new recvonly transceiver (our audio not on it), so the
+    // session refuses it cleanly and the running call is untouched.
+    let err = kelma
+        .accept_offer(FULL_REOFFER)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("new MediaSession"), "{err}");
+
+    let (to_service, to_kelma) = tokio::join!(
+        pump(&kelma, &mut service_events, 0x00),
+        pump(&service, &mut kelma_events, 0x80),
+    );
+    assert!(to_service.len() >= 20, "service got {}", to_service.len());
+    assert!(to_kelma.len() >= 20, "kelma got {}", to_kelma.len());
+    kelma.close().await.unwrap();
+    service.close().await.unwrap();
+}

@@ -236,8 +236,34 @@ impl MediaSession {
             .map_err(media_err("set answer"))
     }
 
-    /// Answers the other side's offer (an incoming call), with every candidate in the answer.
+    /// Whether `offer` starts a new media session rather than renegotiating this one: its audio
+    /// section's mid or ICE ufrag differs from the remote description in force. The media
+    /// servers do this when a lobby participant is admitted (audio mid 0 -> 1, new credentials
+    /// per kind); answer such an offer on a fresh [`MediaSession`]. `false` before anything was
+    /// negotiated, and for an offer with no audio section.
+    pub async fn offer_restarts(&self, offer: &str) -> bool {
+        let Some(current) = self.pc.remote_description().await else {
+            return false;
+        };
+        match (
+            sdp::audio_transport(&current.sdp),
+            sdp::audio_transport(offer),
+        ) {
+            (Some(current), Some(offered)) => current != offered,
+            _ => false,
+        }
+    }
+
+    /// Answers the other side's offer (an incoming call or a renegotiation), with every candidate
+    /// in the answer. Refuses an offer that [`Self::offer_restarts`] this session, leaving it as
+    /// it was: webrtc-rs would answer its new audio mid with a fresh recvonly transceiver that
+    /// carries none of our audio.
     pub async fn accept_offer(&self, offer: &str) -> Result<String> {
+        if self.offer_restarts(offer).await {
+            return Err(Error::Media(
+                "offer restarts the media session (audio mid or ICE ufrag changed); answer it on a new MediaSession".into(),
+            ));
+        }
         let desc = RTCSessionDescription::offer(sdp::from_teams(offer)?)
             .map_err(media_err("parse offer"))?;
         self.pc

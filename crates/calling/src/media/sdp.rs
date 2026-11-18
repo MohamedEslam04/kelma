@@ -65,8 +65,13 @@ const TCP_TYPES: [(&str, &str); 3] = [
 const CANDIDATE_EXTRAS: [&str; 3] = ["generation", "network-id", "network-cost"];
 const MAX_INFLATED: usize = 1 << 20;
 const DIRECTIONS: [&str; 4] = ["sendrecv", "sendonly", "recvonly", "inactive"];
-/// The media kinds webrtc-rs parses; any other (Teams' `x-data`) fails the whole description.
-const WEBRTC_KINDS: [&str; 3] = ["audio", "video", "application"];
+/// The media kinds handed to webrtc-rs. Audio only: no video codec is registered, every other
+/// kind would only be declined, `x-data` fails the whole description (`SdpInvalidValue`), and the
+/// media servers give each kind its own ICE credentials, which webrtc-rs refuses in one bundle
+/// ("multiple conflicting ice-ufrag values"). The rest are answered as stubs.
+const KEPT_KINDS: [&str; 1] = ["audio"];
+/// Profiles Teams writes for SRTP lines; with a fingerprint each is DTLS-SRTP.
+const MS_PROFILES: [&str; 4] = [MS_PROFILE, "RTP/SAVPF", "RTP/AVP", "RTP/AVPF"];
 
 impl SdpBlob {
     /// A blob of plain SDP labelled `application/sdp`.
@@ -232,12 +237,12 @@ pub fn from_teams(sdp: &str) -> Result<String> {
             "remote SDP has no DTLS fingerprint (SDES-only keying); webrtc-rs supports DTLS-SRTP only",
         ));
     }
-    // Sections webrtc-rs cannot parse go, mids and all; `to_teams_answer` writes them back as
+    // Sections webrtc-rs is not given go, mids and all; `to_teams_answer` writes them back as
     // stubs from the offer.
     let removed: Vec<&str> = parsed
         .sections
         .iter()
-        .filter(|s| !webrtc_kind(s))
+        .filter(|s| !kept(s))
         .filter_map(|s| s.iter().find_map(|l| attr(l, "mid")))
         .collect();
     let mut out = Vec::new();
@@ -253,10 +258,10 @@ pub fn from_teams(sdp: &str) -> Result<String> {
             None => out.extend(inbound(line)),
         }
     }
-    for section in parsed.sections.iter().filter(|s| webrtc_kind(s)) {
+    for section in parsed.sections.iter().filter(|s| kept(s)) {
         let m = MediaLine::parse(&section[0]).ok_or_else(|| media("malformed m= line"))?;
         let profile = section[0].split(' ').nth(2).unwrap_or_default();
-        if profile == MS_PROFILE || profile == "RTP/SAVPF" {
+        if MS_PROFILES.contains(&profile) {
             out.push(m.with(m.port, DTLS_PROFILE));
         } else {
             out.push(section[0].clone());
@@ -274,8 +279,8 @@ pub fn from_teams(sdp: &str) -> Result<String> {
     Ok(join(out))
 }
 
-fn webrtc_kind(section: &[String]) -> bool {
-    MediaLine::parse(&section[0]).is_some_and(|m| WEBRTC_KINDS.contains(&m.kind))
+fn kept(section: &[String]) -> bool {
+    MediaLine::parse(&section[0]).is_some_and(|m| KEPT_KINDS.contains(&m.kind))
 }
 
 fn inbound(line: &str) -> Option<String> {
@@ -322,20 +327,29 @@ pub fn to_teams_answer(sdp: &str, remote_offer: &str) -> String {
     to_teams(sdp, Some(remote_offer))
 }
 
-/// Our answer's sections with a port-0 stand-in for each offered section webrtc-rs never saw.
+/// One section per offered section, in the offer's order: ours where we answered a kept section
+/// (matched by mid), else a port-0 stand-in built from the offer's.
 fn in_offer_order(ours: Vec<Vec<String>>, remote_offer: &Parsed) -> Vec<Vec<String>> {
-    let mut ours = ours.into_iter();
+    let mid_of = |s: &[String]| s.iter().find_map(|l| attr(l, "mid")).map(str::to_owned);
+    let mut ours: Vec<Option<Vec<String>>> = ours.into_iter().map(Some).collect();
     let mut out = Vec::new();
     for theirs in &remote_offer.sections {
-        if webrtc_kind(theirs) {
-            out.extend(ours.next());
+        let mid = mid_of(theirs);
+        let answered = kept(theirs)
+            .then(|| {
+                ours.iter_mut()
+                    .find(|s| s.as_ref().is_some_and(|s| mid_of(s) == mid))
+                    .and_then(Option::take)
+            })
+            .flatten();
+        if let Some(section) = answered {
+            out.push(section);
         } else if let Some(m) = MediaLine::parse(&theirs[0]) {
             let mut stub = vec![format!("m={} 0 {MS_PROFILE} {STUB_PAYLOAD}", m.kind)];
-            stub.extend(theirs.iter().filter(|l| attr(l, "mid").is_some()).cloned());
+            stub.extend(mid.map(|mid| format!("a=mid:{mid}")));
             out.push(stub);
         }
     }
-    out.extend(ours);
     out
 }
 
@@ -520,4 +534,19 @@ fn extmap_to_teams(line: &str) -> String {
         }
     }
     line.to_owned()
+}
+
+/// The mid and ICE ufrag of an SDP's first audio section (the ufrag may be session-level).
+pub(crate) fn audio_transport(sdp: &str) -> Option<(String, String)> {
+    let parsed = Parsed::new(sdp);
+    let audio = parsed
+        .sections
+        .iter()
+        .find(|s| MediaLine::parse(&s[0]).is_some_and(|m| m.kind == "audio"))?;
+    let mid = audio.iter().find_map(|l| attr(l, "mid"))?;
+    let ufrag = audio
+        .iter()
+        .chain(&parsed.session)
+        .find_map(|l| attr(l, "ice-ufrag"))?;
+    Some((mid.to_owned(), ufrag.to_owned()))
 }
