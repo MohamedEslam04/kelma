@@ -9,9 +9,15 @@
 //! (media: RTP in) -> mpsc<OpusPacket> -> spawn_decoder_playback -> FrameSink
 //! ```
 //!
+//! With feature `aec`, [`echo_cancelled`] wraps the microphone source in an
+//! [`AudioProcessor`] (echo cancellation, noise suppression, AGC) and hands back the
+//! [`EchoReference`] that [`Playback::start_with_tap`] feeds with what the speaker plays.
+//!
 //! Endpoints are [`FrameSource`]/[`FrameSink`]s: [`Capture`]/[`Playback`] for real devices
 //! (feature `devices`), [`ToneSource`], [`WavSource`] and [`WavSink`] for headless tests.
 
+#[cfg(feature = "aec")]
+mod aec;
 mod codec;
 #[cfg(feature = "devices")]
 mod device;
@@ -20,6 +26,10 @@ mod pipeline;
 mod resample;
 mod source;
 
+#[cfg(feature = "aec")]
+pub use aec::{
+    AudioProcessor, DEFAULT_STREAM_DELAY_MS, EchoCancelled, EchoReference, echo_cancelled,
+};
 pub use codec::{OpusDecoder, OpusEncoder};
 #[cfg(feature = "devices")]
 pub use device::{Capture, DeviceInfo, Playback, list_input_devices, list_output_devices};
