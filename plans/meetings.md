@@ -122,15 +122,17 @@ Everything Teams web has, inside a kelma-owned window. Each item is "verify it w
     - Camera, mic and speaker work.
     - The process exits after leaving.
     - Memory is back to kelma's baseline afterwards.
-- [ ] **M2.2 Pre-join screen:** Evidence (2026-11-19, UI built; live check pending with tester): the native
+- [x] **M2.2 Pre-join screen:** Evidence (2026-11-19, UI built; verified live, see below): the native
   window's pre-join (`ui/call_prejoin.slint`) has the title, "Join as", camera (disabled: "Video isn't
   available yet"), the mic switch, microphone and speaker pickers from `crates/devices`, Join now and Cancel;
   the lobby shows "Someone in the meeting should let you in soon". Background effects, "call me" and the
-  test call are not built. DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). name, camera and mic toggles, device pickers, test call, background effects, noise suppression, audio options (computer, phone "call me", room, no audio), join or ask to join, lobby waiting.
-- [ ] **M2.3 In-meeting controls:** Evidence (2026-11-19, UI built; live check pending with tester): the
+  test call are not built. Scope: name, camera and mic toggles, device pickers, test call, background effects, noise suppression, audio options (computer, phone "call me", room, no audio), join or ask to join, lobby waiting.
+  - **Evidence (live, 2026-11-19).** The user's own two accounts (no colleague): the work account in kelma, the personal account on a phone. A consumer Meet now joined from kelma's GUI with Calendar › Join with an ID: pre-join (mic switch, microphone and speaker pickers, Join now), the lobby, Admit on the phone, then two-way audio; People showed both, Mute/Unmute, Raise and Leave worked, and the mic dropdown switched devices. The same call window and controls also carried a native 1:1 call (calls plan K2.1).
+- [x] **M2.3 In-meeting controls:** Evidence (2026-11-19, UI built; verified live, see below): the
   native window's top bar has the timer, Chat, People, Raise, React, View, More, Camera, Mic with its device
   dropdown, Share and Leave. React, View, Camera and Share are drawn disabled with a tooltip (no engine
-  support). Push-to-talk and shortcuts are not built. DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). Chat, People, Raise, React, View, Notes, Apps, More, Camera, Mic, Share, Leave or End for everyone; push-to-talk (Space); keyboard shortcuts.
+  support). Push-to-talk and shortcuts are not built. Scope: Chat, People, Raise, React, View, Notes, Apps, More, Camera, Mic, Share, Leave or End for everyone; push-to-talk (Space); keyboard shortcuts.
+  - **Evidence (live, 2026-11-19).** The user's own two accounts (no colleague): the work account in kelma, the personal account on a phone. A consumer Meet now joined from kelma's GUI with Calendar › Join with an ID: pre-join (mic switch, microphone and speaker pickers, Join now), the lobby, Admit on the phone, then two-way audio; People showed both, Mute/Unmute, Raise and Leave worked, and the mic dropdown switched devices. The same call window and controls also carried a native 1:1 call (calls plan K2.1).
 - [ ] **M2.4 Screen share on Wayland.** DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). Screen, window and tab sharing through the xdg-desktop-portal and PipeWire, including "include computer sound", presenter modes and give or take control.
 - [ ] **M2.5 Participants:** DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work).
   - lists of presenters and attendees, Invited, Lobby, Raised hands
@@ -170,14 +172,15 @@ Everything Teams web has, inside a kelma-owned window. Each item is "verify it w
   - **How.** Follow rusty-teams `crates/calling` (MIT; reuse with attribution) and the facts from mautrix-teams `calls.go` (AGPL; facts only).
   - **Done when.** kelma joins a real meeting and audio flows both ways.
 - [ ] **M5.2 Video and screen share:** DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). H.264/VP8 send and receive, and screen capture through the PipeWire portal. The UI shows the gallery and speaker views in Slint (frames rendered as textures).
-- [ ] **M5.3 Roster and controls:** Evidence (2026-11-19, UI built; live check pending with tester): the
+- [x] **M5.3 Roster and controls:** Evidence (2026-11-19, UI built; verified live, see below): the
   `CallManager` (`crates/kelma/src/backend/call.rs`, live driver `call/live.rs`, a port of the verified
   `kelma-cli call join`) runs the join, the lobby admit re-offer on a fresh media session, keepAlive, the
   roster (People panel: mute, hand, lobby), self mute and raise or lower hand, device switching, leave,
   a reconnecting banner and the call-ended screen; the recording dot shows only when a conversation update
   says so (UNVERIFIED shape). It owns the one calling trouter and hands invitations to the 1:1 ringing
   flows, which hand connected calls back through `CallManager::adopt`. Reactions, spotlight, admitting from
-  the lobby, captions and recording control are not built. DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). participants, mute and unmute, raise hand, reactions, spotlight, admit from the lobby, captions, and recording start and stop (bot commands to the roster URL).
+  the lobby, captions and recording control are not built. Scope: participants, mute and unmute, raise hand, reactions, spotlight, admit from the lobby, captions, and recording start and stop (bot commands to the roster URL).
+  - **Evidence (live, 2026-11-19).** The user's own two accounts (no colleague): the work account in kelma, the personal account on a phone. A consumer Meet now joined from kelma's GUI with Calendar › Join with an ID: pre-join (mic switch, microphone and speaker pickers, Join now), the lobby, Admit on the phone, then two-way audio; People showed both, Mute/Unmute, Raise and Leave worked, and the mic dropdown switched devices. The same call window and controls also carried a native 1:1 call (calls plan K2.1).
 - [ ] **M5.4 Switch the default launcher to Native** DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). once M5.1–M5.3 pass. ChromiumWindow stays for breakout rooms, Whiteboard, PowerPoint Live and apps.
 
 ## Order

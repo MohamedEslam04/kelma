@@ -234,7 +234,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built, not ticked. Pencil renames in place; the people button opens the participants popover (members, Add people with an "Include chat history" switch, Leave with a confirmation); Leave is also in the chat item menu of groups. Live in the one test group: rename and leave worked. Add people was not run live (it would add a person to a chat). The group photo is not built: no endpoint is known, it needs a capture from Teams web first.
 
 ### 6.4 Presence
-- [ ] DEFERRED: needs test tenant (presence and status are not allowed on the work account). Impact 5, effort 3. Seen: profile menu, participants list, avatars everywhere.
+- [ ] DEFERRED: not built (presence reads now work live; changing the user's own status is allowed since 2026-11-19, so the UI can be built and checked on the work account). Impact 5, effort 3. Seen: profile menu, participants list, avatars everywhere.
   - **What.**
     - Status dots on every avatar: green Available, red Busy or Do not disturb, yellow Away or Be right back, grey Offline, with an out-of-office marker.
     - The profile menu changes your status: Available, Busy, Do not disturb, Be right back, Appear away, Appear offline, Reset status.
@@ -243,12 +243,20 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - Automatic Away when idle.
     - "Notify me when this person is available" (settings › Presence).
   - **How (known).**
-    - Read: `POST presence.teams.microsoft.com/v1/presence/getpresence/` with `[{mri}]`, batched over visible people, plus presence change events from trouter (already registered).
+    - Read: `POST <presence service>/presence/getpresence/` with `[{mri}]`, where the presence service is the regional `regionGtms.presenceUPS` + `/v1` (for example `teams.microsoft.com/ups/noam/v1`), batched over visible people, plus presence change events from trouter (already registered).
     - Set: `PUT /v1/me/forceavailability/` with `{availability}`.
     - Note: `PUT /v1/me/publishnote`.
     - Idle: `POST /v1/me/reportmyactivity/`.
   - **Done when.** Dots match Teams web for 5 people, and setting Busy in kelma shows Busy in Teams web.
-  - **Status.** Not built, on purpose. The presence endpoint answers 401 on the work account and presence experiments are not allowed on it, so this stays open until a token that works is available. `crates/teams-proto/src/presence.rs` is unused.
+  - **Status.** Not built. `crates/teams-proto/src/presence.rs` has read, set, reset, note and activity calls.
+  - **Evidence (2026-11-19, live, work account):** the global `presence.teams.microsoft.com` host answered 401 to
+    the presence token. A capture of Teams web showed it uses the regional unified presence service from the sign-in
+    answer (`regionGtms.presenceUPS`) with the same token audience. With that address `kelma-cli presence` answered
+    200 and read the user's own availability (Away / Away). `kelma-cli presence set Busy|DoNotDisturb` (ten-minute
+    expiry) and `presence reset` then read back Busy, DoNotDisturb and Available. A forced status only shows while
+    some Teams client of the user is active: with none, the service kept answering Away; with Teams web open it
+    showed the forced value at once. So the GUI has to register its endpoint (`PUT me/endpoints/`) and report
+    activity for a status set in kelma to show. The status was reset at the end.
 
 ### 6.5 Profile card
 - [ ] DEFERRED: needs test tenant (comparing the card needs a second account; built and tested offline). Impact 4, effort 3. Seen: avatars and names.

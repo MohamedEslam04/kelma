@@ -34,6 +34,8 @@ pub const TEAMS_ORIGIN: &str = "https://teams.microsoft.com";
 pub const FALLBACK_CHAT_SERVICE: &str = "https://apac.ng.msg.teams.microsoft.com";
 /// Middle tier used when the authz response has no region information.
 pub const FALLBACK_MIDDLE_TIER: &str = "https://teams.microsoft.com/api/mt/apac";
+/// Presence service used when the sign-in answer names no regional one.
+pub const FALLBACK_PRESENCE: &str = "https://presence.teams.microsoft.com/v1";
 
 /// Scope string for a v2 token request for `resource`.
 pub fn scope_for(resource: &str) -> String {

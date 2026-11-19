@@ -1,8 +1,8 @@
 //! Sign-in: OAuth device code, refresh tokens and the skypetoken exchange.
 
 use crate::client_info::{
-    AUTHORITY, CLIENT_ID, FALLBACK_CHAT_SERVICE, FALLBACK_MIDDLE_TIER, RESOURCE_SPACES, USER_AGENT,
-    scope_for,
+    AUTHORITY, CLIENT_ID, FALLBACK_CHAT_SERVICE, FALLBACK_MIDDLE_TIER, FALLBACK_PRESENCE,
+    RESOURCE_SPACES, USER_AGENT, scope_for,
 };
 use crate::error::{Error, Result};
 use serde_json::Value;
@@ -55,6 +55,9 @@ pub struct SkypeToken {
     pub chat_service: String,
     /// Middle-tier base URL, e.g. `https://teams.microsoft.com/api/mt/emea`.
     pub middle_tier: String,
+    /// Presence service base URL with its version, e.g.
+    /// `https://teams.cloud.microsoft/ups/noam/v1` (`regionGtms.presenceUPS`).
+    pub presence: String,
     pub region: Option<String>,
 }
 
@@ -64,6 +67,7 @@ impl std::fmt::Debug for SkypeToken {
             .field("expires_in_s", &self.expires_in_s)
             .field("chat_service", &self.chat_service)
             .field("middle_tier", &self.middle_tier)
+            .field("presence", &self.presence)
             .field("region", &self.region)
             .finish_non_exhaustive()
     }
@@ -166,11 +170,17 @@ pub fn parse_authz(body: &str) -> Result<SkypeToken> {
                 .map(|r| format!("https://teams.microsoft.com/api/mt/{r}"))
         })
         .unwrap_or_else(|| FALLBACK_MIDDLE_TIER.into());
+    // Teams web sends presence to the regional unified presence service; the global host
+    // refuses this client's presence token.
+    let presence = s(gtms.and_then(|g| g.get("presenceUPS")))
+        .map(|u| format!("{}/v1", trim(u)))
+        .unwrap_or_else(|| FALLBACK_PRESENCE.into());
     Ok(SkypeToken {
         token,
         expires_in_s,
         chat_service,
         middle_tier,
+        presence,
         region,
     })
 }
@@ -341,6 +351,17 @@ mod tests {
         assert_eq!(t.chat_service, "https://emea.ng.msg.teams.microsoft.com");
         assert_eq!(t.middle_tier, "https://teams.microsoft.com/api/mt/emea");
         assert!(!format!("{t:?}").contains("SKY"));
+        assert_eq!(t.presence, FALLBACK_PRESENCE);
+    }
+
+    #[test]
+    fn authz_reads_the_regional_presence_service() {
+        let t = parse_authz(
+            r#"{"tokens":{"skypeToken":"S","expiresIn":100},"region":"amer",
+                "regionGtms":{"presenceUPS":"https://teams.cloud.microsoft/ups/noam/"}}"#,
+        )
+        .unwrap();
+        assert_eq!(t.presence, "https://teams.cloud.microsoft/ups/noam/v1");
     }
 
     #[test]

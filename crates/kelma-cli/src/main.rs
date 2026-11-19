@@ -394,6 +394,18 @@ async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
             );
         }
         Some("worklocation") => {
+            // `worklocation [office|remote|clear]`: a pin set here lapses after one hour.
+            let pin = match args.get(1).map(String::as_str) {
+                None => None,
+                Some("office") => Some(cal::WorkLocation::Office),
+                Some("remote") => Some(cal::WorkLocation::Remote),
+                Some("clear") => Some(cal::WorkLocation::Unset),
+                Some(_) => bail!("usage: calendar worklocation [office|remote|clear]"),
+            };
+            if let Some(pin) = pin {
+                cal::set_work_location(client, pin, now + 3_600_000).await?;
+                println!("set work location: {pin:?}");
+            }
             let w = cal::work_location(client).await?;
             println!("work location: {w:?}");
         }
@@ -879,7 +891,26 @@ async fn main() -> Result<()> {
         }
         Some("presence") => {
             let (client, cfg) = connect(&paths).await?;
+            // `presence set <status>` forces my status for ten minutes; `presence reset` clears it.
             let mut mris: Vec<String> = args[1..].to_vec();
+            match mris.first().map(String::as_str) {
+                Some("set") => {
+                    let want = mris.get(1).map(String::as_str).unwrap_or_default();
+                    let a = teams_proto::presence::Availability::from_wire(want).context(
+                        "usage: presence set Available|Busy|DoNotDisturb|BeRightBack|Away|Offline",
+                    )?;
+                    let until = calendar::format_iso_ms(teams_proto::time::now_ms() + 600_000);
+                    client.set_presence(a, Some(&until)).await?;
+                    println!("set {} until {until}", a.as_str());
+                    mris.clear();
+                }
+                Some("reset") => {
+                    client.reset_presence().await?;
+                    println!("reset");
+                    mris.clear();
+                }
+                _ => {}
+            }
             if mris.is_empty() {
                 mris.push(self_mri(&client, &cfg).await?);
             }
@@ -887,7 +918,7 @@ async fn main() -> Result<()> {
             println!("{} presence record(s)", found.len());
             for p in &found {
                 println!(
-                    "{} {} / {}{}{}",
+                    "{} {} / {}{}{}{}",
                     p.mri,
                     p.availability,
                     p.activity,
@@ -895,6 +926,10 @@ async fn main() -> Result<()> {
                     p.note
                         .as_ref()
                         .map(|n| format!(" note={:?}", n.text))
+                        .unwrap_or_default(),
+                    p.work_location
+                        .as_ref()
+                        .map(|w| format!(" work location={w}"))
                         .unwrap_or_default()
                 );
             }

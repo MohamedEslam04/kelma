@@ -111,7 +111,7 @@ are the same as in `plans/chat.md`.
 
 ## Phase C2: write the calendar
 
-- [ ] **C2.1 New event form.** DEFERRED: waits for the tester session (the Done-when needs a meeting with a Teams link and an attendee; private appointments on the user's own calendar now pass live).
+- [ ] **C2.1 New event form.** DEFERRED: needs test tenant (waits for the tester session; the Done-when needs a meeting with a Teams link and an attendee; private appointments on the user's own calendar now pass live).
   - **What.**
     - Event / Series, Show as (Busy), reminder, category, sensitivity (private), Save.
     - Title.
@@ -152,7 +152,7 @@ are the same as in `plans/chat.md`.
       `new_event::tests::a_series_goes_out_in_the_windows_zone`).
   - **Tester session.** `kelma-cli calendar tester invite <address> | status | accept-proposal | move | forward <address> | cancel | cleanup`
     runs the meeting checks of C2.1, C2.2 and C2.5 with one consenting tester, one step at a time.
-- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: waits for the tester session (cancel, forward and moving a meeting mail the attendee; create, move and delete of private appointments pass live, see C2.1). Impact 4, effort 3.
+- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: needs test tenant (waits for the tester session; cancel, forward and moving a meeting mail the attendee; create, move and delete of private appointments pass live, see C2.1). Impact 4, effort 3.
   - **What.**
     - Edit sends an update.
     - Cancel meeting with a message, for one occurrence or the whole series.
@@ -205,7 +205,7 @@ are the same as in `plans/chat.md`.
     the same room at another slot) and the UI test
     `rooms_show_capacity_and_availability_and_picking_one_fills_the_form`. Not checked against a real room:
     this tenant has none, so the live step is fixtures only.
-- [ ] **C2.5 Propose a new time,** as an attendee or as the organizer reviewing proposals. DEFERRED: waits for the tester session (a real proposal from the tester is needed, and Accept moves the meeting; `calendar tester status` and `accept-proposal` are ready and mails its attendees). Impact 2, effort 2.
+- [ ] **C2.5 Propose a new time,** as an attendee or as the organizer reviewing proposals. DEFERRED: needs test tenant (waits for the tester session; a real proposal from the tester is needed, and Accept moves the meeting; `calendar tester status` and `accept-proposal` are ready and mails its attendees). Impact 2, effort 2.
   - **How.** `proposedNewTime` on tentativelyAccept and decline.
   - **Status.** Built both sides. Attendee: "Propose new time" in the peek asks for a start and an end and sends
     it with a tentative or decline answer. Organizer: opening one of my meetings with attendees reads
@@ -293,14 +293,17 @@ are the same as in `plans/chat.md`.
     with only `second_tz_min` still loads, `the_zone_picker_finds_zones_by_name_or_display_name`,
     `share_roles_are_limited_to_what_the_permission_allows` and the UI test
     `the_share_dialog_offers_only_the_roles_the_permission_allows`.
-- [ ] **C3.4 Work location.** DEFERRED: needs test tenant (work location is never exercised on the work account). Impact 3, effort 2.
+- [ ] **C3.4 Work location.** DEFERRED: not built (setting and reading my own pin pass live; the profile menu entry and colleagues' pins in profile cards are not built). Impact 3, effort 2.
   - **What.** A per-day work location pin (Office, Remote, a specific building) in the day header and in the profile menu. Colleagues' locations show in profile cards.
-  - **How.** Discover the endpoint; purple-teams uses `/v1/me/workLocation` on the presence service.
-  - **Status.** UI only, as the endpoint is unverified: a day header opens Office, Remote and Clear, the pin shows
-    in the header, and ⋯ has the same for today. The pin is kept in memory; the call to the presence service
-    is made but never run. DEFERRED: needs test tenant (work location is never exercised on the work account);
-    a refusal leaves a note. The profile menu and colleagues'
-    pins are not built.
+  - **How.** `PUT me/workLocation/` with `{location, expirationTime}` (1 office, 2 remote, 0 clears) on the regional
+    presence service (`regionGtms.presenceUPS`); the pin is read back from `getpresence` (`workLocation`).
+  - **Status.** A day header opens Office, Remote and Clear, the pin shows in the header, and ⋯ has the same for
+    today; a refusal leaves a note. The profile menu and colleagues' pins are not built.
+  - **Evidence (2026-11-19, live, the user's own work account):** `kelma-cli calendar worklocation remote` answered
+    and read back Remote (`presence` showed `work location=Remote`), then `worklocation clear` read back Unset, so
+    the pin was set for under a minute and is cleared. Teams documents the work location as shown on the profile
+    card and presence only, with no notification to anyone. The earlier 404 and 401 came from the global presence
+    host; see chat plan 6.4.
 - [x] **C3.5 Calendar in chat.** Impact 3, effort 1.
   - **What.** "Schedule a meeting" from a chat's header pre-fills its members.
   - **Status.** Built: a calendar button in the chat header opens the new-event form in the calendar with the

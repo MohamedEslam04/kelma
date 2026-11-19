@@ -58,7 +58,7 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
     - Out-of-office voicemail: all the time or when Outlook auto-replies are on, with a custom greeting.
     - The quick forwarding menu in the Calls view.
   - **How.** Discover the Teams middle-tier user calling settings endpoint. Its fields mirror `Get-CsUserCallingSettings`: ForwardingType, ForwardingTargetType, UnansweredTargetType, UnansweredDelay, Delegates, CallGroup. Make the UI read-only where the license does not allow a change.
-- [ ] **K1.5 Incoming call notification.** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). Impact 5, effort 3.
+- [ ] **K1.5 Incoming call notification.** BLOCKED: answering an incoming 1:1 call needs the callee-side media negotiation in crates/calling, which this wave must not change (fix on feat/calls-callee-offer; the ring itself already works live). Impact 5, effort 3.
   - **What.** A toast and an in-app incoming-call window with the caller's photo and name, and Accept with video, Accept with audio, Decline. The ringtone plays. It honors Do not disturb.
   - **How.**
     - The invite arrives over the `NextGenCalling` trouter registration as a `callInvitation` with `links` (documented in `docs/research/open-source.md` §3.15).
@@ -69,6 +69,7 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
 
 ## Phase K0: discovery (before K1.5 and K2)
 
+  - **Evidence (live, 2026-11-19).** A call from the guest account rang kelma: the toast and the desktop notification showed the caller. Accepting failed: the invitation carries no SDP (`mediaContent: null`, `links.mediaAnswer: "cc://ma"`), so the callee must send the offer with `attach` and take the answer from the mediaAnswer callback. Built on feat/calls-callee-offer; live check next.
 - [ ] **K0.1 HAR capture** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). of the Teams web client for:
   - an outgoing 1:1 audio call (to the user's own second device or a willing colleague)
   - accepting and declining an incoming call
@@ -79,10 +80,11 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
 
 ## Phase K2: calls with media (Chromium host)
 
-- [ ] **K2.1 Outgoing calls.** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). Impact 5, effort 4.
+- [x] **K2.1 Outgoing calls.** Impact 5, effort 4. Native, not through the Chromium host; video and group calls stay with K2.2 and M5.2.
   - **What.** The audio and video buttons in the chat header and the Call button in Calls start a call in the Chromium host (deep link `https://teams.microsoft.com/l/call/0/0?users=<upn>&withVideo=true`). Group calls work from group chats.
   - **Done when.** A 1:1 call with a colleague connects both ways.
   - **Evidence (2026-11-19, feat/calls-direct).** built; live check pending with tester. Natively, not through the host: Call (audio) and a disabled Video button in a 1:1 chat's header, Call on the profile card, and the ringing screen ("Calling…", "Ringing…", Cancel; Declined / No answer / Call ended). On answer the call goes to the call manager. CLI: `kelma-cli call dial <mri|email>`. Tests use a fake backend; no live call was placed.
+  - **Evidence (live, 2026-11-19).** The user's own accounts: the personal account as a guest in the work tenant (kelma-sandbox), the work account in kelma. `kelma-cli call dial <MRI>` and the GUI's Audio call in the 1:1 chat header both rang the phone, connected, and carried audio both ways (CLI: 3510 packets sent, 1579 received; roster 2). The GUI call had echo on the far side: the GUI audio path lacked AEC, fixed on feat/calls-callee-offer.
 - [ ] **K2.2 In-call controls** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). (verified in the host): mute, camera, share screen (Wayland portal), hold and resume, transfer (now, or consult first), add people, keypad, record and transcribe (policy), live captions, devices, video effects, chat during the call (the kelma chat window stays usable), convert to a meeting.
 - [ ] **K2.3 Device settings, natively:** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work).
   - speaker, microphone and camera selection through PipeWire
