@@ -3,7 +3,7 @@
 use super::{UiHandle, model};
 use crate::backend::call::{CallData, Person, is_meeting_chat};
 use crate::data::{Pixels, initials};
-use crate::{AppWindow, CallPerson, CallStore};
+use crate::{AppWindow, CallCaption, CallPerson, CallStore};
 use slint::{ComponentHandle, Image, SharedString};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -41,6 +41,18 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_hand(d.hand);
     s.set_prejoin_mic(d.prejoin_mic);
     s.set_recording(d.recording);
+    s.set_transcribing(d.transcribing);
+    s.set_captions(d.captions);
+    s.set_caption_lines(model(
+        d.caption_lines
+            .into_iter()
+            .map(|c| CallCaption {
+                speaker: c.speaker.into(),
+                text: c.text.into(),
+            })
+            .collect(),
+    ));
+    s.set_notice(d.notice.into());
     s.set_error(d.error.into());
     s.set_ended(d.ended.into());
     s.set_chat_id(d.chat_id.into());

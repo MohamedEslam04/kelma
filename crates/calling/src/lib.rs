@@ -13,6 +13,7 @@
 //! - [`audio`]: microphone/speaker I/O and the Opus codec.
 //! - [`history`]: call history from the `48:calllogs` system thread.
 //! - [`emergency`]: emergency short codes kelma refuses to dial.
+//! - [`captions`]: live caption text from the media data channel.
 //!
 //! Protocol sources: rusty-teams `crates/calling` and eisbaw/ost `src/calling` (MIT, code may be
 //! reused with attribution); mautrix-teams `pkg/msteams/calls.go` (AGPL) and teams-lite
@@ -20,6 +21,7 @@
 //! `docs/research/open-source.md` §3.15.
 
 pub mod audio;
+pub mod captions;
 pub mod emergency;
 pub mod error;
 pub mod history;
