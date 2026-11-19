@@ -447,6 +447,36 @@ fn the_shared_tab_lists_files_and_links_filters_them_and_opens_one() {
 }
 
 #[test]
+fn the_shared_tab_can_upload_from_onedrive_through_the_file_picker() {
+    use crate::{DriveStore, backend::DriveCmd};
+    let h = Harness::new();
+    let log = wire(&h);
+    let run = h.runner();
+    h.app.global::<DriveStore>().on_command(move |name, arg| {
+        if let Some(c) = DriveCmd::parse(&name, &arg) {
+            run(Cmd::Drive(c));
+        }
+    });
+    h.select(NOTES);
+    click(&labelled(&h.app, "Shared"));
+    assert_eq!(fs(&h.app).get_chat_tab(), "shared");
+
+    click(&labelled(&h.app, "Upload from OneDrive"));
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|l| l.starts_with("shared-onedrive")),
+        "{:?}",
+        log.borrow()
+    );
+    // The chat is back, with the OneDrive picker open over it for the attach purpose.
+    assert_eq!(fs(&h.app).get_chat_tab(), "chat");
+    let d = h.app.global::<DriveStore>();
+    assert_eq!(d.get_dialog(), "picker");
+    assert_eq!(d.get_picker_purpose(), "attach");
+}
+
+#[test]
 fn a_channel_shows_its_files_tab_and_a_chat_list_of_links() {
     let h = Harness::new();
     wire(&h);

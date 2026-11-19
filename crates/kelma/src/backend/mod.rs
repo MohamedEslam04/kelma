@@ -45,12 +45,13 @@ pub(crate) use activity::{State as ActivityState, row_data as activity_row_data}
 pub use appstore::AppsCmd;
 #[cfg(test)]
 pub use cal::{
-    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, SuggestRow, build, filter_opts, parse_view, peek_data,
-    room_rows, sched_rows,
+    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, ProposalRow, SuggestRow, build, filter_opts,
+    parse_view, peek_data, room_rows, sched_rows,
 };
 pub use cal::{
     CalCmd, CalData, DetailData, FormFields, FormOpen, Panels, PeekData, PermRow, RoomsPush,
-    SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes,
+    SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, share_roles, slot_for_pick,
+    slot_minutes,
 };
 pub use channels::ChannelCmd;
 pub use drive::DriveCmd;
@@ -473,7 +474,7 @@ impl Engine {
                     || url.starts_with("http://")
                     || url.starts_with("mailto:")
                 {
-                    let _ = open::that_detached(&url);
+                    let _ = crate::external::open(&url);
                 }
             }
             Cmd::OpenThread(root) => {

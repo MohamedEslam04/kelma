@@ -55,6 +55,8 @@ pub enum FindCmd {
     SharedKeyword(String),
     SharedOpen(String),
     SharedUpload,
+    /// Upload from OneDrive: the cloud-file picker, answered like Attach cloud files.
+    SharedOneDrive,
     Details(bool),
     Follow(String),
     UnfollowMsg(String),
@@ -87,6 +89,7 @@ impl FindCmd {
             "shared-keyword" => FindCmd::SharedKeyword(a),
             "shared-open" => FindCmd::SharedOpen(a),
             "shared-upload" => FindCmd::SharedUpload,
+            "shared-onedrive" => FindCmd::SharedOneDrive,
             "details" => FindCmd::Details(arg == "open"),
             "follow" => FindCmd::Follow(a),
             "unfollow-msg" => FindCmd::UnfollowMsg(a),
@@ -368,6 +371,7 @@ impl Engine {
                 self.clone().handle(super::Cmd::OpenUrl(url)).await;
             }
             FindCmd::SharedUpload => self.shared_upload().await,
+            FindCmd::SharedOneDrive => self.shared_onedrive().await,
             FindCmd::Details(open) => self.details(open).await,
             FindCmd::Follow(id) => self.set_follow(&id, true).await?,
             FindCmd::UnfollowMsg(id) => self.set_follow(&id, false).await?,

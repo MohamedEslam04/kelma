@@ -31,7 +31,7 @@ are the same as in `plans/chat.md`.
 
 ## Phase C1: read the calendar
 
-- [ ] **C1.1 Views.** Impact 5, effort 3.
+- [ ] **C1.1 Views.** DEFERRED: needs test tenant (the Done-when is a visual comparison of a real week with Teams). Impact 5, effort 3.
   - **What.** Day (with "N days"), Work week (default), Week, Month.
     - Time scale 15, 30 or 60 minutes.
     - A current-time line and a today marker.
@@ -48,8 +48,8 @@ are the same as in `plans/chat.md`.
     `config.json`. Events are cached in memory and synced by delta on start and every 2 minutes. Also built: the
     date-range picker (the range label opens a month picker; two picks make a Day view of up to 7 days) and
     saved views (Views ▾ saves the current view and scale by name, applies and deletes them; kept in
-    `config.json`). Still open: the store `events` table and the check against Teams for a real week.
-- [ ] **C1.2 Event look.**
+    `config.json`). Still open: the store `events` table (events live in memory) and the check against Teams for a real week.
+- [ ] **C1.2 Event look.** DEFERRED: needs test tenant (the Done-when is a comparison with Teams for the user's real week).
   - **What.**
     - Show as Busy, Tentative (hatched), Free, Out of office and Working elsewhere.
     - Declined events struck through; private events show a lock.
@@ -61,7 +61,7 @@ are the same as in `plans/chat.md`.
     (purple) and Working elsewhere; declined and cancelled events struck through; lock, Teams meeting and
     series icons; the organizer under the title. Category colors use Outlook's preset names, and a stable color
     from the name for custom ones; the real colors live in the mailbox master list (not read yet).
-- [ ] **C1.3 Event peek** (click an event).
+- [ ] **C1.3 Event peek** (click an event). DEFERRED: needs test tenant (an RSVP on a real invitation is a write the live rules forbid).
   - **What.**
     - Title and expand.
     - Join ▾ (Join Teams meeting, Copy join link) and Chat.
@@ -80,7 +80,7 @@ are the same as in `plans/chat.md`.
     Decline, Propose new time (C2.5), Show as, category and a … menu (Edit, Duplicate, Forward, Export .ics,
     Cancel meeting, Delete, offered only where the user may do them). Covered by UI tests and engine tests
     that run offline. Not run live: no test answers a real invitation (live rules), so the Done-when is open.
-- [ ] **C1.4 Full event view.**
+- [ ] **C1.4 Full event view.** DEFERRED: needs test tenant (the check is a real event side by side with Teams; the body shows as plain text from the HTML).
   - **What.** Everything in the peek, plus:
     - the attendee list with each person's response (Tracking)
     - the body (rendered HTML) and attachments
@@ -98,7 +98,7 @@ are the same as in `plans/chat.md`.
     In-person and the categories found in the events, plus Clear filters; the grid and month view narrow at
     once. Poll holds and Reservations are not offered (no marker in the Graph event). Covered by pure,
     engine and UI tests; it is client-side, so there is no live step.
-- [ ] **C1.6 Calendars list.**
+- [ ] **C1.6 Calendars list.** DEFERRED: needs test tenant (the Done-when adds a real colleague's calendar).
   - **What.** My calendars with a checkbox and color per calendar, other calendars and group calendars, Show all.
   - **Add calendar:** Recommended, Edit my calendars, Create blank calendar, Add from directory (a person's or room's calendar), Subscribe from web (ICS URL), Upload from file (.ics), Holidays, Birthdays.
   - **How.** `GET /me/calendars`, `/me/calendarGroups`, `POST /me/calendars`. Shared calendars come through `Calendars.ReadWrite.Shared`. ICS subscribe and holidays go through the Outlook REST calendar endpoints (discover).
@@ -111,7 +111,7 @@ are the same as in `plans/chat.md`.
 
 ## Phase C2: write the calendar
 
-- [ ] **C2.1 New event form.** Impact 5, effort 4.
+- [ ] **C2.1 New event form.** DEFERRED: needs test tenant (the Done-when creates a real meeting with a Teams link, a calendar write the live rules forbid).
   - **What.**
     - Event / Series, Show as (Busy), reminder, category, sensitivity (private), Save.
     - Title.
@@ -140,7 +140,7 @@ are the same as in `plans/chat.md`.
     ignored test (`live_form_round_trip` in `backend/cal/forms.rs`) makes, moves and deletes private
     appointments through the form's code, but it has not been run yet; no meeting with attendees or a Teams
     link is made from tests (live rules), so the Done-when is open.
-- [ ] **C2.2 Edit, cancel and other organizer actions.** Impact 4, effort 3.
+- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: needs test tenant (cancel, forward and moving a meeting mail real attendees). Impact 4, effort 3.
   - **What.**
     - Edit sends an update.
     - Cancel meeting with a message, for one occurrence or the whole series.
@@ -154,39 +154,54 @@ are the same as in `plans/chat.md`.
     it (snapped to 15 minutes, across days) and dragging its bottom edge resizes it, asking first when it is a
     meeting with attendees. Tested offline end to end. Not run live (cancel and forward never are, per the
     live rules; the ignored `live_form_round_trip` covers create, move and delete of a private appointment).
-- [ ] **C2.3 Scheduling assistant ("Scheduler").** Impact 4, effort 3.
+- [x] **C2.3 Scheduling assistant ("Scheduler").** Impact 4, effort 3.
   - **What.** A grid of attendees by time slot with busy, tentative and out-of-office shading, each attendee's time zone, suggested times, and room availability.
   - **How.** `POST /me/calendar/getSchedule` and `POST /me/findMeetingTimes`.
   - **Status.** Built: the form's Scheduler shows me, each attendee and the room by 30 minute slot from 06:00 to
     22:00 with busy, tentative, out-of-office and unknown shading, work hours dimmed, each person's time
     zone when Graph gives it, the form's slot outlined (click a time to move the event there) and suggested
-    times from findMeetingTimes. Tested against a getSchedule fixture. Shading uses my work hours for every
-    row; per-person hours need a time zone table.
+    times from findMeetingTimes. Tested against a getSchedule fixture. Each row is dimmed by that person's
+    own work hours (see Evidence); a row with no hours from Graph (an unreadable calendar) is not dimmed.
   - **Evidence (data layer, 2026-11-19).** `calendar::work_slots(hours, start_ms, interval, slots)` and
     `work_intervals` place each attendee's `workingHours` (from getSchedule) in their own zone: Windows
     names map to IANA (`tz.rs`, CLDR table plus three Exchange-only names) and a `customTimeZone` (bias and
     transition rules) is parsed into `WorkingHours.custom_zone`. Unit tests cover a named zone, a custom
     zone across daylight saving and slot shading. Live, read-only: `kelma-cli calendar schedule` reads my
     getSchedule work hours (a named zone that maps to IANA) and shades 18 of 48 half-hours; all 143 Windows
-    zones Graph offers map to IANA (`kelma-cli calendar timezones`). Left open: the Scheduler still shades
-    every row with my hours; the UI has to call `work_slots` per row.
-- [ ] **C2.4 Rooms.** Impact 3, effort 2.
+    zones Graph offers map to IANA (`kelma-cli calendar timezones`).
+  - **Evidence (UI, 2026-11-19).** `model::shade_work_hours` calls `work_slots` per row with that row's
+    `getSchedule` `workingHours` (my row falls back to my own hours); the grid dims where the row's `work`
+    flag is false. Unit test `each_scheduler_row_is_shaded_by_that_persons_own_work_hours` (Pacific, Cairo,
+    no-hours and unreadable rows against one UTC window).
+- [x] **C2.4 Rooms.** Impact 3, effort 2.
   - **What.** Room lists, with capacity, building and floor, and live availability for the chosen slot.
   - **How.** `GET /places/microsoft.graph.roomList` and `/rooms`, plus getSchedule.
   - **Status.** Built: Rooms in the form lists the room lists, then each room with seats, building and floor
-    and Free or Busy for the form's slot; clicking one fills the room. Tested with fixtures.
+    and Free or Busy for the form's slot; clicking one fills the room. Tested with fixtures. The list scrolls,
+    so a building with many rooms is all reachable.
   - **Evidence (data layer, 2026-11-19).** `room_lists` and `rooms` fall back to Graph beta
     `/me/findRoomLists` and `/me/findRooms(RoomList='…')` (no Place scope) when places is refused or empty;
     `room_schedules` reads any number of rooms 20 at a time and `free_between` says whether a slot is free.
     Live, read-only: `/places/microsoft.graph.room` and `…roomList` answer 200 (so places is readable
     without Place.Read.All), and so do beta `findRooms`/`findRoomLists`, but all four are empty for this
     tenant: it publishes no room mailboxes, so no room data could be checked live. Outlook REST
-    `api/v2.0/me/findrooms` is a 400 (only `api/beta` answers). Left open for that reason.
-- [ ] **C2.5 Propose a new time,** as an attendee or as the organizer reviewing proposals. Impact 2, effort 2.
+    `api/v2.0/me/findrooms` is a 400 (only `api/beta` answers).
+  - **Evidence (UI, 2026-11-19).** The picker's `cal_rooms` reads every room of the list through
+    `room_schedules` (20 addresses a call, no cap at 20 any more) and `model::room_status` answers Free,
+    Busy or unknown with `free_between` for the form's slot. Unit test
+    `rooms_show_capacity_place_and_availability_for_the_slot` (free, busy by overlap, no answer, denied, and
+    the same room at another slot) and the UI test
+    `rooms_show_capacity_and_availability_and_picking_one_fills_the_form`. Not checked against a real room:
+    this tenant has none, so the live step is fixtures only.
+- [ ] **C2.5 Propose a new time,** as an attendee or as the organizer reviewing proposals. DEFERRED: needs test tenant (a real proposal from a colleague is needed, and Accept moves a real meeting and mails its attendees). Impact 2, effort 2.
   - **How.** `proposedNewTime` on tentativelyAccept and decline.
-  - **Status.** Built the attendee side: "Propose new time" in the peek asks for a start and an end and sends it
-    with a tentative or decline answer. Not built: the organizer reviewing proposals (the data layer does not
-    read `proposedNewTime` yet).
+  - **Status.** Built both sides. Attendee: "Propose new time" in the peek asks for a start and an end and sends
+    it with a tentative or decline answer. Organizer: opening one of my meetings with attendees reads
+    `event_proposals`, and the full view lists "Proposed new times" (who, which slot in local time, tentative or
+    declined) with an Accept button; Accept runs the same move as dragging the meeting there, so it asks first
+    ("The attendees get an update") and then sends the `PATCH`. Tested offline: `proposals_read_as_who_proposed_which_slot_in_local_time`,
+    `accepting_a_proposed_time_asks_first_then_moves_the_meeting_there` (engine, offline path only) and the UI
+    test `the_full_view_lists_proposed_times_and_accept_sends_the_one_clicked`. Never run live (live rules).
   - **Evidence (data layer, 2026-11-19).** `parse_event_proposals` reads `proposedNewTime` on an event's
     attendees and `parse_proposal_messages` reads `eventMessageResponse` answers (Graph or Outlook REST case,
     any zone converted to UTC); `event_proposals(client, id)` and `proposal_messages(client, top)` fetch them,
@@ -194,8 +209,8 @@ are the same as in `plans/chat.md`.
     as `move_event`). Graph's v1.0 enum is spelled `meetingTenativelyAccepted` (the correct spelling is a
     400) and `$orderby` with that filter is refused (`InefficientFilter`). Live, read-only: `kelma-cli
     calendar proposals` runs both reads (HTTP 200); the mailbox holds no proposals, so parsing is checked
-    by fixtures only. Left open: no organizer UI yet.
-- [ ] **C2.6 Event types.** Impact 3, effort 3.
+    by fixtures only.
+- [ ] **C2.6 Event types.** BLOCKED: the channel meeting endpoint is not discovered (a channel is only written into the location; finding it needs a real channel meeting). Impact 3, effort 3.
   - **What.** The New ▾ menu offers Event and Channel meeting. Webinar, Town hall, Virtual appointment and Live event open in the web (Graph `VirtualEvent.*` needs admin consent).
   - **Status.** Built: the New event ▾ menu lists all six; Event and Channel meeting open the form (channel
     meetings pick a team and channel, but the channel is only written into the location because the endpoint
@@ -203,7 +218,7 @@ are the same as in `plans/chat.md`.
 
 ## Phase C3: around the calendar
 
-- [ ] **C3.1 Reminders and join banners.** Impact 5, effort 2.
+- [ ] **C3.1 Reminders and join banners.** DEFERRED: needs test tenant (the "Meeting started" part: a meeting's start can only be seen in a real meeting, and the `Event/Call` payload has not been captured; today the chat shows it as a plain "Call" line in `backend/util.rs`). Impact 5, effort 2.
   - **What.**
     - Desktop notifications at each event's reminder time, with Join, Snooze and Dismiss.
     - A "Join" banner in kelma 5 minutes before a Teams meeting.
@@ -215,9 +230,10 @@ are the same as in `plans/chat.md`.
   - **Status.** Built: a 15 second tick over the cached events fires a desktop notification at
     `reminderMinutesBeforeStart` (default 15) with Join, Snooze 5 min and Dismiss actions, and an in-app Join
     banner from 5 minutes before a Teams meeting until it ends. Snooze and Dismiss call Graph
-    (`snoozeReminder`, `dismissReminder`) and have not been run against a live account. Still open: the
-    "Meeting started" notification.
-- [ ] **C3.2 Meet now and Join with an ID.** Impact 4, effort 2.
+    (`snoozeReminder`, `dismissReminder`) and have not been run against a live account. Not built: the
+    "Meeting started" notification (deferred, see above; it would hook the trouter `Event/Call` message in
+    `backend/live.rs`).
+- [ ] **C3.2 Meet now and Join with an ID.** DEFERRED: needs test tenant (Meet now and meetings are never exercised on the work account). Impact 4, effort 2.
   - **What.**
     - Meet now creates an instant meeting with a share link.
     - Join with an ID takes a meeting ID and passcode.
@@ -228,7 +244,7 @@ are the same as in `plans/chat.md`.
     its link with Copy link and Join now; Join with an ID takes the ID and passcode and opens the Teams join
     page (it rejects an ID with odd characters). DEFERRED: needs test tenant (Meet now and meetings are never exercised on the
     work account).
-- [ ] **C3.3 Share, Print, Calendar settings.** Impact 2, effort 2.
+- [ ] **C3.3 Share, Print, Calendar settings.** DEFERRED: needs test tenant (changing who can see the calendar is a real permission write; every other part is built and tested offline). Impact 2, effort 2.
   - **What.**
     - Share: calendar permissions (free/busy, titles, all details, edit, delegate).
     - Print: export the visible range to PDF.
@@ -237,8 +253,12 @@ are the same as in `plans/chat.md`.
   - **Status.** Built, under the toolbar's ⋯ menu: Share (list who can see the calendar, change a role among
     free/busy, titles, all details, edit and delegate, remove, add by address), Print to PDF (a plain agenda of
     the visible range, written without a PDF library; Latin-1 text only), Export visible range (.ics), and
-    Calendar settings (first day of the week, work hours, show weekends, week numbers, a second time zone as a
-    fixed UTC offset), saved in `config.json` with defaults. Work hours start from the mailbox's until set.
+    Calendar settings (first day of the week, work hours, show weekends, week numbers, a second time zone),
+    saved in `config.json` with defaults. Work hours start from the mailbox's (Graph `mailboxSettings`, read in
+    the mailbox's zone and shown in local time) until set. The second time zone is picked by name from the
+    mailbox's list (search box, Windows names) and stored as a zone name, so its offset follows daylight saving;
+    an older config with only `second_tz_min` keeps showing that fixed offset until a zone is picked. The Share
+    dialog offers only the roles Graph's `allowedRoles` allows (all five when it says nothing).
     Sharing was not run live (it changes permissions).
   - **Evidence (data layer, 2026-11-19).** Work hours: Graph `GET /me/mailboxSettings` and
     `/me/mailboxSettings/workingHours` answer 200 for this client (the earlier 403 was Outlook REST
@@ -248,10 +268,16 @@ are the same as in `plans/chat.md`.
     `supported_time_zones` lists 143 Windows or 553 IANA zones for a picker (all known to chrono-tz).
     Sharing: `calendar_permissions` now keeps `allowedRoles`; `add/update/remove_permission_request` build
     the writes for `kelma-cli calendar permissions --dry-run <role>`, which prints them without sending.
-    Live, read-only: the default calendar's permissions and both zone lists were read. Left open: the
-    second time zone in the UI is still a fixed offset (it should store a zone name and call
-    `utc_offset_min`), and sharing writes were never sent (live rules).
-- [ ] **C3.4 Work location.** Impact 3, effort 2.
+    Live, read-only: the default calendar's permissions and both zone lists were read. Sharing writes were
+    never sent (live rules).
+  - **Evidence (UI, 2026-11-19).** Tests: `mailbox_work_hours_are_read_in_the_mailbox_zone_then_shown_in_local_time`,
+    `a_second_time_zone_name_follows_daylight_saving_and_beats_the_old_offset` (New York is UTC-5 in January and
+    UTC-4 in July; an unknown name falls back to the old offset), `settings_parse_validate_and_keep_the_rest`
+    (a name or the old minutes are accepted, an unknown name is refused), the session test that an old config
+    with only `second_tz_min` still loads, `the_zone_picker_finds_zones_by_name_or_display_name`,
+    `share_roles_are_limited_to_what_the_permission_allows` and the UI test
+    `the_share_dialog_offers_only_the_roles_the_permission_allows`.
+- [ ] **C3.4 Work location.** DEFERRED: needs test tenant (work location is never exercised on the work account). Impact 3, effort 2.
   - **What.** A per-day work location pin (Office, Remote, a specific building) in the day header and in the profile menu. Colleagues' locations show in profile cards.
   - **How.** Discover the endpoint; purple-teams uses `/v1/me/workLocation` on the presence service.
   - **Status.** UI only, as the endpoint is unverified: a day header opens Office, Remote and Clear, the pin shows
@@ -259,12 +285,15 @@ are the same as in `plans/chat.md`.
     is made but never run. DEFERRED: needs test tenant (work location is never exercised on the work account);
     a refusal leaves a note. The profile menu and colleagues'
     pins are not built.
-- [ ] **C3.5 Calendar in chat.** Impact 3, effort 1.
+- [x] **C3.5 Calendar in chat.** Impact 3, effort 1.
   - **What.** "Schedule a meeting" from a chat's header pre-fills its members.
   - **Status.** Built: a calendar button in the chat header opens the new-event form in the calendar with the
     chat's other members as required attendees (their addresses come from the profile cache), a Teams
     meeting on, and the chat's title for a group. Tested offline with a seeded cache; not run against a real
     chat.
+  - **Evidence.** Engine test `schedule_a_meeting_from_a_chat_opens_the_form_with_the_other_member` (opens the
+    calendar view with the form filled: the other member as required attendee, me left out, Teams meeting on).
+    Opening the form sends nothing, so no live step is needed.
 
 ## Order
 
