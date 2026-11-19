@@ -780,6 +780,12 @@ impl Engine {
 
     /// `privacy`, `terms`, `devices`, `web`, `host`, `tab:<entity id>` or `url:<https link>`.
     pub(super) fn shop_link(self: &Arc<Self>, what: &str) -> anyhow::Result<()> {
+        // A W app's tab opens in the web host; the rest of the links go to the browser.
+        if let Some(tab) = what.strip_prefix("tab:")
+            && self.apps_open_in_host(tab)
+        {
+            return Ok(());
+        }
         let url = {
             let a = self.apps.lock().unwrap();
             let details = a.shop.details.as_ref().map(|d| &d.definition);
@@ -879,6 +885,11 @@ fn grants_path() -> Option<std::path::PathBuf> {
             .config_dir
             .join("app-grants.json"),
     )
+}
+
+/// The text of `app-grants.json`, if there is one (the web host reads the grants from it).
+pub(super) fn read_grants_file() -> Option<String> {
+    std::fs::read_to_string(grants_path()?).ok()
 }
 
 fn load_grants() -> Option<app_store::Grants> {

@@ -16,6 +16,7 @@ mod shop;
 mod source;
 mod tasks;
 pub(crate) mod view;
+mod webhost_open;
 
 use super::Engine;
 use crate::data::Pixels;
