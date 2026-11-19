@@ -16,6 +16,9 @@
 //! kelma-cli card [mri]            profile card of a person, default yourself
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
 //! kelma-cli drive <ls [path]|search q|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir name|rm id|selftest>
+//! kelma-cli drive <meetings|for-you|shared-by-me|people|media>   more views (read-only)
+//! kelma-cli drive new <kind> [name] [--dry-run]                    New menu; --dry-run prints the request
+//! kelma-cli drive shape <graph path> | shape-search <kql>            redacted answer shapes (read-only)
 //! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
@@ -749,6 +752,7 @@ async fn main() -> Result<()> {
             }
             r?;
         }
+        Some("drive") if drive::is_offline(&args[1..]) => drive::offline(&args[1..])?,
         Some("drive") => {
             let (client, cfg) = connect(&paths).await?;
             let r = drive::run(&client, &args[1..]).await;
@@ -870,6 +874,7 @@ async fn main() -> Result<()> {
                    card [mri]\n\
                    horizons <conv>\n\
                    drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest|purge>\n\
+                   drive <meetings|for-you|shared-by-me|people|media|new|shape|shape-search>\n\
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
                    tail"
             );
