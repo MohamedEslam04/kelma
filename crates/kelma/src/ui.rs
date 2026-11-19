@@ -28,6 +28,7 @@ mod find;
 mod lists;
 mod media;
 mod people;
+pub(crate) mod settings;
 mod teams;
 
 thread_local! {

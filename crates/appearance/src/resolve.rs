@@ -12,14 +12,16 @@ pub enum ResolvedTheme {
 }
 
 /// `Light` and `Dark` win; `System` follows the portal. With no portal answer, or "no
-/// preference", the theme is light.
+/// preference", the theme is dark: kelma's built-in look, which every view supports (several views
+/// still hard-code dark colours, so a light fallback would give a half-light window).
 pub fn resolve_theme(prefs: &AppearancePrefs, portal: Option<PortalScheme>) -> ResolvedTheme {
     match prefs.theme {
         Theme::Light => ResolvedTheme::Light,
         Theme::Dark => ResolvedTheme::Dark,
         Theme::System => match portal {
             Some(PortalScheme::Dark) => ResolvedTheme::Dark,
-            Some(PortalScheme::Light | PortalScheme::NoPreference) | None => ResolvedTheme::Light,
+            Some(PortalScheme::Light) => ResolvedTheme::Light,
+            Some(PortalScheme::NoPreference) | None => ResolvedTheme::Dark,
         },
     }
 }
@@ -91,9 +93,9 @@ mod tests {
         );
         assert_eq!(
             resolve_theme(&s, Some(PortalScheme::NoPreference)),
-            ResolvedTheme::Light
+            ResolvedTheme::Dark
         );
-        assert_eq!(resolve_theme(&s, None), ResolvedTheme::Light);
+        assert_eq!(resolve_theme(&s, None), ResolvedTheme::Dark);
     }
 
     #[test]
@@ -124,7 +126,7 @@ mod tests {
         assert_eq!(r.accent, Some(Rgb::new(5, 6, 7)));
         assert_eq!(r.density, Density::Compact);
         assert_eq!(r.font_scale, 1.25);
-        assert_eq!(resolve(&p, None).theme, ResolvedTheme::Light);
+        assert_eq!(resolve(&p, None).theme, ResolvedTheme::Dark);
     }
 
     #[test]

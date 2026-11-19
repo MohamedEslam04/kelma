@@ -34,6 +34,7 @@ mod people;
 mod people_live;
 mod render;
 mod send;
+pub(crate) mod settings;
 mod shared;
 mod sync;
 mod unread;
@@ -117,6 +118,7 @@ pub enum Cmd {
     Find(FindCmd),
     People(PeopleCmd),
     Teams(TeamsCmd),
+    Settings(settings::SettingsCmd),
     Drive(DriveCmd),
     /// The chat list: sections, item menu, options, channel menu (plan 8.1 to 8.3, 8.5).
     Lists(ListsCmd),
@@ -555,6 +557,7 @@ impl Engine {
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
+            Cmd::Settings(c) => self.settings_cmd(c).await?,
             Cmd::Lists(c) => self.lists_cmd(c).await?,
             Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::Media(c) => self.media_cmd(c).await?,

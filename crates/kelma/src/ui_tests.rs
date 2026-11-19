@@ -30,6 +30,7 @@ mod media;
 mod people;
 mod saved;
 mod shortcuts;
+mod settings;
 mod teams;
 mod window_state;
 
