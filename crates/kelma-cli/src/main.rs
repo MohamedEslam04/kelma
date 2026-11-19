@@ -19,6 +19,10 @@
 //! kelma-cli drive <meetings|for-you|shared-by-me|people|media>   more views (read-only)
 //! kelma-cli drive new <kind> [name] [--dry-run]                    New menu; --dry-run prints the request
 //! kelma-cli drive shape <graph path> | shape-search <kql>            redacted answer shapes (read-only)
+//! kelma-cli tasks [todo <n>|plan <n>]  To Do lists and Planner plans (read-only)
+//! kelma-cli flows [runs <n> [top]]  your Workflows and their run history (read-only)
+//! kelma-cli onenote [<notebook> [<section> [<page>]]]  read OneNote notebooks, sections, pages
+//! kelma-cli lists [<site> [<list>]]  SharePoint lists of your teams' sites (read-only)
 //! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
@@ -26,6 +30,7 @@
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
+mod apps;
 mod drive;
 mod team;
 
@@ -759,6 +764,18 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
+        Some("tasks" | "flows" | "onenote" | "lists") => {
+            let (client, cfg) = connect(&paths).await?;
+            let rest = &args[1..];
+            let r = match args[0].as_str() {
+                "tasks" => apps::tasks(&client, rest).await,
+                "flows" => apps::flows(&client, rest).await,
+                "onenote" => apps::onenote(&client, rest).await,
+                _ => apps::lists(&client, rest).await,
+            };
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("audiences") => {
             // Mints a token for every audience through the auth broker. Prints no token values.
             let (client, cfg) = connect(&paths).await?;
@@ -875,6 +892,10 @@ async fn main() -> Result<()> {
                    horizons <conv>\n\
                    drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest|purge>\n\
                    drive <meetings|for-you|shared-by-me|people|media|new|shape|shape-search>\n\
+                   tasks [todo <n>|plan <n>]\n\
+                   flows [runs <n> [top]]\n\
+                   onenote [<notebook> [<section> [<page>]]]\n\
+                   lists [<site> [<list>]]\n\
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
                    tail"
             );

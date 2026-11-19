@@ -300,6 +300,30 @@ Pitfalls found live:
    freeze was in the cache after resume, and a message sent after resume arrived live. Token expiry
    uses wall-clock time, because a monotonic clock stops during suspend.
 
+## Built-in apps, read only (`planner`, `workflows`, `onenote`, `lists`) 2026-11-19
+
+`kelma-cli tasks | flows | onenote | lists` run these. All calls are GETs. The tenant is a work
+tenant, so nothing was created, edited or run. Probed live with the auth broker.
+
+| App | Call | Live |
+|---|---|---|
+| To Do | Graph `GET /me/todo/lists`, `/me/todo/lists/{id}/tasks` (`dueDateTime` is a `dateTimeTimeZone`, read as UTC) | ✅ 200, 1 list, 0 tasks |
+| Planner | Graph `GET /me/planner/tasks`, `/me/planner/plans`, `/groups/{id}/planner/plans`, `/planner/plans/{id}/{tasks,buckets}` | ✅ 200, but 0 tasks and 0 plans, so only the shapes from the Graph docs back the parsers |
+| Planner, `tasks.office.com` token | `/taskAPI/beta/me/{tasks,lists}`, `/taskAPI/v1.0/me/plans` → 404, `/api/v1/me/tasks` → 503 | ❌ 3 attempts, no usable path. kelma uses Graph instead. `/me/planner/favoritePlans` and `rosterPlans` → 400 |
+| Workflows | `GET https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments?api-version=2016-11-01`, `…/environments/{env}/flows?…`, `…/flows/{flow}/runs?…&$top=N` | ✅ 200: 1 environment, 4 flows, runs with `status`, `startTime`, `endTime`, `trigger.name` |
+| OneNote | Graph `GET /me/onenote/notebooks`, `/groups/{id}/onenote/notebooks`, then the `sectionsUrl`, `sectionGroupsUrl`, `pagesUrl` and `contentUrl` links each object carries; `/pages/{id}/content` answers HTML, not JSON | ✅ notebooks: 0 personal, 2 in the teams' groups. Both notebooks have 0 sections and 0 section groups, so sections, pages and page content were **not** checked live |
+| OneNote, `onenote.com` token | `GET https://www.onenote.com/api/v1.0/me/notes/{notebooks,sections,pages}` | ✅ 200, empty. Graph covers the same data, so it is not used |
+| Lists | Graph `GET /groups/{id}/sites/root`, `/sites/{id}/lists?$select=…`, `/sites/{id}/lists/{id}/columns`, `/sites/{id}/lists/{id}/items?expand=fields&$top=100` | ✅ 2 team sites; each has only the Documents library (no user lists). Columns and items of a library were read and parsed |
+
+**Audience hosts.** The token audience is not always the API host. `Audience::Flow` mints for
+`service.flow.microsoft.com` (no DNS record) and serves from `api.flow.microsoft.com`;
+`Audience::OneNote` mints for `onenote.com` and serves from `www.onenote.com`. `request_as` now
+accepts those two API hosts as well, and still refuses every other host.
+
+**Team notebooks.** A team's notebook lives under its Microsoft 365 group, so `/me/onenote`
+alone finds none. Sections can sit in nested section groups, so kelma follows `sectionGroupsUrl`
+up to 4 levels.
+
 ## Teams and channels (`teams_proto::teams`, `tags`, `engage`) 2026-11-19
 
 Code: `crates/teams-proto/src/{teams,tags,engage}.rs`, CLI `kelma-cli team …`. Plan:
