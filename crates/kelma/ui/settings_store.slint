@@ -103,6 +103,11 @@ export global SettingsStore {
 
     // --- About ---
     in-out property <string> version;
+    // Opt-in update check (X3.5). `update-status` is the line under the switch.
+    in-out property <bool> check-updates: false;
+    in-out property <bool> update-checking: false;
+    in-out property <bool> update-available: false;
+    in-out property <string> update-status;
 
     // (name, argument). See `ui/settings.rs` for the list.
     callback command(string, string);

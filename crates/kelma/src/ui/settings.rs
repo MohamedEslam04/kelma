@@ -10,13 +10,15 @@
 //! language, date-format, time-format, time-zone, startup, high-contrast, reduced-motion,
 //! larger-text, a11y, notify, pause, test-notification, privacy, unblock, priority-remove,
 //! speaker, mic, camera, all-devices, test-sound, mic-test, open-files, perm, switch-account,
-//! switch-org, restart, sign-out, view-account, report-problem.
+//! switch-org, restart, sign-out, view-account, report-problem, check-updates, check-now,
+//! release-notes.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
 use crate::backend::settings::{
     self as st, DeviceLists, Local, Look, OpenFilesIn, ServerData, SettingsCmd,
 };
+use crate::update_check::{self, Release};
 use crate::{
     AppWindow, SAccount, SAppPerm, SDevice, SFind, SNotify, SOption, SOrg, SPerson, SToggle,
     SettingsStore, Theme,
@@ -87,6 +89,9 @@ pub struct Hooks {
     pub enumerate: Arc<dyn Fn() -> DeviceLists + Send + Sync>,
     pub test_sound: PlaySound,
     pub mic_level: OpenMic,
+    /// Asks for the latest release (blocking, runs on a thread). Only called when the user has
+    /// turned the update check on.
+    pub check_update: Arc<dyn Fn() -> Result<Release, String> + Send + Sync>,
 }
 
 pub struct SettingsEnv {
@@ -162,6 +167,7 @@ impl SettingsEnv {
                     let s = devices::mic_level(input).map_err(|e| e.to_string())?;
                     Ok(Box::new(move || s.latest().map(|l| l.peak)) as MicPoll)
                 }),
+                check_update: Arc::new(update_check::fetch_latest),
             },
         })
     }
@@ -178,6 +184,12 @@ struct Ctl {
     lists: Option<DeviceLists>,
     listing: bool,
     mic: Option<slint::Timer>,
+    /// An update check is running.
+    checking: bool,
+    /// The one automatic check of this start has been made.
+    update_auto_done: bool,
+    /// The release page of the newer version found, for "Release notes".
+    update_url: Option<String>,
 }
 
 type Shared = Rc<RefCell<Ctl>>;
@@ -229,6 +241,9 @@ pub fn install(
         lists: None,
         listing: false,
         mic: None,
+        checking: false,
+        update_auto_done: false,
+        update_url: None,
     }));
     CTL.with(|c| *c.borrow_mut() = Some(shared.clone()));
     {
@@ -241,6 +256,15 @@ pub fn install(
     window
         .global::<SettingsStore>()
         .set_version(s(env!("CARGO_PKG_VERSION")));
+    // Opt-in: only when the switch is on, and then once per start.
+    check_updates(window, &mut shared.borrow_mut(), false);
+    let release_shared = shared.clone();
+    window.on_banner_action_clicked(move || {
+        let c = release_shared.borrow();
+        if let Some(url) = &c.update_url {
+            (c.env.hooks.open_url)(url);
+        }
+    });
 
     let weak = window.as_weak();
     window
@@ -404,6 +428,7 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_time_zone(s(gp.time_zone.clone().unwrap_or_default()));
     g.set_system_time_zone(s(iana_time_zone::get_timezone().unwrap_or_default()));
     g.set_startup(toggles(st::startup_rows(gp)));
+    g.set_check_updates(gp.check_updates);
 
     let x = &l.a11y;
     g.set_high_contrast(s(st::switch_slug(x.high_contrast)));
@@ -712,6 +737,63 @@ fn start_mic(w: &AppWindow, c: &mut Ctl) {
     }
 }
 
+/// Starts an update check if the switch is on and none is running. The automatic one happens at
+/// most once per start (`force` is false); "Check now" forces another.
+fn check_updates(w: &AppWindow, c: &mut Ctl, force: bool) {
+    if !c.local.general.check_updates || c.checking || (!force && c.update_auto_done) {
+        return;
+    }
+    if !force {
+        c.update_auto_done = true;
+    }
+    c.checking = true;
+    let g = w.global::<SettingsStore>();
+    g.set_update_checking(true);
+    g.set_update_available(false);
+    g.set_update_status(s("Checking for updates…"));
+    let fetch = c.env.hooks.check_update.clone();
+    if c.env.background {
+        let weak = w.as_weak();
+        std::thread::spawn(move || {
+            let r = fetch();
+            let _ = weak.upgrade_in_event_loop(move |w| {
+                if let Some(shared) = ctl() {
+                    update_checked(&w, &mut shared.borrow_mut(), r);
+                }
+            });
+        });
+    } else {
+        update_checked(w, c, fetch());
+    }
+}
+
+/// Shows the answer of an update check on the About page, and as an info banner when newer.
+fn update_checked(w: &AppWindow, c: &mut Ctl, r: Result<Release, String>) {
+    c.checking = false;
+    let g = w.global::<SettingsStore>();
+    g.set_update_checking(false);
+    if !c.local.general.check_updates {
+        // Switched off while the answer was on its way.
+        g.set_update_status(s(""));
+        return;
+    }
+    match r {
+        Ok(rel) if update_check::is_newer(env!("CARGO_PKG_VERSION"), &rel.version) => {
+            g.set_update_status(s(format!("Version {} available", rel.version)));
+            g.set_update_available(true);
+            w.set_banner(s(format!("kelma {} is available", rel.version)));
+            w.set_banner_action(s("Release notes"));
+            w.set_banner_info(true);
+            c.update_url = Some(rel.url);
+        }
+        Ok(_) => g.set_update_status(s("Up to date")),
+        Err(e) => {
+            tracing::debug!(error = %e, "update check failed");
+            g.set_update_status(s("Could not check for updates"));
+        }
+    }
+}
+
 fn with_server_note(c: &Ctl) -> Option<(String, NotificationSettings)> {
     let d = c.server.as_ref()?;
     Some((d.chat_service.clone(), d.notifications.clone()?))
@@ -1005,6 +1087,27 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 Err(e) => g.set_accounts_status(s(format!("Could not switch: {e}"))),
             }
             push_accounts(w, &c);
+        }
+        // --- Updates (opt-in; local) ---
+        "check-updates" => {
+            let mut c = shared.borrow_mut();
+            c.local.general.check_updates = bit(arg);
+            let r = c.local.save_general();
+            push_local(w, &c);
+            if c.local.general.check_updates {
+                check_updates(w, &mut c, false);
+            } else {
+                g.set_update_status(s(""));
+                g.set_update_available(false);
+            }
+            saved(w, r);
+        }
+        "check-now" => check_updates(w, &mut shared.borrow_mut(), true),
+        "release-notes" => {
+            let c = shared.borrow();
+            if let Some(url) = &c.update_url {
+                (c.env.hooks.open_url)(url);
+            }
         }
         "restart" => (shared.borrow().env.hooks.restart)(),
         "sign-out" => {

@@ -194,6 +194,9 @@ pub struct GeneralPrefs {
     /// Closing the window keeps kelma running in the tray.
     #[serde(deserialize_with = "lenient")]
     pub keep_running_on_close: bool,
+    /// Ask GitHub once per start whether a newer release exists. Off until the user turns it on.
+    #[serde(default, deserialize_with = "lenient")]
+    pub check_updates: bool,
 }
 
 prefs_file!(GeneralPrefs, FILE_NAME);
@@ -219,6 +222,20 @@ mod tests {
         assert_eq!(d.time_format, TimeFormat::Auto);
         assert_eq!(d.time_zone, None);
         assert!(!d.auto_start && !d.open_in_background && !d.keep_running_on_close);
+        assert!(!d.check_updates, "the update check is opt-in");
+    }
+
+    #[test]
+    fn check_updates_defaults_off_and_old_files_still_load() {
+        // A file written before the field existed.
+        let old = r#"{"language":"ar","auto_start":true,"keep_running_on_close":true}"#;
+        let p: GeneralPrefs = serde_json::from_str(old).unwrap();
+        assert!(!p.check_updates);
+        assert!(p.auto_start && p.keep_running_on_close);
+        let p: GeneralPrefs = serde_json::from_str(r#"{"check_updates":true}"#).unwrap();
+        assert!(p.check_updates);
+        let p: GeneralPrefs = serde_json::from_str(r#"{"check_updates":"yes"}"#).unwrap();
+        assert!(!p.check_updates, "a bad value means off");
     }
 
     #[test]
@@ -369,6 +386,7 @@ mod tests {
             auto_start: true,
             open_in_background: true,
             keep_running_on_close: true,
+            check_updates: true,
         };
         p.save_to(&path).unwrap();
         assert_eq!(GeneralPrefs::load_from(&path), p);

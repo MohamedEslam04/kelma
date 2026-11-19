@@ -10,6 +10,7 @@ use crate::ui::settings::{Autostart, Hooks, MicPoll, SettingsEnv, install};
 use crate::{SettingsStore, Theme};
 use i_slint_backend_testing::AccessibleRole;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use teams_proto::user_settings::{NotificationSettings, PrivacySettings};
 
 /// A temporary home, removed when dropped.
@@ -101,6 +102,8 @@ fn env(home: &Home, log: &Log, tokens: Arc<session::MemoryStore>) -> SettingsEnv
             }),
             test_sound: Arc::new(|_| Ok(())),
             mic_level: Box::new(|_| Ok(Box::new(|| Some(0.5_f32)) as MicPoll)),
+            // Never the network: a check that was not given a fake answer fails.
+            check_update: Arc::new(|| Err("no network in tests".into())),
         },
     }
 }
@@ -113,13 +116,20 @@ struct Ui {
 }
 
 fn window(home: Home) -> Ui {
+    window_with(home, |_| {})
+}
+
+/// `window` with a change to the environment (a fake update check, say).
+fn window_with(home: Home, tweak: impl FnOnce(&mut SettingsEnv)) -> Ui {
     let app = new_window();
     app.window().set_size(LogicalSize::new(1200., 800.));
     app.set_login_state("ready".into());
     app.set_me_initials("TU".into());
     let log = Log::default();
     let tokens = Arc::new(session::MemoryStore::default());
-    install(&app, None, env(&home, &log, tokens.clone()));
+    let mut e = env(&home, &log, tokens.clone());
+    tweak(&mut e);
+    install(&app, None, e);
     app.show().unwrap();
     Ui {
         app,
@@ -463,4 +473,123 @@ fn autostart_switch_follows_and_writes_the_desktop_entry() {
     assert!(tray::autostart::is_enabled_in(&xdg));
     let desktop = std::fs::read_to_string(tray::autostart::entry_path_in(&xdg)).unwrap();
     assert!(desktop.contains("--hidden"));
+}
+
+const FAKE_RELEASE_URL: &str = "https://github.com/MohamedEslam04/kelma/releases/tag/v999.0.0";
+
+/// A fake update check that counts its calls and answers `r` (never the network).
+fn fake_update(
+    calls: &Arc<AtomicUsize>,
+    r: Result<crate::update_check::Release, String>,
+) -> impl FnOnce(&mut SettingsEnv) {
+    let calls = calls.clone();
+    move |e: &mut SettingsEnv| {
+        e.hooks.check_update = Arc::new(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            r.clone()
+        });
+    }
+}
+
+fn release(version: &str) -> crate::update_check::Release {
+    crate::update_check::Release {
+        version: version.into(),
+        url: FAKE_RELEASE_URL.into(),
+    }
+}
+
+#[test]
+fn update_check_is_off_by_default_and_the_switch_stores_the_pref() {
+    let home = Home::new("update-off");
+    let dir = home.paths().config_dir;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ui = window_with(home, fake_update(&calls, Ok(release("999.0.0"))));
+    let app = &ui.app;
+    open_page(app, "about");
+    assert!(!checked(app, "Check for updates"));
+    assert!(!store(app).get_check_updates());
+    assert!(!Local::load(&dir).general.check_updates);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "off: no check at start");
+    assert_eq!(app.get_banner().as_str(), "");
+    assert!(
+        ElementHandle::find_by_accessible_label(app, "Check now")
+            .next()
+            .is_none(),
+        "no Check now while the switch is off"
+    );
+
+    press(app, "Check for updates");
+    assert!(checked(app, "Check for updates"));
+    assert!(Local::load(&dir).general.check_updates);
+    press(app, "Check for updates");
+    assert!(!Local::load(&dir).general.check_updates);
+    assert_eq!(store(app).get_update_status().as_str(), "");
+}
+
+#[test]
+fn a_newer_release_shows_the_banner_and_release_notes_opens_its_page() {
+    let home = Home::new("update-newer");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ui = window_with(home, fake_update(&calls, Ok(release("999.0.0"))));
+    let app = &ui.app;
+    open_page(app, "about");
+    press(app, "Check for updates");
+    // Turning it on makes the one automatic check of this start.
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(app.get_banner().as_str(), "kelma 999.0.0 is available");
+    assert_eq!(app.get_banner_action().as_str(), "Release notes");
+    assert!(app.get_banner_info());
+    assert_eq!(
+        store(app).get_update_status().as_str(),
+        "Version 999.0.0 available"
+    );
+
+    app.invoke_banner_action_clicked();
+    assert_eq!(*ui.log.borrow(), [format!("open {FAKE_RELEASE_URL}")]);
+
+    // "Check now" is an explicit extra request; the switch alone does not repeat it.
+    press(app, "Check now");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn the_automatic_check_runs_once_at_start_when_the_pref_is_on() {
+    let home = Home::new("update-start");
+    let dir = home.paths().config_dir;
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut local = Local::load(&dir);
+    local.general.check_updates = true;
+    local.save_general().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ui = window_with(
+        home,
+        fake_update(&calls, Ok(release(env!("CARGO_PKG_VERSION")))),
+    );
+    let app = &ui.app;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    open_page(app, "about");
+    assert!(checked(app, "Check for updates"));
+    assert_eq!(store(app).get_update_status().as_str(), "Up to date");
+    assert_eq!(app.get_banner().as_str(), "", "same version: no banner");
+    // Switching off and on again does not make a second automatic request.
+    press(app, "Check for updates");
+    press(app, "Check for updates");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_failed_check_only_says_so_on_the_about_page() {
+    let home = Home::new("update-fail");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ui = window_with(home, fake_update(&calls, Err("offline".into())));
+    let app = &ui.app;
+    open_page(app, "about");
+    press(app, "Check for updates");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store(app).get_update_status().as_str(),
+        "Could not check for updates"
+    );
+    assert_eq!(app.get_banner().as_str(), "");
+    assert!(!store(app).get_update_available());
 }

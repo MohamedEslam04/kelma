@@ -63,6 +63,9 @@ export component AppWindow inherits Window {
     in property <string> me-initials;
     in property <bool> connected: true;
     in property <string> banner;
+    // An info notice (update available) instead of an error toast, with one action link.
+    in property <bool> banner-info: false;
+    in property <string> banner-action;
 
     in-out property <string> view: "chat"; // chat | teams | activity | calendar | onedrive
     in-out property <string> filter: "all";
@@ -166,6 +169,7 @@ export component AppWindow inherits Window {
     callback remove-attachment(int);
     callback skin-tone-changed(int);
     callback dismiss-banner();
+    callback banner-action-clicked();
     callback picker-search(string);
     callback copy-link(string);
     callback toggle-save(string);
@@ -467,17 +471,25 @@ export component AppWindow inherits Window {
                     z: 10;
                     x: (parent.width - self.width) / 2;
                     y: 70px;
-                    width: min(parent.width - 40px, banner-text.preferred-width + 60px);
+                    width: min(parent.width - 40px, banner-text.preferred-width + 60px + (root.banner-action != "" ? 110px : 0px));
                     height: 36px;
                     border-radius: 6px;
-                    background: #3b1f22;
+                    background: root.banner-info ? #1f2a3b : #3b1f22;
                     border-width: 1px;
-                    border-color: Theme.danger;
+                    border-color: root.banner-info ? Theme.accent : Theme.danger;
                     HorizontalLayout {
                         padding-left: 14px;
                         padding-right: 6px;
                         spacing: 8px;
                         banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                        if root.banner-action != "": Rectangle {
+                            width: 100px;
+                            accessible-role: button;
+                            accessible-label: root.banner-action;
+                            accessible-action-default => { root.banner-action-clicked(); }
+                            Text { text: root.banner-action; color: #ffffff; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.banner-action-clicked(); } }
+                        }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 6px; clicked => { root.dismiss-banner(); } }
                     }
                 }
