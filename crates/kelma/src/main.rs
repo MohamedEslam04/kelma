@@ -8,9 +8,11 @@ mod lists_data;
 mod markdown;
 mod mention;
 mod reactions;
+mod tray_wiring;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
+mod window_state;
 
 slint::include_modules!();
 
@@ -446,12 +448,22 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Saved size, position, last chat and collapsed teams; demo mode neither restores nor saves.
+    let _window_state_timers = window_state::install(
+        &window,
+        std::env::var_os("KELMA_DEMO").is_none(),
+        tx.clone(),
+    );
+    let hidden = args.iter().any(|a| a == "--hidden");
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()?;
     rt.spawn(app_main(ui, rx, focus));
-    window.run()?;
+    // Tray, close-to-tray and the event loop (stays up with the window hidden).
+    tray_wiring::run(&window, hidden)?;
+    window_state::finish(&window);
     // Give the engine a moment to write a draft typed just before closing.
     let _ = tx.send(Cmd::Flush);
     std::thread::sleep(std::time::Duration::from_millis(100));
