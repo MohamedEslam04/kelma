@@ -1058,25 +1058,26 @@ impl Call {
                                 sink.send(ev);
                             }
                         }
-                        CallEvent::Other { scope, event, body } => {
-                            match (scope.as_str(), event.as_str()) {
-                                ("call", "transferCompletion") => match parse_transfer_completion(&body) {
-                                    Some(TransferOutcome::Done) => {
-                                        let to = self.transferring.take().unwrap_or_default();
-                                        hang_up = true;
-                                        break Some(format!("You transferred the call to {to}."));
-                                    }
-                                    Some(TransferOutcome::Failed { code, sub_code }) => {
-                                        tracing::warn!(code, sub_code, "transfer failed");
-                                        self.transferring = None;
-                                        sink.send(Event::Error("The transfer didn't go through. The call is still on hold.".into()));
-                                    }
-                                    None => {}
-                                },
-                                _ => {}
+                        CallEvent::Other { scope, event, body }
+                            if scope == "call" && event == "transferCompletion" =>
+                        {
+                            match parse_transfer_completion(&body) {
+                                Some(TransferOutcome::Done) => {
+                                    let to = self.transferring.take().unwrap_or_default();
+                                    hang_up = true;
+                                    break Some(format!("You transferred the call to {to}."));
+                                }
+                                Some(TransferOutcome::Failed { code, sub_code }) => {
+                                    tracing::warn!(code, sub_code, "transfer failed");
+                                    self.transferring = None;
+                                    sink.send(Event::Error("The transfer didn't go through. The call is still on hold.".into()));
+                                }
+                                None => {}
                             }
                         }
-                        CallEvent::Progress { .. } | CallEvent::MediaAcknowledgement { .. } => {}
+                        CallEvent::Progress { .. }
+                        | CallEvent::MediaAcknowledgement { .. }
+                        | CallEvent::Other { .. } => {}
                     }
                 }
             }

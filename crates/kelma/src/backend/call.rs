@@ -1467,6 +1467,7 @@ impl FakeDriver {
         Box::new(FakeHandle {
             log: self.log.clone(),
             sink,
+            demo: false,
         })
     }
 
