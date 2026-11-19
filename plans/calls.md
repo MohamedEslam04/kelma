@@ -58,7 +58,7 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
     - Out-of-office voicemail: all the time or when Outlook auto-replies are on, with a custom greeting.
     - The quick forwarding menu in the Calls view.
   - **How.** Discover the Teams middle-tier user calling settings endpoint. Its fields mirror `Get-CsUserCallingSettings`: ForwardingType, ForwardingTargetType, UnansweredTargetType, UnansweredDelay, Delegates, CallGroup. Make the UI read-only where the license does not allow a change.
-- [ ] **K1.5 Incoming call notification.** Impact 5, effort 3.
+- [ ] **K1.5 Incoming call notification.** BLOCKED: answering an incoming 1:1 call needs the callee-side media negotiation in crates/calling, which this wave must not change (fix on feat/calls-callee-offer; the ring itself already works live). Impact 5, effort 3.
   - **What.** A toast and an in-app incoming-call window with the caller's photo and name, and Accept with video, Accept with audio, Decline. The ringtone plays. It honors Do not disturb.
   - **How.**
     - The invite arrives over the `NextGenCalling` trouter registration as a `callInvitation` with `links` (documented in `docs/research/open-source.md` §3.15).
