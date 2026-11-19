@@ -12,7 +12,7 @@ component MenuItem inherits Rectangle {
     height: 32px;
     border-radius: 4px;
     background: touch.has-hover ? Theme.surface-hover : transparent;
-    Text { x: 10px; text: root.label; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+    Text { x: 10px; text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
@@ -25,7 +25,7 @@ component ChatItem inherits Rectangle {
     callback leave();
     height: 56px;
     border-radius: 4px;
-    background: selected ? Theme.selected : (t.has-hover ? #262626 : transparent);
+    background: selected ? Theme.selected : (t.has-hover ? Theme.surface-hover : transparent);
     HorizontalLayout {
         padding-left: 12px;
         padding-right: 10px;
@@ -47,24 +47,24 @@ component ChatItem inherits Rectangle {
                 Text {
                     text: root.data.title;
                     color: Theme.fg;
-                    font-size: 14px;
+                    font-size: 14px * Theme.font-scale;
                     font-weight: root.data.unread ? 700 : 400;
                     overflow: elide;
                     horizontal-stretch: 1;
                     horizontal-alignment: root.data.rtl-title ? right : left;
                 }
-                if root.data.mention: Text { text: "@"; color: Theme.accent; font-size: 13px; font-weight: 700; horizontal-stretch: 0; vertical-alignment: center; accessible-role: text; accessible-label: "You were mentioned"; }
-                if ListStore.show-times: Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; }
-                if root.data.muted: Text { text: "🔕"; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; accessible-role: text; accessible-label: "Muted"; }
+                if root.data.mention: Text { text: "@"; color: Theme.accent; font-size: 13px * Theme.font-scale; font-weight: 700; horizontal-stretch: 0; vertical-alignment: center; accessible-role: text; accessible-label: "You were mentioned"; }
+                if ListStore.show-times: Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-stretch: 0; vertical-alignment: center; }
+                if root.data.muted: Text { text: "🔕"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-stretch: 0; vertical-alignment: center; accessible-role: text; accessible-label: "Muted"; }
             }
             if ListStore.show-previews: HorizontalLayout {
                 spacing: 4px;
-                if root.data.draft: Text { text: "Draft:"; color: #e97a5f; font-size: 12px; horizontal-stretch: 0; }
+                if root.data.draft: Text { text: "Draft:"; color: #e97a5f; font-size: 12px * Theme.font-scale; horizontal-stretch: 0; }
                 Text {
                     text: root.data.preview;
                     color: root.data.unread ? Theme.fg : Theme.fg-subtle;
                     font-weight: root.data.unread ? 600 : 400;
-                    font-size: 12px;
+                    font-size: 12px * Theme.font-scale;
                     overflow: elide;
                     horizontal-alignment: root.data.rtl-preview ? right : left;
                 }
@@ -147,7 +147,7 @@ export component Sidebar inherits Rectangle {
             height: 56px;
             padding-left: 16px;
             padding-right: 12px;
-            Text { text: root.view == "chat" ? "Chat" : "Teams"; color: Theme.fg; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+            Text { text: root.view == "chat" ? "Chat" : "Teams"; color: Theme.fg; font-size: 20px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
             Rectangle { horizontal-stretch: 1; }
             if root.view == "teams": Pill {
                 label: "Your teams and channels";
@@ -184,7 +184,7 @@ export component Sidebar inherits Rectangle {
                 Pill { label: "Drafts"; active: root.filter == "drafts"; clicked => { root.filter = root.filter == "drafts" ? "all" : "drafts"; root.set-filter(root.filter); } }
             }
         }
-        Rectangle { height: 1px; background: #2b2b2b; }
+        Rectangle { height: 1px; background: Theme.border; }
 
         if root.view == "chat": ScrollView {
             VerticalLayout {
@@ -243,16 +243,16 @@ export component Sidebar inherits Rectangle {
                     Rectangle {
                         height: 44px;
                         border-radius: 4px;
-                        background: tt.has-hover ? #262626 : transparent;
+                        background: tt.has-hover ? Theme.surface-hover : transparent;
                         HorizontalLayout {
                             padding-left: 8px;
                             spacing: 10px;
                             Icon { source: t.expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-right.svg"); width: 14px; height: 14px; y: 15px; }
                             Rectangle {
                                 width: 28px; height: 28px; y: 8px; border-radius: 4px; background: t.color;
-                                Text { text: t.initials; color: #ffffff; font-size: 12px; font-weight: 700; }
+                                Text { text: t.initials; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; }
                             }
-                            Text { text: t.name; color: Theme.fg; font-size: 14px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                            Text { text: t.name; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 600; vertical-alignment: center; overflow: elide; }
                         }
                         tt := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-team(ti); } }
                     }
@@ -260,14 +260,14 @@ export component Sidebar inherits Rectangle {
                         for ch in t.channels: Rectangle {
                             height: 34px;
                             border-radius: 4px;
-                            background: ch.id == root.current-id ? Theme.selected : (ct.has-hover ? #262626 : transparent);
+                            background: ch.id == root.current-id ? Theme.selected : (ct.has-hover ? Theme.surface-hover : transparent);
                             HorizontalLayout {
                                 padding-left: 50px;
                                 spacing: 6px;
                                 Text {
                                     text: ch.hidden ? ch.name + " (hidden)" : ch.name;
                                     color: ch.hidden ? Theme.fg-subtle : Theme.fg;
-                                    font-size: 13px;
+                                    font-size: 13px * Theme.font-scale;
                                     font-weight: ch.unread ? 700 : 400;
                                     font-italic: ch.hidden;
                                     vertical-alignment: center;
@@ -305,7 +305,7 @@ export component Sidebar inherits Rectangle {
         width: 228px;
         height: 6 * 32px + 9px + 2 * 32px + 24px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
@@ -321,7 +321,7 @@ export component Sidebar inherits Rectangle {
                 HorizontalLayout {
                     height: 24px;
                     padding-left: 10px;
-                    Text { text: "Quick views"; color: Theme.fg-subtle; font-size: 11px; vertical-alignment: bottom; }
+                    Text { text: "Quick views"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: bottom; }
                 }
                 MenuItem { label: "Mentions"; clicked => { root.quick-view("mentions"); } }
                 MenuItem { label: "Followed threads"; clicked => { root.quick-view("followed"); } }
