@@ -490,8 +490,14 @@ impl Engine {
         let jump = self.take_jump(&mut out);
         let mode = {
             let mut v = self.view.lock().unwrap();
+            let anchor = v
+                .older_anchor
+                .take()
+                .and_then(|id| out.iter().position(|m| m.id == id));
             let mode = if let Some(i) = jump {
                 Scroll::Divider(i)
+            } else if let Some(i) = anchor {
+                Scroll::Anchor(i)
             } else if !scroll {
                 Scroll::Keep
             } else if let Some(i) =

@@ -193,6 +193,9 @@ pub enum Scroll {
     Bottom,
     /// Put the row at this index (the "New messages" divider) near the top.
     Divider(usize),
+    /// Older messages were added above: keep the row at this index (the one that was first)
+    /// where it was on screen.
+    Anchor(usize),
 }
 
 #[derive(Clone)]

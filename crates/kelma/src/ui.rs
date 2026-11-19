@@ -466,6 +466,10 @@ impl UiHandle {
                     w.set_divider_index(i as i32);
                     w.set_divider_tick(w.get_divider_tick() + 1);
                 }
+                Scroll::Anchor(i) => {
+                    w.set_anchor_index(i as i32);
+                    w.set_anchor_tick(w.get_anchor_tick() + 1);
+                }
                 Scroll::Bottom => {
                     // Two ticks: one now, one after layout settles with images.
                     w.set_scroll_tick(w.get_scroll_tick() + 1);

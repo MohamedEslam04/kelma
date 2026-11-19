@@ -291,7 +291,19 @@ impl Engine {
                 }
             }
         }
-        self.view.lock().unwrap().limit = limit + PAGE;
+        // The first row shown now stays where it is once the older rows are above it.
+        let first = self
+            .store
+            .lock()
+            .unwrap()
+            .messages_before(&conv, None, limit)?
+            .first()
+            .map(|m| m.id.clone());
+        {
+            let mut v = self.view.lock().unwrap();
+            v.limit = limit + PAGE;
+            v.older_anchor = first;
+        }
         self.mark(|d| d.messages = true);
         Ok(())
     }

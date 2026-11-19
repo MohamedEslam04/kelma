@@ -198,6 +198,8 @@ struct View {
     loaded: bool,
     /// The list is at (or about to follow) the newest message.
     at_bottom: bool,
+    /// The first message shown before an older page was added, for the list to keep in place.
+    older_anchor: Option<String>,
     /// New messages that arrived while scrolled up; shown on the jump button.
     new_count: usize,
     /// "Mark as important" is on for the next message (set by the composer just before a send).

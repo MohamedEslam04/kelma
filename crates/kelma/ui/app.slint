@@ -232,6 +232,10 @@ export component AppWindow inherits Window {
     in-out property <int> scroll-tick;
     in-out property <int> focus-tick;
     in-out property <int> divider-tick;
+    // Older messages were added above: keep the row at `anchor-index` (the one that was first)
+    // where it was on screen.
+    in-out property <int> anchor-tick;
+    in property <int> anchor-index: -1;
 
 
     if root.login-state != "ready": LoginView {
@@ -704,6 +708,10 @@ export component AppWindow inherits Window {
                             visible: !root.posts-mode;
                             property <int> tick: root.scroll-tick;
                             property <int> d-tick: root.divider-tick;
+                            property <int> a-tick: root.anchor-tick;
+                            // Where the first row sat on screen when older messages were asked for.
+                            property <length> anchor-at: 0px;
+                            property <bool> anchoring: false;
                             // Stay pinned to the newest message while content grows (images loading).
                             property <bool> pinned: true;
                             // After a jump to the divider its real position corrects the estimate
@@ -717,28 +725,43 @@ export component AppWindow inherits Window {
                                 self.pinned = true;
                                 self.content-y = min(0px, self.visible-height - self.content-height);
                             }
+                            changed a-tick => {
+                                self.aligning = true;
+                                self.anchoring = true;
+                                self.pinned = false;
+                                // An estimate first; the anchor row's real position corrects it.
+                                self.content-y = min(0px, self.anchor-at - self.content-height * root.anchor-index / max(1, root.messages.length));
+                            }
                             changed d-tick => {
                                 self.aligning = true;
                                 self.content-y = min(0px, 24px - self.content-height * root.divider-index / max(1, root.messages.length));
                             }
                             changed content-height => {
-                                if self.pinned {
+                                if self.pinned && !self.aligning {
                                     self.content-y = min(0px, self.visible-height - self.content-height);
                                 }
                             }
                             changed content-y => {
-                                self.pinned = self.content-y <= self.visible-height - self.content-height + 80px;
+                                // Pinned only at the very bottom: rows that get their real height while
+                                // scrolling up change the content height, and a looser margin pulled the
+                                // list back down (the list shook when scrolling up).
+                                self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
                                 if self.content-y > -40px && self.content-height > self.visible-height + 40px && !self.pinned && root.messages.length > 0 && !root.loading-older && !self.aligning {
+                                    self.anchor-at = self.content-y;
+                                    // Until the older page lands: one request per arrival at the top.
+                                    self.aligning = true;
                                     root.load-older();
                                 }
                             }
-                                for m in root.messages: MessageRow {
+                                for m[i] in root.messages: MessageRow {
                                     m: m;
                                     max-bubble: min(720px, msg-list.width * 0.75);
                                     in-channel: root.current-is-channel && root.thread-root == "";
                                     select-mode: root.select-mode;
                                     changed y => {
-                                        if msg-list.aligning && (m.new-above || m.flash) {
+                                        if msg-list.anchoring && i == root.anchor-index {
+                                            msg-list.content-y = min(0px, msg-list.anchor-at - self.y);
+                                        } else if msg-list.aligning && !msg-list.anchoring && (m.new-above || m.flash) {
                                             msg-list.content-y = min(0px, 24px - self.y);
                                         }
                                     }
@@ -816,7 +839,10 @@ export component AppWindow inherits Window {
                         Timer {
                             interval: 700ms;
                             running: msg-list.aligning;
-                            triggered => { msg-list.aligning = false; }
+                            triggered => {
+                                msg-list.aligning = false;
+                                msg-list.anchoring = false;
+                            }
                         }
                         if !root.at-bottom && root.messages.length > 0 && !root.posts-mode: Rectangle {
                             z: 5;

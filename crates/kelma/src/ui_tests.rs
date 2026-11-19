@@ -965,6 +965,63 @@ fn opening_at_the_divider_puts_it_near_the_top_of_a_long_list() {
     assert!((108. ..108. + 120.).contains(&y), "divider at y={y}");
 }
 
+#[test]
+fn older_messages_keep_the_view_in_place_and_load_once() {
+    let page = |from: usize| -> Vec<Msg> {
+        (from..160)
+            .map(|i| {
+                let text = if i % 3 == 0 {
+                    "a longer message that wraps over a few lines because it says rather a lot "
+                        .repeat(3)
+                } else {
+                    "short".to_string()
+                };
+                let mut m = msg(&format!("m{i}"), &text, false);
+                m.sender = format!("S{i}").into();
+                m
+            })
+            .collect()
+    };
+    let app = app_with_messages(page(100));
+    let loads = Rc::new(RefCell::new(0));
+    {
+        let l = loads.clone();
+        app.on_load_older(move || *l.borrow_mut() += 1);
+    }
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    // Wheel up to the top: one older page is asked for, not one per wheel step.
+    for _ in 0..40 {
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: LogicalPosition::new(700., 400.),
+            delta_x: 0.,
+            delta_y: 400.,
+        });
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    assert_eq!(*loads.borrow(), 1, "one older page asked for");
+    let first = find_label(&app, "Open profile of S100");
+    assert!(!first.is_empty(), "the first row is on screen at the top");
+    let before = first[0].absolute_position().y;
+
+    // The older page lands above: the row that was first stays where it was.
+    app.set_messages(ModelRc::new(VecModel::from(page(40))));
+    app.set_anchor_index(60);
+    app.set_anchor_tick(app.get_anchor_tick() + 1);
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    let after = find_label(&app, "Open profile of S100");
+    assert!(!after.is_empty(), "the old first row is still on screen");
+    let y = after[0].absolute_position().y;
+    assert!((y - before).abs() < 40., "moved from {before} to {y}");
+    for _ in 0..20 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(*loads.borrow(), 1, "no cascade of loads once in place");
+}
+
 // ---- failed sends (plans/chat.md 5.8) -----------------------------------
 
 fn outgoing(id: &str, text: &str, pending: bool, failed: bool) -> Msg {
