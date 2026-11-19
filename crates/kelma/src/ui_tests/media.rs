@@ -56,7 +56,7 @@ fn pics(n: usize) -> String {
         .collect()
 }
 
-fn row<'a>(app: &AppWindow, id: &str) -> Msg {
+fn row(app: &AppWindow, id: &str) -> Msg {
     app.get_messages()
         .iter()
         .find(|m| m.id == id)
