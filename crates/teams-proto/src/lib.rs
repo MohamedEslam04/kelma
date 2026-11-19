@@ -30,6 +30,7 @@ pub mod presence;
 pub mod receipts;
 pub mod tags;
 pub mod teams;
+pub mod tenants;
 pub mod threads;
 pub mod time;
 pub mod trouter;
