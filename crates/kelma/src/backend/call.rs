@@ -875,6 +875,19 @@ impl CallManager {
         self.driver().native()
     }
 
+    /// The meeting behind this Join link is the one running, being joined or on the pre-join
+    /// screen, so the calendar does not offer to join it again.
+    pub fn is_in_meeting(&self, join_url: &str) -> bool {
+        let m = self.shared.model.lock().unwrap();
+        if !(m.phase.active() || m.phase == Phase::PreJoin) {
+            return false;
+        }
+        let same_link = matches!(&m.target, Some(JoinTarget::Link(u)) if u == join_url);
+        let same_chat = !m.chat_id.is_empty()
+            && ::calendar::meeting_chat_thread_id(join_url).as_deref() == Some(m.chat_id.as_str());
+        same_link || same_chat
+    }
+
     /// Opens the pre-join screen for a meeting. A running call stays; the window shows why.
     pub fn prejoin(&self, title: String, target: JoinTarget, chat_id: String) {
         let devices = self.driver().devices();
