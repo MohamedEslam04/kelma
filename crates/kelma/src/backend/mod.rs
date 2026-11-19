@@ -22,6 +22,7 @@ mod cal;
 mod drafts;
 pub(crate) mod drive;
 mod live;
+mod manage;
 mod mentions;
 mod outbox;
 mod people;
@@ -47,6 +48,10 @@ pub use cal::{
     SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes,
 };
 pub use drive::DriveCmd;
+pub use manage::{
+    CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
+    SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
+};
 pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
@@ -98,6 +103,7 @@ pub enum Cmd {
     Calendar(CalCmd),
     Activity(ActivityCmd),
     People(PeopleCmd),
+    Teams(TeamsCmd),
     Drive(DriveCmd),
     Apps(AppsCmd),
     SetEnterSends(bool),
@@ -189,6 +195,7 @@ pub struct Engine {
     dirty: Mutex<Dirty>,
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
+    manage: Mutex<manage::State>,
     drive: Mutex<drive::Drive>,
     apps: Mutex<appstore::Apps>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
@@ -242,6 +249,7 @@ impl Engine {
             }),
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
+            manage: Mutex::new(manage::State::default()),
             drive: Mutex::new(drive::Drive::default()),
             apps: Mutex::new(appstore::Apps::default()),
             avatars: Mutex::new(HashMap::new()),
@@ -276,6 +284,7 @@ impl Engine {
         self.push_prefs();
         self.start_people();
         self.start_apps();
+        self.start_manage();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -512,6 +521,7 @@ impl Engine {
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
             Cmd::Activity(c) => self.activity_cmd(c).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
+            Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,

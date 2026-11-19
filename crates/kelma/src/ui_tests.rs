@@ -21,6 +21,7 @@ mod activity;
 mod appstore;
 mod drive;
 mod people;
+mod teams;
 
 type Log = Rc<RefCell<Vec<String>>>;
 

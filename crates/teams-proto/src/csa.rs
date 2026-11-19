@@ -141,7 +141,7 @@ mod tests {
     fn parses_teams_and_chats() {
         let snap = parse_snapshot(&json!({
             "teams": [
-                {"id": "19:t1@thread.tacv2", "displayName": "Velents Technologies Inc.", "channels": [
+                {"id": "19:t1@thread.tacv2", "displayName": "Contoso Ltd.", "channels": [
                     {"id": "19:t1@thread.tacv2", "displayName": "General", "isGeneral": true},
                     {"id": "19:c2@thread.tacv2", "displayName": "tech only"},
                     {"id": "19:c3@thread.tacv2", "displayName": "old", "isDeleted": true}

@@ -1,5 +1,6 @@
 //! Teams apps for kelma: the app bar, the "View more apps" flyout, the Store (home, search,
-//! app page, Manage your apps), install requests and the Store settings.
+//! app page, Manage your apps), install requests, the Store settings, and the bots and
+//! messaging extensions installed in a chat or team.
 //!
 //! Everything reads the Teams app service on the middle tier (`beta/users/apps/…`) with the
 //! client's Teams credentials; the org catalog comes from Graph (`AppCatalog.Read.All`). Graph's
@@ -9,6 +10,7 @@
 
 pub mod api;
 pub mod bar;
+pub mod bots;
 pub mod install;
 pub mod model;
 pub mod settings;

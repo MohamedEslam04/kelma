@@ -19,16 +19,26 @@ The file chooser, open-URI, camera and screen-cast portals need no permission.
 
 ## Build
 
-The sandbox has no network during the build, so the crates are vendored from `Cargo.lock`. The
-generated `cargo-sources.json` is not committed.
+The sandbox has no network during the build, so the crates are vendored from `Cargo.lock`.
+`build.sh` does all of it: it generates `cargo-sources.json` (git-ignored) with
+`flatpak-cargo-generator.py` from `flatpak/flatpak-builder-tools` (pinned to a commit), then runs
+`flatpak-builder` (or the `org.flatpak.Builder` Flatpak) and pulls in the runtime, SDK and
+`rust-stable` extension when they are missing.
+
+```sh
+packaging/flatpak/build.sh /data/kelma-flatpak --install   # work dir on a disk with free space
+flatpak run io.github.mohamedeslam04.kelma
+```
+
+By hand, from this folder:
 
 ```sh
 flatpak install flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08 \
   org.freedesktop.Sdk.Extension.rust-stable//25.08
-# flatpak-cargo-generator.py comes from https://github.com/flatpak/flatpak-builder-tools (cargo/)
 python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json
-flatpak-builder --user --install --force-clean build-dir io.github.mohamedeslam04.kelma.yml
-flatpak run io.github.mohamedeslam04.kelma
+flatpak-builder --user --install --force-clean --state-dir=/data/kelma-flatpak/state \
+  /data/kelma-flatpak/build-dir io.github.mohamedeslam04.kelma.yml
 ```
 
+Keep the build directory outside the source tree: the manifest copies the whole repository.
 Check the metadata with `appstreamcli validate --no-net io.github.mohamedeslam04.kelma.metainfo.xml`.

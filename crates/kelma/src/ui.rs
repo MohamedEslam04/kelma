@@ -24,6 +24,7 @@ pub(crate) mod activity;
 pub(crate) mod appstore;
 pub(crate) mod drive;
 mod people;
+mod teams;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
