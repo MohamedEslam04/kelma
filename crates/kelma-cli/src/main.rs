@@ -32,12 +32,14 @@
 //! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
 //! kelma-cli accounts [tenants|use <label>|add <label>|remove <label>|org <tenant-id|home>]
 //!                                 several accounts and organizations (list and tenants are read-only)
+//! kelma-cli devices [audio|cameras|test-sound|mic-level]  list sound devices and cameras; test-sound plays a tone, mic-level shows the mic level
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
 mod accounts;
 mod apps;
 mod chatx;
+mod devices;
 mod drive;
 mod store;
 mod team;
@@ -503,6 +505,7 @@ async fn main() -> Result<()> {
         }
         Some("accounts") => accounts::run(&paths, &args[1..]).await?,
         Some("web") => web::run(&paths, &args[1..]).await?,
+        Some("devices") => devices::run(&args[1..])?,
         Some("logout") => {
             let cfg = paths.load_config()?;
             session::delete_refresh_token(&cfg.account)?;
