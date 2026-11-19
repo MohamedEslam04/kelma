@@ -24,7 +24,7 @@
 //! kelma-cli flows [runs <n> [top]]  your Workflows and their run history (read-only)
 //! kelma-cli onenote [<notebook> [<section> [<page>]]]  read OneNote notebooks, sections, pages
 //! kelma-cli lists [<site> [<list>]]  SharePoint lists of your teams' sites (read-only)
-//! kelma-cli store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe>  app bar and Store (writes are dry runs)
+//! kelma-cli store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>  app bar and Store (writes are dry runs)
 //! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
@@ -1049,7 +1049,7 @@ async fn main() -> Result<()> {
                    onenote [<notebook> [<section> [<page>]]]\n\
                    lists [<site> [<list>]]\n\
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
-                   store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe>\n\
+                   store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>\n\
                    tail"
             );
         }

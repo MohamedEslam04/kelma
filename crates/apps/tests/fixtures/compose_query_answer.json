@@ -1,0 +1,21 @@
+{
+  "responseType": "composeExtension",
+  "composeExtension": {
+    "type": "result",
+    "attachmentLayout": "list",
+    "attachments": [
+      {
+        "contentType": "application/vnd.microsoft.card.thumbnail",
+        "content": {"title": "TCK-1 Printer on fire", "text": "Open, high priority", "images": [{"url": "https://cdn.example/p.png"}]},
+        "preview": {
+          "contentType": "application/vnd.microsoft.card.thumbnail",
+          "content": {"title": "TCK-1", "subtitle": "Printer on fire", "images": [{"url": "https://cdn.example/p-small.png"}]}
+        }
+      },
+      {
+        "contentType": "application/vnd.microsoft.card.adaptive",
+        "content": "{\"type\":\"AdaptiveCard\",\"body\":[]}"
+      }
+    ]
+  }
+}
