@@ -1,0 +1,6 @@
+{
+  "tokens": [
+    {"realm": "rtcmedia", "username": "relay-user-placeholder", "password": "relay-pass-placeholder"}
+  ],
+  "expires": 604800
+}
