@@ -1,0 +1,20 @@
+[package]
+name = "tray"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kelma tray: StatusNotifierItem tray icon with unread badge, Unity launcher badge and XDG autostart"
+publish = false
+
+[dependencies]
+# Pure Rust StatusNotifierItem over zbus; no system library. Default `tokio` runtime feature.
+# Receiver is Clone and Sync, so the UI can hand clones of `events()` to any thread.
+crossbeam-channel = "0.5.17"
+ksni = "0.3.7"
+tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
+# Same major as ksni's zbus, so one copy is built. Used for the Unity LauncherEntry signal.
+zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
