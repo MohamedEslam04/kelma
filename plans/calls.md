@@ -86,12 +86,25 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
   - **Evidence (2026-11-19, feat/calls-direct).** built; live check pending with tester. Natively, not through the host: Call (audio) and a disabled Video button in a 1:1 chat's header, Call on the profile card, and the ringing screen ("Calling…", "Ringing…", Cancel; Declined / No answer / Call ended). On answer the call goes to the call manager. CLI: `kelma-cli call dial <mri|email>`. Tests use a fake backend; no live call was placed.
   - **Evidence (live, 2026-11-19).** The user's own accounts: the personal account as a guest in the work tenant (kelma-sandbox), the work account in kelma. `kelma-cli call dial <MRI>` and the GUI's Audio call in the 1:1 chat header both rang the phone, connected, and carried audio both ways (CLI: 3510 packets sent, 1579 received; roster 2). The GUI call had echo on the far side: the GUI audio path lacked AEC, fixed on feat/calls-callee-offer.
 - [ ] **K2.2 In-call controls** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). (verified in the host): mute, camera, share screen (Wayland portal), hold and resume, transfer (now, or consult first), add people, keypad, record and transcribe (policy), live captions, devices, video effects, chat during the call (the kelma chat window stays usable), convert to a meeting.
-- [ ] **K2.3 Device settings, natively:** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work).
+- [ ] **K2.3 Device settings, natively:** DEFERRED: not built (the test call and the camera rows wait for video in native calls; speaker and microphone selection, noise suppression and echo cancellation are done).
   - speaker, microphone and camera selection through PipeWire
   - "Make a test call" (`8:echo123`)
   - camera preview, mirror, and low-light brightness
 
   They mirror Settings › Devices and are passed to the host.
+  - **Status.** Speaker and microphone come from Settings › Devices (X1.4, with live evidence in
+    `plans/settings-and-platform.md`). Settings › Devices › Call audio adds Noise suppression and Echo
+    cancellation switches, saved with the device prefs (on by default). The call microphone path reads them
+    each time the devices (re)start: `AudioProcessor::with_options(ProcessingOptions)`, and `KELMA_NO_AEC`
+    still turns echo cancellation off. Tests: `devices` prefs defaults and old files, `calling`
+    `options_switch_echo_cancellation_and_noise_suppression`, `kelma` `the_device_switches_shape_the_mic_processing`
+    and the UI test `call_audio_switches_start_on_and_save_with_the_device_prefs`. Not compared live by ear yet.
+  - **"In a call" presence.** While a call or meeting is connected, kelma publishes its device presence as
+    Busy / `InACall` (`InAConferenceCall` in a meeting), and Available when it ends
+    (`backend/call_presence.rs`, from the call manager). Evidence (2026-11-19, live, the user's own work account):
+    `kelma-cli presence endpoint Busy InACall` read back Busy / InACall, `presence endpoint Available Available`
+    read back Available, and `presence remove-endpoint` removed the test device (back to Away). Away is refused
+    for a device that reports activity by transport (HTTP 400), so leaving a call publishes Available.
 
 ## Phase K3: native calls, ACS and safety
 
@@ -102,7 +115,11 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
   - **During the call:** hold, transfer and add participants through the links.
   - Impact 5, effort 4.
   - **Evidence (2026-11-19, feat/calls-direct).** built; live check pending with tester. 1:1 incoming (attach, ringing, accept, decline) and outgoing (`place_call`, progress, acceptance, cancel) are wired to `crates/calling` in the GUI and in `kelma-cli call listen` / `call dial`; group calls, hold, transfer and adding people are not.
-- [ ] **K3.3 Emergency numbers.** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). kelma is not a compliant emergency endpoint, so block 911/112/122 and similar, and tell the user to use a phone.
+- [ ] **K3.3 Emergency numbers.** DEFERRED: not built (the GUI dial path has no phone-number dialling yet, so its guard waits for it; the check and the CLI guard are done). kelma is not a compliant emergency endpoint, so block 911/112/122 and similar, and tell the user to use a phone.
+  - **Status.** `calling::emergency::is_emergency_number` matches emergency short codes (911, 112, 999, 000, 110,
+    122, 123, 180 and others) on the whole dialled number, ignoring spaces, dashes and brackets; a longer number or
+    one with `+`/`00` never matches. `kelma-cli call dial` refuses them with `calling::emergency::REFUSAL`
+    ("kelma can't place emergency calls. Use a phone …"). Unit tests in `crates/calling/src/emergency.rs`.
 
 ## Order
 

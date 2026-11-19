@@ -1212,6 +1212,10 @@ async fn dial(client: &Client, args: &[String]) -> Result<()> {
         .first()
         .filter(|a| !a.starts_with("--"))
         .context("usage: kelma-cli call dial <mri|email> [--secs N] [--ring-secs N]")?;
+    anyhow::ensure!(
+        !calling::emergency::is_emergency_number(target),
+        calling::emergency::REFUSAL
+    );
     let mut o = CallOpts::from_args(args, 30)?;
     o.ring_timeout = Some(Duration::from_secs(
         opt(args, "--ring-secs")
