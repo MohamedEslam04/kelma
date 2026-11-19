@@ -94,6 +94,10 @@ channels (posts, replies, files, cards) is in `plans/chat.md` phase 8. This file
 
 ## Phase T3: Communities
 
+- [x] **T2.10 Channel tabs and "Add a tab".** Impact 4, effort 2. Seen: the channel header (Posts, Files, then the tabs and "+").
+  - **What.** The channel header lists the channel's other tabs (Notes, Planner, websites, apps) after Posts and Files; "+" adds a tab.
+  - **How.** Graph `GET teams/{group}/channels/{channel}/tabs?$expand=teamsApp` (the middle tier's `beta/teams/…/tabs` answers 405); a website tab is `POST …/tabs` with the website app (`com.microsoft.teamspace.tab.web`) bound.
+  - **Evidence (2026-11-19).** `teams_proto::channel_tabs` (tests for parsing, the Files tab left out whatever its app id, the website body), `backend/channel_tabs.rs`, the header tabs and the Add a tab dialog in `ui/find.slint` / `app.slint`; UI test `a_channel_shows_its_other_tabs_and_add_a_tab_sends_a_name_and_address`. Live, read only: `kelma-cli team tabs` on the sandbox channel listed "Notes (OneNote), opens www.onenote.com" and the Files tab (now filtered). Clicking a tab opens its website, else the tab in Teams on the web. Adding a tab was not run live: Teams posts "… added a tab" in the channel, which has other people in it. Apps' tab pages do not open inside kelma (the web host covers personal tabs only).
 - [x] **T3.1** The Communities section in the chat list (All Company, Join communities), opening a community's feed natively through `api.yammer.com`, with a web host fallback. Impact 3, effort 3.
   - **Evidence.** `ui_tests::teams::communities_tab_lists_communities_and_opens_a_read_only_feed`, `the_chat_list_has_a_communities_section_that_opens_the_feed`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: the community list and the first page of its feed loaded (read only). Each post has an "Open in browser" link as the web fallback.
 
