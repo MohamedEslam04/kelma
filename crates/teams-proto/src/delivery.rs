@@ -447,8 +447,13 @@ mod tests {
         assert!(b["properties"]["mentions"].is_string());
         assert!(b["properties"]["qtdMsgs"].is_string());
         // Standard adds nothing.
-        let plain = outgoing_delivery_body("<p>x</p>", "Me", "1", None, &[], None, &Delivery::Standard);
-        assert!(plain.get("properties").is_none_or(|p| p.get("importance").is_none()));
+        let plain =
+            outgoing_delivery_body("<p>x</p>", "Me", "1", None, &[], None, &Delivery::Standard);
+        assert!(
+            plain
+                .get("properties")
+                .is_none_or(|p| p.get("importance").is_none())
+        );
     }
 
     #[test]

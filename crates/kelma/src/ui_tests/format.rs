@@ -248,7 +248,6 @@ fn incoming_headings_tables_and_colors_render() {
     assert!(drawn.contains('│'), "table columns: {drawn}");
 }
 
-
 // ---- Mark as important (plan chat 5.9 Ctrl+Shift+I, 9.4) ----------------------------------
 
 #[test]

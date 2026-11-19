@@ -127,6 +127,12 @@ async fn live_important_message_reads_back_as_high() {
         let _ = client.delete_message(NOTES, &m.id).await;
     }
     use teams_proto::delivery::Importance;
-    assert_eq!(a.expect("important message").importance, Importance::Important);
-    assert_eq!(b.expect("standard message").importance, Importance::Standard);
+    assert_eq!(
+        a.expect("important message").importance,
+        Importance::Important
+    );
+    assert_eq!(
+        b.expect("standard message").importance,
+        Importance::Standard
+    );
 }
