@@ -6,7 +6,7 @@ use super::grid::{Offset, WEEKDAYS, hhmm, local_date, month_short};
 use ::calendar::{
     Attachment, AttendeeKind, Availability, CalendarInfo, Date, Event, EventDetail, EventFilter,
     EventKind, FoundTimes, RecurrenceFilter, Response, ResponseCounts, Room, Schedule, ShowAs,
-    WorkingHours, work_slots,
+    WorkingHours, free_between, work_slots,
 };
 
 /// What the peek shows and which buttons it offers.
@@ -581,27 +581,25 @@ pub struct RoomRow {
     pub status: i32,
 }
 
-/// Free, busy or unknown for a room over the form's slot, from a schedule asked for exactly
-/// that slot (every slot of it must be free).
-pub fn room_status(s: Option<&Schedule>) -> i32 {
-    match s {
-        Some(s) if s.error.is_none() && !s.availability.is_empty() => {
-            if s.availability
-                .iter()
-                .all(|a| *a == Availability::Free || *a == Availability::WorkingElsewhere)
-            {
-                0
-            } else if s.availability.contains(&Availability::Unknown) {
-                2
-            } else {
-                1
-            }
-        }
+/// Free, busy or unknown for a room over the form's slot `(start, end)` in Unix ms, by the
+/// data layer's `free_between` over the room's busy blocks (unknown when Graph could not read
+/// the room or there is no slot yet).
+pub fn room_status(s: Option<&Schedule>, slot: Option<(i64, i64)>) -> i32 {
+    match (s, slot) {
+        (Some(s), Some((start, end))) => match free_between(s, start, end) {
+            Some(true) => 0,
+            Some(false) => 1,
+            None => 2,
+        },
         _ => 2,
     }
 }
 
-pub fn room_rows(rooms: &[Room], schedules: &[Schedule]) -> Vec<RoomRow> {
+pub fn room_rows(
+    rooms: &[Room],
+    schedules: &[Schedule],
+    slot: Option<(i64, i64)>,
+) -> Vec<RoomRow> {
     rooms
         .iter()
         .map(|r| RoomRow {
@@ -618,6 +616,7 @@ pub fn room_rows(rooms: &[Room], schedules: &[Schedule]) -> Vec<RoomRow> {
                 schedules
                     .iter()
                     .find(|s| s.email.eq_ignore_ascii_case(&r.email)),
+                slot,
             ),
         })
         .collect()
@@ -1108,22 +1107,40 @@ mod tests {
         let rooms = parse_rooms(&json!({"value": [
             {"id": "r1", "displayName": "Atlas", "emailAddress": "atlas@contoso.com", "capacity": 8, "building": "HQ", "floorLabel": "2"},
             {"id": "r2", "displayName": "Boreas", "emailAddress": "boreas@contoso.com"},
-            {"id": "r3", "displayName": "Ceres", "emailAddress": "ceres@contoso.com"}
+            {"id": "r3", "displayName": "Ceres", "emailAddress": "ceres@contoso.com"},
+            {"id": "r4", "displayName": "Dione", "emailAddress": "dione@contoso.com"}
         ]}));
+        let item = |s: &str, e: &str, status: &str| json!({
+            "status": status,
+            "start": {"dateTime": s, "timeZone": "UTC"},
+            "end": {"dateTime": e, "timeZone": "UTC"}});
         let sched = parse_schedules(&json!({"value": [
-            {"scheduleId": "atlas@contoso.com", "availabilityView": "00"},
-            {"scheduleId": "boreas@contoso.com", "availabilityView": "02"}
+            {"scheduleId": "atlas@contoso.com", "availabilityView": "00",
+             "scheduleItems": [item("2026-11-19T08:00:00.0000000", "2026-11-19T09:00:00.0000000", "busy")]},
+            {"scheduleId": "boreas@contoso.com", "availabilityView": "02",
+             "scheduleItems": [item("2026-11-19T10:15:00.0000000", "2026-11-19T10:45:00.0000000", "busy")]},
+            {"scheduleId": "dione@contoso.com", "availabilityView": "",
+             "error": {"message": "No permission", "responseCode": "ErrorAccessDenied"}}
         ]}));
-        let rows = room_rows(&rooms, &sched);
+        let at = |h: i64, m: i64| Date::new(2026, 11, 19).midnight_ms() + h * H + m * 60_000;
+        // The form's slot is 10:00 to 10:30 (UTC here).
+        let rows = room_rows(&rooms, &sched, Some((at(10, 0), at(10, 30))));
         assert_eq!(
             rows.iter().map(|r| r.status).collect::<Vec<_>>(),
-            [0, 1, 2],
-            "free, busy, unknown (no answer)"
+            [0, 1, 2, 2],
+            "free (its busy block is earlier), busy (overlaps), unknown (no answer), unknown (denied)"
         );
         assert_eq!(
             (rows[0].capacity.as_str(), rows[0].place.as_str()),
             ("8", "HQ, 2")
         );
         assert_eq!(rows[1].capacity, "");
+        let moved = room_rows(&rooms, &sched, Some((at(8, 30), at(9, 30))));
+        assert_eq!(moved[0].status, 1, "the same room is busy at another slot");
+        assert_eq!(moved[1].status, 0);
+        assert!(
+            room_rows(&rooms, &sched, None).iter().all(|r| r.status == 2),
+            "no slot, no verdict"
+        );
     }
 }

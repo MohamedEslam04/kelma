@@ -1013,9 +1013,12 @@ mod tests {
                         {"id": "r3", "displayName": "Ceres", "emailAddress": "ceres@contoso.com", "capacity": 4, "building": "Annex"}
                     ]}));
                     let sched = calendar::parse_schedules(&json!({"value": [
-                        {"scheduleId": "atlas@contoso.com", "availabilityView": "0"},
-                        {"scheduleId": "boreas@contoso.com", "availabilityView": "2"}
+                        {"scheduleId": "atlas@contoso.com", "availabilityView": "0", "scheduleItems": []},
+                        {"scheduleId": "boreas@contoso.com", "availabilityView": "2", "scheduleItems": [{"status": "busy",
+                            "start": {"dateTime": "2026-11-19T10:00:00.0000000", "timeZone": "UTC"},
+                            "end": {"dateTime": "2026-11-19T10:30:00.0000000", "timeZone": "UTC"}}]}
                     ]}));
+                    let slot = ::calendar::Date::new(2026, 11, 19).midnight_ms() + 10 * 3_600_000;
                     set_rooms(
                         app,
                         RoomsPush {
@@ -1023,7 +1026,7 @@ mod tests {
                                 ("HQ".into(), "hq@contoso.com".into()),
                                 ("Annex".into(), "annex@contoso.com".into()),
                             ],
-                            rooms: crate::backend::room_rows(&rooms, &sched),
+                            rooms: crate::backend::room_rows(&rooms, &sched, Some((slot, slot + 1_800_000))),
                             ..Default::default()
                         },
                     );
@@ -1886,10 +1889,13 @@ mod tests {
             {"id": "r2", "displayName": "Boreas", "emailAddress": "boreas@contoso.com"}
         ]}));
         let sched = calendar::parse_schedules(&json!({"value": [
-            {"scheduleId": "atlas@contoso.com", "availabilityView": "0"},
-            {"scheduleId": "boreas@contoso.com", "availabilityView": "2"}
+            {"scheduleId": "atlas@contoso.com", "availabilityView": "0", "scheduleItems": []},
+            {"scheduleId": "boreas@contoso.com", "availabilityView": "2", "scheduleItems": [{"status": "busy",
+                "start": {"dateTime": "2026-11-19T10:00:00.0000000", "timeZone": "UTC"},
+                "end": {"dateTime": "2026-11-19T10:30:00.0000000", "timeZone": "UTC"}}]}
         ]}));
-        let rows = crate::backend::room_rows(&rooms, &sched);
+        let slot = calendar::Date::new(2026, 11, 19).midnight_ms() + 10 * 3_600_000;
+        let rows = crate::backend::room_rows(&rooms, &sched, Some((slot, slot + 1_800_000)));
         set_rooms(
             &app,
             RoomsPush {

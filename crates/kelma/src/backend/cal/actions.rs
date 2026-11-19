@@ -12,7 +12,7 @@ use ::calendar::{
     calendars, cancel_event, categories, create_calendar, create_event, delete_event,
     download_attachment, event_detail, find_meeting_times, forward_event, get_schedule,
     join_by_id_url, mailbox_settings, meet_now, meeting_chat_thread_id, move_event, person_view,
-    remove_permission, respond, room_lists, rooms, set_work_location, target_id, to_ics,
+    remove_permission, respond, room_lists, room_schedules, rooms, set_work_location, target_id, to_ics,
     update_event, update_permission,
 };
 use serde_json::{Value, json};
@@ -1244,15 +1244,18 @@ impl Engine {
                 return;
             }
         };
-        let slot_ms = (
+        let slot_ms = match (
             forms::local_ms(&slot.start_date, &slot.start_time, &local_offset),
             forms::local_ms(&slot.end_date, &slot.end_time, &local_offset),
-        );
+        ) {
+            (Some(s), Some(e)) if e > s => Some((s, e)),
+            _ => None,
+        };
+        // Free or busy for the form's slot: every room of the list, 20 addresses a call.
         let schedules = match slot_ms {
-            (Some(s), Some(e)) if e > s && !list.is_empty() => {
-                let emails: Vec<String> = list.iter().take(20).map(|r| r.email.clone()).collect();
+            Some((s, e)) if !list.is_empty() => {
                 let minutes = (((e - s) / 60_000) as u32).clamp(5, 1440);
-                get_schedule(&self.client, &emails, s, e, minutes)
+                room_schedules(&self.client, &list, s, e, minutes)
                     .await
                     .unwrap_or_default()
             }
@@ -1263,7 +1266,7 @@ impl Engine {
         } else {
             ""
         };
-        push(model::room_rows(&list, &schedules), false, note);
+        push(model::room_rows(&list, &schedules, slot_ms), false, note);
     }
 
     // ---- around the calendar ----
