@@ -195,6 +195,11 @@ impl Engine {
     }
 
     fn notify(&self, st: &Store, m: &Message) {
+        // Muted chats and channels set to "Off" stay silent here, like in Teams, and so does
+        // everything while the tray's Mute is on.
+        if self.lists_silenced(&m.conversation_id) || crate::tray_wiring::notifications_muted() {
+            return;
+        }
         let title = st
             .conversation(&m.conversation_id)
             .ok()

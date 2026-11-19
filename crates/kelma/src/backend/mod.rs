@@ -18,8 +18,11 @@ mod actions;
 mod activity;
 mod attach;
 mod cal;
+mod channels;
 mod drafts;
 pub(crate) mod drive;
+mod find;
+mod lists;
 mod live;
 mod manage;
 mod mentions;
@@ -30,6 +33,7 @@ mod people_live;
 mod render;
 mod send;
 pub(crate) mod settings;
+mod shared;
 mod sync;
 mod unread;
 mod util;
@@ -46,7 +50,10 @@ pub use cal::{
     CalCmd, CalData, DetailData, FormFields, FormOpen, Panels, PeekData, PermRow, RoomsPush,
     SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes,
 };
+pub use channels::ChannelCmd;
 pub use drive::DriveCmd;
+pub use find::FindCmd;
+pub use lists::ListsCmd;
 pub use manage::{
     CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
     SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
@@ -101,10 +108,15 @@ pub enum Cmd {
     MarkAllRead,
     Calendar(CalCmd),
     Activity(ActivityCmd),
+    Find(FindCmd),
     People(PeopleCmd),
     Teams(TeamsCmd),
     Settings(settings::SettingsCmd),
     Drive(DriveCmd),
+    /// The chat list: sections, item menu, options, channel menu (plan 8.1 to 8.3, 8.5).
+    Lists(ListsCmd),
+    /// The channel Posts tab (plan 8.4).
+    Channels(ChannelCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -194,8 +206,11 @@ pub struct Engine {
     dirty: Mutex<Dirty>,
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
+    find: Mutex<find::State>,
     manage: Mutex<manage::State>,
     drive: Mutex<drive::Drive>,
+    lists: Mutex<lists::State>,
+    channels: Mutex<channels::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -235,6 +250,7 @@ impl Engine {
             me,
             my_name,
             view: Mutex::new(View {
+                collapsed_teams: crate::window_state::collapsed_teams(),
                 filter: "all".into(),
                 limit: PAGE,
                 at_bottom: true,
@@ -247,8 +263,11 @@ impl Engine {
             }),
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
+            find: Mutex::new(find::State::default()),
             manage: Mutex::new(manage::State::default()),
             drive: Mutex::new(drive::Drive::default()),
+            lists: Mutex::new(lists::State::default()),
+            channels: Mutex::new(channels::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -349,6 +368,7 @@ impl Engine {
                 {
                     v.collapsed_teams.insert(id);
                 }
+                crate::window_state::remember_collapsed_teams(&v.collapsed_teams);
                 drop(v);
                 self.mark(|d| d.teams = true);
             }
@@ -357,6 +377,7 @@ impl Engine {
                 let fav = st.conversation(&id)?.map(|c| c.favorite).unwrap_or(false);
                 st.set_favorite(&id, !fav)?;
                 drop(st);
+                self.lists_clear_assign(&id);
                 self.mark(|d| d.chats = true);
             }
             Cmd::SetFilter(f) => {
@@ -515,10 +536,14 @@ impl Engine {
             Cmd::MarkAllRead => self.mark_all_read().await?,
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
             Cmd::Activity(c) => self.activity_cmd(c).await?,
+            // Boxed: a search result opens a chat through `handle` again.
+            Cmd::Find(c) => Box::pin(self.find_cmd(c)).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::Settings(c) => self.settings_cmd(c).await?,
+            Cmd::Lists(c) => self.lists_cmd(c).await?,
+            Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

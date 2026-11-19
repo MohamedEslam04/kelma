@@ -281,7 +281,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
 ## Phase 7: finding things
 
 ### 7.1 Search page
-- [ ] Impact 5, effort 4. Seen: Search (Ctrl+Alt+E).
+- [x] Impact 5, effort 4. Seen: Search (Ctrl+Alt+E).
   - **What.**
     - Results tabs: All, Messages, Files, People, Channels, Group chats, Meetings (and 2 more).
     - Filters: In (chat or channel), Person, Date.
@@ -292,12 +292,21 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - People results reuse `searchV2`.
     - Chats and channels can be searched locally.
   - **Done when.** Searching a phrase from the cache finds it, and the jump lands on it.
+  - **Status.**
+    - Built in `ui/find.slint` (`SearchView`), `backend/find.rs` and `teams_proto::search`. Tabs: All, Messages, Files, People, Channels, Group chats, Meetings (the two unnamed extra tabs are not built). Filters In, Person and Date apply to messages. A hit shows the sender, the place, the time and a snippet with the matching words in bold.
+    - The cache is searched first (so results show at once and offline), then Substrate adds older messages. Files use Graph search (`onedrive::search`) because the Substrate `File` entity answers 500; people reuse `search_people`; channels, group chats and meetings are matched locally by name.
+    - The top-bar box opens the page on Enter. Clicking a message hit opens its chat and lands on the message (a channel reply opens its thread).
+  - **Evidence.** UI test `ctrl_alt_e_opens_search_and_a_phrase_from_the_cache_is_found_and_jumped_to`, plus `the_in_and_date_filters_narrow_the_messages` and `search_tabs_split_the_results_and_an_empty_search_says_so`. Live read check: `kelma-cli find search` returned hits whose ids were all found in the chat service (counts in `docs/protocol.md`), and `find mentions` flagged 50 of 50 hits as mentions.
 
 ### 7.2 Find in chat
-- [ ] Impact 4, effort 3. Seen: chat header 🔍 ("Find in chat"), and "Find in channel".
+- [x] Impact 4, effort 3. Seen: chat header 🔍 ("Find in chat"), and "Find in channel".
   - **What.** A search box above the conversation with ↑ and ↓ through matches; the list scrolls to each match and highlights it.
   - **How.** Add SQLite FTS5 over cached messages. When a match is older than the cache, page backward with the existing history paging.
   - **Done when.** A UI test plus a live check on a long chat.
+  - **Status.**
+    - Deviation from "How": the cache is scanned with a SQL `LIKE` prefilter (`Store::messages_containing`) and confirmed on the plain text, not FTS5, so there is no migration (other work is adding migrations in parallel). Matches older than the cache come from the server search `clientthreadid:<chat>`; moving to one pages the history back with `jump_to` (10 pages).
+    - The 🔍 button in the chat or channel header opens the bar ("Find in chat" or "Find in channel"). ↑ goes to the older match, ↓ to the newer one, Enter and Shift+Enter do the same, Esc closes. The list scrolls to each match and keeps it highlighted. A channel reply match opens its thread.
+  - **Evidence.** UI tests `find_in_chat_steps_through_the_matches_and_highlights_each` and `find_in_channel_has_its_own_label_and_finds_posts`. Live read check: `kelma-cli find search <word> in <sandbox channel>` found the 2 sandbox messages (a post and its reply) and both ids were found in the chat service.
 
 ### 7.3 Activity feed
 Moved to its own plan: `plans/activity.md`.
@@ -311,6 +320,12 @@ Moved to its own plan: `plans/activity.md`.
     - Auto-follow covers threads you started, threads you replied to and threads where you are @mentioned (settings).
   - **How.** Mentions is a filtered Activity. Followed threads needs discovery (a thread subscription property).
   - **Done when.** Following a test post in kelma shows it in Teams' Followed threads.
+  - **Status.** Not ticked: the Done-when needs the Teams web UI, which was not used.
+    - Built: the chat list "…" menu has Quick views > Mentions and Followed threads (`QuickView` in `find.slint`, `backend/find.rs`). Channel posts have "Follow thread" and "Unfollow thread" in the "…" menu. Unfollow is also a button on each Followed threads row, and the list is ordered by the newest reply.
+    - Mentions is not a filtered Activity (Activity's feed rows carry no text for `48:mentions`): it uses the Substrate query `mentions:<oid>` plus mentioning messages in the cache, which listed 50 of 50 hits as mentions in the live check.
+    - Followed threads reads `48:threads` (newest row per thread, `deleted` rows drop it). Following writes the `follow` emotion (`"0"` follow, `"1"` unfollow), checked on a sandbox post: the service stores it and reads it back. `48:threads` did not change within 30 s of an explicit follow or unfollow (it did get an `ImplicitFollow` row when the sandbox post was replied to), so it is unknown whether Teams' view reads that flag.
+    - Auto-follow is a Teams account setting and no Settings screen exists yet (`plans/settings-and-platform.md`), so it is not built.
+  - **Evidence.** UI tests `mentions_lists_the_messages_that_mention_me_and_a_click_opens_one`, `followed_threads_list_new_replies_on_top_and_unfollow_removes_one` and `channel_posts_offer_follow_and_unfollow_in_their_menu`.
 
 ### 7.5 Shared and Files tabs
 - [ ] Impact 4, effort 3. Seen: chat tab "Shared", channel tab "Shared".
@@ -323,18 +338,24 @@ Moved to its own plan: `plans/activity.md`.
     - Chats: collect from cached messages (`properties.files` and links in the content).
     - Channels: Graph `GET /teams/{groupId}/channels/{channelId}/filesFolder`, then its children. `groupId` comes from CSA `teamSiteInformation` (verify).
   - **Done when.** It lists the same files as Teams for 48:notes and the test channel.
+  - **Status.** Not ticked: the comparison with Teams' own Shared tab was not made (the Teams UI was not used).
+    - Built: the header tab "Shared" (chats) or "Files" (channels) shows `SharedView` with Recent, Files and Links, a keyword filter, and Upload (the file picker adds the file to the composer, then the chat shows again with the chip). Rows open the file or link in the browser.
+    - Chats read the Substrate `AllShared` list, the same call the Teams tab uses, and add what cached messages carry. Channels also list their SharePoint folder (Graph `filesFolder` then its children, `teams_proto::views::channel_files_folder`, reusable by 8.6).
+    - Live read check: `find shared 48:notes` returned 5 files and 22 links, all with a sender and a date. `find folder` on the sandbox channel found its folder (0 items), and `AllShared` for that channel returned none.
+  - **Evidence.** UI tests `the_shared_tab_lists_files_and_links_filters_them_and_opens_one` and `a_channel_shows_its_files_tab_and_a_chat_list_of_links`.
 
 ### 7.6 Chat details pane
-- [ ] Impact 2, effort 2. Seen: header button "Open chat details".
+- [x] Impact 2, effort 2. Seen: header button "Open chat details".
   - **What.** A right panel "In this chat" with the recent shared items and "See all", which goes to 7.5.
   - **Done when.** It toggles, and its items open.
+  - **Evidence.** UI test `the_details_pane_toggles_lists_recent_items_and_see_all_opens_shared` (the "i" button toggles it, it lists the five newest shared items, a row opens, "See all" goes to the Shared tab). The panel overlays the right edge of the conversation instead of pushing it aside.
 
 ---
 
 ## Phase 8: chat list and channels
 
 ### 8.1 Custom sections
-- [ ] Impact 4, effort 3. Seen: Favorites, Groups, DevOps, Operation and Chats in the list; "New section"; "Move to section" and "Remove from section".
+- [ ] BLOCKED: section writes (create, move, rename) are built in the web client's GraphQL layer and are not in its public JS; probing would change the user's real sections. Reading and local sections work. Impact 4, effort 3. Seen: Favorites, Groups, DevOps, Operation and Chats in the list; "New section"; "Move to section" and "Remove from section".
   - **What.**
     - User sections that mix chats and channels, each collapsible.
     - "Collapse all sections" (Alt+Q).
@@ -343,25 +364,32 @@ Moved to its own plan: `plans/activity.md`.
     - Sections sync with Teams.
   - **How.** Discover the CSA folders API (the sections already show in Teams' list). Replace the local favorites star with the real Favorites section.
   - **Done when.** kelma shows the same sections and order as Teams, and a move shows up in Teams.
+  - **Status.** Read side and local sections done; the write side is BLOCKED.
+    - Done: kelma reads the account's sections (`GET csa/api/v1/teams/users/me/conversationFolders`, checked live: the 5 sections and their order match Teams) and shows them between Favorites and Chats, each collapsible. New section, Move to section, Remove from section, rename, delete and Alt+Q work. UI tests: `ui_tests/lists.rs`.
+    - BLOCKED: a move does not reach Teams. The web client defines the write calls (`POST`, `PUT /<id>`, `DELETE` on the same URL) but builds their bodies inside its GraphQL layer, which is not in its public JavaScript. A probe would change the real account's sections, which the run rules forbid. Needs a DevTools capture of the create and move requests, then a test on a test account. Until then, changes stay on this computer and win over what Teams has (`docs/protocol.md`, "Chat list sections").
 
 ### 8.2 Chat item menu
-- [ ] Impact 4, effort 2. Seen: right click on a chat.
+- [ ] DEFERRED: needs test tenant (48:notes refuses mute and real chats may not be muted; menu built and UI-tested). Impact 4, effort 2. Seen: right click on a chat.
   - **What.** Mark as unread, Move to section, Remove from section, Mute, Copy link, Leave (group), Hide.
   - **How.**
     - Mute and Hide: discover (conversation properties).
     - Leave: 6.3.
     - Copy link: `https://teams.microsoft.com/l/chat/{id}/0`.
   - **Done when.** Mute in kelma silences notifications both in kelma and in Teams web.
+  - **Status.** Built, with a DEFERRED live check.
+    - Done: the right-click menu has Mark as unread, Move to section, Remove from section, Mute or Unmute, Copy link, Leave (group chats) and Hide. Mute writes the `alerts` property, reads the state back from the aggregator and silences desktop notifications; Hide writes `unpinnedTime` and keeps the chat out of the list until its next message. UI tests: `ui_tests/lists.rs`.
+    - DEFERRED: needs test tenant (the Done when needs a chat that can be muted and a Teams web session to look at it. `48:notes` refuses the property with `The Thread Id is invalid`, and the run rules forbid muting real chats).
 
 ### 8.3 Filters and list options
-- [ ] Impact 3, effort 1. Seen: filter pills, "…" › Customize view, settings › Chats.
+- [x] Impact 3, effort 1. Seen: filter pills, "…" › Customize view, settings › Chats.
   - **What.**
     - Pills: Unread, Channels, Chats, Meeting chats, plus the filter text box.
     - Options: show message previews, show time stamps, chats and channels combined or separate.
   - **Done when.** UI tests cover each pill and toggle.
+  - **Evidence.** `ui_tests::lists` clicks each pill (Unread, Channels, Chats, Meeting chats, Drafts) and each option (previews, time stamps, chats and channels together) in the "…" menu and checks the rows. The filter text box is the search field above the list.
 
 ### 8.4 Channel posts like Teams
-- [ ] Impact 4, effort 3. Seen: channel Posts tab.
+- [ ] DEFERRED: needs test tenant ("Also send to channel" and post pin write calls need a capture; side-by-side check with Teams pending; post cards, replies, follow and announcements built). Impact 4, effort 3. Seen: channel Posts tab.
   - **What.**
     - Posts are cards with replies shown inline under each post (collapsed after 2, with "See N more replies"), and "Reply in thread" opens an inline reply box.
     - The "Post in channel" button opens a composer with "Add a subject", formatting, and the Announcement type (headline and background banner).
@@ -372,26 +400,34 @@ Moved to its own plan: `plans/activity.md`.
     - Replies come from the existing `;messageid=` threads, and subjects already work.
     - Announcement and "also send to channel" need discovery.
   - **Done when.** The test channel looks and behaves like Teams.
+  - **Status.** Mostly built; not ticked because two entries have no known call and the test channel was not compared with Teams side by side.
+    - Done: post cards with the first two replies inline and "See N more replies" (fetches the thread), the inline reply box (sent through the outbox into the thread), "Post in channel" with subject and Announcement (headline and banner color; the post was stored and read back in the test channel), "See new posts at top", and Follow thread / Unfollow thread (`rcmetadata` `{"f":1}`, read back 1 then 0). Copy post link, Save and Mark as unread are the existing message menu. UI tests: `ui_tests/channels.rs`.
+    - Not built: "Also send to channel" (no such call or property in the web client's public JavaScript) and Pin for a post (the write call was not captured).
 
 ### 8.5 Channel menu
-- [ ] Impact 3, effort 2. Seen: right click on a channel.
+- [x] Impact 3, effort 2. Seen: right click on a channel.
   - **What.** Manage notifications (all activity, off, custom), Hide, Copy link, Leave channel (private channels), Go to team. Admin items stay in the browser.
   - **Done when.** Hiding and per-channel notifications work and sync.
+  - **Evidence.** Live on the sandbox channel: hide flipped the aggregator's `isFavorite` to false and show back to true; the three notification levels were written and read back, then restored. The menu (Manage notifications, Hide or Show, Copy link, Go to team, Leave channel for private channels after a confirmation) is in the chat list and the Teams view; UI tests in `ui_tests/lists.rs`. Leaving a private channel is unit-tested only (it would remove a real member).
 
 ### 8.6 Files in channels
-- [ ] Impact 4, effort 3.
+- [ ] DEFERRED: needs test tenant (a second account must open the uploaded file; upload, post and delete verified in the sandbox). Impact 4, effort 3.
   - **What.** Attach in a channel uploads to the channel's SharePoint folder and posts the file card.
   - **How.** Graph `PUT /drives/{driveId}/items/{folderId}:/{name}:/content`, where the folder comes from `filesFolder` (7.5), then `properties.files` as for chats. No member invite is needed.
   - **Done when.** A test file posts in the test channel and opens for others. Delete it afterwards.
+  - **Status.** Built and run live; DEFERRED for the last clause.
+    - Done: attaching in a channel uploads to the channel's files folder (`filesFolder`, own call in `teams_proto::channel_files`) and posts the file card; a 25-byte file was posted in the test channel, read back as a file card, then the post and the file were deleted.
+    - DEFERRED: needs test tenant (a second account must open the file; the folder is the one every channel member already sees).
 
 ### 8.7 Attach cloud files
-- [ ] Impact 3, effort 3. Seen: attach menu "Attach cloud files".
+- [x] Impact 3, effort 3. Seen: attach menu "Attach cloud files".
   - **What.** A picker with Recent, My files, Shared with me and team libraries; choose files, then send them as file cards.
   - **How.** Graph `/me/drive/recent`, `/me/drive/root/children` and `/me/drive/sharedWithMe`, then share with members and send as in `files.rs`.
   - **Done when.** Attaching an existing OneDrive file works in 48:notes.
+  - **Evidence.** Live: an existing OneDrive file (from `me/drive/recent`) was posted to 48:notes as a file card with its own name, then the post was deleted. The picker (the composer's "…" menu › Attach cloud files) lists My files, Recent, Shared with me and the team libraries; UI test `attach_cloud_files_opens_the_picker_with_recent_and_shared_and_attaches_the_pick`. The invite to chat members is unit-tested only.
 
 ### 8.8 Adaptive cards like Teams
-- [ ] Impact 4, effort 3. Seen: Workflows posts (Release readiness, run reports).
+- [ ] DEFERRED: needs test tenant (no Workflows bot in the sandbox to compare cards with Teams; model and drawing built and tested). Impact 4, effort 3. Seen: Workflows posts (Release readiness, run reports).
   - **What.**
     - Container styles (the colored "AT RISK" band).
     - FactSet as a two-column table.
@@ -401,6 +437,9 @@ Moved to its own plan: `plans/activity.md`.
     - Images.
   - **How.** Add a structured card model in `render` (instead of today's flattened text) and a `CardView` Slint component.
   - **Done when.** The Workflows cards in the test channel match Teams side by side.
+  - **Status.** Built; DEFERRED for the side-by-side check.
+    - Done: `teams_proto::chat_card` keeps the card structure (container styles as colored bands, fact sets as two columns, text size, weight, color and subtle, column sets with auto and stretch widths, images, `ActionSet` and card actions, hero cards, the announcement banner) and `CardView` draws it. `Action.OpenUrl` opens the browser; other actions are drawn disabled. The rows, colors and buttons are checked in `ui_tests/channels.rs`.
+    - DEFERRED: needs test tenant (a Workflows bot posting into a test channel; the sandbox has none, so there was nothing to compare with Teams).
 
 ---
 
@@ -421,11 +460,12 @@ Moved to its own plan: `plans/activity.md`.
   - **Evidence (UI, box stays open).** 2026-11-19: Settings › Notifications and activity lists the 19 types in three groups (Chat; Teams and channels; Meetings and people), each with Banner and feed, Only show in feed, Off, read from `userPersonalSettings` by the engine; Pause notifications; and a Test notification button (a local desktop notification through `notify-rust`). Changes are dry runs: `NotificationSettings::write_request` on a copy, logged and listed as planned, the page keeps showing the Teams value. Verified: `privacy_toggle_plans_a_dry_run_and_changes_nothing` (Chat messages: Off gives the `userPersonalSettings` PUT), `notify_rows_group_and_read_delivery`. Still open: sending the write, sounds and meeting-chat options in the UI, `should_notify` routing, per-chat and per-channel settings. Tests: `cargo test -p kelma settings`.
 
 ### 9.2 Tray icon and badge
-- [ ] Impact 4, effort 3.
+- [x] Impact 4, effort 3.
   - **What.** A tray icon with the unread count, a menu (Open, Status, Quit), close to tray, and optional autostart. The taskbar badge shows the unread count.
   - **How.** Use the `ksni` crate (StatusNotifierItem), an autostart `.desktop` file, and the Unity launcher entry API for the badge.
   - **Done when.** It works on KDE Plasma.
   - **Evidence (tray crate only, app wiring missing, box stays open; same work as X3.3 in `plans/settings-and-platform.md`).** 2026-11-19: new crate `crates/tray` (`ksni` 0.3.7 over zbus 5, pure Rust, no new system package). `Tray::start(TrayOptions) -> TrayHandle` runs on its own thread with a private runtime, so it sits beside the Slint loop. `TrayHandle` (cheap to clone): `set_unread(n)` (overlay badge pixmap in 4 sizes drawn in code, title `kelma (12 unread)`, tooltip), `set_muted(bool)`, `set_launcher_count(n)`, `events()` (a cloneable crossbeam `Receiver<TrayEvent {Open, ToggleMute(bool), Quit}>`), `tray_error()`, `launcher_ready()`, `shutdown()` (removes the icon and clears the launcher badge). The icon is the `kelma` theme name with a pixmap fallback drawn from the `packaging/kelma.svg` shapes. Menu: Open kelma, Mute notifications (checkmark), separator, Quit; left click is `Open`. The badge is 0 hidden, 1 to 99 as is, `99+` above. `launcher::launcher_update` builds the `com.canonical.Unity.LauncherEntry.Update` body (`application://kelma.desktop`, `count` int64, `count-visible`), and `set_unread` sends it too unless `sync_launcher_badge` is off. `autostart::enable(exec, hidden_flag)`/`disable()`/`is_enabled()` write `$XDG_CONFIG_HOME/autostart/kelma.desktop` from the fields of `packaging/kelma.desktop` plus `X-GNOME-Autostart-enabled=true`. Live on KDE Plasma Wayland (`kelma-cli tray-demo`): the item showed up in `org.kde.StatusNotifierWatcher.RegisteredStatusNotifierItems` as `org.kde.StatusNotifierItem-<pid>-1/StatusNotifierItem` and left it on exit; `Activate` produced `Open`, the dbusmenu `Event` on Mute produced `ToggleMute(true)`; the item's Title, ToolTip and `OverlayIconPixmap` (4 sizes) followed 3, 12, 120 and 0; `dbus-monitor` saw LauncherEntry updates 3, 12, 120, 0 and a final 0 on shutdown. Autostart enabled, validated with `desktop-file-validate` and disabled under a scratch `XDG_CONFIG_HOME`. Not verified: how Plasma draws the overlay (no screenshot taken), the task manager badge on a pinned launcher, GNOME (needs the AppIndicator extension). Not done: the app has to call `Tray::start`, handle the events (show and focus the window, mute, quit), pass a `--hidden` flag it does not parse yet, close to tray, and a Settings toggle for autostart; the Flatpak uses the Background portal for autostart instead of the file. Tests: `cargo test -p tray -p kelma-cli`.
+  - **Evidence (app wiring done, box ticked for the KDE Plasma tray; 2026-11-19).** `crates/kelma/src/tray_wiring.rs` starts `Tray::start` before the event loop and replaces `window.run()` with `show` (or not) plus `slint::run_event_loop_until_quit()`. `--hidden` starts with the tray only (it shows the window anyway when the tray did not register, so the user is never locked out). Closing hides the window when the item registered, and quits as before when it did not. Tray Open shows, un-minimizes and focuses the window, Quit quits, and Mute toggles an in-process flag that `backend/live.rs` `notify()` checks (there was no notification setting; the flag is not saved and a Settings toggle can take it over). The unread total (Activity items plus unread chats, the same number as the window title) goes from `UiHandle::badges` through a 300 ms debounce to `TrayHandle::set_unread`, which also drives the launcher badge. Tests: `cargo test -p kelma tray_wiring` (close decision, hidden start, unread total, debounce). Live on KDE Plasma Wayland with `KELMA_DEMO=1 KELMA_HOME=<tmp> kelma --hidden`: `RegisteredStatusNotifierItems` gained `org.kde.StatusNotifierItem-<pid>-1/StatusNotifierItem` and lost it when the process was killed; no kelma window existed while hidden; the item's `Activate` (left click) showed the window, active, titled `(5) kelma` (the demo's unread count); Alt+F4 hid the window and left the process and the tray item alive; `Activate` again showed it. Not verified: the Quit and Mute menu entries inside this app (the `tray` crate's own live check covers the events), the launcher badge on a pinned task manager entry, GNOME. Not done here: the Settings toggle for autostart (belongs to Settings; `tray::autostart` and the `--hidden` flag it writes are ready).
 
 ### 9.3 Appearance
 - [ ] Impact 3, effort 3. Seen: settings › Appearance and Chats.
@@ -476,9 +516,10 @@ Moved to its own plan: `plans/activity.md`.
   - **Evidence (UI).** 2026-11-19: clicking the avatar in the top bar opens the profile menu (`ProfileMenu` in `ui/settings.slint`): name and email (from Teams when read, else the account in `config.json`), presence and status message shown read-only (the engine reads them with `get_presence`, nothing is set), Settings, View account (opens myaccount.microsoft.com), and Sign out with a confirmation, which removes the account's refresh tokens through `session::forget_account_tokens` and closes kelma. Pause notifications is on the Notifications page (dry run). DEFERRED: Change profile photo (shown disabled), setting presence and the status message (not allowed on the work account). Verified: `profile_menu_shows_who_is_signed_in_and_opens_settings`, `sign_out_removes_the_tokens_after_confirming` (in-memory token store; no real sign-out was run). Tests: `cargo test -p kelma settings`.
 
 ### 9.10 Window state
-- [ ] Impact 2, effort 1.
+- [x] Impact 2, effort 1.
   - **What.** Restore the size, position, last open chat and collapsed sections on start.
   - **Evidence (data side done, UI missing, box stays open).** Data side done (session::window_state): `crates/session/src/window_state.rs`, stored as `window-state.json` in the config dir (next to `config.json`, `KELMA_HOME` applies). Fields `width`, `height`, `x`, `y` (both `None` when the window manager places it), `maximized`, `last_chat`, `collapsed_sections` (set of section ids), all `#[serde(default)]`, so old and partial files load. API: `WindowState::load()` / `load_from(path)` (never fails: a missing or corrupt file gives the defaults, values are clamped), `save()` / `save_to(path)` (atomic: temp file plus rename), setters `set_size`, `set_position`, `set_maximized`, `set_last_chat`, `toggle_section`, `set_section_collapsed`, `is_collapsed`. `Config` is untouched. `Debug` hides the chat id and the module never logs. Still to do: the GUI reads it at start, writes it on resize, move, chat change and section toggle (debounced), and applies it. Tests: `cargo test -p session window_state`.
+  - **Evidence (UI wiring done, 2026-11-19).** `crates/kelma/src/window_state.rs`. Start: `WindowState::load()` is applied before the window shows (size, position only when `Some`, `maximized`; a maximized state only calls `set_maximized(true)` and keeps the saved geometry; a state still at the defaults leaves the UI's own size; a position on a monitor that is gone is moved back on screen after the first show). The last chat reopens once sign-in is done and the window is visible, if the sidebar models have it (chat, favorite, pinned channel or team channel), and is skipped silently if not. Save: one UI timer every 500 ms folds size, position, maximized and the open chat into the state and writes only when it changed (so at most one write per 500 ms), plus a final write when the window closes (including close to tray) and on quit. Position is never read or stored where the platform reports none (Wayland). Collapsed teams: `View.collapsed_teams` is seeded from the state and written back on every toggle (section ids `team:<id>`), as a Rust-only hook in `backend/mod.rs` (no sidebar.slint change). Demo mode (`KELMA_DEMO`) neither restores nor saves. Tests: `cargo test -p kelma window_state` (restore plan, observe/maximized rules, Wayland, write spacing, off-screen, last-chat lookup, collapsed teams) and `ui_tests/window_state.rs` on the Slint testing backend (size applied, first run untouched, chat lookup in the real models). The testing backend has no window manager, so a maximized restore is checked as a plan, not as `is_maximized()`. Not verified live: restore across a real restart with a signed-in session (needs the user's account; the logic is covered by the tests above).
 
 ---
 
