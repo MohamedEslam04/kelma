@@ -102,11 +102,16 @@ or the workflow change on `main`, and on a push to any branch named `ci/packagin
 only works once the workflow is on the default branch, so to test a change to it from a branch:
 
 ```sh
-git push origin HEAD:refs/heads/ci/packaging-test
+git switch -c ci/packaging-test
+date > packaging/.ci-trigger && git add -f packaging/.ci-trigger && git commit -m "ci: run packaging"
+git push -u origin ci/packaging-test
 gh run watch "$(gh run list --workflow=packaging.yml --branch ci/packaging-test --limit 1 --json databaseId -q '.[0].databaseId')"
 gh run view <id> --log-failed        # when a job failed
 git push origin --delete ci/packaging-test
 ```
+
+The throwaway commit matters: the `paths` filter only sees files changed by commits that are new to
+the repository, so pushing a branch whose commits are all on GitHub already starts nothing.
 
 ## Verification status
 
