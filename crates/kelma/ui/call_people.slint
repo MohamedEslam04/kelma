@@ -1,9 +1,10 @@
-// The call window's side panels: People (the roster, with the lobby) and More (device settings).
+// The call window's side panels: People (the roster, with the lobby) and More (record and
+// transcribe, live captions, device settings).
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { CallStore, CallPerson } from "call_store.slint";
-import { DeviceSettings } from "call_widgets.slint";
+import { CallAction, DeviceSettings } from "call_widgets.slint";
 
 component PersonRow inherits Rectangle {
     in property <CallPerson> p;
@@ -17,6 +18,8 @@ component PersonRow inherits Rectangle {
         spacing: 10px;
         Avatar {
             initials: root.p.initials;
+            img: root.p.photo;
+            has-img: root.p.has-photo;
             size: 30px;
             y: 7px;
         }
@@ -99,13 +102,89 @@ export component PeoplePanel inherits Rectangle {
     }
 }
 
+// A section title of the More panel.
+component SectionTitle inherits Text {
+    color: Theme.fg-muted;
+    font-size: 12px * Theme.font-scale;
+    font-weight: 600;
+}
+
+// An on/off row of the More panel (Show live captions).
+component SwitchRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked;
+    callback toggled();
+    height: 36px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.toggled(); }
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 8px;
+        Text {
+            text: root.label;
+            color: Theme.fg;
+            font-size: 13px * Theme.font-scale;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: 34px;
+            height: 18px;
+            y: 9px;
+            border-radius: 9px;
+            background: root.checked ? Theme.accent-strong : Theme.surface-hover;
+            border-width: 1px;
+            border-color: root.checked ? Theme.accent-strong : Theme.border;
+            Rectangle {
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                x: root.checked ? parent.width - 15px : 3px;
+                background: #ffffff;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}
+
+// More, as Teams' "..." menu: Record and transcribe, Language and speech, and the devices. The
+// service decides who may record; a refusal shows as the call's error banner.
 export component MorePanel inherits Rectangle {
     background: Theme.sidebar;
     VerticalLayout {
         padding: 12px;
         spacing: 12px;
         alignment: start;
-        PanelHeader { title: "Device settings"; }
+        PanelHeader { title: "More"; }
+        SectionTitle { text: "Record and transcribe"; }
+        HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+            CallAction {
+                label: CallStore.recording ? "Stop recording" : "Start recording";
+                clicked => { CallStore.command("recording", CallStore.recording ? "stop" : "start"); }
+            }
+            CallAction {
+                label: CallStore.transcribing ? "Stop transcription" : "Start transcription";
+                clicked => { CallStore.command("transcription", CallStore.transcribing ? "stop" : "start"); }
+            }
+        }
+        SectionTitle { text: "Language and speech"; }
+        SwitchRow {
+            label: "Show live captions";
+            checked: CallStore.captions;
+            toggled => { CallStore.command("captions", CallStore.captions ? "off" : "on"); }
+        }
+        SectionTitle { text: "Device settings"; }
         DeviceSettings { prefix: "more"; }
         Text {
             text: "Echo cancellation, noise suppression and automatic gain are on.";

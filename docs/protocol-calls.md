@@ -114,6 +114,115 @@ answer (`ngc-<op>.json`), each step of an answer (`step.txt`), every SDP envelop
 before decoding (`*-blob.txt`) and every SDP (`.sdp`). `call listen --dump` writes the same. All
 hold real ids and addresses: keep them out of the repo.
 
+## Live captions, recording and transcription (research, 2026-11-19)
+
+Nothing in this section was run live by kelma. Everything is from the references below, read at
+these commits: rusty-teams `21da0e2` (MIT), eisbaw/ost `0892144` (MIT), mautrix-teams `e1d3018`
+(AGPL, facts only, no code copied). Code: `calling::signaling::recorder` (bodies, roster, state,
+flow) and `calling::captions` (caption framing and text).
+
+### All three go through the recorder bot
+
+Teams web's More › "Record and transcribe" › Start recording / Start transcription, and More ›
+"Language and speech" › Show live captions, all drive one service bot.
+
+1. **Invite the bot.**
+   - Request: `POST` on the conversation's `addParticipantAndModality` link. A call without a chat
+     thread uses `addParticipant`. The credential is the usual IC3 bearer.
+   - Body:
+     - `participants.to[0].id` = `28:bdd75849-e0a6-4cce-8fc1-d7c0d4da43e5`, with a fresh
+       `participantId`;
+     - `participantInvitationData.botData`: `clientInfo: Teams-R4`, `callId` (the chain id),
+       `threadId`, `recorderFeatures {…, useUnmixedAudio: true}`,
+       `mode: RecordingAndTranscription`, `consumerType: Teams`, `meetingOrganizer`, and
+       `initiatorUserToken`;
+     - `groupChat {threadId}`;
+     - `links.addParticipantSuccess` / `addParticipantFailure` (our callback URLs).
+   - `initiatorUserToken` is a token for resource `4580fd1d-e5a3-4f56-9ad1-aab0e3bf8f76`, the
+     recorder service.
+   - Sources: rusty-teams `captions.rs` `add_bot_body`, `signaling.rs` `add_caption_bot`; ost
+     `recording.rs` `add_recorder_bot` ("payload matches real Teams web client capture");
+     mautrix-teams `teams-webclient.yaml` `callAddBotParticipant` (it notes this flow "is not in
+     the captures").
+2. **The command URL.**
+   - The bot's roster entry (a `28:` participant) has, under an endpoint's `endpointMetadata`:
+     - `commandUrl`, e.g. `https://api.flightproxy.teams.microsoft.com/api/v2/ep/…/v2/oncommand/<id>`;
+     - `processingModes.closedCaptions.state` and `processingModes.recording.state`
+       (`Active` while running).
+   - Source: rusty-teams `roster.rs` `caption_bot`. ost instead builds
+     `<recorder host>/v2/oncommand/<conversation id>` from the `addParticipantSuccess` push.
+3. **Commands.**
+   - Request: `POST <commandUrl>` with `Authorization: Bearer <recorder token>` and
+     `X-Skypetoken: <skypetoken>`.
+   - Body: `{timestamp, participantMri, participantLegId, action: start|stop, mode?,
+     processingModes, participantSkypeToken, actionParameters?}`.
+   - Variants (rusty-teams `captions.rs` `command_body`, `recording.rs` `start_body`/`stop_body`,
+     "match the capture"):
+
+     | What | `mode` | `processingModes` | `actionParameters` |
+     |---|---|---|---|
+     | Captions on / off | `transcription` | `[closedCaptions]` | none |
+     | Start recording | none | `[recording, realTimeTranscript]` | `type: start`, `recordingMode: Normal`, `recordingStorageSettings [{StorageType: OnedriveForBusiness, StorageLocation: Recordings, FileName}]`, `meetingTitle`, `correlationId`, `recordingFeatures` |
+     | Start transcription | `transcription` | `[realTimeTranscript]` | the same, without `recordingMode` |
+     | Stop recording | `recording` | `[recording]` | none |
+     | Stop transcription | `transcription` | `[realTimeTranscript]` | none |
+
+   - Recording file name: `<title>-<YYYYMMDD_HHMMSS>-Meeting Recording`.
+   - ost sends `participantSkypeToken: ""` and `spokenLanguage: en-us`. rusty-teams sends the real
+     token and `""`. kelma follows rusty-teams.
+   - rusty-teams retries a stop that the recorder answers while it "still settles".
+4. **Caption preference.** rusty-teams also sends `PUT updateEndpointMetadata`
+   `{participants.from, endpointMetadata {holographicCapabilities: 3, transcriptionPrefs
+   {closedCaptions: true|false}}}` with each captions start and stop.
+
+### State and consent
+
+- Recording and transcription show in conversation updates for everyone:
+  - `meetingStates.cloudRecording` and `meetingStates.transcription`, each
+    `{value: {State: Active|…}, sequenceNumber}`;
+  - an update with a lower `sequenceNumber` is stale.
+  - Source: rusty-teams `recording.rs` `RecordingStatus::apply`.
+- When the meeting requires explicit consent, `meetingDetails.recordingConsentDetails
+  .consentActivelyRequired` is true. Each attendee then publishes `consentToRecording` or
+  `denyConsentToRecording` (`POST publishState`, user level, `content: "{}"`).
+  - Source: rusty-teams `recording.rs` `consent_body`.
+  - kelma does not publish consent yet. It shows Teams' notice ("Recording has started. By
+    attending this meeting, you consent to being included.") when the state turns on.
+
+### Caption text
+
+- **Not on trouter.** The text arrives on the media connection's SCTP data channel
+  `main-channel`, which is the SDP's `x-data` section (`a=x-data-protocol:sctp`).
+- **Framing.** Each frame has a header of 11 or more bytes:
+  - byte 0 (low nibble) and byte 1: the header length;
+  - byte 2: the data id (`& 0x3f`), with `0x80` marking the first fragment;
+  - bytes 3–4: the sequence;
+  - byte 5: the fragments left;
+  - bytes 6–9: the source id;
+  - byte 10: the recipient count, then the recipients.
+- **Payload.** Captions use data id 3. The payload is JSON `recognitionResults[]` or
+  `textTracks[]`, each entry `{id|utteranceId, text|rawText, isFinal, userId, displayName}`. A
+  later partial or final result with the same id replaces the earlier one.
+- Sources: rusty-teams `data_channel.rs`, `captions.rs` `parse_caption_message`, `call/mod.rs`
+  (`DATA_CHANNEL_LABEL = "main-channel"`, `CAPTIONS_DATA_ID`). rusty-teams' ROADMAP says this
+  works live with speech from guests.
+- **Blocked in kelma.** kelma's media session does not open that channel: webrtc-rs refuses the
+  `x-data` section, and it is answered as a port-0 stub (`media/sdp.rs` `KEPT_KINDS`). Until the
+  media session maps `x-data` to a WebRTC data channel and hands its frames to
+  `calling::captions::Depacketizer`, the caption strip turns on but stays empty.
+
+### UNVERIFIED
+
+- Whether kelma's refresh token can mint a token for the recorder resource
+  (`Audience::App("4580fd1d-…")`, scope `<resource>/.default`). rusty-teams gets one in the web
+  page with the Teams client, ost with its own OAuth.
+- The shape of `addParticipantFailure`, and of a command's error answer when policy refuses.
+  kelma reads the first `{code, subCode, phrase}`, else an error `message`, and shows it as the
+  banner text.
+- Whether a 1:1 call (no meeting) accepts the bot. rusty-teams adds it threadless with
+  `addParticipant`. Captions may need a meeting.
+- Whether the web client sends the `updateEndpointMetadata` preference. Only rusty-teams does.
+
 ## Open
 
 - **TURN over TCP/TLS.** webrtc-rs 0.21.1 only relays over UDP. A network that blocks UDP 3478 needs a TLS shim to `turns:<gateway>:443`.

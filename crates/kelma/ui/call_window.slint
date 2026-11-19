@@ -2,19 +2,22 @@
 // More panels, lobby, reconnecting banner) and the call-ended screen. It covers the area right of
 // the rail (see app.slint); `CallMini` is the floating call while another page is open.
 //
-// Video, screen sharing, reactions and views are drawn but disabled: the calling engine carries
+// Video, screen sharing and reactions are drawn but disabled: the calling engine carries
 // audio only and has no reaction API (crates/calling/src/signaling/controls.rs).
 import { Theme } from "theme.slint";
 import { Avatar, Icon } from "widgets.slint";
-import { CallStore, CallPerson } from "call_store.slint";
+import { CallStore, CallPerson, CallCaption } from "call_store.slint";
 import { CallButton, CallAction, DeviceSettings } from "call_widgets.slint";
 import { PreJoin } from "call_prejoin.slint";
 import { PeoplePanel, MorePanel } from "call_people.slint";
+import { CaptionStrip } from "call_captions.slint";
 
-export { CallStore, CallPerson }
+export { CallStore, CallPerson, CallCaption }
 
 component TopBar inherits Rectangle {
     callback open-chat();
+    // Where the View button starts, for the dropdown under it.
+    out property <length> view-x: view-btn.absolute-position.x - root.absolute-position.x;
     height: 62px;
     background: Theme.topbar;
     HorizontalLayout {
@@ -81,11 +84,12 @@ component TopBar inherits Rectangle {
             enabled: false;
             tip: "Reactions aren't available yet";
         }
-        CallButton {
+        view-btn := CallButton {
             icon: @image-url("icons/grid.svg");
             label: "View";
-            enabled: false;
-            tip: "Only this view is available";
+            tip: "Gallery, speaker or focus on content";
+            active: CallStore.menu == "view";
+            clicked => { CallStore.menu = CallStore.menu == "view" ? "" : "view"; }
         }
         CallButton {
             icon: @image-url("icons/more.svg");
@@ -142,6 +146,9 @@ component Banner inherits Rectangle {
     in property <string> message;
     in property <color> tone;
     in property <bool> dismissable;
+    // What Dismiss sends, and its name for screen readers.
+    in property <string> dismiss: "dismiss-error";
+    in property <string> dismiss-label: "Dismiss";
     height: 36px;
     background: root.tone;
     accessible-role: text;
@@ -159,14 +166,17 @@ component Banner inherits Rectangle {
         }
         if root.dismissable: CallAction {
             label: "Dismiss";
+            accessible-label: root.dismiss-label;
             y: 1px;
-            clicked => { CallStore.command("dismiss-error", ""); }
+            clicked => { CallStore.command(root.dismiss, ""); }
         }
     }
 }
 
 component Tile inherits Rectangle {
     in property <CallPerson> p;
+    // The avatar's size, at most (the speaker view's large tile has a bigger one).
+    in property <length> avatar-size: 72px;
     border-radius: 8px;
     background: Theme.surface;
     // Speaking: the accent outline, as Teams draws it; a raised hand also shows it.
@@ -174,7 +184,9 @@ component Tile inherits Rectangle {
     border-color: Theme.accent;
     Avatar {
         initials: root.p.initials;
-        size: min(72px, root.height / 2);
+        img: root.p.photo;
+        has-img: root.p.has-photo;
+        size: min(root.avatar-size, root.height / 2);
         x: (root.width - self.width) / 2;
         y: (root.height - self.height) / 2 - 10px;
     }
@@ -216,6 +228,10 @@ component Stage inherits Rectangle {
     property <length> gap: 8px;
     property <length> tile-w: (root.width - 32px - (cols - 1) * gap) / cols;
     property <length> tile-h: min(tile-w * 9 / 16, (root.height - 32px - (rows - 1) * gap) / rows);
+    // The speaker view: the others in a strip under the speaker's tile, at most eight.
+    property <int> strip-n: max(0, min(CallStore.speaker-people.length - 1, 8));
+    property <length> strip-h: min(120px, root.height / 4);
+    property <length> strip-w: min(strip-h * 16 / 9, (root.width - 32px - max(0, strip-n - 1) * gap) / max(1, strip-n));
     background: Theme.main;
     if CallStore.phase == "lobby" || CallStore.phase == "connecting": VerticalLayout {
         alignment: center;
@@ -243,14 +259,100 @@ component Stage inherits Rectangle {
             color: Theme.fg-muted;
             font-size: 15px * Theme.font-scale;
         }
-        for p[i] in CallStore.people: Tile {
-            visible: i < root.count;
-            p: p;
-            width: root.tile-w;
-            height: root.tile-h;
-            x: 16px + Math.mod(i, root.cols) * (root.tile-w + root.gap);
-            y: (root.height - root.rows * root.tile-h - (root.rows - 1) * root.gap) / 2
-                + Math.floor(i / root.cols) * (root.tile-h + root.gap);
+        if CallStore.view-mode == "gallery": Rectangle {
+            for p[i] in CallStore.people: Tile {
+                visible: i < root.count;
+                p: p;
+                width: root.tile-w;
+                height: root.tile-h;
+                x: 16px + Math.mod(i, root.cols) * (root.tile-w + root.gap);
+                y: (root.height - root.rows * root.tile-h - (root.rows - 1) * root.gap) / 2
+                    + Math.floor(i / root.cols) * (root.tile-h + root.gap);
+            }
+        }
+        if CallStore.view-mode == "speaker" && CallStore.speaker-people.length > 0: Rectangle {
+            Tile {
+                p: CallStore.speaker-people[0];
+                avatar-size: 128px;
+                x: 16px;
+                y: 16px;
+                width: root.width - 32px;
+                height: root.height - 32px - (root.strip-n > 0 ? root.strip-h + root.gap : 0px);
+                accessible-role: text;
+                accessible-label: "Active speaker: " + CallStore.speaker-people[0].name;
+            }
+            for p[i] in CallStore.speaker-people: Rectangle {
+                x: (root.width - root.strip-n * root.strip-w - (root.strip-n - 1) * root.gap) / 2
+                    + (i - 1) * (root.strip-w + root.gap);
+                y: root.height - 16px - root.strip-h;
+                width: root.strip-w;
+                height: root.strip-h;
+                if i > 0 && i <= root.strip-n: Tile { p: p; }
+            }
+        }
+    }
+}
+
+// The View button's dropdown: how the stage lays out the people.
+component ViewMenu inherits Rectangle {
+    width: 220px;
+    height: card.preferred-height;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: #00000080;
+    card := VerticalLayout {
+        padding: 6px;
+        for item[i] in [
+            { mode: "gallery", label: "Gallery", why: "" },
+            { mode: "speaker", label: "Speaker", why: "" },
+            { mode: "content", label: "Focus on content", why: "Nobody is sharing" },
+        ]: Rectangle {
+            property <bool> enabled: item.why == "";
+            height: 32px;
+            border-radius: 3px;
+            background: touch.has-hover && self.enabled ? Theme.surface-hover : transparent;
+            accessible-role: list-item;
+            accessible-label: item.label;
+            accessible-description: item.why;
+            accessible-enabled: self.enabled;
+            accessible-item-selectable: true;
+            accessible-item-selected: CallStore.view-mode == item.mode;
+            accessible-action-default => {
+                if self.enabled {
+                    CallStore.view-mode = item.mode;
+                    CallStore.menu = "";
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px;
+                spacing: 8px;
+                opacity: parent.enabled ? 1 : 0.4;
+                Text {
+                    text: CallStore.view-mode == item.mode ? "✓" : "";
+                    width: 12px;
+                    color: Theme.accent;
+                    font-size: 13px * Theme.font-scale;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: item.label;
+                    color: Theme.fg;
+                    font-size: 13px * Theme.font-scale;
+                    vertical-alignment: center;
+                }
+            }
+            touch := TouchArea {
+                mouse-cursor: parent.enabled ? pointer : default;
+                clicked => {
+                    if parent.enabled {
+                        CallStore.view-mode = item.mode;
+                        CallStore.menu = "";
+                    }
+                }
+            }
         }
     }
 }
@@ -258,7 +360,7 @@ component Stage inherits Rectangle {
 component InCall inherits Rectangle {
     callback open-chat();
     VerticalLayout {
-        TopBar { open-chat => { root.open-chat(); } }
+        bar := TopBar { open-chat => { root.open-chat(); } }
         if CallStore.phase == "reconnecting": Banner {
             message: "Reconnecting… Your connection was interrupted.";
             tone: #8a5a00;
@@ -268,11 +370,31 @@ component InCall inherits Rectangle {
             tone: #8b2a2d;
             dismissable: true;
         }
+        if CallStore.notice != "": Banner {
+            message: CallStore.notice;
+            tone: #3d3e66;
+            dismissable: true;
+            dismiss: "dismiss-notice";
+            dismiss-label: "Dismiss notice";
+        }
         HorizontalLayout {
             Stage { horizontal-stretch: 1; }
             if CallStore.panel == "people": PeoplePanel { width: 320px; }
             if CallStore.panel == "more": MorePanel { width: 320px; }
         }
+    }
+    // The View button's dropdown, under the button.
+    if CallStore.menu == "view": ViewMenu {
+        x: min(bar.view-x, root.width - self.width - 12px);
+        y: 64px;
+        z: 30;
+    }
+    // Live captions over the bottom of the stage.
+    if CallStore.captions && CallStore.phase == "connected": CaptionStrip {
+        x: 16px;
+        width: root.width - 32px - (CallStore.panel != "" ? 320px : 0px);
+        y: root.height - self.height - 16px;
+        z: 20;
     }
     // The mic button's dropdown.
     if CallStore.menu == "devices" || CallStore.menu == "card-mic" || CallStore.menu == "card-speaker": Rectangle {
@@ -483,7 +605,7 @@ export component CallMini inherits Rectangle {
                 }
             }
             MiniButton {
-                icon: @image-url("icons/restore.svg");
+                icon: @image-url("icons/expand.svg");
                 label: "Back to call";
                 clicked => { CallStore.minimized = false; }
             }

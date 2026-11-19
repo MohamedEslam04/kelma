@@ -277,7 +277,6 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
     c.connected();
     for (label, why) in [
         ("React", "Reactions aren't available yet"),
-        ("View", "Only this view is available"),
         ("Camera", "Video isn't available yet"),
         ("Share", "Screen sharing isn't available yet"),
     ] {
@@ -426,6 +425,141 @@ fn the_floating_call_shows_the_speaker_or_more_people() {
     assert_eq!(cs(&c.h.app).get_mini_layout(), "speaker");
 }
 
+/// A roster of three, Bo Ström the latest to speak.
+fn view_roster(c: &CallHarness) {
+    let p = |name: &str, me, spoke| Person {
+        name: name.into(),
+        me,
+        spoke,
+        speaking: spoke == 2,
+        ..Default::default()
+    };
+    c.fake.emit(Event::Roster(vec![
+        p("Ada Lovelace", false, 1),
+        p("Me", true, 0),
+        p("Bo Ström", false, 2),
+    ]));
+}
+
+fn view_item(c: &CallHarness, label: &str) -> ElementHandle {
+    c.with_role(label, AccessibleRole::ListItem)
+}
+
+#[test]
+fn the_view_menu_switches_between_gallery_and_speaker() {
+    let c = CallHarness::new();
+    c.connected();
+    view_roster(&c);
+    assert_eq!(cs(&c.h.app).get_view_mode(), "gallery");
+    let view = c.button("View");
+    assert_eq!(view.accessible_enabled(), Some(true));
+
+    click(&view);
+    assert_eq!(cs(&c.h.app).get_menu(), "view");
+    assert_eq!(
+        view_item(&c, "Gallery").accessible_item_selected(),
+        Some(true)
+    );
+    assert_eq!(
+        view_item(&c, "Speaker").accessible_item_selected(),
+        Some(false)
+    );
+    click(&view_item(&c, "Speaker"));
+    assert_eq!(cs(&c.h.app).get_view_mode(), "speaker");
+    assert_eq!(cs(&c.h.app).get_menu(), "", "picking closes the menu");
+
+    click(&c.button("View"));
+    assert_eq!(
+        view_item(&c, "Speaker").accessible_item_selected(),
+        Some(true)
+    );
+    click(&view_item(&c, "Gallery"));
+    assert_eq!(cs(&c.h.app).get_view_mode(), "gallery");
+}
+
+#[test]
+fn focus_on_content_is_disabled_and_says_nobody_is_sharing() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("View"));
+    let focus = view_item(&c, "Focus on content");
+    assert_eq!(focus.accessible_enabled(), Some(false));
+    assert_eq!(focus.accessible_description().unwrap(), "Nobody is sharing");
+    click(&focus);
+    assert_eq!(cs(&c.h.app).get_view_mode(), "gallery");
+}
+
+#[test]
+fn the_speaker_view_shows_the_latest_speaker_large_and_the_others_below() {
+    let c = CallHarness::new();
+    c.connected();
+    view_roster(&c);
+    assert!(
+        !c.shows("Active speaker: Bo Ström"),
+        "the gallery has no large tile"
+    );
+    cs(&c.h.app).set_view_mode("speaker".into());
+    let big = c.with_role("Active speaker: Bo Ström", AccessibleRole::Text);
+    let big_bottom = big.absolute_position().y + big.size().height;
+    for other in ["Ada Lovelace", "Me (You)"] {
+        let y = c.all(other)[0].absolute_position().y;
+        assert!(
+            y >= big_bottom,
+            "{other} is in the strip below the large tile"
+        );
+    }
+    assert_eq!(c.all("Bo Ström").len(), 1, "the speaker is not shown twice");
+
+    // Somebody else speaks: the large tile follows.
+    c.fake.emit(Event::Roster(vec![
+        Person {
+            name: "Ada Lovelace".into(),
+            spoke: 3,
+            ..Default::default()
+        },
+        Person {
+            name: "Bo Ström".into(),
+            spoke: 2,
+            ..Default::default()
+        },
+    ]));
+    assert!(c.shows("Active speaker: Ada Lovelace"));
+    assert!(!c.shows("Active speaker: Bo Ström"));
+}
+
+#[test]
+fn photos_replace_the_initials_of_the_people_who_have_one() {
+    use slint::Model;
+    let c = CallHarness::new();
+    c.connected();
+    c.h.engine.test_set_avatar(
+        "8:orgid:example-ada",
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4),
+    );
+    let p = |name: &str, mri: &str, spoke| Person {
+        name: name.into(),
+        mri: mri.into(),
+        spoke,
+        ..Default::default()
+    };
+    c.fake.emit(Event::Roster(vec![
+        p("Ada Lovelace", "8:orgid:example-ada", 5),
+        p("Bo Ström", "8:orgid:example-bo", 1),
+    ]));
+    let has_photo = |m: slint::ModelRc<crate::CallPerson>| -> Vec<(String, bool)> {
+        m.iter()
+            .map(|p| (p.name.to_string(), p.has_photo))
+            .collect()
+    };
+    let expected = [
+        ("Ada Lovelace".to_owned(), true),
+        ("Bo Ström".to_owned(), false),
+    ];
+    assert_eq!(has_photo(cs(&c.h.app).get_people()), expected);
+    assert_eq!(has_photo(cs(&c.h.app).get_speaker_people()), expected);
+    assert_eq!(has_photo(cs(&c.h.app).get_mini_people()), expected);
+}
+
 #[test]
 fn a_second_join_while_in_a_call_is_refused() {
     let c = CallHarness::new();
@@ -438,4 +572,95 @@ fn a_second_join_while_in_a_call_is_refused() {
     assert!(c.shows(crate::backend::call::ALREADY_IN_CALL));
     click(&c.button("Dismiss"));
     assert!(!c.shows(crate::backend::call::ALREADY_IN_CALL));
+}
+
+const RECORDING_NOTICE: &str =
+    "Recording has started. By attending this meeting, you consent to being included.";
+
+#[test]
+fn more_starts_and_stops_recording_and_transcription() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("More"));
+    assert!(c.shows("Record and transcribe"));
+    assert!(!c.shows("Recording"), "no recording dot yet");
+
+    click(&c.button("Start recording"));
+    assert_eq!(c.sent().last().unwrap(), "recording start");
+    assert_eq!(c.fake.calls().last().unwrap(), "recording start");
+    // The state comes from the meeting, with Teams' consent notice.
+    c.fake.emit(Event::Recording(true));
+    assert!(c.shows("Recording"), "the recording dot");
+    assert!(c.shows(RECORDING_NOTICE));
+    click(&c.button("Dismiss notice"));
+    assert!(!c.shows(RECORDING_NOTICE));
+    click(&c.button("Stop recording"));
+    assert_eq!(c.fake.calls().last().unwrap(), "recording stop");
+    c.fake.emit(Event::Recording(false));
+    assert!(c.shows("Start recording"));
+
+    click(&c.button("Start transcription"));
+    assert_eq!(c.fake.calls().last().unwrap(), "transcription start");
+    c.fake.emit(Event::Transcribing(true));
+    assert!(c.shows(
+        "Transcription has started. By attending this meeting, you consent to being included."
+    ));
+    click(&c.button("Stop transcription"));
+    assert_eq!(c.fake.calls().last().unwrap(), "transcription stop");
+}
+
+#[test]
+fn a_refused_recording_shows_the_services_reason() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("More"));
+    click(&c.button("Start recording"));
+    let why = "Couldn't start recording: Recording is disabled by policy (403/10501)";
+    c.fake.emit(Event::Error(why.into()));
+    assert!(c.shows(why));
+    assert!(c.shows("Start recording"), "nothing started");
+}
+
+#[test]
+fn live_captions_show_the_speaker_and_the_text_at_the_bottom() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("More"));
+    let switch = c.with_role("Show live captions", AccessibleRole::Switch);
+    assert_eq!(switch.accessible_checked(), Some(false));
+    click(&switch);
+    assert_eq!(c.fake.calls().last().unwrap(), "captions on");
+    assert_eq!(
+        c.with_role("Show live captions", AccessibleRole::Switch)
+            .accessible_checked(),
+        Some(true)
+    );
+    assert!(c.shows("Waiting for someone to speak…"));
+
+    let caption = |id: &str, speaker: &str, text: &str| {
+        Event::Caption(crate::backend::call::Caption {
+            id: id.into(),
+            speaker: speaker.into(),
+            text: text.into(),
+        })
+    };
+    c.fake.emit(caption("u1", "Ada Example", "Hel"));
+    c.fake.emit(caption("u1", "Ada Example", "Hello everyone"));
+    c.fake.emit(caption("u2", "Bo Example", "Hi"));
+    assert!(c.shows("Ada Example: Hello everyone"));
+    assert!(c.shows("Bo Example: Hi"));
+    assert!(!c.shows("Ada Example: Hel"), "replaced in place");
+    assert!(!c.shows("Waiting for someone to speak…"));
+
+    // Turned off (or refused by the service): the strip goes away.
+    c.fake.emit(Event::Captions(false));
+    assert!(!c.shows("Bo Example: Hi"));
+    assert_eq!(
+        c.with_role("Show live captions", AccessibleRole::Switch)
+            .accessible_checked(),
+        Some(false)
+    );
+    click(&c.with_role("Show live captions", AccessibleRole::Switch));
+    click(&c.with_role("Show live captions", AccessibleRole::Switch));
+    assert_eq!(c.fake.calls().last().unwrap(), "captions off");
 }
