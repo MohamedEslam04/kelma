@@ -2,7 +2,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
-import { CallStore, CallPerson } from "call_store.slint";
+import { CallStore, CallPerson, CallFound } from "call_store.slint";
 import { DeviceSettings } from "call_widgets.slint";
 
 component PersonRow inherits Rectangle {
@@ -67,18 +67,89 @@ component PanelHeader inherits HorizontalLayout {
     }
 }
 
+// A people search box with its results under it: `find` on every edit, `picked` with the MRI of
+// the row clicked. The invite box and the transfer dialog share it.
+export component PeopleSearch inherits VerticalLayout {
+    in property <string> placeholder;
+    callback picked(CallFound);
+    spacing: 4px;
+    Rectangle {
+        height: 34px;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: input.has-focus ? Theme.accent : Theme.border;
+        background: Theme.surface;
+        input := TextInput {
+            x: 10px;
+            width: parent.width - 20px;
+            color: Theme.fg;
+            font-size: 13px * Theme.font-scale;
+            single-line: true;
+            vertical-alignment: center;
+            accessible-role: text-input;
+            accessible-label: root.placeholder;
+            accessible-placeholder-text: root.placeholder;
+            edited => { CallStore.command("find", self.text); }
+        }
+        if input.text == "": Text {
+            x: 10px;
+            text: root.placeholder;
+            color: Theme.fg-subtle;
+            font-size: 13px * Theme.font-scale;
+            vertical-alignment: center;
+        }
+    }
+    if input.text != "": VerticalLayout {
+        for f in CallStore.found: Rectangle {
+            height: 40px;
+            border-radius: 4px;
+            background: row-touch.has-hover ? Theme.surface-hover : transparent;
+            accessible-role: list-item;
+            accessible-label: f.name;
+            accessible-description: f.subtitle;
+            accessible-action-default => { input.text = ""; root.picked(f); }
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Avatar { initials: f.initials; size: 26px; y: 7px; }
+                VerticalLayout {
+                    alignment: center;
+                    Text { text: f.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+                    if f.subtitle != "": Text { text: f.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
+                }
+            }
+            row-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { input.text = ""; root.picked(f); }
+            }
+        }
+    }
+}
+
 export component PeoplePanel inherits Rectangle {
     background: Theme.sidebar;
     VerticalLayout {
         padding: 12px;
         spacing: 8px;
         PanelHeader { title: "People"; }
+        // Teams' "Invite someone or dial a number" (people only: no phone numbers here).
+        if CallStore.kind == "direct": PeopleSearch {
+            placeholder: "Invite someone or dial a number";
+            picked(f) => { CallStore.command("invite", f.id); }
+        }
+        if CallStore.kind == "direct" && CallStore.notice != "": Text {
+            text: CallStore.notice;
+            color: Theme.fg-subtle;
+            font-size: 12px * Theme.font-scale;
+            accessible-role: text;
+            accessible-label: self.text;
+        }
         ScrollView {
             VerticalLayout {
                 alignment: start;
                 spacing: 2px;
                 Text {
-                    text: "In this meeting (" + CallStore.in-call + ")";
+                    text: (CallStore.kind == "direct" ? "Currently in this call (" : "In this meeting (") + CallStore.in-call + ")";
                     color: Theme.fg-muted;
                     font-size: 12px * Theme.font-scale;
                     font-weight: 600;

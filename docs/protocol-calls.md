@@ -114,6 +114,69 @@ answer (`ngc-<op>.json`), each step of an answer (`step.txt`), every SDP envelop
 before decoding (`*-blob.txt`) and every SDP (`.sdp`). `call listen --dump` writes the same. All
 hold real ids and addresses: keep them out of the repo.
 
+## 1:1 call controls: add a person, hold, transfer (built 2026-11-19, UNVERIFIED live)
+
+`calling::signaling::call_ops` builds these; the GUI sends them from the call window (People
+panel invite box, Hold / Resume, Transfer). No HAR backs them: each shape comes from the
+reference named, and none has been run against the service yet.
+
+Where the links come from (live 1:1 dump, names only):
+
+- the attach answer's `additionalActionResponses[].output` carries the conversation controller
+  and the conversation's `links` (`addParticipant`, `addParticipantAndModality`, `admit`, ...).
+  kelma keeps the controller and the two add links; it does not take the conversation's `leave`,
+  so a 1:1 call still hangs up on its leg (`DELETE callLeg`).
+- the acceptance acknowledgement's links carry `hold`, `transfer`, `replacement`,
+  `retargetCompletion`, `startOutgoingNegotiation`, `callLeg` and `mediaRenegotiation`.
+
+1. **Add a person** (UNVERIFIED). `POST addParticipant` (the link, else
+   `<controller>/addParticipant`):
+   `{disableUnmute: false, participants: {from, to: [{id, displayName, participantId: <new uuid>}]},
+   participantInvitationData: {}, replacementDetails: null, debugContent: {},
+   links: {addParticipantSuccess, addParticipantFailure}}` (our `conversation/` callbacks).
+   - mautrix-teams `calls.go` `AddParticipant` and `teams-webclient.yaml` `/add` (AGPL, facts
+     only): without a known group chat thread the web client posts to `/addParticipant` with
+     `debugContent: {}` instead of `groupContext`/`groupChat`. Read from the web client's code;
+     no capture shows it.
+   - rusty-teams `organizer.rs` `add_participants_body` (MIT): the same fields plus
+     `displayName`. For a 1:1 call rusty-teams first creates a group chat and posts to
+     `addParticipantAndModality` with `groupChat: {threadId, messageId: null}`; kelma does not
+     create that chat yet. If the plain add is refused, that is the next shape to try.
+   - The answer comes on `conversation/addParticipantSuccess` or `addParticipantFailure`
+     (the GUI shows an error on failure). The move to a conference is the service's: kelma
+     answers its re-offer as it answers the lobby's (a fresh media session when ICE restarts).
+     rusty-teams instead re-offers on a new peer connection itself and waits for
+     `retargetCompletion`; kelma does not.
+2. **Hold / Resume** (UNVERIFIED). A re-offer on the same peer connection, `POST
+   mediaRenegotiation` with `{mediaNegotiation: {callModalities, sender, links {mediaAnswer,
+   rejection}, mediaContent {blob, contentType, mediaLegId, requiredFeatures: nonByPass,
+   newOffer: false}}}`. To hold, every media line of our offer says `a=inactive`; to resume, the
+   offer is sent as the session makes it. The answer (inline or on `call/mediaAnswer/`) is applied
+   with our own directions mirrored back, so the local media never stops; kelma stops sending
+   and playing audio itself while on hold. A media answer that names `mediaAcknowledgement` is
+   acknowledged with an empty POST.
+   - rusty-teams (MIT): `hold.rs` `all_inactive` / `keep_media_running`, `call/peer_sdp.rs`
+     `offer_same_peer` (`newOffer: false`) and `call/mod.rs` (`POST mediaAcknowledgement` after
+     applying an answer). Its roadmap lists hold as "renegotiates every line inactive", not run
+     with a second person.
+   - Teams on the web (live, 2026-11-19, network log only): opening Transfer puts the call on
+     hold; Resume showed only a media answer acknowledgement
+     (`.../cc/v1/mediaAnswers/<id>/<n>/t/<n>/acknowledge`), no separate hold or resume URL.
+   - Neither reference posts to the acknowledgement's `hold` link; kelma does not either.
+   - A refused re-offer leaves webrtc-rs with a pending local offer (kelma cannot roll it back
+     outside `crates/calling/src/media`); the GUI puts the hold state back and shows an error.
+3. **Transfer now** (blind; UNVERIFIED). `POST transfer` (the acknowledgement's link):
+   `{callTransfer: {target: {id: <MRI>}, transferor: {details: {id, endpointId, participantId,
+   languageId}, authorizationToken: null}, links: {transferAcceptance, transferCompletion}
+   (our `call/` callbacks), replacementDetails: null, disableForwardingAndUnanswered: false,
+   transferContext: null}}`.
+   - rusty-teams `transfer.rs` `transfer_body` and `completion` (MIT).
+   - `call/transferCompletion` with `code` 0 or 2xx means done: kelma ends the call ("You
+     transferred the call to ...") and still ends its leg. Any other code keeps the call on hold
+     with an error.
+   - The GUI opens Transfer with the call on hold, as Teams on the web does. Consult first (a
+     second call, then `replacementDetails` naming its leg) is not built.
+
 ## Open
 
 - **TURN over TCP/TLS.** webrtc-rs 0.21.1 only relays over UDP. A network that blocks UDP 3478 needs a TLS shim to `turns:<gateway>:443`.

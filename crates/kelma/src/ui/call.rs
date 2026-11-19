@@ -1,9 +1,9 @@
 //! UI-thread side of the call window: fills the `CallStore` global (`ui/call_store.slint`).
 
 use super::{UiHandle, model};
-use crate::backend::call::{CallData, Person, is_meeting_chat};
+use crate::backend::call::{CallData, Found, Person, is_meeting_chat};
 use crate::data::initials;
-use crate::{AppWindow, CallPerson, CallStore};
+use crate::{AppWindow, CallFound, CallPerson, CallStore};
 use slint::{ComponentHandle, SharedString};
 
 fn int(n: usize) -> i32 {
@@ -52,6 +52,18 @@ fn set(w: &AppWindow, d: CallData) {
     s.set_mic(int(d.mic));
     s.set_speakers(texts(d.speakers));
     s.set_speaker(int(d.speaker));
+    s.set_held(d.held);
+    s.set_found(model(d.found.into_iter().map(call_found).collect()));
+    s.set_notice(d.notice.into());
+}
+
+fn call_found(f: Found) -> CallFound {
+    CallFound {
+        id: f.mri.into(),
+        initials: initials(&f.name).into(),
+        name: f.name.into(),
+        subtitle: f.subtitle.into(),
+    }
 }
 
 fn call_person(p: Person) -> CallPerson {

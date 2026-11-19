@@ -16,6 +16,14 @@ export struct CallPerson {
     speaking: bool,
 }
 
+// Someone the people search found (the invite box, the transfer dialog).
+export struct CallFound {
+    id: string,
+    name: string,
+    subtitle: string,
+    initials: string,
+}
+
 export global CallStore {
     // "" (no call) | prejoin | connecting | lobby | connected | reconnecting | ended
     in property <string> phase;
@@ -51,9 +59,15 @@ export global CallStore {
     in property <int> mic;
     in property <[string]> speakers;
     in property <int> speaker;
+    // A 1:1 call we put on hold.
+    in property <bool> held;
+    // The people search's results for the invite box or the transfer dialog.
+    in property <[CallFound]> found;
+    // A short status under the invite box ("Calling Ada…").
+    in property <string> notice;
     // The side panel: "" | people | more.
     in-out property <string> panel;
-    // The open dropdown or card: "" | devices | a device picker's key.
+    // The open dropdown or card: "" | devices | transfer | a device picker's key.
     in-out property <string> menu;
     // The call shrinks to a floating bar while the meeting chat is open.
     in-out property <bool> minimized;
@@ -61,7 +75,8 @@ export global CallStore {
     in-out property <length> mini-dx;
     in-out property <length> mini-dy;
     // (name, argument): join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
-    // leave, close, rejoin, dismiss-error. See `backend/call.rs` `CallCmd::parse`.
+    // hold, transfer-open, find (query), invite (MRI), transfer (MRI), leave, close, rejoin,
+    // dismiss-error. See `backend/call.rs` `CallCmd::parse`.
     callback command(string, string);
     // The conversation is a meeting's chat (its header shows Join).
     pure callback is-meeting-chat(string) -> bool;

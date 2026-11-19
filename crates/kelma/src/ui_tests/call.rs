@@ -439,3 +439,128 @@ fn a_second_join_while_in_a_call_is_refused() {
     click(&c.button("Dismiss"));
     assert!(!c.shows(crate::backend::call::ALREADY_IN_CALL));
 }
+
+const DM: &str =
+    "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000002@unq.gbl.spaces";
+const BO: &str = "8:orgid:00000000-0000-0000-0000-000000000003";
+
+impl CallHarness {
+    /// A connected 1:1 call with Ada, as the ringing flows hand it over.
+    fn direct(&self) {
+        use crate::backend::call::CallKind;
+        let kind = CallKind::Direct {
+            peer_name: "Ada Example".into(),
+            chat_id: DM.into(),
+        };
+        assert!(self.h.engine.calls.adopt_fake(&self.fake, kind));
+        assert_eq!(self.phase(), "connected");
+        assert_eq!(cs(&self.h.app).get_kind(), "direct");
+    }
+
+    /// Types into the search box labelled `label`; the search answers with Bo.
+    fn search(&self, label: &str, text: &str) {
+        use crate::backend::call::Found;
+        self.with_role(label, AccessibleRole::TextInput)
+            .set_accessible_value(text);
+        self.h.engine.calls.test_found(vec![Found {
+            mri: BO.into(),
+            name: "Bo Example".into(),
+            subtitle: "Engineer".into(),
+        }]);
+    }
+}
+
+#[test]
+fn chat_in_a_direct_call_opens_the_one_on_one_chat_and_shrinks_the_call() {
+    let c = CallHarness::new();
+    c.direct();
+    let opened = Log::default();
+    let o = opened.clone();
+    c.h.app
+        .on_select_chat(move |id| o.borrow_mut().push(id.to_string()));
+    let chat = c.button("Chat");
+    assert_eq!(chat.accessible_enabled(), Some(true));
+    assert_eq!(
+        chat.accessible_description().unwrap(),
+        "Open the chat with Ada Example"
+    );
+    click(&chat);
+    assert!(cs(&c.h.app).get_minimized());
+    assert_eq!(*opened.borrow(), [DM.to_owned()]);
+    assert_eq!(c.h.app.get_view(), "chat");
+}
+
+#[test]
+fn hold_toggles_to_resume_and_back() {
+    let c = CallHarness::new();
+    c.direct();
+    click(&c.button("Hold"));
+    assert!(cs(&c.h.app).get_held());
+    assert!(c.shows("You put the call on hold. Select Resume to continue."));
+    let resume = c.button("Resume");
+    assert_eq!(resume.accessible_checked(), Some(true));
+    click(&resume);
+    assert!(!cs(&c.h.app).get_held());
+    assert!(c.shows("Hold"));
+    assert_eq!(c.fake.calls(), ["hold on", "hold off"]);
+    assert_eq!(c.sent(), ["hold", "hold"]);
+
+    // A hold the service refused puts the button back.
+    click(&c.button("Hold"));
+    c.fake.emit(Event::Held(false));
+    assert!(c.shows("Hold") && !cs(&c.h.app).get_held());
+}
+
+#[test]
+fn the_invite_box_rings_a_person_into_the_call() {
+    let c = CallHarness::new();
+    c.direct();
+    click(&c.button("People"));
+    assert!(c.shows("Currently in this call (0)"));
+    c.search("Invite someone or dial a number", "bo");
+    assert_eq!(c.sent(), ["find bo"]);
+    click(&c.row("Bo Example"));
+    assert_eq!(c.fake.calls(), [format!("add {BO}")]);
+    assert_eq!(c.sent().last().unwrap(), &format!("invite {BO}"));
+    assert!(c.shows("Calling Bo Example…"));
+    assert!(
+        c.all("Bo Example")
+            .iter()
+            .all(|e| e.accessible_role() != Some(AccessibleRole::ListItem)),
+        "the results close after a pick"
+    );
+}
+
+#[test]
+fn transfer_holds_the_call_then_transfers_now_to_the_picked_person() {
+    let c = CallHarness::new();
+    c.direct();
+    click(&c.button("Transfer"));
+    assert!(c.shows("The call is on hold. Pick who takes it."));
+    assert!(cs(&c.h.app).get_held(), "opening Transfer holds the call");
+    assert_eq!(c.fake.calls(), ["hold on"]);
+    assert!(c.all("Transfer now").is_empty(), "nobody picked yet");
+    c.search("Transfer to", "bo");
+    click(&c.row("Bo Example"));
+    assert!(c.shows("To: Bo Example"));
+    click(&c.button("Transfer now"));
+    assert_eq!(
+        c.fake.calls(),
+        ["hold on", format!("transfer {BO}").as_str()]
+    );
+    assert_eq!(cs(&c.h.app).get_menu(), "", "the dialog closes");
+    c.fake.emit(Event::Ended(
+        "You transferred the call to Bo Example.".into(),
+    ));
+    assert_eq!(c.phase(), "ended");
+}
+
+#[test]
+fn a_meeting_has_no_hold_transfer_or_invite_box() {
+    let c = CallHarness::new();
+    c.connected();
+    assert!(c.all("Hold").is_empty() && c.all("Transfer").is_empty());
+    click(&c.button("People"));
+    assert!(c.all("Invite someone or dial a number").is_empty());
+    assert!(c.shows("In this meeting (0)"));
+}
