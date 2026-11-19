@@ -22,6 +22,7 @@ mod drafts;
 pub(crate) mod drive;
 mod find;
 mod live;
+mod manage;
 mod mentions;
 mod outbox;
 mod people;
@@ -48,6 +49,10 @@ pub use cal::{
 };
 pub use drive::DriveCmd;
 pub use find::FindCmd;
+pub use manage::{
+    CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
+    SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
+};
 pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
@@ -100,6 +105,7 @@ pub enum Cmd {
     Activity(ActivityCmd),
     Find(FindCmd),
     People(PeopleCmd),
+    Teams(TeamsCmd),
     Drive(DriveCmd),
     SetEnterSends(bool),
     /// The composer text changed.
@@ -191,6 +197,7 @@ pub struct Engine {
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
     find: Mutex<find::State>,
+    manage: Mutex<manage::State>,
     drive: Mutex<drive::Drive>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
@@ -244,6 +251,7 @@ impl Engine {
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
             find: Mutex::new(find::State::default()),
+            manage: Mutex::new(manage::State::default()),
             drive: Mutex::new(drive::Drive::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
@@ -275,6 +283,7 @@ impl Engine {
     pub fn start(self: &Arc<Self>) {
         self.push_prefs();
         self.start_people();
+        self.start_manage();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -513,6 +522,7 @@ impl Engine {
             // Boxed: a search result opens a chat through `handle` again.
             Cmd::Find(c) => Box::pin(self.find_cmd(c)).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
+            Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,

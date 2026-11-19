@@ -2,6 +2,8 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ChatRow, TeamRow } from "types.slint";
 import { Avatar, Icon, IconButton, Pill, SectionHeader } from "widgets.slint";
+import { CommunitiesSection } from "teams_page.slint";
+import { TeamsStore } from "teams_store.slint";
 
 component MenuItem inherits Rectangle {
     in property <string> label;
@@ -131,10 +133,13 @@ export component Sidebar inherits Rectangle {
     callback new-chat();
     // Quick views: "mentions" or "followed".
     callback quick-view(string);
+    callback manage-teams();
+    callback open-community(string);
 
     property <bool> favorites-open: true;
     property <bool> chats-open: true;
     property <bool> channels-open: true;
+    property <bool> communities-open: true;
 
     width: 320px;
     background: Theme.sidebar;
@@ -147,6 +152,11 @@ export component Sidebar inherits Rectangle {
             padding-right: 12px;
             Text { text: root.view == "chat" ? "Chat" : "Teams"; color: Theme.fg; font-size: 20px; font-weight: 700; vertical-alignment: center; }
             Rectangle { horizontal-stretch: 1; }
+            if root.view == "teams": Pill {
+                label: "Your teams and channels";
+                y: 15px;
+                clicked => { root.manage-teams(); }
+            }
             if root.view == "chat": IconButton {
                 icon: @image-url("icons/compose.svg");
                 tooltip: "New chat";
@@ -203,6 +213,8 @@ export component Sidebar inherits Rectangle {
                     mark-unread => { root.mark-unread(c.id); }
                     leave => { root.leave-chat(c.id); }
                 } }
+                if TeamsStore.communities.length > 0: SectionHeader { label: "Communities"; expanded <=> root.communities-open; }
+                if TeamsStore.communities.length > 0 && root.communities-open: CommunitiesSection { open(id) => { root.open-community(id); } }
             }
         }
 

@@ -362,6 +362,14 @@ fn main() -> anyhow::Result<()> {
     }
     {
         let tx = tx.clone();
+        window.global::<TeamsStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::TeamsCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Teams(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
         window.global::<DriveStore>().on_command(move |name, arg| {
             if let Some(c) = backend::DriveCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Drive(c));

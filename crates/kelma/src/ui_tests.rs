@@ -21,6 +21,7 @@ mod activity;
 mod drive;
 mod find;
 mod people;
+mod teams;
 
 type Log = Rc<RefCell<Vec<String>>>;
 

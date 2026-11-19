@@ -268,8 +268,12 @@ impl Engine {
             let v = self.view.lock().unwrap();
             (v.teams_order.clone(), v.collapsed_teams.clone())
         };
+        // Teams and channels the user hid on the management page stay out of the list; pinned
+        // channels come first.
+        let (hidden, pinned) = (self.hidden_ids(), self.pinned_ids());
         let st = self.store.lock().unwrap();
         let mut teams = st.teams().unwrap_or_default();
+        teams.retain(|t| !hidden.contains(&t.id));
         teams.sort_by_key(|t| order.iter().position(|o| o == &t.id).unwrap_or(usize::MAX));
         // ToggleTeam(index) refers to this order.
         self.view.lock().unwrap().teams_order = teams.iter().map(|t| t.id.clone()).collect();
@@ -277,7 +281,14 @@ impl Engine {
             .into_iter()
             .map(|t| {
                 let mut channels = st.channels(&t.id).unwrap_or_default();
-                channels.sort_by_key(|c| (c.title != "General", c.title.to_lowercase()));
+                channels.retain(|c| !hidden.contains(&c.id));
+                channels.sort_by_key(|c| {
+                    (
+                        c.title != "General",
+                        !pinned.contains(&c.id),
+                        c.title.to_lowercase(),
+                    )
+                });
                 TeamData {
                     initials: initials(&t.name),
                     color: color_for(&t.id),

@@ -1,0 +1,127 @@
+// State of the Teams management UI (the "Your teams and channels" page, its dialogs and the
+// Communities feed). Everything shown comes from this global, filled by the Rust backend
+// (`backend/manage`); the UI reports what the user did through `command(name, argument)`.
+// Arguments with several values are joined with the unit separator "\u{1f}".
+
+export struct TChannel {
+    id: string,
+    name: string,
+    kind: string, // standard | private | shared
+    shown: bool,
+    pinned: bool,
+    muted: bool,
+    archived: bool,
+    general: bool,
+    member: bool,
+    owner: bool,
+}
+
+export struct TTeam {
+    id: string,
+    group: string,
+    name: string,
+    desc: string,
+    access: string, // Public | Private | Org-wide
+    role: string,   // Owner | Member | Guest
+    people: int,
+    channel-count: int,
+    shown-count: int,
+    shown: bool,
+    archived: bool,
+    expanded: bool,
+    owner: bool,
+    initials: string,
+    color: color,
+    channels: [TChannel],
+}
+
+export struct TDiscover { group: string, name: string, desc: string, people: int, access: string, requested: bool }
+export struct TPerson { mri: string, name: string, detail: string, role: string, me: bool, picked: bool }
+export struct TTag { id: string, name: string, desc: string, count: int, mine: bool, selected: bool }
+export struct TDeleted { id: string, name: string, when: string }
+export struct TSetting { key: string, group: string, label: string, on: bool }
+export struct TStat { label: string, value: string }
+export struct TCommunity { id: string, name: string, desc: string, people: int, company: bool }
+export struct TPost { id: string, sender: string, time: string, text: string, likes: int, reply: bool, url: string }
+
+export global TeamsStore {
+    // --- the page ---
+    in-out property <bool> open: false;
+    in-out property <string> tab: "teams"; // teams | discover | invites | analytics | communities
+    in-out property <string> filter: "all"; // all | owned | member | guest | hidden | archived
+    in-out property <string> sort: "az";    // az | za | people | channels
+    in-out property <string> query;
+    in property <[TTeam]> teams;
+    in property <[TStat]> stats;
+    in property <bool> loading;
+    in property <string> error;
+    in property <string> notice;
+    // --- Discover, Join with a code, Pending invites ---
+    in property <[TDiscover]> discover;
+    in property <[TDiscover]> requests;
+    in property <string> join-info;
+    // --- Communities (read-only feed) ---
+    in property <[TCommunity]> communities;
+    in-out property <string> community; // the open community id
+    in property <string> community-name;
+    in property <[TPost]> posts;
+    in property <bool> posts-more;
+    // --- dialogs: new-channel, new-team, edit-channel, moderation, members, tags, email,
+    //     notify, manage-team, deleted, confirm, join ---
+    in-out property <string> dialog;
+    in property <bool> busy;
+    in property <string> d-error;
+    in property <string> d-team;       // team thread id
+    in property <string> d-team-name;
+    in property <string> d-channel;    // channel id
+    in property <string> d-channel-name;
+    in property <string> d-kind;       // standard | private | shared
+    in property <string> d-name;       // initial values of the edit forms
+    in property <string> d-desc;
+    in property <string> d-access;     // team privacy: Public | Private
+    in property <bool> d-owner;        // we own the team or channel
+    in property <[TPerson]> people;    // team or channel roster
+    in property <[TPerson]> candidates; // people search results
+    in property <[TTag]> tags;
+    in property <[TPerson]> tag-people;
+    in property <[TDeleted]> deleted;
+    in property <[TSetting]> user-settings;
+    in property <[TSetting]> guest-settings;
+    in property <string> email;
+    in property <string> email-senders; // Anyone | Members | Domains
+    in property <string> post-perm: "Everyone";
+    in property <string> reply-perm: "Everyone";
+    in property <string> pin-perm: "Everyone";
+    in property <bool> allow-bots: true;
+    in property <bool> allow-connectors: true;
+    in property <string> notify-level: "feed"; // banner | feed | off
+    in property <bool> notify-replies;
+    in property <string> team-code;
+    in-out property <string> confirm-text;
+    in-out property <string> confirm-command;
+    in-out property <string> confirm-arg;
+    // (name, argument). Names are listed in `backend/manage/cmd.rs`.
+    callback command(string, string);
+}
+
+export global TeamsActions {
+    // Joins command arguments with the unit separator.
+    pure public function j2(a: string, b: string) -> string { return a + "\u{1f}" + b; }
+    pure public function j3(a: string, b: string, c: string) -> string { return a + "\u{1f}" + b + "\u{1f}" + c; }
+    // Opens a dialog: the Rust side loads what it needs and answers with the dialog's data.
+    public function open-dialog(kind: string, team: string, channel: string) {
+        TeamsStore.dialog = kind;
+        TeamsStore.command("dialog", kind + "\u{1f}" + team + "\u{1f}" + channel);
+    }
+    // Asks before a destructive change; "Yes" runs `command` with `arg`.
+    public function confirm(text: string, command: string, arg: string) {
+        TeamsStore.confirm-text = text;
+        TeamsStore.confirm-command = command;
+        TeamsStore.confirm-arg = arg;
+        TeamsStore.dialog = "confirm";
+    }
+    public function close-dialog() {
+        TeamsStore.dialog = "";
+        TeamsStore.command("dialog-close", "");
+    }
+}
