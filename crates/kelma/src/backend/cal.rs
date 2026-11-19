@@ -146,6 +146,8 @@ pub enum CalCmd {
     OpenAttachment(usize),
     /// Accept the `n`th proposed new time of the open meeting: move it there (asks first).
     AcceptProposal(usize),
+    /// The zone picker of the settings dialog: zones matching what was typed.
+    ZoneSearch(String),
 
     // Filters, calendars, saved views, the date range and settings.
     Filter(String, String),
@@ -284,6 +286,7 @@ impl CalCmd {
             "export-event" => CalCmd::ExportEvent,
             "open-attachment" => CalCmd::OpenAttachment(arg.parse().ok()?),
             "accept-proposal" => CalCmd::AcceptProposal(arg.parse().ok()?),
+            "zone-search" => CalCmd::ZoneSearch(arg.into()),
 
             "filter" => {
                 let (g, k) = arg.split_once(':')?;
@@ -393,6 +396,8 @@ struct Inner {
     saved_views: Vec<session::SavedView>,
     /// Work hours from the mailbox, used until the user sets their own.
     mailbox_hours: Option<(i32, i32)>,
+    /// The time zones the mailbox offers, `(name, display name)`, for the second time zone.
+    zones: Vec<(String, String)>,
     calendars: Vec<CalendarInfo>,
     /// Ticked calendars other than the default one.
     visible: HashSet<String>,
@@ -457,6 +462,7 @@ impl CalState {
             settings: cfg.calendar_settings.clone(),
             saved_views: cfg.calendar_saved_views.clone(),
             mailbox_hours: None,
+            zones: Vec::new(),
             calendars: Vec::new(),
             visible: HashSet::new(),
             extras: HashMap::new(),
@@ -613,14 +619,47 @@ impl Inner {
         )
     }
 
-    fn prefs(&self) -> grid::Prefs {
+    /// The second time column's UTC offset in minutes at `now`: from its zone (so daylight
+    /// saving applies), else the old fixed offset.
+    fn second_tz_min(&self, now: i64) -> Option<i32> {
+        self.settings
+            .second_tz
+            .as_deref()
+            .and_then(|z| ::calendar::utc_offset_min(z, now))
+            .or(self.settings.second_tz_min)
+    }
+
+    /// The second time zone as the settings dialog names it; empty when off.
+    fn second_tz_label(&self, now: i64) -> String {
+        let fixed = |m: i32| {
+            format!(
+                "UTC{}{:02}:{:02} (fixed offset)",
+                if m < 0 { '-' } else { '+' },
+                m.abs() / 60,
+                m.abs() % 60
+            )
+        };
+        match &self.settings.second_tz {
+            Some(z) => match ::calendar::utc_offset_min(z, now) {
+                Some(_) => self
+                    .zones
+                    .iter()
+                    .find(|(n, _)| n == z)
+                    .map_or_else(|| z.clone(), |(_, d)| d.clone()),
+                None => self.settings.second_tz_min.map(fixed).unwrap_or_default(),
+            },
+            None => self.settings.second_tz_min.map(fixed).unwrap_or_default(),
+        }
+    }
+
+    fn prefs(&self, now: i64) -> grid::Prefs {
         let (work_start, work_end) = self.work_hours();
         grid::Prefs {
             show_weekends: self.settings.show_weekends,
             week_numbers: self.settings.week_numbers,
             work_start,
             work_end,
-            second_tz_min: self.settings.second_tz_min,
+            second_tz_min: self.second_tz_min(now),
             pins: self.pins.clone(),
         }
     }
@@ -641,7 +680,7 @@ impl Inner {
     fn data(&self, now: i64) -> CalData {
         let (s, e) = self.range();
         let events = self.visible_events(s, e);
-        let prefs = self.prefs();
+        let prefs = self.prefs(now);
         let mut data = grid::build(
             &events,
             &Ctx {
@@ -703,12 +742,15 @@ impl Inner {
                 work_end: forms::hm(we.max(0) as u32),
                 weekends: self.settings.show_weekends,
                 week_numbers: self.settings.week_numbers,
+                // A zone, else the old fixed offset in minutes, as the dialog sends it back.
                 second_tz: self
                     .settings
-                    .second_tz_min
-                    .map(|m| m.to_string())
+                    .second_tz
+                    .clone()
+                    .or_else(|| self.settings.second_tz_min.map(|m| m.to_string()))
                     .unwrap_or_default(),
             },
+            second_tz_label: self.second_tz_label(now_ms()),
             categories: cats,
         }
     }
@@ -1477,6 +1519,33 @@ mod tests {
         assert!(g.find("Theirs").is_some());
         let rows = g.panels().calendars;
         assert!(rows.iter().any(|r| r.name == "Team" && r.checked));
+    }
+
+    #[test]
+    fn a_second_time_zone_name_follows_daylight_saving_and_beats_the_old_offset() {
+        let s = with_events(vec![]);
+        let mut g = s.lock();
+        g.settings.second_tz_min = Some(-300);
+        assert_eq!(g.second_tz_min(0), Some(-300), "only the old offset: kept");
+        assert_eq!(g.second_tz_label(0), "UTC-05:00 (fixed offset)");
+        assert_eq!(g.panels().settings.second_tz, "-300");
+        g.settings.second_tz = Some("America/New_York".into());
+        let winter = Date::new(2026, 1, 15).midnight_ms();
+        let summer = Date::new(2026, 7, 15).midnight_ms();
+        assert_eq!(g.second_tz_min(winter), Some(-300));
+        assert_eq!(g.second_tz_min(summer), Some(-240), "daylight saving");
+        g.apply(&CalCmd::SetView("week".into()), NOV_18);
+        assert_eq!(g.data(summer).second_title, "UTC-04:00");
+        assert_eq!(g.data(winter).second_title, "UTC-05:00");
+        assert_eq!(g.panels().settings.second_tz, "America/New_York");
+        g.zones = vec![("America/New_York".into(), "(UTC-05:00) Eastern Time".into())];
+        assert_eq!(g.second_tz_label(winter), "(UTC-05:00) Eastern Time");
+        g.settings.second_tz = Some("Not/AZone".into());
+        assert_eq!(
+            g.second_tz_min(summer),
+            Some(-300),
+            "unknown zone: the old offset"
+        );
     }
 
     #[test]

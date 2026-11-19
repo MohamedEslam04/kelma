@@ -3,6 +3,7 @@
 //! send (dry run) and never send it.
 
 use anyhow::{Context, Result, bail};
+use app_store::bots::{self, CommandContext, CommandKind, Input, Place, PlaceApp};
 use app_store::{AddTarget, AppDetails, Filter, PinChange, Scope, Target, WorksIn};
 use reqwest::Method;
 use serde_json::Value;
@@ -186,6 +187,216 @@ async fn app_page(client: &Client, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// A chat or a team from `--chat <id>` / `--team <id>`, else the first positional id (a team
+/// or channel thread id ends in `@thread.tacv2`/`@thread.skype`, anything else is a chat).
+fn place(args: &[String], positional: Option<&str>) -> Option<Place> {
+    if let Some(t) = flag(args, "--team") {
+        Some(Place::Team(t.into()))
+    } else if let Some(c) = flag(args, "--chat") {
+        Some(Place::Chat(c.into()))
+    } else {
+        positional.map(|id| {
+            if id.ends_with("@thread.tacv2") || id.ends_with("@thread.skype") {
+                Place::Team(id.into())
+            } else {
+                Place::Chat(id.into())
+            }
+        })
+    }
+}
+
+fn place_id(place: &Place) -> &str {
+    match place {
+        Place::Chat(id) | Place::Team(id) => id,
+    }
+}
+
+fn print_bots(apps: &[PlaceApp]) {
+    let n = apps.iter().map(|a| a.bots.len()).sum::<usize>();
+    println!(
+        "{n} bots in {} apps",
+        apps.iter().filter(|a| !a.bots.is_empty()).count()
+    );
+    for app in apps.iter().filter(|a| !a.bots.is_empty()) {
+        println!("{} ({})", app.name, app.id);
+        for bot in &app.bots {
+            println!(
+                "  {} scopes {}{}{}",
+                bot.mri(),
+                bot.scopes.join(","),
+                if bot.is_notification_only {
+                    ", notification only"
+                } else {
+                    ""
+                },
+                if bot.supports_files { ", files" } else { "" },
+            );
+            for c in &bot.commands {
+                println!("    {:<24} {:<7} {}", c.title, c.kind, c.description);
+            }
+        }
+    }
+}
+
+fn print_extensions(apps: &[PlaceApp]) {
+    let n = apps.iter().map(|a| a.extensions.len()).sum::<usize>();
+    println!(
+        "{n} messaging extensions in {} apps",
+        apps.iter().filter(|a| !a.extensions.is_empty()).count()
+    );
+    for app in apps.iter().filter(|a| !a.extensions.is_empty()) {
+        println!("{} ({})", app.name, app.id);
+        for ext in &app.extensions {
+            println!(
+                "  bot {} scopes {}{}{}",
+                ext.bot_id,
+                ext.scopes.join(","),
+                if ext.fetch_commands {
+                    ", commands fetched at run time"
+                } else {
+                    ""
+                },
+                if ext.can_update_configuration {
+                    ", configurable"
+                } else {
+                    ""
+                },
+            );
+            for c in &ext.commands {
+                let params: Vec<String> = c
+                    .parameters
+                    .iter()
+                    .map(|p| {
+                        let kind = match &p.input {
+                            Input::Text => String::new(),
+                            Input::ChoiceSet => format!(":{} choices", p.choices.len()),
+                            other => format!(":{other:?}").to_lowercase(),
+                        };
+                        format!("{}{}{kind}", p.name, if p.required { "*" } else { "" })
+                    })
+                    .collect();
+                let contexts: Vec<&str> = c.contexts.iter().map(|c| c.as_str()).collect();
+                println!(
+                    "    {:<20} {:<6} {:<26} {}{}",
+                    c.id,
+                    match c.kind {
+                        CommandKind::Query => "query",
+                        CommandKind::Action => "action",
+                    },
+                    contexts.join(","),
+                    params.join(" "),
+                    if c.fetch_task { " (task module)" } else { "" },
+                );
+            }
+        }
+    }
+}
+
+/// `store ext-query <app id|name> <command id|title> <text> [--chat <id>|--team <id>] [--no-conversation] [--dry-run]`:
+/// runs a search-type command (default place `48:notes`) and prints the results. `--dry-run`
+/// prints the invoke without sending it. Never sends a message.
+async fn ext_query(client: &Client, args: &[String]) -> Result<()> {
+    let usage = "usage: store ext-query <app id|name> <command id|title> <text> [--chat <id>|--team <id>] [--no-conversation] [--dry-run]";
+    let app_key = args.get(1).context(usage)?;
+    let command_key = args.get(2).context(usage)?;
+    let query = args
+        .get(3)
+        .filter(|a| !a.starts_with("--"))
+        .context(usage)?;
+    let place = place(&args[4..], None).unwrap_or(Place::Chat("48:notes".into()));
+    let apps = bots::place_apps(client, &place).await?;
+    let app = apps
+        .iter()
+        .find(|a| a.id == *app_key || a.name.eq_ignore_ascii_case(app_key))
+        .context("no such app with a messaging extension here")?;
+    let (ext, command) = app
+        .extensions
+        .iter()
+        .flat_map(|e| e.commands.iter().map(move |c| (e, c)))
+        .find(|(_, c)| c.id == *command_key || c.title.eq_ignore_ascii_case(command_key))
+        .context("no such command")?;
+    if command.kind != CommandKind::Query {
+        bail!(
+            "{} is an action command (it opens a task module), not a search",
+            command.id
+        );
+    }
+    let context = if command.contexts.contains(&CommandContext::Compose) {
+        CommandContext::Compose
+    } else {
+        command.contexts[0]
+    };
+    let conversation = if args.iter().any(|a| a == "--no-conversation") {
+        ""
+    } else {
+        place_id(&place)
+    };
+    let parameters: Vec<(String, String)> = command
+        .parameters
+        .first()
+        .map(|p| vec![(p.name.clone(), query.clone())])
+        .unwrap_or_default();
+    if args.iter().any(|a| a == "--dry-run") {
+        let req = bots::query_request(
+            &client.chat_service().await,
+            &bots::QueryRequest {
+                app_id: &app.id,
+                bot_id: &ext.bot_id,
+                command_id: &command.id,
+                context,
+                parameters: &parameters,
+                skip: 0,
+                count: 25,
+                conversation_id: conversation,
+                display_name: "",
+            },
+        );
+        println!("{}", req.dry_run());
+        return Ok(());
+    }
+    match bots::query_extension(
+        client,
+        app,
+        ext,
+        command,
+        context,
+        &parameters,
+        conversation,
+        "",
+    )
+    .await?
+    {
+        bots::QueryOutcome::Results(r) => {
+            println!(
+                "{:?}, {} results, layout {:?}",
+                r.kind,
+                r.items.len(),
+                r.layout
+            );
+            if let Some(t) = &r.text {
+                println!("text: {t}");
+            }
+            for (title, value) in &r.actions {
+                println!("action: {title} -> {value}");
+            }
+            for i in r.items.iter().take(20) {
+                println!(
+                    "  {:<40} {:<30} {}",
+                    i.title,
+                    i.subtitle,
+                    i.content_type.rsplit('.').next().unwrap_or_default()
+                );
+            }
+        }
+        bots::QueryOutcome::Failed { status, message } => {
+            println!("the extension answered {status}: {message}")
+        }
+        bots::QueryOutcome::Other => println!("answer is not a query result"),
+        bots::QueryOutcome::Empty => println!("empty answer"),
+    }
+    Ok(())
+}
+
 pub async fn run(client: &Client, args: &[String]) -> Result<()> {
     let arg = |i: usize| args.get(i).map(String::as_str);
     match arg(0) {
@@ -340,12 +551,24 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
                 app_store::pin_request(&base, &installed, &change).dry_run()
             );
         }
+        Some("bots") => {
+            let place = place(&args[1..], arg(1).filter(|a| !a.starts_with("--")))
+                .context("usage: store bots <chat or team thread id> [--chat <id>|--team <id>]")?;
+            print_bots(&bots::place_apps(client, &place).await?);
+        }
+        Some("extensions") => {
+            let place = place(&args[1..], arg(1).filter(|a| !a.starts_with("--"))).context(
+                "usage: store extensions <chat or team thread id> [--chat <id>|--team <id>]",
+            )?;
+            print_extensions(&bots::place_apps(client, &place).await?);
+        }
+        Some("ext-query") => ext_query(client, args).await?,
         Some("probe") => {
             let which = arg(1).context("usage: store probe <mt|teams|graph> <path>...")?;
             probe(client, which, &args[2..]).await?
         }
         _ => bail!(
-            "usage: store <bar|more [q]|home|search q|app id|mine|org|settings|install id|uninstall id|update id|pin id|unpin id|move id n|probe>"
+            "usage: store <bar|more [q]|home|search q|app id|mine|org|settings|install id|uninstall id|update id|pin id|unpin id|move id n|bots id|extensions id|ext-query app command text|probe>"
         ),
     }
     Ok(())

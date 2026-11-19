@@ -10,15 +10,42 @@ use super::*;
 use ::calendar::{
     EventChange, Person, PersonView, ShowAs, add_permission, calendar_permissions, calendar_view,
     calendars, cancel_event, categories, create_calendar, create_event, delete_event,
-    download_attachment, event_detail, event_proposals, find_meeting_times, forward_event, get_schedule,
-    join_by_id_url, mailbox_settings, meet_now, meeting_chat_thread_id, move_event, person_view,
-    remove_permission, respond, room_lists, room_schedules, rooms, set_work_location, target_id, to_ics,
-    update_event, update_permission,
+    download_attachment, event_detail, event_proposals, find_meeting_times, forward_event,
+    get_schedule, join_by_id_url, mailbox_settings, meet_now, meeting_chat_thread_id, move_event,
+    person_view, remove_permission, respond, room_lists, room_schedules, rooms, set_work_location,
+    supported_time_zones, target_id, to_ics, update_event, update_permission,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
 
 /// Calendars shown in demo mode.
+/// A few zones to pick from when the mailbox's list has not loaded (demo mode, offline).
+fn demo_zones() -> Vec<(String, String)> {
+    [
+        ("UTC", "(UTC) Coordinated Universal Time"),
+        ("Egypt Standard Time", "(UTC+02:00) Cairo"),
+        (
+            "W. Europe Standard Time",
+            "(UTC+01:00) Amsterdam, Berlin, Rome, Stockholm",
+        ),
+        (
+            "Eastern Standard Time",
+            "(UTC-05:00) Eastern Time (US & Canada)",
+        ),
+        (
+            "Pacific Standard Time",
+            "(UTC-08:00) Pacific Time (US & Canada)",
+        ),
+        (
+            "India Standard Time",
+            "(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi",
+        ),
+        ("Tokyo Standard Time", "(UTC+09:00) Osaka, Sapporo, Tokyo"),
+    ]
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .to_vec()
+}
+
 pub(super) fn demo_calendars() -> Vec<CalendarInfo> {
     let c =
         |id: &str, name: &str, color: &str, default: bool, owner: &str, email: &str| CalendarInfo {
@@ -249,15 +276,26 @@ impl Engine {
             Ok(list) => self.cal.lock().categories = list.into_iter().map(|c| c.name).collect(),
             Err(err) => tracing::warn!(%err, "could not read categories"),
         }
+        // Graph's `/me/mailboxSettings` first (the data layer falls back by itself).
         match mailbox_settings(&self.client).await {
             Ok(m) if m.working_hours.end_min > m.working_hours.start_min => {
-                self.cal.lock().mailbox_hours = Some((
-                    m.working_hours.start_min as i32,
-                    m.working_hours.end_min as i32,
+                self.cal.lock().mailbox_hours = Some(model::local_work_hours(
+                    &m.working_hours,
+                    today(),
+                    &local_offset,
                 ));
             }
             Ok(_) => {}
             Err(err) => tracing::warn!(%err, "could not read mailbox settings"),
+        }
+        match supported_time_zones(&self.client, false).await {
+            Ok(list) => {
+                self.cal.lock().zones = list
+                    .into_iter()
+                    .map(|z| (z.alias, z.display_name))
+                    .collect()
+            }
+            Err(err) => tracing::warn!(%err, "could not list time zones"),
         }
         self.push_calendar();
     }
@@ -323,6 +361,18 @@ impl Engine {
             CalCmd::ExportEvent => self.cal_export_event().await,
             CalCmd::OpenAttachment(i) => self.cal_open_attachment(i).await,
             CalCmd::AcceptProposal(i) => self.cal_accept_proposal(i).await,
+            CalCmd::ZoneSearch(q) => {
+                let found = {
+                    let s = self.cal.lock();
+                    let zones = if s.zones.is_empty() {
+                        demo_zones()
+                    } else {
+                        s.zones.clone()
+                    };
+                    model::zone_matches(&zones, &q, 6)
+                };
+                self.ui.cal_zones(found);
+            }
 
             CalCmd::CalendarToggle(id) => {
                 {
@@ -1621,14 +1671,15 @@ pub(super) fn parse_settings(arg: &str) -> Result<session::CalendarSettings, Str
     if end <= start {
         return Err("Work hours end after they start.".into());
     }
-    let tz = match p[5].trim() {
-        "" => None,
-        t => Some(
-            t.parse::<i32>()
-                .ok()
-                .filter(|m| (-12 * 60..=14 * 60).contains(m))
-                .ok_or("The second time zone is out of range.")?,
-        ),
+    // A zone name, or the old fixed offset in minutes (kept as it was until a zone is picked).
+    let (tz, zone) = match p[5].trim() {
+        "" => (None, None),
+        t => match t.parse::<i32>() {
+            Ok(m) if (-12 * 60..=14 * 60).contains(&m) => (Some(m), None),
+            Ok(_) => return Err("The second time zone is out of range.".into()),
+            Err(_) if ::calendar::utc_offset_min(t, 0).is_some() => (None, Some(t.to_string())),
+            Err(_) => return Err("Pick the second time zone from the list.".into()),
+        },
     };
     Ok(session::CalendarSettings {
         first_day,
@@ -1637,6 +1688,7 @@ pub(super) fn parse_settings(arg: &str) -> Result<session::CalendarSettings, Str
         show_weekends: p[3] == "1",
         week_numbers: p[4] == "1",
         second_tz_min: tz,
+        second_tz: zone,
     })
 }
 
@@ -1676,6 +1728,24 @@ mod tests {
                 .contains("09:00")
         );
         assert!(parse_settings("1|09:00|17:00|1|0|900").is_err());
+        // A zone name is stored as a name, with no fixed offset.
+        let z = parse_settings("1|09:00|17:00|1|0|Egypt Standard Time").unwrap();
+        assert_eq!(
+            (z.second_tz.as_deref(), z.second_tz_min),
+            (Some("Egypt Standard Time"), None)
+        );
+        assert_eq!(
+            parse_settings("1|09:00|17:00|1|0|Europe/Paris")
+                .unwrap()
+                .second_tz
+                .as_deref(),
+            Some("Europe/Paris")
+        );
+        assert!(
+            parse_settings("1|09:00|17:00|1|0|Atlantis Time")
+                .unwrap_err()
+                .contains("list")
+        );
         assert!(parse_settings("1|09:00").is_err());
     }
 
@@ -1930,7 +2000,10 @@ mod tests {
         r.seed(json!({"value": [ev_json("M1", meeting_extra("organizer"))]}));
         r.run(CalCmd::Peek("M1".into()));
         let before = r.engine.cal.lock().find("M1").unwrap().clone();
-        let (start, end) = (before.start_ms + 26 * 3_600_000, before.start_ms + 27 * 3_600_000);
+        let (start, end) = (
+            before.start_ms + 26 * 3_600_000,
+            before.start_ms + 27 * 3_600_000,
+        );
         r.engine.cal.lock().proposals = vec![::calendar::Proposal {
             name: "Bob Lee".into(),
             email: "bob@contoso.com".into(),
@@ -1943,7 +2016,11 @@ mod tests {
             sent_ms: None,
         }];
         r.run(CalCmd::AcceptProposal(5));
-        assert_eq!(r.app.global::<CalStore>().get_modal(), "", "no such proposal: nothing");
+        assert_eq!(
+            r.app.global::<CalStore>().get_modal(),
+            "",
+            "no such proposal: nothing"
+        );
         r.run(CalCmd::AcceptProposal(0));
         let s = r.app.global::<CalStore>();
         assert_eq!(
@@ -1951,7 +2028,10 @@ mod tests {
             ("prompt", "move-ok"),
             "a meeting move asks first, as for a drag"
         );
-        assert_eq!(r.engine.cal.lock().find("M1").unwrap().start_ms, before.start_ms);
+        assert_eq!(
+            r.engine.cal.lock().find("M1").unwrap().start_ms,
+            before.start_ms
+        );
         r.run(CalCmd::MoveOk);
         let moved = r.engine.cal.lock().find("M1").unwrap().clone();
         assert_eq!((moved.start_ms, moved.end_ms), (start, end));

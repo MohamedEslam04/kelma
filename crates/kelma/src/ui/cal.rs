@@ -8,8 +8,9 @@ use crate::backend::{
 };
 use crate::{
     AppWindow, CalAllDay, CalAttachmentRow, CalAttendeeRow, CalBlock, CalCalendarRow, CalDay,
-    CalDetail, CalFilterOpt, CalProposalRow, CalForm, CalMiniCell, CalMonthCell, CalMonthItem, CalPeek, CalPerm,
-    CalRoom, CalRoomList, CalSavedView, CalSchedRow, CalSettingsData, CalStore, CalSuggest,
+    CalDetail, CalFilterOpt, CalForm, CalMiniCell, CalMonthCell, CalMonthItem, CalPeek, CalPerm,
+    CalProposalRow, CalRoom, CalRoomList, CalSavedView, CalSchedRow, CalSettingsData, CalStore,
+    CalSuggest,
 };
 use slint::{ComponentHandle, Model, SharedString};
 use tokio::sync::mpsc::UnboundedSender;
@@ -178,6 +179,7 @@ fn set_panels(w: &AppWindow, p: Panels) {
         week_numbers: p.settings.week_numbers,
         second_tz: p.settings.second_tz.into(),
     });
+    s.set_second_tz_label(p.second_tz_label.into());
     s.set_categories(strings(p.categories));
 }
 
@@ -507,6 +509,21 @@ impl UiHandle {
             let s = w.global::<CalStore>();
             s.set_meet_link(link.into());
             s.set_modal("meet-link".into());
+        });
+    }
+
+    /// The zones the settings dialog's picker lists, as `(name, display name)`.
+    pub fn cal_zones(&self, zones: Vec<(String, String)>) {
+        self.run(move |w| {
+            w.global::<CalStore>().set_zone_matches(model(
+                zones
+                    .into_iter()
+                    .map(|(name, label)| crate::CalZone {
+                        name: name.into(),
+                        label: label.into(),
+                    })
+                    .collect(),
+            ))
         });
     }
 
@@ -1043,7 +1060,11 @@ mod tests {
                                 ("HQ".into(), "hq@contoso.com".into()),
                                 ("Annex".into(), "annex@contoso.com".into()),
                             ],
-                            rooms: crate::backend::room_rows(&rooms, &sched, Some((slot, slot + 1_800_000))),
+                            rooms: crate::backend::room_rows(
+                                &rooms,
+                                &sched,
+                                Some((slot, slot + 1_800_000)),
+                            ),
                             ..Default::default()
                         },
                     );
@@ -1700,7 +1721,48 @@ mod tests {
         click(&button(&app, "Show week numbers"));
         click(&button(&app, "Show weekends in the week and month views"));
         click(&button(&app, "Save"));
-        assert_eq!(log_of(&log), ["settings 0|09:00|17:00|0|1|"]);
+        assert_eq!(
+            log_of(&log),
+            ["zone-search ", "settings 0|09:00|17:00|0|1|"],
+            "opening the dialog clears the zone matches"
+        );
+    }
+
+    #[test]
+    fn the_second_time_zone_is_picked_by_name_and_an_old_offset_is_kept_until_then() {
+        let app = app(View::WorkWeek, &[]);
+        let log = commands(&app);
+        let store = app.global::<CalStore>();
+        // An old config: only a fixed offset (-5 hours).
+        store.set_settings(crate::CalSettingsData {
+            first_day: 1,
+            work_start: "09:00".into(),
+            work_end: "17:00".into(),
+            weekends: true,
+            week_numbers: false,
+            second_tz: "-300".into(),
+        });
+        store.set_second_tz_label("UTC-05:00 (fixed offset)".into());
+        click(&button(&app, "⋯"));
+        click(&button(&app, "Calendar settings…"));
+        click(&button(&app, "Save"));
+        assert_eq!(
+            log_of(&log).last().unwrap(),
+            "settings 1|09:00|17:00|1|0|-300",
+            "saving without picking a zone keeps the fixed offset"
+        );
+        // Pick a zone from the matches instead.
+        log.borrow_mut().clear();
+        store.set_zone_matches(model(vec![crate::CalZone {
+            name: "Egypt Standard Time".into(),
+            label: "(UTC+02:00) Cairo".into(),
+        }]));
+        click(&button(&app, "(UTC+02:00) Cairo"));
+        click(&button(&app, "Save"));
+        assert_eq!(
+            log_of(&log).last().unwrap(),
+            "settings 1|09:00|17:00|1|0|Egypt Standard Time"
+        );
     }
 
     #[test]
