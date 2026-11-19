@@ -26,6 +26,7 @@ import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
 import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
+import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
 import { AppsStore } from "apps_store.slint";
 import { RailApps, AppsOverlays } from "apps_rail.slint";
 import { AppsHost } from "apps_host.slint";
@@ -33,6 +34,8 @@ import { AppsHost } from "apps_host.slint";
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
 export { EmojiApi } from "composer.slint";
+export { FormatApi, FormatEdit } from "composer_format.slint";
+export { ShortcutApi } from "shortcuts.slint";
 export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
 export { ListStore, SectionRow, SectionChoice } from "lists.slint";
@@ -128,6 +131,11 @@ export component AppWindow inherits Window {
     out property <int> badge-total: root.activity-unread + root.chats-unread;
     out property <string> window-title: root.badge-total > 0 ? "(" + root.badge-total + ") kelma" : "kelma";
     in-out property <bool> enter-sends: true;
+    // Ctrl+. shows the shortcut list; Ctrl+Shift+X makes the composer taller (plan chat 5.9).
+    in-out property <bool> shortcuts-open: false;
+    in-out property <bool> composer-expanded: false;
+    in-out property <int> msg-focus-tick: 0;
+    in-out property <bool> composer-focused;
     in-out property <int> skin-tone: 0;
     in property <[ComposerEmoji]> recent-emoji;
     in property <[PendingAttachment]> pending-attachments;
@@ -217,7 +225,7 @@ export component AppWindow inherits Window {
         retry => { root.retry-login(); }
     }
 
-    if root.login-state == "ready": FocusScope {
+    if root.login-state == "ready": win-keys := FocusScope {
         // Shift+Esc marks every chat read, wherever the focus is. The Activity view handles it
         // itself (marks every Activity item read).
         capture-key-pressed(event) => {
@@ -243,12 +251,45 @@ export component AppWindow inherits Window {
                 PeopleStore.command("new-chat-open", "");
                 return accept;
             }
-            // Ctrl+Shift+1 to 9: the nth entry of the app bar.
-            if (event.modifiers.control && event.modifiers.shift && AppsStore.shortcut-index(event.text) > 0) {
+            // Ctrl+Shift+1 to 9: the nth entry of the app bar. In the composer Ctrl+Shift+7 and 8
+            // are the numbered and bullet list (Teams), so they stay with the composer there.
+            if (event.modifiers.control && event.modifiers.shift && AppsStore.shortcut-index(event.text) > 0 && !(root.composer-focused && (AppsStore.shortcut-index(event.text) == 7 || AppsStore.shortcut-index(event.text) == 8))) {
                 AppsStore.command("shortcut", "" + AppsStore.shortcut-index(event.text));
                 return accept;
             }
+            // The other Teams chords (plan chat 5.9); the mapping is in src/shortcuts.rs.
+            if ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift) != "" {
+                win-keys.run-shortcut(ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift));
+                return accept;
+            }
             reject
+        }
+        // Esc, when nothing else took it: closes the shortcut list, then the thread, then the reply.
+        key-pressed(event) => {
+            if event.text == Key.Escape && !event.modifiers.shift {
+                if root.shortcuts-open { root.shortcuts-open = false; return accept; }
+                if root.menu-open { root.menu-open = false; root.focus-tick += 1; return accept; }
+                if root.thread-root != "" { root.close-thread(); return accept; }
+                if root.reply-preview != "" { root.cancel-reply(); return accept; }
+            }
+            reject
+        }
+        function run-shortcut(a: string) {
+            if a == "shortcuts" { root.shortcuts-open = !root.shortcuts-open; }
+            if a == "goto" {
+                root.view = "search";
+                FindStore.command("search-tab", "chats");
+                FindStore.focus-tick += 1;
+            }
+            if a == "filter-box" { root.view = "chat"; search-input.focus(); }
+            if a == "filter-unread" { root.filter = root.filter == "unread" ? "all" : "unread"; root.set-filter(root.filter); }
+            if a == "filter-chats" { root.filter = root.filter == "chats" ? "all" : "chats"; root.set-filter(root.filter); }
+            if a == "filter-channels" { root.filter = root.filter == "channels" ? "all" : "channels"; root.set-filter(root.filter); }
+            if a == "filter-clear" { root.filter = "all"; root.set-filter("all"); }
+            if a == "focus-composer" { root.focus-tick += 1; }
+            if a == "focus-messages" { root.msg-focus-tick += 1; }
+            if a == "expand-composer" { root.composer-expanded = !root.composer-expanded; root.focus-tick += 1; }
+            if a == "attach-file" { root.attach-file(); }
         }
         VerticalLayout {
         // Top bar with search
@@ -731,6 +772,23 @@ export component AppWindow inherits Window {
                             retry-send(id) => { root.retry-send(id); }
                             discard-send(id) => { root.discard-send(id); }
                         }
+                        // Alt+Shift+M lands here: the arrow keys, Page Up/Down, Home and End scroll the list.
+                        msg-scope := FocusScope {
+                            width: 0px;
+                            height: 0px;
+                            property <int> tick: root.msg-focus-tick;
+                            changed tick => { self.focus(); }
+                            key-pressed(event) => {
+                                if event.text == Key.UpArrow { msg-list.content-y = min(0px, msg-list.content-y + 48px); return accept; }
+                                if event.text == Key.DownArrow { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - 48px)); return accept; }
+                                if event.text == Key.PageUp { msg-list.content-y = min(0px, msg-list.content-y + msg-list.visible-height * 0.9); return accept; }
+                                if event.text == Key.PageDown { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - msg-list.visible-height * 0.9)); return accept; }
+                                if event.text == Key.Home { msg-list.content-y = 0px; return accept; }
+                                if event.text == Key.End { root.scroll-tick += 1; return accept; }
+                                if event.text == Key.Escape { root.focus-tick += 1; return accept; }
+                                reject
+                            }
+                        }
                         Timer {
                             interval: 700ms;
                             running: msg-list.aligning;
@@ -807,6 +865,11 @@ export component AppWindow inherits Window {
                         post-subject <=> root.post-subject;
                         focus-tick <=> root.focus-tick;
                         enter-sends <=> root.enter-sends;
+                        expanded <=> root.composer-expanded;
+                        input-focus(f) => { root.composer-focused = f; }
+                        edit-last => {
+                            if ShortcutApi.last-own(root.messages) != "" { root.edit(ShortcutApi.last-own(root.messages)); }
+                        }
                         set-enter-sends(on) => { root.set-enter-sends(on); }
                         skin-tone <=> root.skin-tone;
                         recent-emoji: root.recent-emoji;
@@ -900,6 +963,13 @@ export component AppWindow inherits Window {
             edit => { root.menu-open = false; root.edit(root.menu-msg.id); }
             delete => { root.menu-open = false; root.delete(root.menu-msg.id); }
         }
+    }
+
+    if root.login-state == "ready" && root.shortcuts-open: ShortcutsDialog {
+        z: 200;
+        width: root.width;
+        height: root.height;
+        close => { root.shortcuts-open = false; }
     }
 
     if root.login-state == "ready" && root.picker-open: Rectangle {

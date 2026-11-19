@@ -535,7 +535,9 @@ impl Engine {
             let system = system_text(r);
             let props: Value =
                 serde_json::from_str(&r.reactions_json).unwrap_or_else(|_| json!({}));
-            let parsed = render_blocks(&render::parse_teams_html(&r.content_html));
+            let mut parsed = render_blocks(&render::parse_teams_html(&r.content_html));
+            // Headings, tables and colors (the plan's 5.4): the richer model draws the body.
+            crate::markdown::upgrade_rich(&mut parsed, &r.content_html);
             let headline = props
                 .get("t")
                 .and_then(Value::as_str)

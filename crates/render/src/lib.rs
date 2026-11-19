@@ -5,11 +5,12 @@
 //! the other way for the composer.
 
 mod compose;
+pub mod edit;
 mod markdown_out;
 mod parse;
 mod rich;
 
-pub use compose::{reply_html, text_to_teams_html};
+pub use compose::{reply_html, reply_quote_html, text_to_teams_html};
 pub use markdown_out::markdown_to_teams_html;
 pub use parse::parse_teams_html;
 pub use rich::{

@@ -22,8 +22,12 @@ mod appstore;
 mod channels;
 mod drive;
 mod find;
+mod format;
+mod format_live;
 mod lists;
 mod people;
+mod saved;
+mod shortcuts;
 mod teams;
 mod window_state;
 

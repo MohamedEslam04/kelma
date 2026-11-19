@@ -4,6 +4,7 @@ import { Edited, ComposerEmoji, PendingAttachment } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
 import { PeopleStore } from "people.slint";
 import { MentionApi, MentionPicker } from "mention_picker.slint";
+import { FormatApi, FormatBar, FormatEdit, FormatPreview, FormatToggle } from "composer_format.slint";
 
 // Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
 export global EmojiApi {
@@ -52,6 +53,13 @@ export component Composer inherits Rectangle {
     in property <[ComposerEmoji]> recent-emoji;
     in property <[PendingAttachment]> pending-attachments;
     in-out property <int> skin-tone: 0; // 0 default, 1..5 light to dark
+    // Formatting (plan chat 5.4): the toolbar and preview strip, and the taller composer (Ctrl+Shift+X).
+    in-out property <bool> format-open: false;
+    in-out property <bool> expanded: false;
+    // True while the text box has the keyboard focus (the window leaves Ctrl+Shift+7 and 8 to the composer then).
+    property <bool> input-focused: composer-input.has-focus;
+    callback input-focus(bool);
+    changed input-focused => { root.input-focus(root.input-focused); }
 
     callback send(string);
     callback set-enter-sends(bool);
@@ -65,6 +73,8 @@ export component Composer inherits Rectangle {
     callback attach-image();
     callback attach-file();
     callback attach-cloud();
+    // Up in an empty composer: edit my last message.
+    callback edit-last();
 
     property <int> emoji-tab: 0;
     property <string> emoji-query;
@@ -105,6 +115,42 @@ export component Composer inherits Rectangle {
         composer-input.set-selection-offsets(e.cursor, e.cursor);
         root.draft-edited(e.text);
         root.focus-tick += 1;
+    }
+
+    // Puts a formatted text back with its selection.
+    function put-selection(e: FormatEdit) {
+        composer-input.text = e.text;
+        composer-input.set-selection-offsets(e.anchor, e.cursor);
+        root.draft-edited(e.text);
+        root.focus-tick += 1;
+    }
+
+    // A toolbar action or shortcut on the selection (`a`, `c`: anchor and cursor byte offsets).
+    function format(act: string, a: int, c: int) {
+        if act == "undo" || act == "redo" {
+            let u = act == "undo" ? FormatApi.undo(composer-input.text, a, c) : FormatApi.redo(composer-input.text, a, c);
+            if u.ok { root.put-selection(u); }
+            return;
+        }
+        let e = FormatApi.apply(act, composer-input.text, a, c);
+        if e.ok { root.put-selection(e); }
+    }
+
+    // Formatting shortcuts (Ctrl+B, Ctrl+Alt+1, ...). False: not one, or an undo or redo the toolbar
+    // has nothing for, so the input's own undo runs.
+    function try-shortcut(event: KeyEvent) -> bool {
+        let act = FormatApi.shortcut(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift);
+        let a = composer-input.anchor-position-byte-offset;
+        let c = composer-input.cursor-position-byte-offset;
+        if act == "" { return false; }
+        if act == "link" { fmt-bar.open-link(); return true; }
+        if act == "undo" || act == "redo" {
+            let u = act == "undo" ? FormatApi.undo(composer-input.text, a, c) : FormatApi.redo(composer-input.text, a, c);
+            if u.ok { root.put-selection(u); return true; }
+            return false;
+        }
+        root.format(act, a, c);
+        return true;
     }
 
     function pick-emoji(ch: string) {
@@ -213,13 +259,25 @@ export component Composer inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
+                fmt-bar := FormatBar {
+                    open: root.format-open;
+                    sel-anchor: composer-input.anchor-position-byte-offset;
+                    sel-cursor: composer-input.cursor-position-byte-offset;
+                    action(a, s, c) => { root.format(a, s, c); }
+                }
+                if root.format-open && FormatApi.has-format(root.draft): FormatPreview {
+                    source: root.draft;
+                }
                 Rectangle {
-                    height: max(44px, min(220px, composer-input.preferred-height + 20px));
+                    height: root.expanded ? max(200px, min(420px, composer-input.preferred-height + 20px)) : max(44px, min(220px, composer-input.preferred-height + 20px));
                     composer-scope := FocusScope {
                         capture-key-pressed(event) => {
                             // Not consumed: a text paste still happens. Rust adds an image if the clipboard holds one.
                             if event.text == "v" && (event.modifiers.control || event.modifiers.meta) {
                                 root.paste-image();
+                            }
+                            if root.try-shortcut(event) {
+                                return accept;
                             }
                             if root.mention-open {
                                 if event.text == Key.DownArrow {
@@ -263,6 +321,10 @@ export component Composer inherits Rectangle {
                                     return accept;
                                 }
                             }
+                            if event.text == Key.UpArrow && composer-input.text == "" && root.editing-id == "" && root.pending-attachments.length == 0 {
+                                root.edit-last();
+                                return accept;
+                            }
                             if (event.text == Key.Return && (root.enter-sends ? !event.modifiers.shift : event.modifiers.control || event.modifiers.meta)) {
                                 root.submit();
                                 return accept;
@@ -299,6 +361,7 @@ export component Composer inherits Rectangle {
                     padding-bottom: 6px;
                     spacing: 2px;
                     alignment: end;
+                    FormatToggle { on: root.format-open; clicked => { root.format-open = !root.format-open; } }
                     IconButton { icon: @image-url("icons/emoji.svg"); clicked => { root.emoji-query = ""; emoji-popup.show(); } }
                     IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
                     IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
