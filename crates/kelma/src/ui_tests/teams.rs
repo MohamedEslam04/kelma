@@ -829,15 +829,12 @@ fn the_chat_list_has_a_communities_section_that_opens_the_feed() {
     app.window().set_size(LogicalSize::new(1200., 900.));
     app.set_login_state("ready".into());
     app.show().unwrap();
-    let log = Log::default();
-    let l = log.clone();
-    ts(&app).on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
     assert!(!has(&app, "All Company"), "no community, no section");
     ts(&app).set_communities(ModelRc::new(VecModel::from(vec![community()])));
+    // A click opens the Engage feed (`ui_tests::engage`), not the Teams page.
     tap(&app, "All Company");
-    assert!(ts(&app).get_open());
-    assert_eq!(ts(&app).get_tab(), "communities");
-    assert_eq!(last(&log), "community-open 42");
+    assert!(app.global::<crate::EngageStore>().get_open());
+    assert!(!ts(&app).get_open());
 }
 
 #[test]

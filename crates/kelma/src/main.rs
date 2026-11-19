@@ -402,6 +402,14 @@ fn main() -> anyhow::Result<()> {
     }
     {
         let tx = tx.clone();
+        window.global::<EngageStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::EngageCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Engage(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
         window.global::<DriveStore>().on_command(move |name, arg| {
             if let Some(c) = backend::DriveCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Drive(c));

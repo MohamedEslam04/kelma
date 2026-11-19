@@ -24,6 +24,7 @@ pub(crate) mod activity;
 pub(crate) mod appstore;
 mod channels;
 pub(crate) mod drive;
+mod engage;
 mod find;
 mod lists;
 mod media;
