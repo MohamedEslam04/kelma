@@ -210,6 +210,7 @@ impl Default for GeneralPrefs {
             auto_start: false,
             open_in_background: false,
             keep_running_on_close: true,
+            check_updates: false,
         }
     }
 }
