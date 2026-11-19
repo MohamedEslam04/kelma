@@ -1,0 +1,55 @@
+{
+  "url": "https://trouter.example.invalid/v4/f/AbCd/NGCallManagerWin",
+  "body": {
+    "callNotification": {
+      "clientEndpointCapabilities": 0,
+      "from": {
+        "displayName": "Guest Example",
+        "displayNameSource": "example",
+        "endpointId": "00000000-0000-0000-0000-0000000000e3",
+        "hidden": false,
+        "id": "8:teamsvisitor:00000000000000000000000000000a03",
+        "languageId": "en-US",
+        "participantId": "00000000-0000-0000-0000-0000000000f3",
+        "propertyBag": null,
+        "region": "example",
+        "tenantId": "00000000-0000-0000-0000-0000000000d0"
+      },
+      "to": {
+        "displayName": "Callee Example",
+        "displayNameSource": "example",
+        "endpointId": "00000000-0000-0000-0000-000000000000",
+        "hidden": false,
+        "id": "8:orgid:00000000-0000-0000-0000-0000000000b2",
+        "languageId": null,
+        "participantId": "00000000-0000-0000-0000-0000000000f4",
+        "propertyBag": null,
+        "tenantId": "00000000-0000-0000-0000-0000000000d0"
+      },
+      "links": {
+        "attach": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c3/1/i1/1/attach?i=1",
+        "progress": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c3/1/i1/1/progress?i=1",
+        "reject": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c3/1/i1/1/reject?i=1",
+        "udpTransport": "udp://192.0.2.1:3478/",
+        "mediaAnswer": "cc://ma"
+      },
+      "mediaContent": null,
+      "replaces": null,
+      "udpKey": null
+    },
+    "conversationInvitation": {
+      "conversationController": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-example.conv.skype.com/conv/00000000-0000-0000-0000-0000000000c4?i=1",
+      "isBroadcast": false,
+      "isMultiParty": false
+    },
+    "debugContent": {
+      "ProcessingCallControllerInstance": "https://cc-example-prod-aks.cc.skype.com/",
+      "callId": "00000000-0000-0000-0000-0000000000c3",
+      "callStartTime": "2026-01-01T00:00:00.0000000Z",
+      "ecsEtag": "example",
+      "participantId": "00000000-0000-0000-0000-0000000000f4",
+      "potentialCallNotificationSent": false
+    },
+    "groupContext": null
+  }
+}

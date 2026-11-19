@@ -56,9 +56,48 @@ their meetings. Command: `kelma-cli call join --secs 60 --out <wav> --dump <dir>
    - Teams' SDP names no SSRCs, only `a=x-ssrc-range`, so a remote track can arrive with an unknown kind.
    - Every track must be drained. Otherwise webrtc-rs's queue fills and the packets are dropped.
 
+## Live 2026-11-19: invitation without offer; offerer path unverified until next live test
+
+A 1:1 call from a Teams web guest to the work account reached kelma: the toast showed, and
+Accept failed with "the call carries no media offer". The ring's shape (no values recorded):
+
+- push url `<surl>NGCallManagerWin`
+- `callNotification`
+  - `from` / `to`: `displayName`, `displayNameSource`, `endpointId`, `id`, `participantId`,
+    `tenantId`, `languageId`, `hidden`, `propertyBag`; `from.region`
+  - `links`: `attach`, `progress`, `reject` (on the call controller's `forked` leg),
+    `udpTransport` (`udp://…`) and `mediaAnswer: "cc://ma"`, a placeholder, not a URL
+  - `mediaContent: null`, `udpKey: null`, `replaces: null`, `clientEndpointCapabilities`
+  - no `callModalities` (kelma assumes audio)
+- `conversationInvitation`: `conversationController`, `isMultiParty`, `isBroadcast`
+- `debugContent`: `callId`, `participantId`, `callStartTime`, `ProcessingCallControllerInstance`,
+  `ecsEtag`, `potentialCallNotificationSent`
+- `groupContext: null`; no `groupChat`
+
+What kelma does now (`calling::incoming`, used by the GUI accept and by
+`kelma-cli call listen --accept-audio`):
+
+1. **Fetch the offer** (default). `attach` with `requireMediaContent: true`. The caller's offer is
+   expected in the attach answer's `callInvitation.mediaContent` (with `mediaLegId`), and the
+   answerer path follows: ringing, then `acceptance` with our SDP answer. Evidence: rusty-teams
+   (MIT, `engine.rs` `ring_task`) does exactly this for a ring without an offer, and the mautrix-teams
+   OpenAPI says the web client sends `false` "because the offer came in the ring". Not yet seen live.
+2. **Offer ourselves** (fallback, UNVERIFIED). When the attach answer has no offer either, kelma
+   accepts with its own offer (built as `call dial` builds it, verified live for outgoing calls)
+   and a `mediaAnswer` callback link. The caller's answer is taken from the acknowledgement
+   (`callAcceptanceAcknowledgement.mediaContent`) or from a `call/mediaAnswer/` callback within
+   20 s, applied, and the call is adopted.
+3. `kelma-cli call listen --accept-audio --offer-in-attach` instead sends our offer inside the
+   attach (`attach.mediaContent`, plus a `mediaAnswer` callback link), then accepts with it.
+   UNVERIFIED: no reference sends media with an attach.
+
+`--ring-only` now prints whether the attach answer carried an offer. `KELMA_CALL_DUMP=<dir>` makes
+the GUI write every raw calling push (and each SDP of a call being answered) into `<dir>`, like
+`call listen --dump`. Both hold real ids: keep them out of the repo.
+
 ## Open
 
 - **TURN over TCP/TLS.** webrtc-rs 0.21.1 only relays over UDP. A network that blocks UDP 3478 needs a TLS shim to `turns:<gateway>:443`.
-- **1:1 calls.** Placing, accepting and declining a 1:1 call, and the template key, are not verified. The tenant policy blocks them against the test account.
+- **1:1 calls.** An outgoing 1:1 call to a Teams web guest worked both ways (2026-11-19, `call dial` and the GUI). Accepting a ring without an offer is built (above) but not verified; declining is not verified.
 - **AEC delay.** The stream delay starts at a fixed 40 ms (AEC3 estimates the rest). It is not yet taken from cpal's measured latency.
 - **Disconnected.** One short `Disconnected` → `Connected` blip was seen before leaving.

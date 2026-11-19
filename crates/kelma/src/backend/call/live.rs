@@ -10,7 +10,8 @@
 //! it, invitations and every other push to the ringing flows' subscriptions.
 //!
 //! Audio is the microphone through echo cancellation (AEC3, noise suppression, AGC2), fed by
-//! what the speaker plays, as `call join --mic --speaker` runs it.
+//! what the speaker plays, as `call join --mic --speaker` runs it. `KELMA_CALL_DUMP=<dir>` writes
+//! every raw calling push there.
 
 use super::{
     CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
@@ -28,8 +29,9 @@ use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_
 use calling::signaling::roster::{Presence, roster_snapshot};
 use calling::signaling::{CallSession, Controls, NgcClient, Roster};
 use calling::{CallInvitation, IceServer, Links, Modality, OpusPacket, SdpBlob};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use teams_proto::Client;
 use tokio::sync::{mpsc, watch};
@@ -132,6 +134,7 @@ impl Hub {
 
     /// Sends one push where it belongs.
     pub fn route(&self, p: CallPush) {
+        dump_push(&p);
         match classify(&p.url, &p.body) {
             NgcPush::Invitation(inv) => self
                 .invitations
@@ -217,6 +220,61 @@ impl Hub {
                     .context("This chat has no meeting to join.")
             }
         }
+    }
+}
+
+/// `KELMA_CALL_DUMP=<dir>`: every raw calling push, and each SDP an incoming call exchanges, is
+/// written there as it arrives (as `kelma-cli call listen --dump` does), for protocol debugging.
+/// The files hold real ids, names and addresses: keep the directory out of the repo.
+fn dump_dir() -> Option<&'static Path> {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = PathBuf::from(std::env::var_os("KELMA_CALL_DUMP").filter(|v| !v.is_empty())?);
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => {
+                tracing::info!(dir = %dir.display(), "dumping calling pushes");
+                Some(dir)
+            }
+            Err(e) => {
+                tracing::warn!(%e, "KELMA_CALL_DUMP: cannot create the directory");
+                None
+            }
+        }
+    })
+    .as_deref()
+}
+
+/// `<dir>/<unix ms>-<seq>-<name>.<ext>`: sorts in arrival order.
+fn dump_path(dir: &Path, name: &str, ext: &str) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    dir.join(format!("{ms}-{n:04}-{name}.{ext}"))
+}
+
+/// Writes one push as `{url, body}` JSON into `dir`.
+fn write_push(dir: &Path, p: &CallPush) -> std::io::Result<PathBuf> {
+    let path = dump_path(dir, "push", "json");
+    let doc = serde_json::json!({"url": p.url, "body": p.body});
+    std::fs::write(&path, serde_json::to_vec_pretty(&doc)?)?;
+    Ok(path)
+}
+
+fn dump_push(p: &CallPush) {
+    if let Some(dir) = dump_dir()
+        && let Err(e) = write_push(dir, p)
+    {
+        tracing::warn!(%e, "KELMA_CALL_DUMP: push not written");
+    }
+}
+
+/// Writes one SDP of a call being answered (`KELMA_CALL_DUMP`).
+pub(crate) fn dump_sdp(name: &str, sdp: &str) {
+    if let Some(dir) = dump_dir() {
+        let _ = std::fs::write(dump_path(dir, name, "sdp"), sdp);
     }
 }
 
@@ -872,6 +930,26 @@ impl Call {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_dumped_push_is_its_url_and_body_in_arrival_order() {
+        let dir = std::env::temp_dir().join(format!("kelma-dump-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let push = |n: i64| CallPush {
+            id: n,
+            url: format!("https://trouter.example.invalid/v4/f/x/NGCallManagerWin/{n}"),
+            headers: Default::default(),
+            body: json!({"callNotification": {"mediaContent": null}}),
+        };
+        let first = write_push(&dir, &push(1)).unwrap();
+        let second = write_push(&dir, &push(2)).unwrap();
+        assert!(first < second, "names sort in arrival order");
+        let doc: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&first).unwrap()).unwrap();
+        assert_eq!(doc["url"], push(1).url);
+        assert_eq!(doc["body"]["callNotification"]["mediaContent"], json!(null));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn the_live_driver_is_native() {

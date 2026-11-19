@@ -7,6 +7,7 @@
 //! - [`signaling`]: the NGC conversation service (`epconv`): place, join, and every later step
 //!   POSTed to a `link` the service handed back.
 //! - [`invitation`]: parsing an incoming `callInvitation` push.
+//! - [`incoming`]: answering one, with or without the caller's offer in the ring.
 //! - [`relay`]: TURN credentials from `trap/tokens`.
 //! - [`media`]: one WebRTC peer (webrtc-rs) speaking Opus over ICE/TURN + SRTP.
 //! - [`audio`]: microphone/speaker I/O and the Opus codec.
@@ -20,6 +21,7 @@
 pub mod audio;
 pub mod error;
 pub mod history;
+pub mod incoming;
 pub mod invitation;
 pub mod media;
 pub mod ngc_trouter;

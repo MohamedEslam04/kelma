@@ -209,11 +209,21 @@ pub fn code_join_body(
 
 /// `POST <attach>` of a forked invitation: claims the leg and, through `additionalActions`, joins
 /// its conversation. The answer's `callInvitation.links` holds `acceptance`.
-pub fn attach_body(s: &CallSession, conversation_controller: Option<&str>) -> Value {
+///
+/// `require_media` asks the call controller to put the caller's offer into the answer
+/// (`callInvitation.mediaContent`): set it when the ring came without one. A ring may carry
+/// `mediaContent: null` (seen live 2026-11-19); rusty-teams (MIT, `engine.rs` `ring_task`) then
+/// attaches with `requireMediaContent: true` and reads the offer from the attach answer, and the
+/// mautrix-teams OpenAPI notes the web client sends `false` "because the offer came in the ring".
+pub fn attach_body(
+    s: &CallSession,
+    conversation_controller: Option<&str>,
+    require_media: bool,
+) -> Value {
     let cb = &s.callbacks;
     let mut b = json!({
         "attach": {
-            "requireMediaContent": false,
+            "requireMediaContent": require_media,
             "links": {"end": cb.call("end")},
             "locationContent": null,
             "networkContent": null,
@@ -245,6 +255,21 @@ pub fn attach_body(s: &CallSession, conversation_controller: Option<&str>) -> Va
     b
 }
 
+/// `POST <attach>` carrying OUR offer (`attach.mediaContent`) and a `mediaAnswer` callback link for
+/// the caller's answer: the coordinator's reading of a ring without an offer (live 2026-11-19).
+/// UNVERIFIED: no reference sends media with an attach; the default asks for the caller's offer
+/// instead ([`attach_body`] with `require_media`).
+pub fn attach_offer_body(
+    s: &CallSession,
+    conversation_controller: Option<&str>,
+    offer: &SdpBlob,
+) -> Value {
+    let mut b = attach_body(s, conversation_controller, false);
+    b["attach"]["links"]["mediaAnswer"] = json!(s.callbacks.call("mediaAnswer"));
+    b["attach"]["mediaContent"] = media_content(s, offer, true);
+    b
+}
+
 /// `POST <progress>`: tell the caller we ring.
 pub fn progress_body(s: &CallSession) -> Value {
     json!({"callProgress": {"sender": s.me.wire(), "status": "ringing", "phrase": "ringing"}})
@@ -265,6 +290,18 @@ pub fn acceptance_body(s: &CallSession, modalities: &[Modality], answer: &SdpBlo
         "pstnContent": {"emergencyCallCountry": "", "platformName": "kelma", "publicApiCall": false},
         "callKeepAliveInterval": null,
     }})
+}
+
+/// `POST <acceptance>` when nobody offered media (the offerer path, UNVERIFIED live): the same
+/// acceptance with OUR offer as `mediaContent`, plus a `mediaAnswer` callback link for the
+/// caller's answer (the link shape of a client's own offer, rusty-teams `renegotiation_body`).
+/// The answer comes back inline in the acknowledgement or later on `call/mediaAnswer/`.
+pub fn offer_acceptance_body(s: &CallSession, modalities: &[Modality], offer: &SdpBlob) -> Value {
+    let mut b = acceptance_body(s, modalities, offer);
+    b["callAcceptance"]["links"]["mediaAnswer"] = json!(s.callbacks.call("mediaAnswer"));
+    b["callAcceptance"]["links"]["mediaAcknowledgement"] =
+        json!(s.callbacks.call("mediaAcknowledgement"));
+    b
 }
 
 /// `POST <mediaAnswer>`: our answer to an offer the service made (meeting media, renegotiation).
@@ -371,13 +408,59 @@ pub fn parse_conversation(body: &Value, location: Option<&str>) -> Result<Conver
     })
 }
 
-/// Links from an attach answer (`callInvitation.links`: `acceptance`, `callLeg`, `mediaAnswer`, ...).
-pub fn parse_attach_links(body: &Value) -> Result<Links> {
+/// What an attach answer hands back.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Attached {
+    /// `callInvitation.links`: `acceptance`, `callLeg`, `mediaAnswer`, `progress`, ...
+    pub links: Links,
+    /// The caller's offer (`callInvitation.mediaContent`), present when we asked for it with
+    /// `requireMediaContent`.
+    pub offer: Option<SdpBlob>,
+    /// The offer's `mediaLegId`, which our answer names too.
+    pub media_leg_id: Option<String>,
+}
+
+/// Parses an attach answer.
+pub fn parse_attach(body: &Value) -> Result<Attached> {
     let inv = body
         .get("callInvitation")
         .filter(|v| v.is_object())
         .ok_or_else(|| Error::Protocol("attach answer has no callInvitation".into()))?;
-    Ok(parse_links(&inv["links"]))
+    let media = &inv["mediaContent"];
+    let text = |ptr: &str| {
+        media
+            .pointer(ptr)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    Ok(Attached {
+        links: parse_links(&inv["links"]),
+        offer: text("/blob").map(|blob| SdpBlob {
+            content_type: text("/contentType").unwrap_or_else(|| "application/sdp".into()),
+            blob,
+        }),
+        media_leg_id: text("/mediaLegId"),
+    })
+}
+
+/// Links from an attach answer (`callInvitation.links`: `acceptance`, `callLeg`, `mediaAnswer`, ...).
+pub fn parse_attach_links(body: &Value) -> Result<Links> {
+    parse_attach(body).map(|a| a.links)
+}
+
+/// The SDP an acceptance answer may carry inline (`callAcceptanceAcknowledgement.mediaContent`),
+/// the caller's answer when we accepted with our own offer.
+pub fn parse_acceptance_answer(body: &Value) -> Option<SdpBlob> {
+    let media = &body["callAcceptanceAcknowledgement"]["mediaContent"];
+    let blob = media["blob"].as_str().filter(|s| !s.is_empty())?;
+    Some(SdpBlob {
+        content_type: media["contentType"]
+            .as_str()
+            .unwrap_or("application/sdp")
+            .to_owned(),
+        blob: blob.to_owned(),
+    })
 }
 
 /// Links from an acceptance answer (`callAcceptanceAcknowledgement.links`).

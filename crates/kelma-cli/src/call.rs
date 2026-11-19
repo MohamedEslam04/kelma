@@ -30,6 +30,8 @@
 //!     --accept-audio on the first incoming call: answer with audio, run it like `join` for
 //!                    --secs (default 30; --mic, --speaker, --out, --turn-tls ... apply), hang up
 //!     --accept       the same (video is not supported yet: answers with audio only)
+//!     --offer-in-attach  when the ring carries no offer: send ours with the attach (UNVERIFIED)
+//!                    instead of asking for the caller's (`requireMediaContent`, the default)
 //!     --wait <n>     with an action: wait this long for the first call (default: 120)
 //! kelma-cli call dial <mri|email> [opts]  place a 1:1 audio call; prints ringing/connected/ended
 //!     --secs <n>       stay this long after it connects, then hang up (default: 30)
@@ -48,6 +50,7 @@ use calling::audio::{
     AudioProcessor, Capture, Paced, Playback, ToneSource, WavSink, echo_cancelled,
     spawn_capture_encoder, spawn_decoder_playback,
 };
+use calling::incoming::NoOffer;
 use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::{MediaEvents, MediaOptions, MediaSession, MediaState};
 use calling::ngc_trouter::{NgcEvent, NgcTrouter};
@@ -875,7 +878,8 @@ fn invitation_line(n: u32, inv: &CallInvitation) -> String {
 /// With `--ring-only`, `--decline`, `--accept` or `--accept-audio` it acts on the first invitation
 /// that arrives within `--wait` seconds (default 120): `--ring-only` attaches and reports ringing
 /// and keeps reporting; `--decline` declines; `--accept[-audio]` attaches, rings, answers the
-/// caller's offer with audio and runs the call like `join` for `--secs` (default 30, the audio
+/// caller's offer with audio (or, when the ring has none, fetches it with the attach, else offers
+/// ours; see `calling::incoming`) and runs the call like `join` for `--secs` (default 30, the audio
 /// flags of `join` apply), then hangs up.
 async fn listen(client: &Client, args: &[String]) -> Result<()> {
     let action = listen_action(args)?;
@@ -991,15 +995,23 @@ async fn answer_invitation(
     match action {
         ListenAction::Report => {}
         ListenAction::RingOnly => {
-            let links = if inv.links.get("progress").is_some() {
+            let links = if inv.links.get("acceptance").is_some() {
                 inv.links.clone()
             } else {
-                let l = ngc.attach(&s, inv).await.context("attach")?;
+                // Without an offer in the ring, ask for it: the answer shows whether it comes.
+                let a = ngc
+                    .attach_with(&s, inv, inv.offer.is_none())
+                    .await
+                    .context("attach")?;
                 println!(
-                    "attached; leg links [{}]",
-                    l.0.keys().cloned().collect::<Vec<_>>().join(", ")
+                    "attached; leg links [{}]; offer in the attach answer: {}",
+                    a.links.0.keys().cloned().collect::<Vec<_>>().join(", "),
+                    if a.offer.is_some() { "present" } else { "missing" },
                 );
-                l
+                if let Some(offer) = a.offer.as_ref().and_then(|o| o.decode().ok()) {
+                    dump(opt(args, "--dump"), "caller-offer-attach", &offer);
+                }
+                a.links
             };
             match ngc.send_ringing(&s, &links).await {
                 Ok(()) => println!("ringing reported; not answering (Ctrl-C to stop)"),
@@ -1019,22 +1031,20 @@ async fn answer_invitation(
         }
         ListenAction::Accept => {
             let o = CallOpts::from_args(args, 30)?;
-            let offer = inv
-                .offer
-                .as_ref()
-                .context("the invitation carries no media offer")?
-                .decode()?;
-            dump(o.dump_dir.as_deref(), "caller-offer", &offer);
+            let no_offer = if args.iter().any(|a| a == "--offer-in-attach") {
+                NoOffer::OfferInAttach
+            } else {
+                NoOffer::FetchOffer
+            };
+            if inv.offer.is_none() {
+                println!("the ring carries no offer: {no_offer:?}");
+            }
             let (ice, _turn_shim) = ice_servers(client, &ngc, args).await;
             let media_opts = media_options(args);
             let (media, events) =
                 MediaSession::with_options(ice.clone(), media_opts.clone()).await?;
-            let answer = media.accept_offer(&offer).await?;
-            dump(o.dump_dir.as_deref(), "our-answer", &answer);
-            let links = ngc
-                .accept_invitation(&s, inv, &[Modality::Audio], &SdpBlob::ngc(answer))
-                .await
-                .context("accept")?;
+            let mut s = s;
+            let links = answer_with_pushes(&ngc, &mut s, inv, &media, rx, no_offer, &o).await?;
             println!(
                 "accepted; links [{}]",
                 links.0.keys().cloned().collect::<Vec<_>>().join(", ")
@@ -1056,6 +1066,58 @@ async fn answer_invitation(
         }
     }
     Ok(())
+}
+
+/// Runs [`calling::incoming::answer_invitation`] while forwarding our session's callbacks to it
+/// (the caller's `mediaAnswer` when we offer) and writing every push and SDP to `--dump`.
+async fn answer_with_pushes(
+    ngc: &NgcClient,
+    s: &mut CallSession,
+    inv: &CallInvitation,
+    media: &MediaSession,
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<NgcEvent>,
+    no_offer: NoOffer,
+    o: &CallOpts,
+) -> Result<Links> {
+    let session = s.callbacks.session_id().to_owned();
+    let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+    let dump_dir = o.dump_dir.clone();
+    let observe = move |name: &str, sdp: &str| {
+        println!("{name} ({} bytes)", sdp.len());
+        dump(dump_dir.as_deref(), name, sdp);
+    };
+    let drive =
+        calling::incoming::answer_invitation(ngc, s, inv, media, &mut events, no_offer, &observe);
+    tokio::pin!(drive);
+    let mut n = 0u32;
+    loop {
+        tokio::select! {
+            r = &mut drive => return r.context("answer"),
+            ev = rx.recv() => {
+                let Some(NgcEvent::Push(p)) = ev else { continue };
+                n += 1;
+                dump_push(o.dump_dir.as_deref(), &format!("answer-{n:03}"), &p.url, &p.body);
+                match classify(&p.url, &p.body) {
+                    NgcPush::Call { session_id, event } if session_id == session => {
+                        println!("call callback: {event:?}");
+                        let _ = tx.send(event);
+                    }
+                    NgcPush::Call { event, .. } => println!("other call's callback: {event:?}"),
+                    NgcPush::Invitation(inv) => println!("{}", invitation_line(0, &inv)),
+                    NgcPush::Other { url, .. } => println!("other push: {}", host(&url)),
+                }
+            }
+        }
+    }
+}
+
+fn dump_push(dir: Option<&str>, name: &str, url: &str, body: &Value) {
+    if let Some(d) = dir {
+        let doc = serde_json::json!({"url": url, "body": body});
+        if let Ok(bytes) = serde_json::to_vec_pretty(&doc) {
+            let _ = std::fs::write(format!("{d}/push-{name}.json"), bytes);
+        }
+    }
 }
 
 /// The MRI and name to call: an MRI as given, or the directory entry whose email is `target`.

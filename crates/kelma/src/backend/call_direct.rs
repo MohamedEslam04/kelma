@@ -4,8 +4,10 @@
 //!
 //! Incoming: the manager hands us each `callInvitation`. The toast rings (a generated tone through
 //! cpal) and, when the window is not focused, a desktop notification goes out. Accept builds a
-//! media session from the caller's offer and accepts with our answer (attach first when the
-//! invitation is forked, then ringing, then accept; `NgcClient::accept_invitation`). Decline posts
+//! media session and runs `calling::incoming::answer_invitation`: attach first when the
+//! invitation is forked (asking for the caller's offer when the ring has none, as seen live
+//! 2026-11-19), then ringing, then accept with our answer; or, when no offer comes at all, accept
+//! with our own offer and apply the caller's answer from our `mediaAnswer` callback. Decline posts
 //! to the invitation's rejection link (or to the leg `attach` hands back). The caller cancelling
 //! closes the toast.
 //!
@@ -21,6 +23,7 @@ use super::Engine;
 use super::call::{self, CallKind, CallManager};
 use crate::data::{Pixels, color_for, initials};
 use anyhow::Context;
+use calling::incoming::NoOffer;
 use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::MediaSession;
 use calling::ngc_trouter::CallPush;
@@ -267,6 +270,9 @@ struct IncomingCall {
     state: IncomingState,
     /// `None` for the fake (demo and test) invitation.
     inv: Option<Box<CallInvitation>>,
+    /// Our session (endpoint) id once Accept started: its callbacks go to `events`.
+    session: Option<String>,
+    events: Option<mpsc::UnboundedSender<CallEvent>>,
 }
 
 struct OutgoingCall {
@@ -496,6 +502,8 @@ impl Engine {
             video,
             state: IncomingState::Ringing,
             inv,
+            session: None,
+            events: None,
         });
         c.ringtone = Ringtone::start();
         drop(c);
@@ -631,12 +639,13 @@ impl Engine {
         let m = manager()?;
         let ngc = m.ngc().await?;
         let surl = m.surl().context("the calling connection is down")?;
-        let s = CallSession::for_invitation(&surl, &self.me, &self.my_name, inv);
-        let offer = inv
-            .offer
-            .as_ref()
-            .context("the call carries no media offer")?
-            .decode()?;
+        let mut s = CallSession::for_invitation(&surl, &self.me, &self.my_name, inv);
+        // Callbacks under our session (the caller's media answer) come to this flow.
+        let (tx, mut events) = mpsc::unbounded_channel();
+        if let Some(i) = self.direct().incoming.as_mut().filter(|i| i.id == id) {
+            i.session = Some(s.callbacks.session_id().to_owned());
+            i.events = Some(tx);
+        }
         let ice =
             match calling::relay::resolve_ice_servers(&self.client, &ngc.endpoints().region, None)
                 .await
@@ -647,11 +656,25 @@ impl Engine {
                     vec![]
                 }
             };
-        let (media, events) = MediaSession::new(ice).await?;
-        let answer = media.accept_offer(&offer).await?;
-        let links = ngc
-            .accept_invitation(&s, inv, &[Modality::Audio], &SdpBlob::ngc(answer))
-            .await?;
+        let (media, media_events) = MediaSession::new(ice).await?;
+        let observe = |name: &str, sdp: &str| call::live::dump_sdp(name, sdp);
+        let links = match calling::incoming::answer_invitation(
+            &ngc,
+            &mut s,
+            inv,
+            &media,
+            &mut events,
+            NoOffer::default(),
+            &observe,
+        )
+        .await
+        {
+            Ok(l) => l,
+            Err(e) => {
+                let _ = media.close().await;
+                return Err(e.into());
+            }
+        };
         // The caller may have given up while we answered.
         if self.incoming_event(id, IncomingEvent::Connected) != Some(IncomingState::Connected) {
             let _ = ngc.hang_up(&s, &links).await;
@@ -662,7 +685,7 @@ impl Engine {
             s,
             links,
             media,
-            events,
+            media_events,
             CallKind::Direct { peer_name: name },
         )
     }
@@ -707,6 +730,16 @@ impl Engine {
     pub(crate) fn on_unmatched(self: &Arc<Self>, push: &CallPush) {
         if let NgcPush::Call { session_id, event } = classify(&push.url, &push.body) {
             let c = self.direct();
+            // The call we are answering: it waits for the caller's media answer. An end still
+            // falls through to the cancel check below.
+            if let Some(i) = c
+                .incoming
+                .as_ref()
+                .filter(|i| i.session.as_deref() == Some(session_id.as_str()))
+                && let Some(tx) = &i.events
+            {
+                let _ = tx.send(event.clone());
+            }
             if let Some(o) = c
                 .outgoing
                 .as_ref()

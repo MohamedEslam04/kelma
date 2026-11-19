@@ -1,0 +1,17 @@
+{
+  "callInvitation": {
+    "callModalities": ["Audio"],
+    "links": {
+      "acceptance": "https://cc-example-prod-aks.cc.skype.com/cc/v1/incoming/00000000-0000-0000-0000-0000000000c3/1/t/1/accept?i=1",
+      "callLeg": "https://cc-example-prod-aks.cc.skype.com/cc/v1/incoming/00000000-0000-0000-0000-0000000000c3/1/t/1?i=1",
+      "mediaAnswer": "https://cc-example-prod-aks.cc.skype.com/cc/v1/incoming/00000000-0000-0000-0000-0000000000c3/1/t/1/mediaAnswer?i=1",
+      "newOffer": "https://cc-example-prod-aks.cc.skype.com/cc/v1/incoming/00000000-0000-0000-0000-0000000000c3/1/t/1/newOffer?i=1",
+      "progress": "https://cc-example-prod-aks.cc.skype.com/cc/v1/incoming/00000000-0000-0000-0000-0000000000c3/1/t/1/progress?i=1"
+    },
+    "mediaContent": {
+      "contentType": "application/sdp-ngc-1.0",
+      "blob": "v=0\r\no=- 3 4 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 RTP/SAVP 111\r\na=mid:0\r\n",
+      "mediaLegId": "FEDCBA9876543210FEDCBA9876543210"
+    }
+  }
+}

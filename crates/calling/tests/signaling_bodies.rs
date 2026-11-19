@@ -213,7 +213,7 @@ fn join_meeting_names_the_meeting_and_rings_nobody() {
 #[test]
 fn attach_progress_accept_reject_answer_leave() {
     let s = session();
-    let a = attach_body(&s, Some("https://conv.example/c"));
+    let a = attach_body(&s, Some("https://conv.example/c"), false);
     assert_eq!(a["attach"]["requireMediaContent"], false);
     assert_our_link(&a["attach"]["links"]["end"], "call/end/");
     let join = &a["additionalActions"][0];
@@ -225,7 +225,7 @@ fn attach_progress_accept_reject_answer_leave() {
         &join["input"]["conversationRequest"]["roster"]["rosterUpdate"],
         "conversation/rosterUpdate/",
     );
-    assert!(attach_body(&s, None).get("additionalActions").is_none());
+    assert!(attach_body(&s, None, false).get("additionalActions").is_none());
 
     let p = progress_body(&s);
     assert_eq!(p["callProgress"]["status"], "ringing");

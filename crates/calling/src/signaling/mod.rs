@@ -12,7 +12,7 @@ pub mod endpoints;
 pub mod meeting;
 pub mod roster;
 
-pub use bodies::{Conversation, MeetingInfo};
+pub use bodies::{Attached, Conversation, MeetingInfo};
 pub use callbacks::CallbackLinks;
 pub use controls::{Controls, HandReceipt};
 pub use endpoints::CallingEndpoints;
@@ -342,10 +342,35 @@ impl NgcClient {
     /// Claims a forked incoming call (`attach`) and joins its conversation. Returns the leg's links
     /// (`acceptance`, `callLeg`, `mediaAnswer`, `progress`, ...).
     pub async fn attach(&self, s: &CallSession, inv: &CallInvitation) -> Result<Links> {
+        self.attach_with(s, inv, false).await.map(|a| a.links)
+    }
+
+    /// [`Self::attach`], asking for the caller's offer when `require_media` (a ring that came
+    /// without `mediaContent`). The offer, if the service sends it, is in [`Attached::offer`].
+    pub async fn attach_with(
+        &self,
+        s: &CallSession,
+        inv: &CallInvitation,
+        require_media: bool,
+    ) -> Result<Attached> {
         let url = Self::link(&inv.links, "attach")?;
-        let body = bodies::attach_body(s, invitation::conversation_controller(inv));
+        let body = bodies::attach_body(s, invitation::conversation_controller(inv), require_media);
         let r = self.post("attach", s, url, &body).await?;
-        bodies::parse_attach_links(&r.body)
+        bodies::parse_attach(&r.body)
+    }
+
+    /// [`Self::attach`] with OUR offer in it (see [`bodies::attach_offer_body`]; UNVERIFIED).
+    pub async fn attach_with_offer(
+        &self,
+        s: &CallSession,
+        inv: &CallInvitation,
+        offer: &SdpBlob,
+    ) -> Result<Attached> {
+        let url = Self::link(&inv.links, "attach")?;
+        let body =
+            bodies::attach_offer_body(s, invitation::conversation_controller(inv), offer);
+        let r = self.post("attach", s, url, &body).await?;
+        bodies::parse_attach(&r.body)
     }
 
     /// Tells the caller we ring (`progress`).
@@ -375,6 +400,32 @@ impl NgcClient {
             )
             .await?;
         Ok(bodies::parse_acceptance_links(&r.body))
+    }
+
+    /// Accepts a call that came without an offer, with OUR offer (the offerer path, UNVERIFIED
+    /// live; see [`bodies::offer_acceptance_body`]). Returns the leg's links and the caller's
+    /// answer when the acknowledgement carries it inline; otherwise it arrives on our
+    /// `call/mediaAnswer/` callback.
+    pub async fn accept_with_offer(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        modalities: &[Modality],
+        offer: &SdpBlob,
+    ) -> Result<(Links, Option<SdpBlob>)> {
+        let url = Self::link(links, "acceptance")?;
+        let r = self
+            .post(
+                "accept_with_offer",
+                s,
+                url,
+                &bodies::offer_acceptance_body(s, modalities, offer),
+            )
+            .await?;
+        Ok((
+            bodies::parse_acceptance_links(&r.body),
+            bodies::parse_acceptance_answer(&r.body),
+        ))
     }
 
     /// The whole incoming path: attach when the invitation has no `acceptance` of its own (a
