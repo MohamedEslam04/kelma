@@ -717,7 +717,7 @@ fn toolbar_emoji_picker_and_attach_buttons() {
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 6, "emoji, image, file, more, apps, send");
+    assert_eq!(tb.len(), 7, "emoji, image, file, more, GIF, apps, send");
 
     tb[1].mock_single_click(PointerEventButton::Left);
     tb[2].mock_single_click(PointerEventButton::Left);

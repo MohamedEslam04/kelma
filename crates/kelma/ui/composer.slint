@@ -412,6 +412,9 @@ export component Composer inherits Rectangle {
                     alignment: end;
                     FormatToggle { on: root.format-open; clicked => { root.format-open = !root.format-open; } }
                     IconButton { icon: @image-url("icons/emoji.svg"); clicked => { root.emoji-query = ""; emoji-popup.show(); } }
+                    IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
+                    IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
+                    IconButton { icon: @image-url("icons/more.svg"); clicked => { more-popup.show(); } }
                     IconButton {
                         icon: @image-url("icons/gif.svg");
                         tooltip: @tr("GIF");
@@ -420,9 +423,6 @@ export component Composer inherits Rectangle {
                             gif-popup.show();
                         }
                     }
-                    IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
-                    IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
-                    IconButton { icon: @image-url("icons/more.svg"); clicked => { more-popup.show(); } }
                     ComposerAppsButton { }
                     Rectangle { width: 1px; background: Theme.border; }
                     IconButton {
