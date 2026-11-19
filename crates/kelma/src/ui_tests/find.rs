@@ -192,7 +192,7 @@ fn the_in_and_date_filters_narrow_the_messages() {
     h.app.set_view("search".into());
     click(&labelled(&h.app, "In"));
     assert_eq!(fs(&h.app).get_filter_editor(), "in");
-    h.runner()(Cmd::Find(FindCmd::PickQuery("velents".into())));
+    h.runner()(Cmd::Find(FindCmd::PickQuery("contoso".into())));
     let pick = fs(&h.app)
         .get_picks()
         .iter()
@@ -424,7 +424,7 @@ fn the_shared_tab_lists_files_and_links_filters_them_and_opens_one() {
     };
     let all = names(&h.app);
     assert!(
-        all.iter().any(|n| n == "Safha-archive Saudi voice.m4a"),
+        all.iter().any(|n| n == "archive voice note.m4a"),
         "{all:?}"
     );
     assert!(!find_label(&h.app, "Upload").is_empty());
@@ -438,10 +438,10 @@ fn the_shared_tab_lists_files_and_links_filters_them_and_opens_one() {
 
     // Keyword filter.
     click(&labelled(&h.app, "Recent"));
-    h.runner()(Cmd::Find(FindCmd::SharedKeyword("saudi".into())));
+    h.runner()(Cmd::Find(FindCmd::SharedKeyword("voice".into())));
     assert_eq!(
         names(&h.app),
-        vec!["Safha-archive Saudi voice.m4a".to_string()]
+        vec!["archive voice note.m4a".to_string()]
     );
     h.runner()(Cmd::Find(FindCmd::SharedKeyword("zzz".into())));
     assert!(names(&h.app).is_empty());
