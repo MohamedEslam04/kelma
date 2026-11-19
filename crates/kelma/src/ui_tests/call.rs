@@ -439,3 +439,94 @@ fn a_second_join_while_in_a_call_is_refused() {
     click(&c.button("Dismiss"));
     assert!(!c.shows(crate::backend::call::ALREADY_IN_CALL));
 }
+
+const RECORDING_NOTICE: &str =
+    "Recording has started. By attending this meeting, you consent to being included.";
+
+#[test]
+fn more_starts_and_stops_recording_and_transcription() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("More"));
+    assert!(c.shows("Record and transcribe"));
+    assert!(!c.shows("Recording"), "no recording dot yet");
+
+    click(&c.button("Start recording"));
+    assert_eq!(c.sent().last().unwrap(), "recording start");
+    assert_eq!(c.fake.calls().last().unwrap(), "recording start");
+    // The state comes from the meeting, with Teams' consent notice.
+    c.fake.emit(Event::Recording(true));
+    assert!(c.shows("Recording"), "the recording dot");
+    assert!(c.shows(RECORDING_NOTICE));
+    click(&c.button("Dismiss notice"));
+    assert!(!c.shows(RECORDING_NOTICE));
+    click(&c.button("Stop recording"));
+    assert_eq!(c.fake.calls().last().unwrap(), "recording stop");
+    c.fake.emit(Event::Recording(false));
+    assert!(c.shows("Start recording"));
+
+    click(&c.button("Start transcription"));
+    assert_eq!(c.fake.calls().last().unwrap(), "transcription start");
+    c.fake.emit(Event::Transcribing(true));
+    assert!(c.shows(
+        "Transcription has started. By attending this meeting, you consent to being included."
+    ));
+    click(&c.button("Stop transcription"));
+    assert_eq!(c.fake.calls().last().unwrap(), "transcription stop");
+}
+
+#[test]
+fn a_refused_recording_shows_the_services_reason() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("More"));
+    click(&c.button("Start recording"));
+    let why = "Couldn't start recording: Recording is disabled by policy (403/10501)";
+    c.fake.emit(Event::Error(why.into()));
+    assert!(c.shows(why));
+    assert!(c.shows("Start recording"), "nothing started");
+}
+
+#[test]
+fn live_captions_show_the_speaker_and_the_text_at_the_bottom() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("More"));
+    let switch = c.with_role("Show live captions", AccessibleRole::Switch);
+    assert_eq!(switch.accessible_checked(), Some(false));
+    click(&switch);
+    assert_eq!(c.fake.calls().last().unwrap(), "captions on");
+    assert_eq!(
+        c.with_role("Show live captions", AccessibleRole::Switch)
+            .accessible_checked(),
+        Some(true)
+    );
+    assert!(c.shows("Waiting for someone to speak…"));
+
+    let caption = |id: &str, speaker: &str, text: &str| {
+        Event::Caption(crate::backend::call::Caption {
+            id: id.into(),
+            speaker: speaker.into(),
+            text: text.into(),
+        })
+    };
+    c.fake.emit(caption("u1", "Ada Example", "Hel"));
+    c.fake.emit(caption("u1", "Ada Example", "Hello everyone"));
+    c.fake.emit(caption("u2", "Bo Example", "Hi"));
+    assert!(c.shows("Ada Example: Hello everyone"));
+    assert!(c.shows("Bo Example: Hi"));
+    assert!(!c.shows("Ada Example: Hel"), "replaced in place");
+    assert!(!c.shows("Waiting for someone to speak…"));
+
+    // Turned off (or refused by the service): the strip goes away.
+    c.fake.emit(Event::Captions(false));
+    assert!(!c.shows("Bo Example: Hi"));
+    assert_eq!(
+        c.with_role("Show live captions", AccessibleRole::Switch)
+            .accessible_checked(),
+        Some(false)
+    );
+    click(&c.with_role("Show live captions", AccessibleRole::Switch));
+    click(&c.with_role("Show live captions", AccessibleRole::Switch));
+    assert_eq!(c.fake.calls().last().unwrap(), "captions off");
+}

@@ -6,12 +6,13 @@
 // audio only and has no reaction API (crates/calling/src/signaling/controls.rs).
 import { Theme } from "theme.slint";
 import { Avatar, Icon } from "widgets.slint";
-import { CallStore, CallPerson } from "call_store.slint";
+import { CallStore, CallPerson, CallCaption } from "call_store.slint";
 import { CallButton, CallAction, DeviceSettings } from "call_widgets.slint";
 import { PreJoin } from "call_prejoin.slint";
 import { PeoplePanel, MorePanel } from "call_people.slint";
+import { CaptionStrip } from "call_captions.slint";
 
-export { CallStore, CallPerson }
+export { CallStore, CallPerson, CallCaption }
 
 component TopBar inherits Rectangle {
     callback open-chat();
@@ -142,6 +143,9 @@ component Banner inherits Rectangle {
     in property <string> message;
     in property <color> tone;
     in property <bool> dismissable;
+    // What Dismiss sends, and its name for screen readers.
+    in property <string> dismiss: "dismiss-error";
+    in property <string> dismiss-label: "Dismiss";
     height: 36px;
     background: root.tone;
     accessible-role: text;
@@ -159,8 +163,9 @@ component Banner inherits Rectangle {
         }
         if root.dismissable: CallAction {
             label: "Dismiss";
+            accessible-label: root.dismiss-label;
             y: 1px;
-            clicked => { CallStore.command("dismiss-error", ""); }
+            clicked => { CallStore.command(root.dismiss, ""); }
         }
     }
 }
@@ -268,11 +273,25 @@ component InCall inherits Rectangle {
             tone: #8b2a2d;
             dismissable: true;
         }
+        if CallStore.notice != "": Banner {
+            message: CallStore.notice;
+            tone: #3d3e66;
+            dismissable: true;
+            dismiss: "dismiss-notice";
+            dismiss-label: "Dismiss notice";
+        }
         HorizontalLayout {
             Stage { horizontal-stretch: 1; }
             if CallStore.panel == "people": PeoplePanel { width: 320px; }
             if CallStore.panel == "more": MorePanel { width: 320px; }
         }
+    }
+    // Live captions over the bottom of the stage.
+    if CallStore.captions && CallStore.phase == "connected": CaptionStrip {
+        x: 16px;
+        width: root.width - 32px - (CallStore.panel != "" ? 320px : 0px);
+        y: root.height - self.height - 16px;
+        z: 20;
     }
     // The mic button's dropdown.
     if CallStore.menu == "devices" || CallStore.menu == "card-mic" || CallStore.menu == "card-speaker": Rectangle {
