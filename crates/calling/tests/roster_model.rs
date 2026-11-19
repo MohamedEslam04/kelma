@@ -239,9 +239,16 @@ fn only_sending_cameras_and_shares_are_sources() {
     assert_eq!(org.screen_source(), None, "recvonly is not a share");
     assert_eq!(roster.get(PRESENTER).unwrap().video_source(), None);
 
-    assert_eq!(roster.video_candidates(ME), vec![(ORGANIZER.to_owned(), 202)]);
+    assert_eq!(
+        roster.video_candidates(ME),
+        vec![(ORGANIZER.to_owned(), 202)]
+    );
     assert_eq!(roster.screen_sharer(ME), Some((PRESENTER.to_owned(), 312)));
-    assert_eq!(roster.screen_sharer(PRESENTER), None, "our own share is not shown to us");
+    assert_eq!(
+        roster.screen_sharer(PRESENTER),
+        None,
+        "our own share is not shown to us"
+    );
 }
 
 #[test]

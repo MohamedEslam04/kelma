@@ -362,10 +362,17 @@ fn a_share_takes_the_stage_and_names_who_presents() {
             .expect("the View menu lists Focus on content")
     };
     assert_eq!(focus().accessible_enabled(), Some(false));
-    assert_eq!(focus().accessible_description().unwrap(), "Nobody is sharing");
+    assert_eq!(
+        focus().accessible_description().unwrap(),
+        "Nobody is sharing"
+    );
 
     c.fake.emit(Event::Presenter("Ada Lovelace".into()));
-    assert_eq!(cs(&c.h.app).get_view_mode(), "content", "a share takes the stage");
+    assert_eq!(
+        cs(&c.h.app).get_view_mode(),
+        "content",
+        "a share takes the stage"
+    );
     assert!(c.shows("Ada Lovelace is presenting"));
 
     c.fake.emit(Event::Presenter(String::new()));

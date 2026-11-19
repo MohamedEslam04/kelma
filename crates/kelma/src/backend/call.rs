@@ -30,9 +30,9 @@ pub(crate) mod camera;
 #[cfg(feature = "calls")]
 pub(crate) mod live;
 #[cfg(feature = "calls")]
-pub(crate) mod share;
-#[cfg(feature = "calls")]
 pub(crate) mod remote_video;
+#[cfg(feature = "calls")]
+pub(crate) mod share;
 
 /// What kind of call the window shows.
 #[derive(Debug, Clone, PartialEq, Eq)]

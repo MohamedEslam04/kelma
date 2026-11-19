@@ -1203,8 +1203,14 @@ impl Call {
             if roster_changed {
                 if self.meeting {
                     let spoke = |m: &str| talk.last.get(m).copied().unwrap_or(0);
-                    self.video
-                        .reselect(&self.ngc, &self.s, &self.links, &self.roster, spoke, &sink);
+                    self.video.reselect(
+                        &self.ngc,
+                        &self.s,
+                        &self.links,
+                        &self.roster,
+                        spoke,
+                        &sink,
+                    );
                 }
                 if let Some(name) = self.video.presenter_changed(&self.roster, &me) {
                     sink.send(Event::Presenter(name));
@@ -1381,7 +1387,7 @@ impl Call {
     ) {
         match m {
             CameraMsg::Opened(Ok(capture)) => {
-                match self.camera.start(capture, &self.media, tx, sink) {
+                match self.camera.start(*capture, &self.media, tx, sink) {
                     Ok(()) => self.tell_camera(true, sink).await,
                     Err(e) => {
                         tracing::warn!(%e, "camera not started");

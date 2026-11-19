@@ -32,11 +32,11 @@ use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_OPUS};
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use rtc::rtp_transceiver::rtp_sender::{
     RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters,
     RTCRtpEncodingParameters, RtpCodecKind,
 };
+use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use tokio::sync::{OnceCell, mpsc, watch};
 use webrtc::data_channel::{DataChannel, DataChannelEvent, RTCDataChannelInit};
 use webrtc::media_stream::track_local::TrackLocal;
@@ -768,8 +768,7 @@ async fn mid_of(
         if same(receiver.track()) {
             return t.mid().await.ok().flatten();
         }
-        if by_id.is_none() && !id.is_empty() && receiver.track().track_id().await.to_string() == id
-        {
+        if by_id.is_none() && !id.is_empty() && receiver.track().track_id().await == id {
             by_id = t.mid().await.ok().flatten();
         }
     }

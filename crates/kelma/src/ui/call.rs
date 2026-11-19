@@ -290,7 +290,13 @@ impl UiHandle {
                 VideoSlot::Gallery(i) => GALLERY.with(|g| {
                     use slint::Model;
                     if i < g.row_count() {
-                        g.set_row_data(i, crate::CallVideo { frame: image, shown });
+                        g.set_row_data(
+                            i,
+                            crate::CallVideo {
+                                frame: image,
+                                shown,
+                            },
+                        );
                     }
                 }),
             }
@@ -380,7 +386,11 @@ mod tests {
     fn a_share_that_starts_takes_the_stage_and_one_that_ends_gives_it_back() {
         assert_eq!(view_after_share("gallery", false, true), Some("content"));
         assert_eq!(view_after_share("content", true, false), Some("gallery"));
-        assert_eq!(view_after_share("gallery", true, true), None, "still sharing");
+        assert_eq!(
+            view_after_share("gallery", true, true),
+            None,
+            "still sharing"
+        );
         assert_eq!(
             view_after_share("gallery", true, false),
             None,

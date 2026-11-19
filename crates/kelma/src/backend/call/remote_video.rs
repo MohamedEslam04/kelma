@@ -12,6 +12,7 @@
 //! line only with `KELMA_SCREEN_SHARE=1`. Everything here is UNVERIFIED live.
 
 use super::{EventSink, VideoSlot};
+use calling::Links;
 use calling::media::MediaSession;
 use calling::media::sdp::source_stream_ids;
 use calling::signaling::roster::Roster;
@@ -19,7 +20,6 @@ use calling::signaling::video::{SCREEN_LIMITS, SourceRequest, TILE_LIMITS, plan_
 use calling::signaling::{CallSession, NgcClient};
 use calling::video::receive::{VideoPacket, spawn_decoder};
 use calling::video::{RgbFrame, VideoRole};
-use calling::Links;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -215,8 +215,11 @@ impl RemoteVideo {
         wanted.sort_by_key(|(mri, _)| std::cmp::Reverse(spoke(mri)));
         let next = plan_receive(&self.held, &wanted);
         let mut out = Vec::new();
-        for (i, ((mid, msid), (before, after))) in
-            self.table.iter().zip(self.held.iter().zip(&next)).enumerate()
+        for (i, ((mid, msid), (before, after))) in self
+            .table
+            .iter()
+            .zip(self.held.iter().zip(&next))
+            .enumerate()
         {
             if before == after {
                 continue;
@@ -274,7 +277,9 @@ impl RemoteVideo {
             tokio::spawn(async move {
                 while let Some((url, r, n)) = rx.recv().await {
                     match ngc.apply_channel_parameters(&s, &url, &r, n).await {
-                        Ok(()) => tracing::info!(mid = %r.mid, source = ?r.source, "video subscribed"),
+                        Ok(()) => {
+                            tracing::info!(mid = %r.mid, source = ?r.source, "video subscribed")
+                        }
                         Err(e) => tracing::warn!(%e, mid = %r.mid, "video subscription refused"),
                     }
                 }
@@ -293,7 +298,13 @@ impl RemoteVideo {
         let name = roster
             .screen_sharer(me)
             .and_then(|(mri, _)| roster.get(&mri).map(|p| p.display_name.clone()))
-            .map(|n| if n.is_empty() { "Someone".to_owned() } else { n })
+            .map(|n| {
+                if n.is_empty() {
+                    "Someone".to_owned()
+                } else {
+                    n
+                }
+            })
             .unwrap_or_default();
         (self.presenter.as_ref() != Some(&name)).then(|| {
             self.presenter = Some(name.clone());
@@ -355,18 +366,23 @@ mod tests {
             streams.push(json!({"type": "video", "label": "main-video", "sourceId": c, "direction": "sendonly"}));
         }
         if let Some(s) = screen {
-            streams.push(json!({"type": "applicationsharing-video", "sourceId": s, "direction": "sendrecv"}));
+            streams.push(
+                json!({"type": "applicationsharing-video", "sourceId": s, "direction": "sendrecv"}),
+            );
         }
         json!({"version": 1, "state": "active", "details": {"displayName": name},
                "endpoints": {"ep": {"call": {"mediaStreams": streams}}}})
     }
 
     fn with_lines(slots: usize, share: bool) -> RemoteVideo {
-        let mut v = RemoteVideo::default();
-        v.table = (0..slots).map(|i| (format!("{}", i + 3), 4000 + i as u32)).collect();
-        v.held = vec![None; slots];
-        v.share_line = share.then(|| ("2".to_owned(), 3000));
-        v
+        RemoteVideo {
+            table: (0..slots)
+                .map(|i| (format!("{}", i + 3), 4000 + i as u32))
+                .collect(),
+            held: vec![None; slots],
+            share_line: share.then(|| ("2".to_owned(), 3000)),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -399,7 +415,10 @@ mod tests {
         assert_eq!(first[0].stream_msid, 4000);
         assert_eq!(v.slot_of("8:c"), Some(0));
         assert_eq!(v.slot_of("8:me"), None);
-        assert!(v.plan(&r, "8:me", spoke, |_| {}).is_empty(), "nothing changed");
+        assert!(
+            v.plan(&r, "8:me", spoke, |_| {}).is_empty(),
+            "nothing changed"
+        );
         assert_eq!(cleared, [0, 1]);
     }
 

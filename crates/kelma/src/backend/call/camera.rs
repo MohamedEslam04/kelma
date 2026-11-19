@@ -80,7 +80,7 @@ fn device_for(cameras: &[devices::Camera], chosen: Option<&str>) -> Option<Strin
 /// What the camera tasks report to the call loop.
 pub enum CameraMsg {
     /// The camera opened, or why it did not.
-    Opened(Result<CameraCapture, String>),
+    Opened(Result<Box<CameraCapture>, String>),
     /// The capture ended on its own (the camera was unplugged).
     Ended,
 }
@@ -118,6 +118,7 @@ impl Camera {
                 .flatten();
             let r = open(device.as_deref(), CameraSettings::default())
                 .await
+                .map(Box::new)
                 .map_err(|e| e.to_string());
             let _ = tx.send(CameraMsg::Opened(r));
         });

@@ -93,7 +93,11 @@ fn the_camera_role_takes_the_first_main_video_line() {
 
 #[test]
 fn a_role_named_n_times_keeps_its_first_n_lines() {
-    let roles = [VideoRole::MainVideo, VideoRole::MainVideo, VideoRole::MainVideo];
+    let roles = [
+        VideoRole::MainVideo,
+        VideoRole::MainVideo,
+        VideoRole::MainVideo,
+    ];
     let browser = from_teams_with(FULL_REOFFER, &roles, false).unwrap();
     let kept = sections(&browser);
     let mids: Vec<_> = kept[1..].iter().map(|s| value(s, "mid").unwrap()).collect();

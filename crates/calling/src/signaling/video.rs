@@ -331,7 +331,10 @@ mod tests {
         assert_eq!(c["controlInfo"]["sourceId"], 202);
         assert_eq!(c["controlInfo"]["streamMsid"], 4001);
         assert_eq!(c["controlInfo"]["fmtParams"][0]["max-fs"], 920);
-        assert_eq!(c["controlInfo"]["fmtParams"][0]["profile-level-id"], "64001f");
+        assert_eq!(
+            c["controlInfo"]["fmtParams"][0]["profile-level-id"],
+            "64001f"
+        );
     }
 
     #[test]
@@ -349,7 +352,10 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(inner["controlVideoStreaming"]["controlInfo"]["sourceId"], -1);
+        assert_eq!(
+            inner["controlVideoStreaming"]["controlInfo"]["sourceId"],
+            -1
+        );
     }
 
     #[test]
