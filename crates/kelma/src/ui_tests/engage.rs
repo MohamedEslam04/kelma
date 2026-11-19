@@ -99,7 +99,7 @@ fn tall(e: &EngageHarness) {
 
 fn with_role(app: &AppWindow, label: &str, role: AccessibleRole) -> Vec<ElementHandle> {
     ElementHandle::find_by_accessible_label(app, label)
-        .filter(|e| e.accessible_role() == Some(role.clone()))
+        .filter(|e| e.accessible_role() == Some(role))
         .collect()
 }
 
