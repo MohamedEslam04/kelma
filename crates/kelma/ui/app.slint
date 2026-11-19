@@ -33,6 +33,7 @@ import { RailApps, AppsOverlays } from "apps_rail.slint";
 import { AppsHost } from "apps_host.slint";
 import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
 import { EngageView, EngageStore } from "engage.slint";
+import { ComposerAppsOverlay } from "composer_apps.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -49,6 +50,7 @@ export { EngageStore, EPost } from "engage.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { ComposerApps, CaCommand, CaResult, CaCard } from "composer_apps.slint";
 export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
 export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
 
@@ -1216,6 +1218,12 @@ export component AppWindow inherits Window {
     // The full-size picture viewer (plan chat 9.5), above everything else.
     if root.login-state == "ready" && MediaStore.viewer-open: ImageViewer {
         z: 60;
+        width: root.width;
+        height: root.height;
+    }
+
+    // The composer's apps picker (the "+" button).
+    if root.login-state == "ready": ComposerAppsOverlay {
         width: root.width;
         height: root.height;
     }
