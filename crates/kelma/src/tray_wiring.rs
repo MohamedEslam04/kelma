@@ -31,19 +31,20 @@ pub enum CloseAction {
     Quit,
 }
 
-/// Closing hides to the tray only when the tray icon registered; without it the user would have
-/// no way back to the window.
-pub fn close_action(tray_registered: bool) -> CloseAction {
-    if tray_registered {
+/// Closing hides to the tray only when the tray icon registered (without it the user would have
+/// no way back to the window) and the "keep running on close" setting is on.
+pub fn close_action(tray_registered: bool, keep_running: bool) -> CloseAction {
+    if tray_registered && keep_running {
         CloseAction::HideToTray
     } else {
         CloseAction::Quit
     }
 }
 
-/// `--hidden` starts without a window, but only when the tray can bring it back.
-pub fn start_hidden(hidden_flag: bool, tray_registered: bool) -> bool {
-    hidden_flag && tray_registered
+/// `--hidden` or the "open in background" setting starts without a window, but only when the
+/// tray can bring it back.
+pub fn start_hidden(hidden_flag: bool, open_in_background: bool, tray_registered: bool) -> bool {
+    (hidden_flag || open_in_background) && tray_registered
 }
 
 /// The count the tray shows: Activity items plus unread chats, the same total as the window
@@ -99,10 +100,22 @@ impl<T: PartialEq + Copy> Coalescer<T> {
 
 static TRAY: OnceLock<TrayHandle> = OnceLock::new();
 static MUTED: AtomicBool = AtomicBool::new(false);
+/// Settings > General > "keep running on close" (on until Settings says otherwise).
+static KEEP_RUNNING: AtomicBool = AtomicBool::new(true);
 static LAST_UNREAD: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     static UNREAD: std::cell::RefCell<Coalescer<u32>> = std::cell::RefCell::default();
+}
+
+/// The "keep running on close" setting in force.
+pub fn keep_running() -> bool {
+    KEEP_RUNNING.load(Ordering::Relaxed)
+}
+
+/// The "keep running on close" setting changed (Settings calls this at start and on every change).
+pub fn set_keep_running(on: bool) {
+    KEEP_RUNNING.store(on, Ordering::Relaxed);
 }
 
 /// Whether the tray's Mute notifications is on; desktop notifications are skipped meanwhile.
@@ -191,14 +204,17 @@ pub fn run(window: &AppWindow, hidden_flag: bool) -> Result<(), slint::PlatformE
             if let Some(w) = weak.upgrade() {
                 crate::window_state::save_on_close(&w);
             }
-            if close_action(registered) == CloseAction::Quit {
+            if close_action(registered, keep_running()) == CloseAction::Quit {
                 let _ = slint::quit_event_loop();
             }
             slint::CloseRequestResponse::HideWindow
         }
     });
 
-    if !start_hidden(hidden_flag, registered) {
+    let general = appearance::GeneralPrefs::load();
+    set_keep_running(general.keep_running_on_close);
+    let open_in_background = general.open_in_background;
+    if !start_hidden(hidden_flag, open_in_background, registered) {
         window.show()?;
     }
     // `run_event_loop_until_quit` keeps going with no window shown, which close-to-tray needs.
@@ -213,17 +229,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn close_hides_only_when_the_tray_registered() {
-        assert_eq!(close_action(true), CloseAction::HideToTray);
-        assert_eq!(close_action(false), CloseAction::Quit);
+    fn close_hides_only_when_the_tray_registered_and_keep_running_is_on() {
+        assert_eq!(close_action(true, true), CloseAction::HideToTray);
+        assert_eq!(close_action(false, true), CloseAction::Quit);
+        assert_eq!(close_action(true, false), CloseAction::Quit);
+        assert_eq!(close_action(false, false), CloseAction::Quit);
     }
 
     #[test]
     fn hidden_start_needs_the_tray() {
-        assert!(start_hidden(true, true));
-        assert!(!start_hidden(true, false));
-        assert!(!start_hidden(false, true));
-        assert!(!start_hidden(false, false));
+        assert!(start_hidden(true, false, true));
+        assert!(!start_hidden(true, false, false));
+        assert!(!start_hidden(false, false, true));
+        assert!(!start_hidden(false, false, false));
+    }
+
+    #[test]
+    fn the_open_in_background_setting_starts_hidden_like_the_flag() {
+        assert!(start_hidden(false, true, true));
+        assert!(
+            !start_hidden(false, true, false),
+            "never without a way back"
+        );
     }
 
     #[test]

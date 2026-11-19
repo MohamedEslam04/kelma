@@ -139,7 +139,7 @@ async fn sign_in(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
     cfg.self_mri = Some(me.clone());
     cfg.display_name = Some(my_name.clone());
     paths.save_config(&cfg)?;
-    let store = store::Store::open(&paths.db_path())?;
+    let store = store::Store::open(&paths.db_path_for(&cfg))?;
     ui.ready(data::initials(&my_name));
     Ok(Engine::new(client, store, cfg, ui.clone(), me, my_name))
 }

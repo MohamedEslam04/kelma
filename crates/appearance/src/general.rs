@@ -172,7 +172,7 @@ fn de_time_zone<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Er
 }
 
 /// General preferences kept on this machine.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GeneralPrefs {
     /// BCP-47 tag for the app language. `None` follows the system.
@@ -191,12 +191,27 @@ pub struct GeneralPrefs {
     /// Start hidden, in the tray.
     #[serde(deserialize_with = "lenient")]
     pub open_in_background: bool,
-    /// Closing the window keeps kelma running in the tray.
+    /// Closing the window keeps kelma running in the tray. On by default: that is how kelma
+    /// behaved before the switch existed.
     #[serde(deserialize_with = "lenient")]
     pub keep_running_on_close: bool,
     /// Ask GitHub once per start whether a newer release exists. Off until the user turns it on.
     #[serde(default, deserialize_with = "lenient")]
     pub check_updates: bool,
+}
+
+impl Default for GeneralPrefs {
+    fn default() -> Self {
+        GeneralPrefs {
+            language: None,
+            date_format: DateFormat::default(),
+            time_format: TimeFormat::default(),
+            time_zone: None,
+            auto_start: false,
+            open_in_background: false,
+            keep_running_on_close: true,
+        }
+    }
 }
 
 prefs_file!(GeneralPrefs, FILE_NAME);
@@ -221,7 +236,11 @@ mod tests {
         assert_eq!(d.date_format, DateFormat::Auto);
         assert_eq!(d.time_format, TimeFormat::Auto);
         assert_eq!(d.time_zone, None);
-        assert!(!d.auto_start && !d.open_in_background && !d.keep_running_on_close);
+        assert!(!d.auto_start && !d.open_in_background);
+        assert!(
+            d.keep_running_on_close,
+            "closing keeps running in the tray, as before"
+        );
         assert!(!d.check_updates, "the update check is opt-in");
     }
 

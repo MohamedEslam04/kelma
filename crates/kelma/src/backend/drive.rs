@@ -228,6 +228,28 @@ fn non_empty(s: &str) -> &str {
     if s.is_empty() { "unknown" } else { s }
 }
 
+/// Settings > Files and links: where Word, Excel and PowerPoint files open. The browser and the
+/// desktop app replace kelma's own preview; every other file keeps its preview.
+fn with_files_pref(
+    pref: super::settings::OpenFilesIn,
+    preview: Preview,
+    kind: FileKind,
+) -> Preview {
+    use super::settings::OpenFilesIn;
+    if !matches!(
+        kind,
+        FileKind::Word | FileKind::Excel | FileKind::PowerPoint
+    ) {
+        return preview;
+    }
+    match pref {
+        OpenFilesIn::Kelma => preview,
+        OpenFilesIn::Browser => Preview::Browser,
+        // Downloads the file and hands it to the desktop's default app.
+        OpenFilesIn::Desktop => Preview::Player,
+    }
+}
+
 /// `expirationDateTime` for a link that lasts `days` days.
 fn link_expiry(days: u32, now: i64) -> String {
     calendar::format_iso_ms(now + i64::from(days) * 86_400_000)
@@ -1062,7 +1084,12 @@ impl Engine {
             self.drive_push();
             return self.drive_load(g).await;
         }
-        match Preview::of(&item) {
+        let preview = with_files_pref(
+            super::settings::files_prefs().open_office_in,
+            Preview::of(&item),
+            FileKind::of(&item),
+        );
+        match preview {
             Preview::Image | Preview::Text | Preview::Markdown
                 if item.size <= MAX_PREVIEW_BYTES && !self.drive_offline() =>
             {
@@ -2319,6 +2346,33 @@ fn preview_of(item: &DriveItem, bytes: &[u8]) -> PreviewData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_files_setting_decides_where_office_files_open() {
+        use super::super::settings::OpenFilesIn::*;
+        for kind in [FileKind::Word, FileKind::Excel, FileKind::PowerPoint] {
+            assert_eq!(with_files_pref(Kelma, Preview::Pages, kind), Preview::Pages);
+            assert_eq!(
+                with_files_pref(Browser, Preview::Pages, kind),
+                Preview::Browser
+            );
+            assert_eq!(
+                with_files_pref(Desktop, Preview::Pages, kind),
+                Preview::Player
+            );
+        }
+        // Pictures, text and PDFs are not Office files: the setting leaves them alone.
+        for kind in [FileKind::Image, FileKind::Pdf, FileKind::Text] {
+            assert_eq!(
+                with_files_pref(Desktop, Preview::Image, kind),
+                Preview::Image
+            );
+            assert_eq!(
+                with_files_pref(Browser, Preview::Pages, kind),
+                Preview::Pages
+            );
+        }
+    }
 
     #[test]
     fn path_prefixes_walk_down_a_drive_path() {
