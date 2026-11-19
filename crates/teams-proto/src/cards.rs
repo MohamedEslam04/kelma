@@ -332,7 +332,7 @@ mod tests {
                     {"type": "Column", "items": [{"type": "TextBlock", "text": "🚨", "size": "extraLarge"}]},
                     {"type": "Column", "items": [{"type": "TextBlock", "text": "Docs build failed", "weight": "bolder"}]}
                 ]},
-                {"type": "TextBlock", "text": "Repo **velents-docs** on [main](https://github.com/x) <script>"},
+                {"type": "TextBlock", "text": "Repo **contoso-docs** on [main](https://github.com/x) <script>"},
                 {"type": "FactSet", "facts": [{"title": "Status:", "value": "failed"}]},
                 {"type": "TextBlock", "text": "hidden", "isVisible": false},
                 {"type": "Image", "url": "https://example.com/a.png"}
@@ -344,7 +344,7 @@ mod tests {
             html.contains("<p><b>🚨</b></p><p><b>Docs build failed</b></p>"),
             "{html}"
         );
-        assert!(html.contains("Repo <b>velents-docs</b> on <a href=\"https://github.com/x\">main</a> &lt;script&gt;"), "{html}");
+        assert!(html.contains("Repo <b>contoso-docs</b> on <a href=\"https://github.com/x\">main</a> &lt;script&gt;"), "{html}");
         assert!(html.contains("<p><b>Status:</b> failed</p>"));
         assert!(!html.contains("hidden"));
         assert!(html.contains("<img src=\"https://example.com/a.png\""));

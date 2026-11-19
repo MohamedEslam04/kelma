@@ -446,7 +446,7 @@ mod tests {
             "content": "<p>تمام 👍</p>",
             "properties": {
                 "emotions": "[{\"key\":\"like\",\"users\":[{\"mri\":\"8:orgid:aaa\",\"time\":1,\"value\":\"1\"}]},{\"key\":\"heart\",\"users\":[]}]",
-                "files": "[{\"fileName\":\"velents-docs-demo.mp4\",\"fileType\":\"mp4\",\"objectUrl\":\"https://x.sharepoint.com/a.mp4\",\"fileInfo\":{\"shareUrl\":\"https://x.sharepoint.com/:v:/g/a\"}}]",
+                "files": "[{\"fileName\":\"contoso-docs-demo.mp4\",\"fileType\":\"mp4\",\"objectUrl\":\"https://x.sharepoint.com/a.mp4\",\"fileInfo\":{\"shareUrl\":\"https://x.sharepoint.com/:v:/g/a\"}}]",
                 "edittime": "1795001090000"
             }
         })
@@ -470,7 +470,7 @@ mod tests {
                 users: vec!["8:orgid:aaa".into()]
             }]
         );
-        assert_eq!(m.files[0].name, "velents-docs-demo.mp4");
+        assert_eq!(m.files[0].name, "contoso-docs-demo.mp4");
         assert_eq!(m.files[0].url, "https://x.sharepoint.com/:v:/g/a");
         assert!(m.is_chat_content());
     }

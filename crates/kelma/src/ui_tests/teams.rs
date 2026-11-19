@@ -400,7 +400,7 @@ fn hidden_channels_and_teams_leave_the_sidebar_and_pinned_come_first() {
     assert_eq!(names(&h), ["General", "tech only"]);
     let mut t = team(
         "19:team1@thread.tacv2",
-        "Velents Technologies Inc.",
+        "Contoso Ltd.",
         Role::Owner,
         5,
         vec![
