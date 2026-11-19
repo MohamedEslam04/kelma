@@ -143,7 +143,10 @@ mod tests {
     fn a_message_must_contain_every_term() {
         assert!(matches_all("The Quarterly report", &t("report quarterly")));
         assert!(!matches_all("The Quarterly report", &t("report budget")));
-        assert!(!matches_all("anything", &[]), "an empty query matches nothing");
+        assert!(
+            !matches_all("anything", &[]),
+            "an empty query matches nothing"
+        );
     }
 
     #[test]

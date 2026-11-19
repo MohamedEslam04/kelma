@@ -106,7 +106,11 @@ fn ctrl_alt_e_opens_search_and_a_phrase_from_the_cache_is_found_and_jumped_to() 
     composer(&h.app).mock_single_click(PointerEventButton::Left);
 
     ctrl_alt_e(&h.app);
-    assert_eq!(h.app.get_view(), "search", "Ctrl+Alt+E opens the Search page");
+    assert_eq!(
+        h.app.get_view(),
+        "search",
+        "Ctrl+Alt+E opens the Search page"
+    );
     assert!(!find_label(&h.app, "Search").is_empty());
 
     click(&by_id(&h.app, "SearchView::query-input"));
@@ -120,7 +124,11 @@ fn ctrl_alt_e_opens_search_and_a_phrase_from_the_cache_is_found_and_jumped_to() 
     assert_eq!(rows[0].section, "Messages");
     assert_eq!(rows[0].title, "Sara Hassan");
     assert_eq!(rows[0].subtitle, "Backend Team");
-    assert!(rows[0].snippet_plain.contains("Yes, it was deployed to staging"));
+    assert!(
+        rows[0]
+            .snippet_plain
+            .contains("Yes, it was deployed to staging")
+    );
 
     // Clicking the result lands on that message in its chat.
     click(&items(&h.app, "HitItem")[0]);
@@ -140,9 +148,12 @@ fn search_tabs_split_the_results_and_an_empty_search_says_so() {
     // The chat named "Backend Team" is a group chat, so the All tab has a section for it.
     let rows = hit_rows(&h.app);
     assert!(
-        rows.iter().any(|r| r.kind == "chat" && r.section == "Group chats"),
+        rows.iter()
+            .any(|r| r.kind == "chat" && r.section == "Group chats"),
         "{:?}",
-        rows.iter().map(|r| (r.kind.to_string(), r.section.to_string())).collect::<Vec<_>>()
+        rows.iter()
+            .map(|r| (r.kind.to_string(), r.section.to_string()))
+            .collect::<Vec<_>>()
     );
 
     // The Channels tab shows channels only, without section headers.
@@ -154,10 +165,12 @@ fn search_tabs_split_the_results_and_an_empty_search_says_so() {
     h.runner()(Cmd::Find(FindCmd::Search("zzzzqqqq".into())));
     assert_eq!(fs(&h.app).get_results().row_count(), 0);
     assert!(fs(&h.app).get_searched());
-    assert!(!find_label(&h.app, "We couldn't find any results").is_empty() || {
-        // The text has no accessible label, so look for the Text itself.
-        true
-    });
+    assert!(
+        !find_label(&h.app, "We couldn't find any results").is_empty() || {
+            // The text has no accessible label, so look for the Text itself.
+            true
+        }
+    );
 }
 
 #[test]
@@ -170,7 +183,10 @@ fn the_in_and_date_filters_narrow_the_messages() {
         .into_iter()
         .filter(|r| r.kind == "message")
         .count();
-    assert!(all >= 3, "release appears in the backend chat and the channel: {all}");
+    assert!(
+        all >= 3,
+        "release appears in the backend chat and the channel: {all}"
+    );
 
     // In: the channel.
     h.app.set_view("search".into());
@@ -217,13 +233,21 @@ fn find_in_chat_steps_through_the_matches_and_highlights_each() {
     // Newest match first: 2 of 2, highlighted in the list.
     assert_eq!(fs(&h.app).get_chat_find_count(), 2);
     assert_eq!(fs(&h.app).get_chat_find_index(), 2);
-    assert!(flashed(&h.app)[0].contains("refresh logic"), "{:?}", flashed(&h.app));
+    assert!(
+        flashed(&h.app)[0].contains("refresh logic"),
+        "{:?}",
+        flashed(&h.app)
+    );
     assert!(!find_label(&h.app, "2 of 2").is_empty());
 
     // Up goes to the older match.
     click(&labelled(&h.app, "Previous match"));
     assert_eq!(fs(&h.app).get_chat_find_index(), 1);
-    assert!(flashed(&h.app)[0].contains("Redis memory"), "{:?}", flashed(&h.app));
+    assert!(
+        flashed(&h.app)[0].contains("Redis memory"),
+        "{:?}",
+        flashed(&h.app)
+    );
     // Down comes back, and past the end wraps to the first.
     click(&labelled(&h.app, "Next match"));
     assert_eq!(fs(&h.app).get_chat_find_index(), 2);
@@ -247,7 +271,11 @@ fn find_in_channel_has_its_own_label_and_finds_posts() {
     click(&labelled(&h.app, "Find in channel"));
     h.runner()(Cmd::Find(FindCmd::FindQuery("all-hands".into())));
     assert_eq!(fs(&h.app).get_chat_find_count(), 1);
-    assert!(flashed(&h.app)[0].contains("all-hands"), "{:?}", flashed(&h.app));
+    assert!(
+        flashed(&h.app)[0].contains("all-hands"),
+        "{:?}",
+        flashed(&h.app)
+    );
 }
 
 // ---- 7.4 Quick views -----------------------------------------------------------------
@@ -257,11 +285,21 @@ fn mentions_lists_the_messages_that_mention_me_and_a_click_opens_one() {
     let h = Harness::new();
     let log = wire(&h);
     let me = demo::ME;
-    let mention = |mri: &str| {
-        serde_json::json!({"m": [{"itemid": 0, "mri": mri, "displayName": "x", "mentionType": "person"}]})
-    };
-    put(&h, BACKEND, "m-me", "<p>ping <span itemtype=\"http://schema.skype.com/Mention\" itemid=\"0\">Mohamed</span> about the review</p>", mention(me));
-    put(&h, BACKEND, "m-other", "<p>ping <span itemtype=\"http://schema.skype.com/Mention\" itemid=\"0\">Sara</span> instead</p>", mention("8:orgid:00000000-0000-0000-0000-000000000003"));
+    let mention = |mri: &str| serde_json::json!({"m": [{"itemid": 0, "mri": mri, "displayName": "x", "mentionType": "person"}]});
+    put(
+        &h,
+        BACKEND,
+        "m-me",
+        "<p>ping <span itemtype=\"http://schema.skype.com/Mention\" itemid=\"0\">Mohamed</span> about the review</p>",
+        mention(me),
+    );
+    put(
+        &h,
+        BACKEND,
+        "m-other",
+        "<p>ping <span itemtype=\"http://schema.skype.com/Mention\" itemid=\"0\">Sara</span> instead</p>",
+        mention("8:orgid:00000000-0000-0000-0000-000000000003"),
+    );
     h.select(NOTES);
 
     // The chat list's "…" menu has the Quick views.
@@ -276,7 +314,10 @@ fn mentions_lists_the_messages_that_mention_me_and_a_click_opens_one() {
 
     click(&items(&h.app, "HitItem")[0]);
     assert_eq!(h.app.get_current_id(), BACKEND);
-    assert!(!fs(&h.app).get_quick_open(), "opening a chat closes the quick view");
+    assert!(
+        !fs(&h.app).get_quick_open(),
+        "opening a chat closes the quick view"
+    );
     assert_eq!(log.borrow().last().unwrap().split(' ').next(), Some("open"));
 }
 
@@ -318,7 +359,11 @@ fn followed_threads_list_new_replies_on_top_and_unfollow_removes_one() {
     assert!(!find_label(&h.app, "Unfollow").is_empty());
 
     click(&labelled(&h.app, "Unfollow"));
-    assert_eq!(fs(&h.app).get_quick_rows().row_count(), 1, "the thread is gone from the list");
+    assert_eq!(
+        fs(&h.app).get_quick_rows().row_count(),
+        1,
+        "the thread is gone from the list"
+    );
 }
 
 #[test]
@@ -329,7 +374,13 @@ fn channel_posts_offer_follow_and_unfollow_in_their_menu() {
     let root = h
         .engine
         .test_store(|st| st.messages_before(CHANNEL, None, 1).unwrap().remove(0));
-    h.app.set_menu_msg(h.app.get_messages().iter().find(|m| m.id == root.id.as_str()).unwrap());
+    h.app.set_menu_msg(
+        h.app
+            .get_messages()
+            .iter()
+            .find(|m| m.id == root.id.as_str())
+            .unwrap(),
+    );
     h.app.set_menu_open(true);
     click(&labelled(&h.app, "Follow thread"));
     assert_eq!(
@@ -343,7 +394,10 @@ fn channel_posts_offer_follow_and_unfollow_in_their_menu() {
     h.app.set_menu_open(true);
     assert!(!find_label(&h.app, "Unfollow thread").is_empty());
     click(&labelled(&h.app, "Unfollow thread"));
-    assert_eq!(log.borrow().last().unwrap(), &format!("unfollow-msg {}", root.id));
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        &format!("unfollow-msg {}", root.id)
+    );
     assert!(!fs(&h.app).get_menu_following());
 
     // Chats have no Follow item.
@@ -362,10 +416,17 @@ fn the_shared_tab_lists_files_and_links_filters_them_and_opens_one() {
     click(&labelled(&h.app, "Shared"));
     assert_eq!(fs(&h.app).get_chat_tab(), "shared");
     let names = |app: &AppWindow| -> Vec<String> {
-        fs(app).get_shared().iter().map(|s| s.name.to_string()).collect()
+        fs(app)
+            .get_shared()
+            .iter()
+            .map(|s| s.name.to_string())
+            .collect()
     };
     let all = names(&h.app);
-    assert!(all.iter().any(|n| n == "Safha-archive Saudi voice.m4a"), "{all:?}");
+    assert!(
+        all.iter().any(|n| n == "Safha-archive Saudi voice.m4a"),
+        "{all:?}"
+    );
     assert!(!find_label(&h.app, "Upload").is_empty());
     assert!(!find_label(&h.app, "Filter by keyword").is_empty());
 
@@ -378,7 +439,10 @@ fn the_shared_tab_lists_files_and_links_filters_them_and_opens_one() {
     // Keyword filter.
     click(&labelled(&h.app, "Recent"));
     h.runner()(Cmd::Find(FindCmd::SharedKeyword("saudi".into())));
-    assert_eq!(names(&h.app), vec!["Safha-archive Saudi voice.m4a".to_string()]);
+    assert_eq!(
+        names(&h.app),
+        vec!["Safha-archive Saudi voice.m4a".to_string()]
+    );
     h.runner()(Cmd::Find(FindCmd::SharedKeyword("zzz".into())));
     assert!(names(&h.app).is_empty());
     h.runner()(Cmd::Find(FindCmd::SharedKeyword(String::new())));
@@ -386,7 +450,12 @@ fn the_shared_tab_lists_files_and_links_filters_them_and_opens_one() {
     // A click opens the item (the engine opens the browser for web addresses; the command carries it).
     let row = items(&h.app, "SharedLine")[0].clone();
     click(&row);
-    assert!(log.borrow().last().unwrap().starts_with("shared-open https://"));
+    assert!(
+        log.borrow()
+            .last()
+            .unwrap()
+            .starts_with("shared-open https://")
+    );
 
     // Back to Chat: the header tab, not the rail's Chat button with the same name.
     let tab = find_label(&h.app, "Chat")
@@ -402,11 +471,21 @@ fn a_channel_shows_its_files_tab_and_a_chat_list_of_links() {
     let h = Harness::new();
     wire(&h);
     h.select(CHANNEL);
-    assert!(!find_label(&h.app, "Files").is_empty(), "the channel tab is called Files");
+    assert!(
+        !find_label(&h.app, "Files").is_empty(),
+        "the channel tab is called Files"
+    );
     h.select(BACKEND);
     click(&labelled(&h.app, "Shared"));
-    let links: Vec<_> = fs(&h.app).get_shared().iter().filter(|s| s.kind == "link").collect();
-    assert!(links.iter().any(|s| s.url.contains("github.com")), "the PR link of the chat");
+    let links: Vec<_> = fs(&h.app)
+        .get_shared()
+        .iter()
+        .filter(|s| s.kind == "link")
+        .collect();
+    assert!(
+        links.iter().any(|s| s.url.contains("github.com")),
+        "the PR link of the chat"
+    );
 }
 
 #[test]
@@ -422,7 +501,11 @@ fn the_details_pane_toggles_lists_recent_items_and_see_all_opens_shared() {
     assert!(fs(&h.app).get_recent().row_count() <= 5);
 
     click(&labelled(&h.app, "See all"));
-    assert_eq!(fs(&h.app).get_chat_tab(), "shared", "See all goes to the Shared tab");
+    assert_eq!(
+        fs(&h.app).get_chat_tab(),
+        "shared",
+        "See all goes to the Shared tab"
+    );
 
     // The pane closes with its button and with the header toggle.
     click(&labelled(&h.app, "Close details"));

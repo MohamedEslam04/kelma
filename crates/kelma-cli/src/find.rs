@@ -121,7 +121,10 @@ pub async fn run(client: &Client, cfg: &session::Config, args: &[String]) -> Res
                 reqwest::Method::PUT
             };
             let (status, text) = client.request(m, &url, Some(&body), &[]).await?;
-            println!("{method} follow value={value}: status {status} ({} bytes)", text.len());
+            println!(
+                "{method} follow value={value}: status {status} ({} bytes)",
+                text.len()
+            );
         }
         // `find props <root id>`: emotions of a sandbox channel post (keys, values, user counts).
         Some("props") => {
@@ -130,11 +133,11 @@ pub async fn run(client: &Client, cfg: &session::Config, args: &[String]) -> Res
             )?)?)?;
             let chan = sb["channels"]["tests"].as_str().unwrap_or_default();
             let root = args.get(1).map(String::as_str).unwrap_or_default();
-            let url = feed_url(&client.chat_service().await, chan, "10").replace(
-                "/messages?",
-                "/messages?",
-            );
-            let v = client.json("props", reqwest::Method::GET, &url, None).await?;
+            let url = feed_url(&client.chat_service().await, chan, "10")
+                .replace("/messages?", "/messages?");
+            let v = client
+                .json("props", reqwest::Method::GET, &url, None)
+                .await?;
             for m in v["messages"].as_array().into_iter().flatten() {
                 if m["id"].as_str() != Some(root) {
                     continue;
@@ -216,7 +219,9 @@ pub async fn run(client: &Client, cfg: &session::Config, args: &[String]) -> Res
             let conv = args.get(1).map(String::as_str).unwrap_or("48:threads");
             let n = args.get(2).map(String::as_str).unwrap_or("5");
             let url = feed_url(&client.chat_service().await, conv, n);
-            let v = client.json("feed", reqwest::Method::GET, &url, None).await?;
+            let v = client
+                .json("feed", reqwest::Method::GET, &url, None)
+                .await?;
             shape(&v, 0, "root");
             // Enum-like fields of activity rows (no names or content).
             for m in v["messages"].as_array().into_iter().flatten() {

@@ -166,10 +166,12 @@ pub fn parse_messages(v: &Value) -> MessagePage {
         .filter_map(|r| {
             let src = r.get("Source")?;
             let ext = |k: &str| {
-                src.pointer(&format!("/Extensions/SkypeSpaces_ConversationPost_Extension_{k}"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string()
+                src.pointer(&format!(
+                    "/Extensions/SkypeSpaces_ConversationPost_Extension_{k}"
+                ))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
             };
             let (conv, _) = split_thread(&s(src, "ClientConversationId"));
             let conversation_id = if conv.is_empty() {
@@ -382,7 +384,9 @@ mod tests {
     #[test]
     fn channel_posts_and_replies_are_told_apart_by_the_send_time() {
         let chan = "19:chan@thread.tacv2";
-        let root = parse_iso_ms("2026-11-18T10:00:00.500Z").unwrap().to_string();
+        let root = parse_iso_ms("2026-11-18T10:00:00.500Z")
+            .unwrap()
+            .to_string();
         let root = root.as_str();
         let mut post = result(&format!("{chan};messageid={root}"), root, "p");
         let mut reply = result(&format!("{chan};messageid={root}"), root, "r");
@@ -393,7 +397,10 @@ mod tests {
         }
         let v = json!({"EntitySets": [{"ResultSets": [{"Results": [post, reply]}]}]});
         let hits = parse_messages(&v).hits;
-        assert_eq!((hits[0].message_id.as_str(), hits[0].root_id.as_str()), (root, ""));
+        assert_eq!(
+            (hits[0].message_id.as_str(), hits[0].root_id.as_str()),
+            (root, "")
+        );
         assert_eq!(hits[1].root_id, root);
         assert_eq!(hits[1].message_id, hits[1].time_ms.to_string());
     }

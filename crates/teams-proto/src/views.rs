@@ -129,28 +129,27 @@ pub fn parse_shared(v: &Value) -> Vec<SharedItem> {
         .into_iter()
         .flatten()
         .filter_map(|i| {
-            let (kind, name, url, extension) = if let Some(f) = i.get("FileData").filter(|f| f.is_object())
-            {
-                let url = [text(f, "WebUrl"), text(f, "FileUrl")]
-                    .into_iter()
-                    .find(|u| !u.is_empty())?;
-                (
-                    SharedKind::File,
-                    text(f, "FileName"),
-                    url,
-                    text(f, "FileExtension").trim_start_matches('.').to_string(),
-                )
-            } else if let Some(l) = i.get("WeblinkData").filter(|l| l.is_object()) {
-                let url = text(l, "WebUrl");
-                if url.is_empty() {
-                    return None;
-                }
-                let title = text(l, "Title");
-                let name = if title.is_empty() { url.clone() } else { title };
-                (SharedKind::Link, name, url, String::new())
-            } else {
-                return None;
-            };
+            let (kind, name, url, extension) =
+                if let Some(f) = i.get("FileData").filter(|f| f.is_object()) {
+                    let url = [text(f, "WebUrl"), text(f, "FileUrl")]
+                        .into_iter()
+                        .find(|u| !u.is_empty())?;
+                    (
+                        SharedKind::File,
+                        text(f, "FileName"),
+                        url,
+                        text(f, "FileExtension").trim_start_matches('.').to_string(),
+                    )
+                } else {
+                    let l = i.get("WeblinkData").filter(|l| l.is_object())?;
+                    let url = text(l, "WebUrl");
+                    if url.is_empty() {
+                        return None;
+                    }
+                    let title = text(l, "Title");
+                    let name = if title.is_empty() { url.clone() } else { title };
+                    (SharedKind::Link, name, url, String::new())
+                };
             Some(SharedItem {
                 kind,
                 name,
@@ -220,7 +219,11 @@ impl Client {
     }
 
     /// The files and links shared in a chat or channel, newest first (first page of 50).
-    pub async fn shared_items(&self, self_mri: &str, conversation: &str) -> Result<Vec<SharedItem>> {
+    pub async fn shared_items(
+        &self,
+        self_mri: &str,
+        conversation: &str,
+    ) -> Result<Vec<SharedItem>> {
         let tenant = self.tenant_id().await?;
         let anchor = anchor_mailbox(self_mri, &tenant)
             .ok_or_else(|| Error::Protocol(format!("{self_mri} is not an orgid MRI")))?;
@@ -350,9 +353,15 @@ mod tests {
         let items = parse_shared(&v);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].kind, SharedKind::Link);
-        assert_eq!(items[0].name, "https://example.com/a", "a link without a title shows its address");
+        assert_eq!(
+            items[0].name, "https://example.com/a",
+            "a link without a title shows its address"
+        );
         assert_eq!(items[1].kind, SharedKind::File);
-        assert_eq!((items[1].name.as_str(), items[1].extension.as_str()), ("plan.pdf", "pdf"));
+        assert_eq!(
+            (items[1].name.as_str(), items[1].extension.as_str()),
+            ("plan.pdf", "pdf")
+        );
         assert_eq!(items[1].shared_by, "Sara");
         assert!(items[0].shared_ms > items[1].shared_ms);
     }

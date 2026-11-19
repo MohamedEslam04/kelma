@@ -107,8 +107,7 @@ fn items_from_cache(rows: &[MessageRow]) -> Vec<Item> {
     let mut out: Vec<Item> = vec![];
     let mut seen: HashSet<String> = HashSet::new();
     for m in rows {
-        let props: serde_json::Value =
-            serde_json::from_str(&m.reactions_json).unwrap_or_default();
+        let props: serde_json::Value = serde_json::from_str(&m.reactions_json).unwrap_or_default();
         for f in props
             .get("f")
             .and_then(|f| f.as_array())
@@ -174,10 +173,7 @@ fn visible(items: &[Item], filter: &str, keyword: &str) -> Vec<Item> {
             "links" => i.kind == SharedKind::Link,
             _ => true,
         })
-        .filter(|i| {
-            terms.is_empty()
-                || matches_all(&format!("{} {}", i.name, i.shared_by), &terms)
-        })
+        .filter(|i| terms.is_empty() || matches_all(&format!("{} {}", i.name, i.shared_by), &terms))
         .cloned()
         .collect()
 }
@@ -276,10 +272,17 @@ impl Engine {
             f.shared.seq += 1;
             f.shared.conv = conv.clone();
             f.shared.loading = !self.offline.load(Ordering::Relaxed);
-            let kind = self.store.lock().unwrap().conversation(&conv).ok().flatten();
+            let kind = self
+                .store
+                .lock()
+                .unwrap()
+                .conversation(&conv)
+                .ok()
+                .flatten();
             (
                 f.shared.seq,
-                kind.is_some_and(|c| c.kind == ConvKind::Channel) || conv.ends_with("@thread.tacv2"),
+                kind.is_some_and(|c| c.kind == ConvKind::Channel)
+                    || conv.ends_with("@thread.tacv2"),
             )
         };
         let rows = self
@@ -398,14 +401,32 @@ mod tests {
     #[test]
     fn cached_messages_give_files_and_links_newest_first() {
         let rows = vec![
-            msg("1", 100, "<p>see <a href=\"https://example.com/a?x=1&amp;y=2\">the doc</a></p>", "[]"),
-            msg("2", 200, "<p>file</p>", r#"[{"name":"plan.pdf","url":"https://x/plan.pdf","type":"pdf"}]"#),
-            msg("3", 300, "<p>again <a href=\"https://example.com/a?x=1&amp;y=2\">dup</a></p>", "[]"),
+            msg(
+                "1",
+                100,
+                "<p>see <a href=\"https://example.com/a?x=1&amp;y=2\">the doc</a></p>",
+                "[]",
+            ),
+            msg(
+                "2",
+                200,
+                "<p>file</p>",
+                r#"[{"name":"plan.pdf","url":"https://x/plan.pdf","type":"pdf"}]"#,
+            ),
+            msg(
+                "3",
+                300,
+                "<p>again <a href=\"https://example.com/a?x=1&amp;y=2\">dup</a></p>",
+                "[]",
+            ),
         ];
         let items = items_from_cache(&rows);
         assert_eq!(items.len(), 2, "the repeated link counts once");
         assert_eq!(items[0].kind, SharedKind::File);
-        assert_eq!((items[0].name.as_str(), items[0].ext.as_str()), ("plan.pdf", "PDF"));
+        assert_eq!(
+            (items[0].name.as_str(), items[0].ext.as_str()),
+            ("plan.pdf", "PDF")
+        );
         assert_eq!(items[1].kind, SharedKind::Link);
         assert_eq!(items[1].url, "https://example.com/a?x=1&y=2");
         assert_eq!(items[1].name, "the doc");
@@ -414,29 +435,62 @@ mod tests {
 
     #[test]
     fn only_web_links_count() {
-        assert!(links_of("<a href=\"mailto:a@b.c\">mail</a><a href=\"kelma-media:1\">x</a>").is_empty());
-        assert_eq!(links_of("<a href=\"https://e.com\"></a>"), [("https://e.com".to_string(), String::new())]);
+        assert!(
+            links_of("<a href=\"mailto:a@b.c\">mail</a><a href=\"kelma-media:1\">x</a>").is_empty()
+        );
+        assert_eq!(
+            links_of("<a href=\"https://e.com\"></a>"),
+            [("https://e.com".to_string(), String::new())]
+        );
     }
 
     #[test]
     fn filters_and_keyword_narrow_the_list() {
         let items = vec![
-            Item { kind: SharedKind::File, name: "Budget.xlsx".into(), ext: "XLSX".into(), shared_by: "Sara".into(), shared_ms: 3, url: "u1".into() },
-            Item { kind: SharedKind::Link, name: "Wiki".into(), ext: String::new(), shared_by: "Omar".into(), shared_ms: 2, url: "u2".into() },
+            Item {
+                kind: SharedKind::File,
+                name: "Budget.xlsx".into(),
+                ext: "XLSX".into(),
+                shared_by: "Sara".into(),
+                shared_ms: 3,
+                url: "u1".into(),
+            },
+            Item {
+                kind: SharedKind::Link,
+                name: "Wiki".into(),
+                ext: String::new(),
+                shared_by: "Omar".into(),
+                shared_ms: 2,
+                url: "u2".into(),
+            },
         ];
         assert_eq!(visible(&items, "recent", "").len(), 2);
         assert_eq!(visible(&items, "files", "")[0].name, "Budget.xlsx");
         assert_eq!(visible(&items, "links", "")[0].name, "Wiki");
-        assert_eq!(visible(&items, "recent", "omar").len(), 1, "the keyword also matches who shared");
+        assert_eq!(
+            visible(&items, "recent", "omar").len(),
+            1,
+            "the keyword also matches who shared"
+        );
         assert!(visible(&items, "files", "wiki").is_empty());
     }
 
     #[test]
     fn merge_keeps_one_item_per_address() {
-        let a = |url: &str, ms| Item { kind: SharedKind::Link, name: url.into(), ext: String::new(), shared_by: String::new(), shared_ms: ms, url: url.into() };
+        let a = |url: &str, ms| Item {
+            kind: SharedKind::Link,
+            name: url.into(),
+            ext: String::new(),
+            shared_by: String::new(),
+            shared_ms: ms,
+            url: url.into(),
+        };
         let mut items = vec![a("u1", 1)];
         merge_items(&mut items, vec![a("u1", 9), a("u2", 5)]);
-        assert_eq!(items.iter().map(|i| i.url.as_str()).collect::<Vec<_>>(), ["u2", "u1"]);
+        assert_eq!(
+            items.iter().map(|i| i.url.as_str()).collect::<Vec<_>>(),
+            ["u2", "u1"]
+        );
     }
 
     #[test]

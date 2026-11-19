@@ -274,7 +274,12 @@ fn rows_for(tab: Tab, filtered: bool, hits: &[Hit]) -> Vec<(Hit, String)> {
             None if filtered && kind != "message" => continue,
             None => (cap, true),
         };
-        for (i, h) in hits.iter().filter(|h| h.kind == kind).take(take).enumerate() {
+        for (i, h) in hits
+            .iter()
+            .filter(|h| h.kind == kind)
+            .take(take)
+            .enumerate()
+        {
             out.push((
                 h.clone(),
                 if section && i == 0 {
@@ -642,32 +647,37 @@ impl Engine {
             }
             if let Some(p) = people {
                 f.hits.retain(|h| h.kind != "person");
-                f.hits.extend(p.into_iter().take(10).map(|p| Hit {
-                    kind: "person",
-                    mri: p.mri,
-                    name: p.display_name,
-                    place: [p.job_title, p.email]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                    ..Default::default()
+                f.hits.extend(p.into_iter().take(10).map(|p| {
+                    Hit {
+                        kind: "person",
+                        mri: p.mri,
+                        name: p.display_name,
+                        place: [p.job_title, p.email]
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>()
+                            .join(" · "),
+                        ..Default::default()
+                    }
                 }));
             }
             if let Some(items) = files {
                 f.hits.retain(|h| h.kind != "file");
-                f.hits.extend(items.into_iter().filter(|i| !i.is_folder).map(|i| Hit {
-                    kind: "file",
-                    name: i.name,
-                    place: [i.modified_by, i.parent_path]
-                        .into_iter()
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                    time_ms: i.modified_ms,
-                    url: i.web_url,
-                    ..Default::default()
-                }));
+                f.hits
+                    .extend(items.into_iter().filter(|i| !i.is_folder).map(|i| {
+                        Hit {
+                            kind: "file",
+                            name: i.name,
+                            place: [i.modified_by, i.parent_path]
+                                .into_iter()
+                                .filter(|s| !s.is_empty())
+                                .collect::<Vec<_>>()
+                                .join(" · "),
+                            time_ms: i.modified_ms,
+                            url: i.web_url,
+                            ..Default::default()
+                        }
+                    }));
             }
         }
         self.push_search(false);
@@ -768,11 +778,8 @@ impl Engine {
                 Ok(page) => {
                     f.msg_from += PAGE;
                     f.more = page.more;
-                    let hits: Vec<Hit> = page
-                        .hits
-                        .iter()
-                        .map(|h| self.hit_from_message(h))
-                        .collect();
+                    let hits: Vec<Hit> =
+                        page.hits.iter().map(|h| self.hit_from_message(h)).collect();
                     merge_messages(&mut f.hits, hits);
                 }
                 Err(err) => {
@@ -990,7 +997,9 @@ impl Engine {
                 };
                 match target {
                     Some(t) => self.flash_row(&t),
-                    None => self.ui.banner("That reply is no longer in the thread".into()),
+                    None => self
+                        .ui
+                        .banner("That reply is no longer in the thread".into()),
                 }
                 Ok(())
             }
@@ -1033,11 +1042,7 @@ impl Engine {
                 .store
                 .lock()
                 .unwrap()
-                .messages_containing(
-                    Some(&conv),
-                    longest(&terms).unwrap_or_default(),
-                    CACHE_SCAN,
-                )
+                .messages_containing(Some(&conv), longest(&terms).unwrap_or_default(), CACHE_SCAN)
                 .unwrap_or_default();
             rows.iter()
                 .filter(|m| !m.message_type.starts_with("Control/"))
@@ -1115,11 +1120,17 @@ impl Engine {
             self.ui
                 .chat_find(true, n, if n == 0 { 0 } else { f.find.index + 1 });
             let reached = jump || n == 1;
-            f.find.matches.get(f.find.index).cloned().filter(|_| reached)
+            f.find
+                .matches
+                .get(f.find.index)
+                .cloned()
+                .filter(|_| reached)
         };
         match target {
             Some(m) => {
-                let _ = self.land_on(&m.id, m.time_ms, m.root.as_deref(), false).await;
+                let _ = self
+                    .land_on(&m.id, m.time_ms, m.root.as_deref(), false)
+                    .await;
             }
             None if jump => self.clear_flash(),
             None => {}
@@ -1175,7 +1186,11 @@ impl Engine {
     fn push_quick(self: &Arc<Self>, loading: bool) {
         let (kind, hits, more) = {
             let f = self.find.lock().unwrap();
-            (f.quick.unwrap_or("mentions"), f.quick_hits.clone(), f.quick_more)
+            (
+                f.quick.unwrap_or("mentions"),
+                f.quick_hits.clone(),
+                f.quick_more,
+            )
         };
         let rows = hits
             .iter()
@@ -1400,7 +1415,11 @@ impl Engine {
             place: self.location_of(
                 &t.conversation_id,
                 t.topic.rsplit(" > ").next().unwrap_or(""),
-                t.topic.split(" > ").next().filter(|_| t.topic.contains(" > ")).unwrap_or(""),
+                t.topic
+                    .split(" > ")
+                    .next()
+                    .filter(|_| t.topic.contains(" > "))
+                    .unwrap_or(""),
             ),
             text,
             ..Default::default()
@@ -1418,7 +1437,11 @@ impl Engine {
             .cloned();
         if let Some(h) = hit {
             self.apply_follow(&h.conv, &h.root, false).await?;
-            self.find.lock().unwrap().quick_hits.retain(|x| x.id() != id);
+            self.find
+                .lock()
+                .unwrap()
+                .quick_hits
+                .retain(|x| x.id() != id);
             self.push_quick(false);
         }
         Ok(())
@@ -1544,22 +1567,37 @@ mod tests {
             FindCmd::parse("search", "hello"),
             Some(FindCmd::Search("hello".into()))
         );
-        assert_eq!(FindCmd::parse("details", "open"), Some(FindCmd::Details(true)));
-        assert_eq!(FindCmd::parse("details", "close"), Some(FindCmd::Details(false)));
+        assert_eq!(
+            FindCmd::parse("details", "open"),
+            Some(FindCmd::Details(true))
+        );
+        assert_eq!(
+            FindCmd::parse("details", "close"),
+            Some(FindCmd::Details(false))
+        );
         assert_eq!(FindCmd::parse("find-next", ""), Some(FindCmd::FindNext));
         assert_eq!(FindCmd::parse("nope", ""), None);
     }
 
     #[test]
     fn all_tab_shows_the_top_of_each_category_with_headers() {
-        let mut hits: Vec<Hit> = (0..8).map(|i| hit("message", "c", &i.to_string(), i)).collect();
+        let mut hits: Vec<Hit> = (0..8)
+            .map(|i| hit("message", "c", &i.to_string(), i))
+            .collect();
         hits.extend((0..5).map(|i| hit("file", "", &i.to_string(), i)));
         hits.push(hit("person", "", "", 0));
         let rows = rows_for(Tab::All, false, &hits);
         let kinds: Vec<_> = rows.iter().map(|(h, _)| h.kind).collect();
-        assert_eq!(kinds.iter().filter(|k| **k == "message").count(), ALL_MESSAGES);
+        assert_eq!(
+            kinds.iter().filter(|k| **k == "message").count(),
+            ALL_MESSAGES
+        );
         assert_eq!(kinds.iter().filter(|k| **k == "file").count(), ALL_OTHER);
-        let sections: Vec<_> = rows.iter().map(|(_, s)| s.as_str()).filter(|s| !s.is_empty()).collect();
+        let sections: Vec<_> = rows
+            .iter()
+            .map(|(_, s)| s.as_str())
+            .filter(|s| !s.is_empty())
+            .collect();
         assert_eq!(sections, ["Messages", "Files", "People"]);
     }
 
