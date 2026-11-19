@@ -105,7 +105,7 @@ component PersonLine inherits Rectangle {
                 accessible-role: button;
                 accessible-label: @tr("Move up");
                 // The up arrow is the down chevron turned over.
-                Icon { source: @image-url("icons/chevron-down.svg"); width: 16px; height: 16px; rotation-angle: 180deg; tint: up-touch.has-hover ? Theme.accent : Theme.fg-muted; }
+                Icon { source: @image-url("icons/chevron-down.svg"); width: 16px; height: 16px; transform-rotation: 180deg; tint: up-touch.has-hover ? Theme.accent : Theme.fg-muted; }
                 up-touch := TouchArea { mouse-cursor: pointer; clicked => { root.up(); } }
             }
             if root.reorder && line-touch.has-hover: IconButton {

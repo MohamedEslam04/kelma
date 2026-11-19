@@ -67,7 +67,7 @@ impl CallsCmd {
 const FILTERS: [&str; 5] = ["all", "missed", "incoming", "outgoing", "voicemail"];
 
 /// A row of the history.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct HistoryRow {
     pub id: String,
     /// The other party; empty for a group call (no Call back).
@@ -90,7 +90,7 @@ pub struct HistoryRow {
 }
 
 /// A person in the search results or on the speed dial.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct PersonRow {
     pub mri: String,
     pub name: String,
@@ -115,7 +115,7 @@ pub struct VoicemailRow {
 }
 
 /// Everything the page shows.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct CallsData {
     pub filter: String,
     pub history: Vec<HistoryRow>,
