@@ -93,14 +93,14 @@ component EventSummary inherits VerticalLayout {
     HorizontalLayout {
         spacing: 8px;
         Icon { source: @image-url("icons/calendar.svg"); width: 16px; height: 16px; y: 2px; }
-        Text { text: CalStore.peek.when; color: Theme.fg; font-size: 13px; wrap: word-wrap; horizontal-stretch: 1; }
+        Text { text: CalStore.peek.when; color: Theme.fg; font-size: 13px * Theme.font-scale; wrap: word-wrap; horizontal-stretch: 1; }
         if CalStore.peek.recurring: Icon { source: @image-url("icons/repeat.svg"); width: 16px; height: 16px; y: 2px; tint: Theme.fg-muted; }
         if CalStore.peek.private: Icon { source: @image-url("icons/lock.svg"); width: 16px; height: 16px; y: 2px; tint: Theme.fg-muted; }
     }
-    if CalStore.peek.location != "": Text { text: "Location: " + CalStore.peek.location; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
-    if CalStore.peek.organizer != "": Text { text: CalStore.peek.organizer; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
-    if CalStore.peek.counts != "": Text { text: CalStore.peek.counts; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
-    if CalStore.peek.cancelled: Text { text: "This event was cancelled."; color: #ff8a8d; font-size: 13px; }
+    if CalStore.peek.location != "": Text { text: "Location: " + CalStore.peek.location; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
+    if CalStore.peek.organizer != "": Text { text: CalStore.peek.organizer; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
+    if CalStore.peek.counts != "": Text { text: CalStore.peek.counts; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
+    if CalStore.peek.cancelled: Text { text: "This event was cancelled."; color: #ff8a8d; font-size: 13px * Theme.font-scale; }
 }
 
 export component EventPeek inherits CalCard {
@@ -116,7 +116,7 @@ export component EventPeek inherits CalCard {
         alignment: start;
         HorizontalLayout {
             spacing: 4px;
-            Text { text: CalStore.peek.title; color: Theme.fg; font-size: 16px; font-weight: 700; wrap: word-wrap; horizontal-stretch: 1; accessible-role: text; }
+            Text { text: CalStore.peek.title; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; wrap: word-wrap; horizontal-stretch: 1; accessible-role: text; }
             IconButton { icon: @image-url("icons/close.svg"); size: 26px; tooltip: "Close"; clicked => { CalStore.close-all(); } }
         }
         EventSummary { }
@@ -133,7 +133,7 @@ export component EventFull inherits CalCard {
         HorizontalLayout {
             spacing: 4px;
             height: 30px;
-            Text { text: CalStore.peek.title; color: Theme.fg; font-size: 18px; font-weight: 700; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; accessible-role: text; }
+            Text { text: CalStore.peek.title; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; accessible-role: text; }
             IconButton { icon: @image-url("icons/close.svg"); size: 28px; tooltip: "Close"; clicked => { CalStore.close-all(); } }
         }
         ScrollView {
@@ -143,17 +143,17 @@ export component EventFull inherits CalCard {
                 width: parent.width - 14px;
                 EventSummary { }
                 EventActions { full: true; }
-                if CalStore.detail.loading: Text { text: "Loading details…"; color: Theme.fg-muted; font-size: 13px; }
-                if CalStore.detail.error != "": Text { text: CalStore.detail.error; color: #ffb900; font-size: 13px; wrap: word-wrap; }
+                if CalStore.detail.loading: Text { text: "Loading details…"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; }
+                if CalStore.detail.error != "": Text { text: CalStore.detail.error; color: #ffb900; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
                 if CalStore.detail.dial-in != "": VerticalLayout {
                     spacing: 4px;
-                    Text { text: "Dial in"; color: Theme.fg; font-size: 13px; font-weight: 600; }
-                    Text { text: CalStore.detail.dial-in; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
+                    Text { text: "Dial in"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; }
+                    Text { text: CalStore.detail.dial-in; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
                 }
                 if CalStore.detail.attendees.length > 0 || CalStore.detail.hide-attendees: VerticalLayout {
                     spacing: 2px;
-                    Text { text: "Attendees"; color: Theme.fg; font-size: 13px; font-weight: 600; }
-                    if CalStore.detail.hide-attendees: Text { text: "The organizer hid the attendee list."; color: Theme.fg-muted; font-size: 13px; }
+                    Text { text: "Attendees"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; }
+                    if CalStore.detail.hide-attendees: Text { text: "The organizer hid the attendee list."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; }
                     for a in CalStore.detail.attendees: Rectangle {
                         height: 26px;
                         accessible-role: text;
@@ -161,29 +161,29 @@ export component EventFull inherits CalCard {
                         HorizontalLayout {
                             spacing: 10px;
                             Rectangle { width: 8px; height: 8px; y: 9px; border-radius: 4px; background: CalFmt.response-color(a.response); }
-                            Text { text: a.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                            Text { text: a.kind == "optional" ? "Optional" : (a.kind == "resource" ? "Room" : ""); color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
-                            Text { text: CalFmt.response-text(a.response); color: CalFmt.response-color(a.response); font-size: 12px; vertical-alignment: center; }
+                            Text { text: a.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: a.kind == "optional" ? "Optional" : (a.kind == "resource" ? "Room" : ""); color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                            Text { text: CalFmt.response-text(a.response); color: CalFmt.response-color(a.response); font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                         }
                     }
                 }
                 if CalStore.detail.proposals.length > 0: VerticalLayout {
                     spacing: 4px;
-                    Text { text: "Proposed new times"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                    Text { text: "Proposed new times"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; }
                     for p[i] in CalStore.detail.proposals: HorizontalLayout {
                         height: 30px;
                         spacing: 10px;
                         accessible-role: text;
                         accessible-label: p.name + " proposed " + p.when;
-                        Text { text: p.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                        Text { text: p.when; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
-                        Text { text: p.response == "declined" ? "Declined" : "Tentative"; color: CalFmt.response-color(p.response); font-size: 12px; vertical-alignment: center; }
+                        Text { text: p.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: p.when; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                        Text { text: p.response == "declined" ? "Declined" : "Tentative"; color: CalFmt.response-color(p.response); font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                         CalButton { label: "Accept"; accessible-label: "Accept " + p.name + "'s proposed time"; clicked => { CalStore.command("accept-proposal", "" + i); } }
                     }
                 }
                 if CalStore.detail.attachments.length > 0: VerticalLayout {
                     spacing: 2px;
-                    Text { text: "Attachments"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                    Text { text: "Attachments"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; }
                     for f[i] in CalStore.detail.attachments: Rectangle {
                         height: 28px;
                         border-radius: 4px;
@@ -194,16 +194,16 @@ export component EventFull inherits CalCard {
                             padding-left: 6px;
                             spacing: 8px;
                             Icon { source: @image-url("icons/file.svg"); width: 16px; height: 16px; y: 6px; }
-                            Text { text: f.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                            Text { text: f.size; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                            Text { text: f.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: f.size; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                         }
                         fa := TouchArea { mouse-cursor: pointer; clicked => { CalStore.command("open-attachment", "" + i); } }
                     }
                 }
                 if CalStore.detail.body != "": VerticalLayout {
                     spacing: 4px;
-                    Text { text: "Details"; color: Theme.fg; font-size: 13px; font-weight: 600; }
-                    Text { text: CalStore.detail.body; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
+                    Text { text: "Details"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; }
+                    Text { text: CalStore.detail.body; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
                 }
             }
         }

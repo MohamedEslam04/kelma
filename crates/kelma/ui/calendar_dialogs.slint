@@ -28,7 +28,7 @@ export component RangePicker inherits CalCard {
         padding: 10px;
         HorizontalLayout {
             height: 30px;
-            Text { text: CalStore.mini-title; color: Theme.fg; font-size: 13px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+            Text { text: CalStore.mini-title; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
             IconButton { icon: @image-url("icons/chevron-left.svg"); size: 26px; tooltip: "Previous month"; clicked => { CalStore.command("mini", "-1"); } }
             IconButton { icon: @image-url("icons/chevron-right.svg"); size: 26px; tooltip: "Next month"; clicked => { CalStore.command("mini", "1"); } }
         }
@@ -40,7 +40,7 @@ export component RangePicker inherits CalCard {
                 height: 20px;
                 text: l;
                 color: Theme.fg-subtle;
-                font-size: 11px;
+                font-size: 11px * Theme.font-scale;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -53,7 +53,7 @@ export component RangePicker inherits CalCard {
                 border-radius: 4px;
                 accessible-role: button;
                 accessible-label: "Pick " + c.iso;
-                Text { text: c.number; color: c.in-month ? Theme.fg : Theme.fg-subtle; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: c.number; color: c.in-month ? Theme.fg : Theme.fg-subtle; font-size: 12px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                 rt := TouchArea {
                     mouse-cursor: pointer;
                     clicked => {
@@ -68,7 +68,7 @@ export component RangePicker inherits CalCard {
                 }
             }
         }
-        Text { text: CalStore.range-start == "" ? "Pick the first day, then the last (up to 7 days)." : "Now pick the last day."; color: Theme.fg-muted; font-size: 12px; wrap: word-wrap; }
+        Text { text: CalStore.range-start == "" ? "Pick the first day, then the last (up to 7 days)." : "Now pick the last day."; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; wrap: word-wrap; }
     }
 }
 
@@ -80,7 +80,7 @@ export component FiltersPanel inherits CalCard {
         spacing: 4px;
         HorizontalLayout {
             height: 28px;
-            Text { text: "Filter"; color: Theme.fg; font-size: 14px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+            Text { text: "Filter"; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
             CalButton { label: "Clear filters"; enabled: CalStore.filtered; clicked => { CalStore.command("filter-clear", ""); } }
         }
         ScrollView {
@@ -88,7 +88,7 @@ export component FiltersPanel inherits CalCard {
             VerticalLayout {
                 width: parent.width - 12px;
                 for g in [{key: "kind", label: "Type"}, {key: "show", label: "Show as"}, {key: "rec", label: "Recurrence"}, {key: "place", label: "Place"}, {key: "cat", label: "Categories"}]: VerticalLayout {
-                    if g.key != "cat" || CalStore.categories.length > 0: Text { text: g.label; color: Theme.fg-subtle; font-size: 11px; height: 22px; vertical-alignment: bottom; }
+                    if g.key != "cat" || CalStore.categories.length > 0: Text { text: g.label; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; height: 22px; vertical-alignment: bottom; }
                     for o in CalStore.filter-opts: VerticalLayout {
                         if o.group == g.key: CalCheck {
                             label: o.label;
@@ -109,8 +109,8 @@ export component ViewsPanel inherits CalCard {
     VerticalLayout {
         padding: 8px;
         spacing: 2px;
-        Text { text: "Saved views"; color: Theme.fg-muted; font-size: 12px; height: 24px; vertical-alignment: center; }
-        if CalStore.saved-views.length == 0: Text { text: "No saved views yet."; color: Theme.fg-subtle; font-size: 12px; height: 28px; vertical-alignment: center; }
+        Text { text: "Saved views"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; height: 24px; vertical-alignment: center; }
+        if CalStore.saved-views.length == 0: Text { text: "No saved views yet."; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; height: 28px; vertical-alignment: center; }
         for v in CalStore.saved-views: HorizontalLayout {
             height: 30px;
             CalMenuItem { label: v.name; hint: v.summary; horizontal-stretch: 1; clicked => { CalStore.popup = ""; CalStore.command("saved-apply", v.name); } }
@@ -141,7 +141,7 @@ export component WorkLocationMenu inherits CalCard {
     height: 3 * 30px + 40px;
     VerticalLayout {
         padding: 4px;
-        Text { text: "Work location, " + CalStore.range-start; color: Theme.fg-muted; font-size: 12px; height: 28px; vertical-alignment: center; }
+        Text { text: "Work location, " + CalStore.range-start; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; height: 28px; vertical-alignment: center; }
         CalMenuItem { label: "Office"; clicked => { CalStore.popup = ""; CalStore.command("work-location", CalStore.range-start + "|office"); } }
         CalMenuItem { label: "Remote"; clicked => { CalStore.popup = ""; CalStore.command("work-location", CalStore.range-start + "|remote"); } }
         CalMenuItem { label: "Clear"; clicked => { CalStore.popup = ""; CalStore.command("work-location", CalStore.range-start + "|unset"); } }
@@ -187,12 +187,12 @@ export component PromptDialog inherits Modal {
             width: parent.width - 32px;
             spacing: 10px;
             alignment: start;
-            Text { text: CalStore.prompt-title; color: Theme.fg; font-size: 17px; font-weight: 700; wrap: word-wrap; }
-            if CalStore.prompt-message != "": Text { text: CalStore.prompt-message; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
+            Text { text: CalStore.prompt-title; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; wrap: word-wrap; }
+            if CalStore.prompt-message != "": Text { text: CalStore.prompt-message; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
             if CalStore.prompt-label1 != "": CalField { placeholder: CalStore.prompt-label1; text <=> CalStore.prompt-text1; accepted => { CalStore.command(CalStore.prompt-kind, CalStore.prompt-text1 + "|" + CalStore.prompt-text2 + "|" + (CalStore.prompt-check ? "1" : "0")); } }
             if CalStore.prompt-label2 != "": CalField { placeholder: CalStore.prompt-label2; text <=> CalStore.prompt-text2; }
             if CalStore.prompt-check-label != "": CalCheck { label: CalStore.prompt-check-label; checked <=> CalStore.prompt-check; }
-            if CalStore.prompt-error != "": Text { text: CalStore.prompt-error; color: #ff8a8d; font-size: 13px; wrap: word-wrap; }
+            if CalStore.prompt-error != "": Text { text: CalStore.prompt-error; color: #ff8a8d; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
                 alignment: end;
@@ -222,8 +222,8 @@ export component MeetLinkDialog inherits Modal {
         VerticalLayout {
             padding: 16px;
             spacing: 10px;
-            Text { text: "Your meeting is ready"; color: Theme.fg; font-size: 17px; font-weight: 700; }
-            Text { text: CalStore.meet-link; color: Theme.accent; font-size: 13px; wrap: word-wrap; accessible-role: text; }
+            Text { text: "Your meeting is ready"; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; }
+            Text { text: CalStore.meet-link; color: Theme.accent; font-size: 13px * Theme.font-scale; wrap: word-wrap; accessible-role: text; }
             HorizontalLayout {
                 spacing: 8px;
                 alignment: end;
@@ -260,19 +260,19 @@ export component SettingsDialog inherits Modal {
         VerticalLayout {
             padding: 16px;
             spacing: 12px;
-            Text { text: "Calendar settings"; color: Theme.fg; font-size: 17px; font-weight: 700; }
-            Text { text: "First day of the week"; color: Theme.fg-muted; font-size: 12px; }
+            Text { text: "Calendar settings"; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; }
+            Text { text: "First day of the week"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
             HorizontalLayout {
                 spacing: 4px;
                 alignment: start;
                 for d[i] in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]: CalButton { label: d; active: root.first-day == i; clicked => { root.first-day = i; } }
             }
-            Text { text: "Work hours"; color: Theme.fg-muted; font-size: 12px; }
+            Text { text: "Work hours"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
             HorizontalLayout {
                 spacing: 8px;
                 alignment: start;
                 CalField { width: 90px; placeholder: "09:00"; text <=> root.work-start; }
-                Text { text: "to"; color: Theme.fg-muted; font-size: 13px; vertical-alignment: center; }
+                Text { text: "to"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                 CalField { width: 90px; placeholder: "17:00"; text <=> root.work-end; }
             }
             CalCheck { label: "Show weekends in the week and month views"; checked <=> root.weekends; }
@@ -280,7 +280,7 @@ export component SettingsDialog inherits Modal {
             CalCheck { label: "Show a second time zone"; checked <=> root.tz-on; }
             if root.tz-on: VerticalLayout {
                 spacing: 4px;
-                Text { text: root.tz-label != "" ? root.tz-label : "No time zone picked yet"; color: Theme.fg; font-size: 13px; overflow: elide; }
+                Text { text: root.tz-label != "" ? root.tz-label : "No time zone picked yet"; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
                 CalField {
                     placeholder: "Search time zones, like Cairo or Eastern";
                     text <=> root.tz-query;
@@ -296,7 +296,7 @@ export component SettingsDialog inherits Modal {
                     }
                 }
             }
-            if CalStore.prompt-error != "": Text { text: CalStore.prompt-error; color: #ff8a8d; font-size: 13px; }
+            if CalStore.prompt-error != "": Text { text: CalStore.prompt-error; color: #ff8a8d; font-size: 13px * Theme.font-scale; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: 8px;
@@ -331,10 +331,10 @@ export component ShareDialog inherits Modal {
             spacing: 10px;
             HorizontalLayout {
                 height: 28px;
-                Text { text: "Share your calendar"; color: Theme.fg; font-size: 17px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                Text { text: "Share your calendar"; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
                 IconButton { icon: @image-url("icons/close.svg"); size: 28px; tooltip: "Close"; clicked => { CalStore.modal = ""; } }
             }
-            if CalStore.share-note != "": Text { text: CalStore.share-note; color: #ffb900; font-size: 13px; wrap: word-wrap; }
+            if CalStore.share-note != "": Text { text: CalStore.share-note; color: #ffb900; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
@@ -346,7 +346,7 @@ export component ShareDialog inherits Modal {
                             spacing: 4px;
                             HorizontalLayout {
                                 spacing: 8px;
-                                Text { text: p.email == "" ? p.name : (p.name == "" ? p.email : p.name + " (" + p.email + ")"); color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                Text { text: p.email == "" ? p.name : (p.name == "" ? p.email : p.name + " (" + p.email + ")"); color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                                 if p.removable: CalButton { label: "Remove"; danger: true; clicked => { CalStore.command("share-remove", p.id); } }
                             }
                             HorizontalLayout {
@@ -363,7 +363,7 @@ export component ShareDialog inherits Modal {
                     }
                 }
             }
-            Text { text: "Share with"; color: Theme.fg-muted; font-size: 12px; }
+            Text { text: "Share with"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
             CalField { placeholder: "name@company.com"; text <=> root.email; }
             HorizontalLayout {
                 spacing: 4px;

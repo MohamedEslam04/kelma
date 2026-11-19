@@ -58,7 +58,7 @@ component FmtButton inherits Rectangle {
     Text {
         text: root.label;
         color: touch.has-hover || root.active ? Theme.accent : Theme.fg-muted;
-        font-size: 14px;
+        font-size: 14px * Theme.font-scale;
         font-weight: root.bold ? 800 : 400;
         font-italic: root.italic;
         horizontal-alignment: center;
@@ -83,7 +83,7 @@ component FmtItem inherits Rectangle {
     background: touch.has-hover ? Theme.surface-hover : transparent;
     accessible-role: button;
     accessible-label: root.hint != "" ? root.hint : root.label;
-    Text { x: 10px; text: root.label; color: Theme.fg; font-size: 13px; vertical-alignment: center; accessible-role: none; }
+    Text { x: 10px; text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; accessible-role: none; }
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -116,21 +116,21 @@ component Stepper inherits Rectangle {
     height: 30px;
     HorizontalLayout {
         spacing: 6px;
-        Text { text: root.label; color: Theme.fg-muted; font-size: 13px; vertical-alignment: center; width: 60px; }
+        Text { text: root.label; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; width: 60px; }
         Rectangle {
             width: 28px;
             border-radius: 4px;
-            background: minus.has-hover ? Theme.surface-hover : #333333;
+            background: minus.has-hover ? Theme.surface-hover : Theme.surface;
             accessible-role: button;
             accessible-label: "Fewer " + root.label;
             Text { text: "−"; color: Theme.fg; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
             minus := TouchArea { mouse-cursor: pointer; clicked => { root.value = max(root.lo, root.value - 1); } }
         }
-        Text { text: root.value; color: Theme.fg; font-size: 14px; vertical-alignment: center; horizontal-alignment: center; width: 28px; }
+        Text { text: root.value; color: Theme.fg; font-size: 14px * Theme.font-scale; vertical-alignment: center; horizontal-alignment: center; width: 28px; }
         Rectangle {
             width: 28px;
             border-radius: 4px;
-            background: plus.has-hover ? Theme.surface-hover : #333333;
+            background: plus.has-hover ? Theme.surface-hover : Theme.surface;
             accessible-role: button;
             accessible-label: "More " + root.label;
             Text { text: "+"; color: Theme.fg; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
@@ -151,7 +151,7 @@ export component FormatToggle inherits Rectangle {
     accessible-label: "Show formatting options";
     accessible-checkable: true;
     accessible-checked: root.on;
-    Text { text: "Aa"; color: touch.has-hover || root.on ? Theme.accent : Theme.fg-muted; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+    Text { text: "Aa"; color: touch.has-hover || root.on ? Theme.accent : Theme.fg-muted; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -162,7 +162,7 @@ export component FormatToggle inherits Rectangle {
 export component FormatPreview inherits Rectangle {
     in property <string> source;
     height: min(body.preferred-height + 22px, 150px);
-    background: #1f1f1f;
+    background: Theme.sidebar;
     border-radius: 4px;
     clip: true;
     accessible-role: groupbox;
@@ -171,11 +171,11 @@ export component FormatPreview inherits Rectangle {
         padding: 8px;
         padding-top: 4px;
         spacing: 2px;
-        Text { text: "Preview"; color: Theme.fg-subtle; font-size: 10px; font-weight: 600; }
+        Text { text: "Preview"; color: Theme.fg-subtle; font-size: 10px * Theme.font-scale; font-weight: 600; }
         StyledText {
             text: FormatApi.preview(root.source);
             default-color: Theme.fg;
-            default-font-size: 13px;
+            default-font-size: 13px * Theme.font-scale;
             link-color: Theme.accent;
         }
     }
@@ -255,14 +255,14 @@ export component FormatBar inherits Rectangle {
         width: 150px;
         height: 100px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
                 padding: 8px;
                 spacing: 6px;
-                Text { text: "Font color"; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
+                Text { text: "Font color"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 GridLayout {
                     spacing: 4px;
                     Row {
@@ -291,14 +291,14 @@ export component FormatBar inherits Rectangle {
         width: 150px;
         height: 100px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
                 padding: 8px;
                 spacing: 6px;
-                Text { text: "Text highlight color"; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
+                Text { text: "Text highlight color"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 // Teams' own palette, so the sent message keeps its highlight names.
                 GridLayout {
                     spacing: 4px;
@@ -328,7 +328,7 @@ export component FormatBar inherits Rectangle {
         width: 130px;
         height: 118px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
@@ -348,14 +348,14 @@ export component FormatBar inherits Rectangle {
         width: 170px;
         height: 262px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
                 padding: 6px;
                 spacing: 2px;
-                Text { text: "Code block language"; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
+                Text { text: "Code block language"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 ScrollView {
                     VerticalLayout {
                         spacing: 1px;
@@ -376,7 +376,7 @@ export component FormatBar inherits Rectangle {
         width: 220px;
         height: 340px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
@@ -408,14 +408,14 @@ export component FormatBar inherits Rectangle {
         width: 210px;
         height: 142px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
                 padding: 10px;
                 spacing: 6px;
-                Text { text: "Insert table"; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
+                Text { text: "Insert table"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 Stepper { label: "Rows"; value <=> root.table-rows; lo: 1; hi: 12; }
                 Stepper { label: "Columns"; value <=> root.table-cols; lo: 1; hi: 8; }
                 Rectangle {
@@ -424,7 +424,7 @@ export component FormatBar inherits Rectangle {
                     background: table-ok.has-hover ? #6c71e0 : Theme.accent-strong;
                     accessible-role: button;
                     accessible-label: "Insert table";
-                    Text { text: "Insert"; color: #ffffff; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                    Text { text: "Insert"; color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
                     table-ok := TouchArea {
                         mouse-cursor: pointer;
                         clicked => {
@@ -443,20 +443,20 @@ export component FormatBar inherits Rectangle {
         width: 330px;
         height: 86px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
                 padding: 10px;
                 spacing: 6px;
-                Text { text: "Insert link"; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
+                Text { text: "Insert link"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 HorizontalLayout {
                     spacing: 6px;
                     Rectangle {
                         height: 30px;
                         border-radius: 4px;
-                        background: #1f1f1f;
+                        background: Theme.sidebar;
                         border-width: 1px;
                         border-color: link-input.has-focus ? Theme.accent : Theme.border;
                         link-input := TextInput {
@@ -464,7 +464,7 @@ export component FormatBar inherits Rectangle {
                             width: parent.width - 16px;
                             text <=> root.link-url;
                             color: Theme.fg;
-                            font-size: 13px;
+                            font-size: 13px * Theme.font-scale;
                             single-line: true;
                             vertical-alignment: center;
                             accessible-role: text-input;
@@ -472,7 +472,7 @@ export component FormatBar inherits Rectangle {
                             accepted => { root.insert-link(); }
                             init => { self.focus(); }
                         }
-                        if root.link-url == "": Text { x: 8px; text: "Address, for example example.com"; color: Theme.fg-subtle; font-size: 13px; vertical-alignment: center; }
+                        if root.link-url == "": Text { x: 8px; text: "Address, for example example.com"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                     }
                     Rectangle {
                         width: 64px;
@@ -481,7 +481,7 @@ export component FormatBar inherits Rectangle {
                         background: link-ok.has-hover ? #6c71e0 : Theme.accent-strong;
                         accessible-role: button;
                         accessible-label: "Insert link address";
-                        Text { text: "Insert"; color: #ffffff; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                        Text { text: "Insert"; color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
                         link-ok := TouchArea { mouse-cursor: pointer; clicked => { root.insert-link(); } }
                     }
                 }

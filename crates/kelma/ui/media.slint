@@ -24,7 +24,7 @@ export component LinkCardView inherits Rectangle {
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.border;
-    background: touch.has-hover ? #2a2a2a : #1f1f1f;
+    background: touch.has-hover ? Theme.surface : Theme.sidebar;
     clip: true;
     accessible-role: button;
     accessible-label: "Open link " + (root.c.title != "" ? root.c.title : root.c.domain);
@@ -34,7 +34,7 @@ export component LinkCardView inherits Rectangle {
         spacing: 0px;
         if root.c.has-thumb: Rectangle {
             width: 92px;
-            background: #151515;
+            background: Theme.main;
             Image {
                 source: root.c.thumb;
                 width: parent.width;
@@ -45,11 +45,11 @@ export component LinkCardView inherits Rectangle {
         VerticalLayout {
             padding: 10px;
             spacing: 2px;
-            Text { text: root.c.domain; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+            Text { text: root.c.domain; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
             if root.c.title != "": Text {
                 text: root.c.title;
                 color: Theme.fg;
-                font-size: 13px;
+                font-size: 13px * Theme.font-scale;
                 font-weight: 600;
                 wrap: word-wrap;
                 overflow: elide;
@@ -58,7 +58,7 @@ export component LinkCardView inherits Rectangle {
             if root.c.description != "": Text {
                 text: root.c.description;
                 color: Theme.fg-muted;
-                font-size: 12px;
+                font-size: 12px * Theme.font-scale;
                 wrap: word-wrap;
                 overflow: elide;
                 max-height: 48px;
@@ -134,14 +134,14 @@ export component ImageViewer inherits Rectangle {
     if !MediaStore.viewer-loaded && !MediaStore.viewer-failed: Text {
         text: "Loading image…";
         color: Theme.fg-muted;
-        font-size: 14px;
+        font-size: 14px * Theme.font-scale;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
     if MediaStore.viewer-failed: Text {
         text: "This image could not be loaded.";
         color: Theme.fg-muted;
-        font-size: 14px;
+        font-size: 14px * Theme.font-scale;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -177,7 +177,7 @@ export component ImageViewer inherits Rectangle {
             Text {
                 text: MediaStore.viewer-title;
                 color: Theme.fg;
-                font-size: 14px;
+                font-size: 14px * Theme.font-scale;
                 font-weight: 600;
                 vertical-alignment: center;
                 overflow: elide;
@@ -186,13 +186,13 @@ export component ImageViewer inherits Rectangle {
             Text {
                 text: MediaStore.viewer-count > 1 ? (MediaStore.viewer-index + 1) + " / " + MediaStore.viewer-count : "";
                 color: Theme.fg-muted;
-                font-size: 13px;
+                font-size: 13px * Theme.font-scale;
                 vertical-alignment: center;
                 accessible-role: text;
                 accessible-label: "Picture " + (MediaStore.viewer-index + 1) + " of " + MediaStore.viewer-count;
             }
             IconButton { icon: @image-url("icons/plus.svg"); tooltip: "Zoom in"; clicked => { root.zoom-by(1.25); } }
-            Text { text: round(root.fit * root.zoom * 100) + "%"; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; min-width: 40px; horizontal-alignment: center; }
+            Text { text: round(root.fit * root.zoom * 100) + "%"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; min-width: 40px; horizontal-alignment: center; }
             IconButton { icon: @image-url("icons/minus.svg"); tooltip: "Zoom out"; clicked => { root.zoom-by(0.8); } }
             IconButton { icon: @image-url("icons/download.svg"); tooltip: "Save image"; clicked => { MediaStore.command("image-save", ""); } }
             IconButton { icon: @image-url("icons/copy.svg"); tooltip: "Copy image"; clicked => { MediaStore.command("image-copy", ""); } }
@@ -234,6 +234,6 @@ export component ImageViewer inherits Rectangle {
         height: 32px;
         border-radius: 16px;
         background: #000000c0;
-        status-text := Text { text: MediaStore.viewer-status; color: Theme.fg; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+        status-text := Text { text: MediaStore.viewer-status; color: Theme.fg; font-size: 12px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
     }
 }

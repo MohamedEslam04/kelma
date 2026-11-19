@@ -23,7 +23,7 @@ export component MentionPicker inherits Rectangle {
 
     width: 320px;
     height: min(items.length, 8) * 40px + 8px;
-    background: #2b2b2b;
+    background: Theme.surface;
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.border;
@@ -44,8 +44,8 @@ export component MentionPicker inherits Rectangle {
                 Avatar { initials: p.initials; tone: p.color; img: p.avatar; has-img: p.has-avatar; size: 28px; y: 6px; }
                 VerticalLayout {
                     alignment: center;
-                    Text { text: p.name; color: Theme.fg; font-size: 13px; overflow: elide; }
-                    if p.subtitle != "": Text { text: p.subtitle; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+                    Text { text: p.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+                    if p.subtitle != "": Text { text: p.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
                 }
             }
             row := TouchArea { mouse-cursor: pointer; clicked => { root.picked(i); } }

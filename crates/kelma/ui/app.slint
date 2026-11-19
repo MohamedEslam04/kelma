@@ -311,7 +311,7 @@ export component AppWindow inherits Window {
                     width: 260px;
                     spacing: 8px;
                     Image { source: @image-url("icons/logo.svg"); colorize: Theme.accent; width: 22px; height: 22px; y: 13px; }
-                    Text { text: "kelma"; color: Theme.fg; font-size: 15px; font-weight: 600; vertical-alignment: center; }
+                    Text { text: "kelma"; color: Theme.fg; font-size: 15px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
                 }
                 Rectangle {
                     height: 32px;
@@ -320,7 +320,7 @@ export component AppWindow inherits Window {
                     max-width: 640px;
                     horizontal-stretch: 2;
                     border-radius: 4px;
-                    background: search-input.has-focus ? #1f1f1f : #292929;
+                    background: search-input.has-focus ? Theme.sidebar : Theme.surface;
                     border-width: 1px;
                     border-color: search-input.has-focus ? Theme.accent : Theme.border;
                     HorizontalLayout {
@@ -330,7 +330,7 @@ export component AppWindow inherits Window {
                         Icon { source: @image-url("icons/search.svg"); width: 16px; height: 16px; y: 8px; }
                         search-input := TextInput {
                             color: Theme.fg;
-                            font-size: 13px;
+                            font-size: 13px * Theme.font-scale;
                             vertical-alignment: center;
                             single-line: true;
                             edited => { root.search(self.text); }
@@ -346,12 +346,12 @@ export component AppWindow inherits Window {
                         x: 36px;
                         text: "Search chats";
                         color: Theme.fg-subtle;
-                        font-size: 13px;
+                        font-size: 13px * Theme.font-scale;
                         vertical-alignment: center;
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if !root.connected: Text { text: "Reconnecting…"; color: #ffb900; font-size: 12px; vertical-alignment: center; }
+                if !root.connected: Text { text: "Reconnecting…"; color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                 Avatar { initials: root.me-initials; size: 30px; y: 9px; TouchArea { accessible-role: button; accessible-label: "Profile menu"; accessible-action-default => { SettingsStore.open-profile(); } mouse-cursor: pointer; clicked => { SettingsStore.open-profile(); } } }
             }
         }
@@ -381,7 +381,7 @@ export component AppWindow inherits Window {
                             alignment: center;
                             spacing: 2px;
                             Icon { source: item.icon; tint: root.view == item.key || rt.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
-                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px; horizontal-alignment: center; }
+                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px * Theme.font-scale; horizontal-alignment: center; }
                         }
                         if ri.badge-count > 0: Rectangle {
                             x: parent.width / 2 + 2px;
@@ -392,7 +392,7 @@ export component AppWindow inherits Window {
                             background: Theme.unread-badge;
                             accessible-role: text;
                             accessible-label: ri.badge-count + " unread";
-                            badge-text := Text { text: ri.badge-count > 99 ? "99+" : ri.badge-count; color: #ffffff; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            badge-text := Text { text: ri.badge-count > 99 ? "99+" : ri.badge-count; color: #ffffff; font-size: 10px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         rt := TouchArea {
                             mouse-cursor: pointer;
@@ -500,7 +500,7 @@ export component AppWindow inherits Window {
                 }
                 if root.current-id == "": VerticalLayout {
                     alignment: center;
-                    Image { source: @image-url("icons/chat.svg"); colorize: #3d3d3d; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
+                    Image { source: @image-url("icons/chat.svg"); colorize: Theme.border; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
                     Text { text: "Select a chat to start messaging"; color: Theme.fg-subtle; horizontal-alignment: center; }
                 }
                 if root.banner != "": Rectangle {
@@ -517,7 +517,7 @@ export component AppWindow inherits Window {
                         padding-left: 14px;
                         padding-right: 6px;
                         spacing: 8px;
-                        banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                        banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 6px; clicked => { root.dismiss-banner(); } }
                     }
                 }
@@ -542,7 +542,7 @@ export component AppWindow inherits Window {
                             if !root.renaming || root.thread-root != "": Text {
                                 text: root.thread-root != "" ? "Thread" : root.current-title;
                                 color: Theme.fg;
-                                font-size: 17px;
+                                font-size: 17px * Theme.font-scale;
                                 font-weight: 700;
                                 vertical-alignment: center;
                                 overflow: elide;
@@ -554,7 +554,7 @@ export component AppWindow inherits Window {
                                 width: 260px;
                                 horizontal-stretch: 0;
                                 border-radius: 4px;
-                                background: #1f1f1f;
+                                background: Theme.sidebar;
                                 border-width: 1px;
                                 border-color: Theme.accent;
                                 FocusScope {
@@ -575,7 +575,7 @@ export component AppWindow inherits Window {
                                         width: parent.width - 20px;
                                         text <=> root.rename-text;
                                         color: Theme.fg;
-                                        font-size: 15px;
+                                        font-size: 15px * Theme.font-scale;
                                         single-line: true;
                                         vertical-alignment: center;
                                         accessible-role: text-input;
@@ -603,7 +603,7 @@ export component AppWindow inherits Window {
                                 accessible-checked: self.active;
                                 VerticalLayout {
                                     alignment: center;
-                                    tab-label := Text { text: tab; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px; font-weight: tab-item.active ? 600 : 400; }
+                                    tab-label := Text { text: tab; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; font-weight: tab-item.active ? 600 : 400; }
                                     Rectangle { height: 3px; border-radius: 1px; background: tab-item.active ? Theme.accent : transparent; }
                                 }
                                 TouchArea {
@@ -652,7 +652,7 @@ export component AppWindow inherits Window {
                                 accessible-role: button;
                                 accessible-label: "Participants";
                                 Icon { source: @image-url("icons/people.svg"); x: 8px; y: 8px; width: 16px; height: 16px; tint: Theme.fg-muted; }
-                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px; vertical-alignment: center; }
+                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                                 people-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => {
@@ -662,7 +662,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
                     }
 
                     if FindStore.chat-find-open && root.thread-root == "": ChatFindBar { channel: root.current-is-channel; }
@@ -808,7 +808,7 @@ export component AppWindow inherits Window {
                             jump-text := Text {
                                 text: root.new-count > 0 ? "↓ Jump to newest · " + root.new-count : "↓ Jump to newest";
                                 color: #ffffff;
-                                font-size: 12px;
+                                font-size: 12px * Theme.font-scale;
                                 font-weight: 600;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -828,13 +828,13 @@ export component AppWindow inherits Window {
                             x: (parent.width - 200px) / 2;
                             border-radius: 12px;
                             background: Theme.surface;
-                            Text { text: "Loading older messages…"; color: Theme.fg-muted; font-size: 12px; }
+                            Text { text: "Loading older messages…"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
                         }
                     }
 
                     if root.typing != "": HorizontalLayout {
                         padding-left: 24px;
-                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px; }
+                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
                     }
 
                     if root.select-mode: SelectBar {
@@ -1155,10 +1155,10 @@ export component AppWindow inherits Window {
     // Teams management: the "Your teams and channels" page covers the area right of the rail, and
     // its dialogs cover the window (see teams_page.slint and teams_dialogs.slint).
     if root.login-state == "ready" && TeamsStore.open: TeamsPage {
-        x: 68px;
+        x: AppsStore.rail-width;
         y: 48px;
         z: 40;
-        width: root.width - 68px;
+        width: root.width - AppsStore.rail-width;
         height: root.height - 48px;
         go(id, title) => {
             TeamsStore.open = false;

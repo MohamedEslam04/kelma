@@ -15,7 +15,7 @@ component PickColumn inherits Rectangle {
     width: root.col-width;
     background: Theme.sidebar;
     VerticalLayout {
-        Rectangle { height: 34px; Text { x: 14px; width: parent.width - 28px; text: root.title; color: Theme.fg-subtle; font-size: 11px; font-weight: 700; vertical-alignment: bottom; } }
+        Rectangle { height: 34px; Text { x: 14px; width: parent.width - 28px; text: root.title; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 700; vertical-alignment: bottom; } }
         ScrollView {
             vertical-stretch: 1;
             VerticalLayout {
@@ -36,8 +36,8 @@ component PickColumn inherits Rectangle {
                         padding-left: 14px;
                         padding-right: 8px;
                         alignment: center;
-                        Text { text: r.title; color: Theme.fg; font-size: 13px; font-weight: r.selected ? 600 : 400; overflow: elide; }
-                        if r.subtitle != "": Text { text: r.subtitle; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+                        Text { text: r.title; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: r.selected ? 600 : 400; overflow: elide; }
+                        if r.subtitle != "": Text { text: r.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
                     }
                     t := TouchArea { mouse-cursor: pointer; clicked => { root.picked(r.id); } }
                 }
@@ -63,7 +63,7 @@ export component NotesView inherits Rectangle {
                     padding-left: 20px;
                     padding-right: 16px;
                     spacing: 8px;
-                    Text { text: NotesStore.page-title == "" ? "OneNote" : NotesStore.page-title; color: Theme.fg; font-size: 18px; font-weight: 700; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    Text { text: NotesStore.page-title == "" ? "OneNote" : NotesStore.page-title; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                     KitButton { y: 12px; label: "Open in OneNote on the web"; enabled: NotesStore.can-open-web; clicked => { NotesStore.command("notes-open-web", ""); } }
                 }
             }
@@ -75,7 +75,7 @@ export component NotesView inherits Rectangle {
                     width: parent.width - 12px;
                     padding: 20px;
                     alignment: start;
-                    Text { text: NotesStore.page-text; color: Theme.fg; font-size: 14px; wrap: word-wrap; }
+                    Text { text: NotesStore.page-text; color: Theme.fg; font-size: 14px * Theme.font-scale; wrap: word-wrap; }
                 }
             }
             KitNote { text: "Read only. Edit pages in OneNote."; text-size: 11px; }
@@ -98,7 +98,7 @@ export component ListsView inherits Rectangle {
                 HorizontalLayout {
                     padding-left: 20px;
                     padding-right: 16px;
-                    Text { text: ListsStore.title == "" ? "Lists" : ListsStore.title; color: Theme.fg; font-size: 18px; font-weight: 700; vertical-alignment: center; overflow: elide; }
+                    Text { text: ListsStore.title == "" ? "Lists" : ListsStore.title; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; overflow: elide; }
                 }
             }
             if ListsStore.loading: KitNote { text: "Loading…"; }
@@ -109,7 +109,7 @@ export component ListsView inherits Rectangle {
                 HorizontalLayout {
                     padding-left: 20px;
                     spacing: 8px;
-                    for c in ListsStore.columns: Text { text: c; color: Theme.fg-muted; font-size: 12px; font-weight: 700; width: root.cell; vertical-alignment: center; overflow: elide; }
+                    for c in ListsStore.columns: Text { text: c; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 700; width: root.cell; vertical-alignment: center; overflow: elide; }
                 }
             }
             ScrollView {
@@ -119,14 +119,14 @@ export component ListsView inherits Rectangle {
                     alignment: start;
                     for row in ListsStore.items: Rectangle {
                         height: 36px;
-                        background: hover.has-hover ? #262626 : transparent;
+                        background: hover.has-hover ? Theme.surface-hover : transparent;
                         accessible-role: list-item;
                         accessible-label: row.cells.length > 0 ? row.cells[0] : "";
                         hover := TouchArea { }
                         HorizontalLayout {
                             padding-left: 20px;
                             spacing: 8px;
-                            for cell in row.cells: Text { text: cell; color: Theme.fg; font-size: 13px; width: root.cell; vertical-alignment: center; overflow: elide; }
+                            for cell in row.cells: Text { text: cell; color: Theme.fg; font-size: 13px * Theme.font-scale; width: root.cell; vertical-alignment: center; overflow: elide; }
                         }
                     }
                 }

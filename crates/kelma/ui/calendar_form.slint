@@ -19,7 +19,7 @@ component SchedulerGrid inherits Rectangle {
     property <int> sel-end: CalForm.sel-end;
     height: 26px + CalForm.sched.length * root.row-h + 6px;
     border-radius: 4px;
-    background: #1a1a1a;
+    background: Theme.sidebar;
     border-width: 1px;
     border-color: Theme.border;
     clip: true;
@@ -32,7 +32,7 @@ component SchedulerGrid inherits Rectangle {
         height: 24px;
         text: Math.mod(i * CalForm.sched-slot-min, 60) == 0 ? CalFmt.hhmm(CalForm.sched-first-min + i * CalForm.sched-slot-min) : "";
         color: Theme.fg-subtle;
-        font-size: 10px;
+        font-size: 10px * Theme.font-scale;
         vertical-alignment: center;
         overflow: clip;
     }
@@ -40,13 +40,13 @@ component SchedulerGrid inherits Rectangle {
         y: 26px + ri * root.row-h;
         height: root.row-h;
         width: parent.width;
-        Rectangle { y: 0px; height: 1px; background: #2b2b2b; }
+        Rectangle { y: 0px; height: 1px; background: Theme.border; }
         VerticalLayout {
             x: 8px;
             width: root.label-w - 12px;
             alignment: center;
-            Text { text: r.name; color: Theme.fg; font-size: 12px; overflow: elide; }
-            Text { text: r.error != "" ? r.error : (r.tz != "" ? r.tz : (r.kind == "room" ? "Room" : "")); color: r.error != "" ? #ffb900 : Theme.fg-subtle; font-size: 9px; overflow: elide; }
+            Text { text: r.name; color: Theme.fg; font-size: 12px * Theme.font-scale; overflow: elide; }
+            Text { text: r.error != "" ? r.error : (r.tz != "" ? r.tz : (r.kind == "room" ? "Room" : "")); color: r.error != "" ? #ffb900 : Theme.fg-subtle; font-size: 9px * Theme.font-scale; overflow: elide; }
         }
         for c[ci] in r.cells: Rectangle {
             x: root.label-w + ci * root.cell-w;
@@ -87,13 +87,13 @@ component SchedulerGrid inherits Rectangle {
 component Labeled inherits VerticalLayout {
     in property <string> label;
     spacing: 3px;
-    Text { text: root.label; color: Theme.fg-muted; font-size: 12px; }
+    Text { text: root.label; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
     @children
 }
 
 component RecurrencePicker inherits VerticalLayout {
     spacing: 6px;
-    Text { text: "Repeat"; color: Theme.fg-muted; font-size: 12px; }
+    Text { text: "Repeat"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
     HorizontalLayout {
         spacing: 6px;
         alignment: start;
@@ -103,25 +103,25 @@ component RecurrencePicker inherits VerticalLayout {
             clicked => { CalForm.repeat = k.key; }
         }
     }
-    if CalForm.repeat == "keep": Text { text: "This event repeats. Pick a choice above to change the series."; color: Theme.fg-subtle; font-size: 12px; }
+    if CalForm.repeat == "keep": Text { text: "This event repeats. Pick a choice above to change the series."; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; }
     if CalForm.repeat != "none" && CalForm.repeat != "keep": VerticalLayout {
         spacing: 6px;
         HorizontalLayout {
             spacing: 8px;
             alignment: start;
-            Text { text: "Every"; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+            Text { text: "Every"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
             CalField { width: 56px; placeholder: "1"; text <=> CalForm.interval; }
             Text {
                 text: CalForm.repeat == "daily" ? "day(s)" : (CalForm.repeat == "weekdays" || CalForm.repeat == "weekly" ? "week(s)" : (CalForm.repeat == "yearly" ? "year(s)" : "month(s)"));
                 color: Theme.fg;
-                font-size: 13px;
+                font-size: 13px * Theme.font-scale;
                 vertical-alignment: center;
             }
         }
         if CalForm.repeat == "weekly": HorizontalLayout {
             spacing: 4px;
             alignment: start;
-            Text { text: "On"; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+            Text { text: "On"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
             for d[i] in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]: CalButton {
                 label: d;
                 active: CalForm.repeat-days[i];
@@ -131,7 +131,7 @@ component RecurrencePicker inherits VerticalLayout {
         HorizontalLayout {
             spacing: 6px;
             alignment: start;
-            Text { text: "Ends"; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+            Text { text: "Ends"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
             for k in [{key: "never", label: "Never"}, {key: "on", label: "On date"}, {key: "after", label: "After occurrences"}]: CalButton {
                 label: k.label;
                 active: CalForm.end-kind == k.key;
@@ -149,7 +149,7 @@ component RecurrencePicker inherits VerticalLayout {
 component RoomPicker inherits Rectangle {
     height: 40px + max(1, min(CalForm.rooms.length, 6)) * 34px + 44px;
     border-radius: 4px;
-    background: #1a1a1a;
+    background: Theme.sidebar;
     border-width: 1px;
     border-color: Theme.border;
     VerticalLayout {
@@ -160,8 +160,8 @@ component RoomPicker inherits Rectangle {
             alignment: start;
             height: 28px;
             for l in CalForm.room-lists: CalButton { label: l.name; clicked => { CalStore.command("room-list", l.email); } }
-            if CalForm.room-lists.length == 0 && !CalForm.rooms-loading: Text { text: CalForm.rooms-note != "" ? CalForm.rooms-note : "No room lists found."; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
-            if CalForm.rooms-loading: Text { text: "Loading rooms…"; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
+            if CalForm.room-lists.length == 0 && !CalForm.rooms-loading: Text { text: CalForm.rooms-note != "" ? CalForm.rooms-note : "No room lists found."; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+            if CalForm.rooms-loading: Text { text: "Loading rooms…"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
         }
         ScrollView {
             vertical-stretch: 1;
@@ -177,10 +177,10 @@ component RoomPicker inherits Rectangle {
                     padding-left: 8px;
                     padding-right: 8px;
                     spacing: 10px;
-                    Text { text: r.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                    Text { text: r.capacity != "" ? r.capacity + " seats" : ""; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
-                    Text { text: r.place; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                    Text { text: r.status == 0 ? "Free" : (r.status == 1 ? "Busy" : "?"); color: r.status == 0 ? #6bd69b : (r.status == 1 ? #ff8a8d : Theme.fg-subtle); font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                    Text { text: r.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    Text { text: r.capacity != "" ? r.capacity + " seats" : ""; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                    Text { text: r.place; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+                    Text { text: r.status == 0 ? "Free" : (r.status == 1 ? "Busy" : "?"); color: r.status == 0 ? #6bd69b : (r.status == 1 ? #ff8a8d : Theme.fg-subtle); font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
                 }
                 rt := TouchArea { mouse-cursor: pointer; clicked => { CalForm.pick-room(i); } }
             }
@@ -198,7 +198,7 @@ export component EventForm inherits CalCard {
         HorizontalLayout {
             spacing: 8px;
             height: 32px;
-            Text { text: CalForm.heading; color: Theme.fg; font-size: 18px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+            Text { text: CalForm.heading; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
             CalButton { label: "Save"; primary: true; y: 2px; clicked => { CalForm.submit(); } }
             CalButton { label: "Discard"; y: 2px; clicked => { CalForm.cancel(); } }
         }
@@ -208,7 +208,7 @@ export component EventForm inherits CalCard {
             background: #3b1f22;
             accessible-role: text;
             accessible-label: CalForm.error;
-            Text { x: 10px; width: parent.width - 20px; text: CalForm.error; color: #ff8a8d; font-size: 13px; vertical-alignment: center; overflow: elide; }
+            Text { x: 10px; width: parent.width - 20px; text: CalForm.error; color: #ff8a8d; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
         }
         ScrollView {
             vertical-stretch: 1;
@@ -222,7 +222,7 @@ export component EventForm inherits CalCard {
                         spacing: 6px;
                         alignment: start;
                         for c in CalForm.channels: CalButton { label: c; active: CalForm.channel == c; clicked => { CalForm.channel = c; } }
-                        if CalForm.channels.length == 0: Text { text: "You are not in any team yet."; color: Theme.fg-subtle; font-size: 12px; }
+                        if CalForm.channels.length == 0: Text { text: "You are not in any team yet."; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; }
                     }
                 }
                 Labeled {
@@ -246,7 +246,7 @@ export component EventForm inherits CalCard {
                     alignment: start;
                     CalCheck { label: "All day"; checked <=> CalForm.all-day; }
                     CalCheck { label: "Microsoft Teams meeting"; checked <=> CalForm.teams-meeting; }
-                    Text { text: "Times are in your local time zone."; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                    Text { text: "Times are in your local time zone."; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                 }
                 RecurrencePicker { }
                 HorizontalLayout {
@@ -260,13 +260,13 @@ export component EventForm inherits CalCard {
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
-                        Text { text: CalForm.sched-loading ? "Checking calendars…" : (CalForm.sched-note != "" ? CalForm.sched-note : "Click a time to move the event there."); color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
+                        Text { text: CalForm.sched-loading ? "Checking calendars…" : (CalForm.sched-note != "" ? CalForm.sched-note : "Click a time to move the event there."); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                         CalButton { label: "Refresh"; clicked => { CalStore.command("sched", ""); } }
                     }
                     SchedulerGrid { }
                     if CalForm.suggestions.length > 0: VerticalLayout {
                         spacing: 4px;
-                        Text { text: "Suggested times"; color: Theme.fg-muted; font-size: 12px; }
+                        Text { text: "Suggested times"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
                         HorizontalLayout {
                             spacing: 6px;
                             alignment: start;
@@ -282,7 +282,7 @@ export component EventForm inherits CalCard {
                 HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
-                    Text { text: "Show as"; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
+                    Text { text: "Show as"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                     for s in [{key: "busy", label: "Busy"}, {key: "tentative", label: "Tentative"}, {key: "free", label: "Free"}, {key: "oof", label: "Out of office"}, {key: "elsewhere", label: "Working elsewhere"}]: CalButton {
                         label: s.label;
                         active: CalForm.show-as == s.key;
@@ -292,7 +292,7 @@ export component EventForm inherits CalCard {
                 HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
-                    Text { text: "Reminder"; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
+                    Text { text: "Reminder"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                     for r in [{key: "default", label: "Default"}, {key: "off", label: "None"}, {key: "5", label: "5 min"}, {key: "15", label: "15 min"}, {key: "60", label: "1 hour"}, {key: "1440", label: "1 day"}]: CalButton {
                         label: r.label;
                         active: CalForm.reminder == r.key;
@@ -302,7 +302,7 @@ export component EventForm inherits CalCard {
                 if CalForm.categories.length > 0: HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
-                    Text { text: "Category"; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
+                    Text { text: "Category"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                     CalButton { label: "None"; active: CalForm.category == ""; clicked => { CalForm.category = ""; } }
                     for c in CalForm.categories: CalButton { label: c; active: CalForm.category == c; clicked => { CalForm.category = c; } }
                 }
