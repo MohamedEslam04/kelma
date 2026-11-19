@@ -1,6 +1,6 @@
 //! The XDG desktop portal (`org.freedesktop.portal.Settings`): read the desktop's color scheme
 //! and accent color, and watch them change. Parsing is pure; only [`read`] and [`watch`] talk to
-//! D-Bus, and both need a tokio runtime (zbus runs on tokio here, like the tray crate).
+//! D-Bus. zbus runs on its own async-io reactor, so they work from any executor.
 //!
 //! Without a session bus or a portal, [`read`] and [`watch`] return `Ok(None)`. They never panic.
 

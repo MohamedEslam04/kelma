@@ -13,9 +13,9 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
-# Same version and features as the tray crate, so the workspace builds one zbus.
-# Needs a tokio runtime when the portal is read or watched.
-zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
+# `async-io` runs its own reactor, so it works from any thread and inside a tokio runtime
+# (the `tokio` feature panics when ksni drives zbus from its async-io executor).
+zbus = { version = "5.19.0", default-features = false, features = ["async-io"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
