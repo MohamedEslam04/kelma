@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.104"
+app_store = { package = "apps", version = "0.0.0", path = "../apps" }
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 calendar = { version = "0.0.0", path = "../calendar" }
 diag = { version = "0.0.0", path = "../diag" }
