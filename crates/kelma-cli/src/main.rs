@@ -46,6 +46,7 @@
 //! ```
 
 mod accounts;
+mod appcard;
 mod appearance;
 mod apps;
 mod call;
@@ -938,6 +939,13 @@ async fn main() -> Result<()> {
         Some("translate") => {
             let (client, cfg) = connect(&paths).await?;
             let r = chatx::translate(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("appcard") => {
+            let (client, cfg) = connect(&paths).await?;
+            let name = cfg.display_name.clone().unwrap_or_default();
+            let r = appcard::run(&client, &name, &args[1..]).await;
             session::persist(&cfg, &client).await?;
             r?;
         }

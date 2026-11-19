@@ -28,7 +28,21 @@ impl Engine {
             self.flush_outbox(false).await;
             return Err(err);
         }
-        if text.is_empty() {
+        // The cards chosen in the apps picker go in the message of this send: the typed text is
+        // its body. They come back to the picker if the message cannot be queued.
+        let current = self
+            .view
+            .lock()
+            .unwrap()
+            .current
+            .clone()
+            .unwrap_or_default();
+        let cards = if editing_now {
+            Vec::new()
+        } else {
+            self.take_composer_cards(&current)
+        };
+        if text.is_empty() && cards.is_empty() {
             // Nothing but attachments (or nothing at all).
             self.flush_outbox(false).await;
             return Ok(());
@@ -50,6 +64,7 @@ impl Engine {
         };
         self.ui.reply_bar(String::new(), String::new(), false);
         let Some(target) = target else {
+            self.restore_composer_cards(&current, cards);
             return Ok(());
         };
         if let Some(id) = editing {
@@ -109,13 +124,6 @@ impl Engine {
         };
         let html = mentions::finish(&html, &prepared);
         // The draft is sent: forget it. It comes back if the message cannot even be queued.
-        let current = self
-            .view
-            .lock()
-            .unwrap()
-            .current
-            .clone()
-            .unwrap_or_default();
         self.clear_draft(&current);
         let mut item = self.new_outbox_item(
             target,
@@ -132,8 +140,19 @@ impl Engine {
         if important {
             item.importance = teams_proto::delivery::Importance::Important.wire().into();
         }
+        if !cards.is_empty() {
+            // One message holds the typed text and every card, as in Teams, where the card
+            // chosen from an extension is attached to the message being written.
+            item.kind = OutboxKind::Card;
+            let out: Vec<_> = cards.iter().map(|c| c.out_card()).collect();
+            item.cards = Some(teams_proto::card_send::cards_to_json(&out));
+            if text.is_empty() && item.reply_to.is_none() {
+                item.html.clear();
+            }
+        }
         self.ui.clear_subject();
         if let Err(err) = self.enqueue(item) {
+            self.restore_composer_cards(&current, cards);
             self.ui.set_draft(text.clone());
             self.view.lock().unwrap().draft_text = text;
             self.schedule_draft_save();
