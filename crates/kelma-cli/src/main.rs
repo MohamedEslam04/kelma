@@ -29,6 +29,7 @@
 
 mod apps;
 mod drive;
+mod find;
 mod team;
 
 use anyhow::{Context, Result, bail};
@@ -754,6 +755,12 @@ async fn main() -> Result<()> {
             }
             r?;
         }
+        Some("find") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = find::run(&client, &cfg, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("drive") => {
             let (client, cfg) = connect(&paths).await?;
             let r = drive::run(&client, &args[1..]).await;
@@ -886,6 +893,7 @@ async fn main() -> Result<()> {
                    presence [mri..]\n\
                    card [mri]\n\
                    horizons <conv>\n\
+                   find <probe|search|mentions|followed|shared> (search and quick views, counts only)\n\
                    drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest|purge>\n\
                    tasks [todo <n>|plan <n>]\n\
                    flows [runs <n> [top]]\n\

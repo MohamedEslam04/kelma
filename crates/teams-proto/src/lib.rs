@@ -28,11 +28,13 @@ pub mod people;
 pub mod planner;
 pub mod presence;
 pub mod receipts;
+pub mod search;
 pub mod tags;
 pub mod teams;
 pub mod threads;
 pub mod time;
 pub mod trouter;
+pub mod views;
 pub mod workflows;
 
 pub use client::{Client, Session};
