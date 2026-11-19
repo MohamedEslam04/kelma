@@ -155,8 +155,10 @@ impl FormFields {
         if self.subject.trim().is_empty() {
             return Err("Add a title".into());
         }
-        let start_date = parse_date(&self.start_date).ok_or("The start date should look like 2026-12-18")?;
-        let end_date = parse_date(&self.end_date).ok_or("The end date should look like 2026-12-18")?;
+        let start_date =
+            parse_date(&self.start_date).ok_or("The start date should look like 2026-12-18")?;
+        let end_date =
+            parse_date(&self.end_date).ok_or("The end date should look like 2026-12-18")?;
         let (start, end) = if self.all_day {
             if end_date < start_date {
                 return Err("The end is before the start".into());
@@ -184,7 +186,10 @@ impl FormFields {
         let reminder = match self.reminder.as_str() {
             "off" => Reminder::Off,
             "" | "default" => Reminder::Default,
-            m => Reminder::Minutes(m.parse().map_err(|_| "The reminder is not a number of minutes")?),
+            m => Reminder::Minutes(
+                m.parse()
+                    .map_err(|_| "The reminder is not a number of minutes")?,
+            ),
         };
         let body_html = match original_body {
             Some((plain, html)) if plain == self.body => html.to_string(),
@@ -224,8 +229,11 @@ impl FormFields {
             hide_attendees: self.hide_attendees,
             transaction_id: None,
         };
-        ev.validate()
-            .map_err(|e| e.to_string().replace("protocol: ", "").replace("event: ", ""))?;
+        ev.validate().map_err(|e| {
+            e.to_string()
+                .replace("protocol: ", "")
+                .replace("event: ", "")
+        })?;
         Ok(ev)
     }
 
@@ -333,7 +341,11 @@ pub fn parse_hm(s: &str) -> Option<u32> {
 pub fn parse_date(s: &str) -> Option<Date> {
     let mut it = s.trim().splitn(3, '-');
     let (y, m, d) = (it.next()?, it.next()?, it.next()?);
-    let (y, m, d) = (y.parse::<i32>().ok()?, m.parse::<u32>().ok()?, d.parse::<u32>().ok()?);
+    let (y, m, d) = (
+        y.parse::<i32>().ok()?,
+        m.parse::<u32>().ok()?,
+        d.parse::<u32>().ok()?,
+    );
     if y.to_string().len() != 4 || !(1..=12).contains(&m) || d == 0 {
         return None;
     }
@@ -398,7 +410,14 @@ pub fn show_as_graph(key: &str) -> &'static str {
 }
 
 /// Everything a chat header's "Schedule a meeting" fills in: the people and a Teams meeting.
-pub fn from_chat(subject: &str, members: &[Person], my_email: &str, date: Date, start_min: u32, tz: &str) -> FormFields {
+pub fn from_chat(
+    subject: &str,
+    members: &[Person],
+    my_email: &str,
+    date: Date,
+    start_min: u32,
+    tz: &str,
+) -> FormFields {
     let ev = NewEvent::from_chat_members(subject, members, my_email, tz);
     let mut f = FormFields::blank(date, start_min);
     f.subject = ev.subject;
@@ -503,7 +522,10 @@ mod tests {
         assert!(e.recurrence.is_none() && !e.is_teams_meeting);
         // A slot that starts in the last half hour ends after midnight.
         let late = FormFields::blank(DEC_18, 23 * 60 + 45);
-        assert_eq!((late.end_date.as_str(), late.end_time.as_str()), ("2026-12-19", "00:15"));
+        assert_eq!(
+            (late.end_date.as_str(), late.end_time.as_str()),
+            ("2026-12-19", "00:15")
+        );
     }
 
     #[test]
@@ -551,9 +573,15 @@ mod tests {
         f.all_day = true;
         f.end_date = "2026-12-20".into();
         let e = build(&f);
-        assert_eq!((e.start.as_str(), e.end.as_str()), ("2026-12-18T00:00:00", "2026-12-21T00:00:00"));
+        assert_eq!(
+            (e.start.as_str(), e.end.as_str()),
+            ("2026-12-18T00:00:00", "2026-12-21T00:00:00")
+        );
         f.end_date = "2026-12-17".into();
-        assert_eq!(f.to_new_event("UTC", None).unwrap_err(), "The end is before the start");
+        assert_eq!(
+            f.to_new_event("UTC", None).unwrap_err(),
+            "The end is before the start"
+        );
     }
 
     #[test]
@@ -602,7 +630,10 @@ mod tests {
             }
         );
         f.repeat = "monthly".into();
-        assert_eq!(rec(&f).unwrap().pattern, Pattern::MonthlyOnDate { day_of_month: 18 });
+        assert_eq!(
+            rec(&f).unwrap().pattern,
+            Pattern::MonthlyOnDate { day_of_month: 18 }
+        );
         f.repeat = "yearly".into();
         assert_eq!(
             rec(&f).unwrap().pattern,
@@ -629,10 +660,17 @@ mod tests {
             RecurrenceEnd::On(Date::new(2027, 1, 31))
         );
         f.end_value = "2026-12-01".into();
-        assert_eq!(f.to_new_event("UTC", None).unwrap_err(), "The series ends before it starts");
+        assert_eq!(
+            f.to_new_event("UTC", None).unwrap_err(),
+            "The series ends before it starts"
+        );
         f.interval = "0".into();
         f.end_value = "2027-01-31".into();
-        assert!(f.to_new_event("UTC", None).unwrap_err().contains("at least 1"));
+        assert!(
+            f.to_new_event("UTC", None)
+                .unwrap_err()
+                .contains("at least 1")
+        );
     }
 
     #[test]
@@ -666,7 +704,10 @@ mod tests {
         let e = build(&f);
         assert!(e.is_teams_meeting && e.hide_attendees);
         assert!(!e.allow_new_time_proposals && !e.response_requested);
-        assert_eq!((e.show_as, e.sensitivity), (ShowAs::Oof, Sensitivity::Private));
+        assert_eq!(
+            (e.show_as, e.sensitivity),
+            (ShowAs::Oof, Sensitivity::Private)
+        );
         assert_eq!(e.categories, ["Blue category"]);
         assert_eq!(e.reminder, Reminder::Minutes(30));
         assert_eq!(e.room, Some(Person::new("Atlas", "atlas@contoso.com")));
@@ -709,17 +750,30 @@ mod tests {
         let two_hours = |_: i64| 2 * 3_600_000;
         let f = FormFields::from_event(&evs[0], "Notes", &two_hours, true);
         assert_eq!(
-            (f.start_date.as_str(), f.start_time.as_str(), f.end_time.as_str()),
+            (
+                f.start_date.as_str(),
+                f.start_time.as_str(),
+                f.end_time.as_str()
+            ),
             ("2026-12-18", "10:00", "11:30")
         );
         assert_eq!(f.required, "Alice <alice@contoso.com>");
         assert_eq!(f.optional, "bob@contoso.com");
-        assert_eq!((f.room_email.as_str(), f.location.as_str()), ("atlas@contoso.com", "Room 4"));
-        assert_eq!((f.show_as.as_str(), f.category.as_str(), f.repeat.as_str()), ("tentative", "Red category", "keep"));
+        assert_eq!(
+            (f.room_email.as_str(), f.location.as_str()),
+            ("atlas@contoso.com", "Room 4")
+        );
+        assert_eq!(
+            (f.show_as.as_str(), f.category.as_str(), f.repeat.as_str()),
+            ("tentative", "Red category", "keep")
+        );
         assert!(f.teams_meeting);
         // Saving it back is a valid event with no recurrence change.
         let e = f.to_new_event("Africa/Cairo", None).unwrap();
-        assert_eq!((e.start.as_str(), e.end.as_str()), ("2026-12-18T10:00:00", "2026-12-18T11:30:00"));
+        assert_eq!(
+            (e.start.as_str(), e.end.as_str()),
+            ("2026-12-18T10:00:00", "2026-12-18T11:30:00")
+        );
         assert_eq!(e.recurrence, None);
         assert_eq!(e.required.len(), 1);
     }
@@ -753,16 +807,29 @@ mod tests {
     fn the_scheduler_click_keeps_the_events_length_and_can_cross_midnight() {
         let mut f = form();
         f.end_time = "11:30".into(); // 10:00 to 11:30, an hour and a half
-        assert_eq!(slot_for_pick(&f, 14 * 60), ("14:00".into(), "2026-12-18".into(), "15:30".into()));
-        assert_eq!(slot_for_pick(&f, 23 * 60), ("23:00".into(), "2026-12-19".into(), "00:30".into()));
+        assert_eq!(
+            slot_for_pick(&f, 14 * 60),
+            ("14:00".into(), "2026-12-18".into(), "15:30".into())
+        );
+        assert_eq!(
+            slot_for_pick(&f, 23 * 60),
+            ("23:00".into(), "2026-12-19".into(), "00:30".into())
+        );
         f.end_time = "08:00".into(); // nonsense: fall back to half an hour
-        assert_eq!(slot_for_pick(&f, 9 * 60), ("09:00".into(), "2026-12-18".into(), "09:30".into()));
+        assert_eq!(
+            slot_for_pick(&f, 9 * 60),
+            ("09:00".into(), "2026-12-18".into(), "09:30".into())
+        );
     }
 
     #[test]
     fn typed_attendees_are_read_leniently_for_the_scheduler() {
-        let p = people_lenient("alice@contoso.com; nobody, Bob <bob@contoso.com>, ALICE@contoso.com");
-        assert_eq!(p.iter().map(|x| x.email.as_str()).collect::<Vec<_>>(), ["alice@contoso.com", "bob@contoso.com"]);
+        let p =
+            people_lenient("alice@contoso.com; nobody, Bob <bob@contoso.com>, ALICE@contoso.com");
+        assert_eq!(
+            p.iter().map(|x| x.email.as_str()).collect::<Vec<_>>(),
+            ["alice@contoso.com", "bob@contoso.com"]
+        );
         assert!(people_lenient("").is_empty());
     }
 
@@ -783,7 +850,9 @@ mod tests {
     #[test]
     #[ignore = "talks to the live service: makes and deletes two private appointments"]
     fn live_form_round_trip() {
-        use ::calendar::{Calendar, create_event, delete_event, event_detail, instances, move_event};
+        use ::calendar::{
+            Calendar, create_event, delete_event, event_detail, instances, move_event,
+        };
         const DAY: i64 = 86_400_000;
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -812,7 +881,9 @@ mod tests {
                 f.reminder = "30".into();
                 f.body = "**bold** line".into();
                 let new = f.to_new_event(&tz, None)?;
-                let created = create_event(&client, &new).await.map_err(|e| e.to_string())?;
+                let created = create_event(&client, &new)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 made.borrow_mut().push(created.id.clone());
                 println!("created with time zone {tz}");
                 check!(created.sensitivity_private, "not private");
@@ -825,9 +896,14 @@ mod tests {
                     "local time round trip: {}",
                     (back.start_date == f.start_date && back.start_time == f.start_time)
                 );
-                check!(back.start_date == f.start_date && back.start_time == f.start_time, "time");
+                check!(
+                    back.start_date == f.start_date && back.start_time == f.start_time,
+                    "time"
+                );
                 check!(back.end_time == f.end_time, "end time");
-                let detail = event_detail(&client, &created.id).await.map_err(|e| e.to_string())?;
+                let detail = event_detail(&client, &created.id)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let plain = super::super::model::detail_data(&detail).body;
                 println!("body round trip: {}", plain.contains("bold"));
                 check!(plain.contains("bold"), "body");
@@ -842,7 +918,10 @@ mod tests {
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                println!("moved an hour: {}", moved.start_ms == created.start_ms + hour);
+                println!(
+                    "moved an hour: {}",
+                    moved.start_ms == created.start_ms + hour
+                );
                 check!(moved.start_ms == created.start_ms + hour, "move");
 
                 // A weekly series of three.
@@ -854,7 +933,9 @@ mod tests {
                 series.end_kind = "after".into();
                 series.end_value = "3".into();
                 let sn = series.to_new_event(&tz, None)?;
-                let master = create_event(&client, &sn).await.map_err(|e| e.to_string())?;
+                let master = create_event(&client, &sn)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 made.borrow_mut().push(master.id.clone());
                 let from = master.start_ms - DAY;
                 let found = instances(&client, &master.id, from, from + 40 * DAY)
@@ -865,7 +946,8 @@ mod tests {
                 Ok(())
             }
             .await;
-            for id in made.borrow().iter() {
+            let ids: Vec<String> = made.borrow().clone();
+            for id in &ids {
                 if let Err(e) = delete_event(&client, id).await {
                     println!("cleanup failed: {e}");
                 }

@@ -414,7 +414,7 @@ fn days_in_year_weeks(year: i32) -> u32 {
 /// The ISO 8601 week number of a date (weeks start on Monday, week 1 has the year's first
 /// Thursday).
 pub fn iso_week(d: Date) -> u32 {
-    let ordinal = ((d.midnight_ms() - Date::new(d.year, 1, 1).midnight_ms()) / DAY_MS) as i64 + 1;
+    let ordinal = ((d.midnight_ms() - Date::new(d.year, 1, 1).midnight_ms()) / DAY_MS) + 1;
     let weekday = match d.weekday() {
         Weekday::Sunday => 7,
         w => w as i64,
@@ -1086,9 +1086,17 @@ mod tests {
     fn iso_week_numbers_follow_iso_8601() {
         assert_eq!(iso_week(NOV_18), 47);
         assert_eq!(iso_week(Date::new(2026, 12, 28)), 53, "2026 has 53 weeks");
-        assert_eq!(iso_week(Date::new(2027, 1, 1)), 53, "a Friday in the last ISO week of 2026");
+        assert_eq!(
+            iso_week(Date::new(2027, 1, 1)),
+            53,
+            "a Friday in the last ISO week of 2026"
+        );
         assert_eq!(iso_week(Date::new(2027, 1, 4)), 1);
-        assert_eq!(iso_week(Date::new(2025, 12, 29)), 1, "belongs to 2026 week 1");
+        assert_eq!(
+            iso_week(Date::new(2025, 12, 29)),
+            1,
+            "belongs to 2026 week 1"
+        );
         assert_eq!(iso_week(Date::new(2024, 2, 29)), 9);
     }
 
@@ -1104,14 +1112,25 @@ mod tests {
         assert_eq!(d.week_label, "Week 47");
         assert!(d.week_numbers);
         assert_eq!(d.mini_weeks.len(), d.mini.len() / 7);
-        assert_eq!(d.mini_weeks[3], 47, "the mini calendar's fourth row is the 16th to the 22nd");
+        assert_eq!(
+            d.mini_weeks[3], 47,
+            "the mini calendar's fourth row is the 16th to the 22nd"
+        );
         let mut c = ctx(View::Month, &utc);
         c.prefs = &prefs;
         let m = build(&[], &c);
         assert_eq!(m.month_weeks.len(), m.month.len() / 7);
         assert_eq!(m.month_weeks[0], 44, "Nov 2 is the first Monday");
-        assert_eq!(*m.month_weeks.last().unwrap(), 49, "the last row is Nov 30 to Dec 6");
-        assert_eq!(build(&[], &ctx(View::Week, &utc)).week_label, "", "off by default");
+        assert_eq!(
+            *m.month_weeks.last().unwrap(),
+            49,
+            "the last row is Nov 30 to Dec 6"
+        );
+        assert_eq!(
+            build(&[], &ctx(View::Week, &utc)).week_label,
+            "",
+            "off by default"
+        );
     }
 
     #[test]
@@ -1177,7 +1196,10 @@ mod tests {
         let d = build(&[], &c);
         assert_eq!(d.second_title, "UTC+05:00");
         assert_eq!(d.second_labels.len(), 24);
-        assert_eq!(d.second_labels[9], "12:00", "09:00 in UTC+2 is 12:00 in UTC+5");
+        assert_eq!(
+            d.second_labels[9], "12:00",
+            "09:00 in UTC+2 is 12:00 in UTC+5"
+        );
         assert_eq!(d.second_labels[22], "01:00", "wraps past midnight");
         let neg = Prefs {
             second_tz_min: Some(-(9 * 60 + 30)),
@@ -1186,7 +1208,11 @@ mod tests {
         let mut c = ctx(View::Day(1), &utc);
         c.prefs = &neg;
         assert_eq!(build(&[], &c).second_title, "UTC-09:30");
-        assert!(build(&[], &ctx(View::Day(1), &utc)).second_labels.is_empty());
+        assert!(
+            build(&[], &ctx(View::Day(1), &utc))
+                .second_labels
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1209,7 +1235,12 @@ mod tests {
     fn month_items_carry_the_event_id_so_they_can_open_the_peek() {
         let e = ev("M1", 0, 9.0, 10.0, 0, json!({}));
         let d = build(&[&e], &ctx(View::Month, &utc));
-        let ids: Vec<_> = d.month.iter().flat_map(|c| c.items.iter()).map(|i| i.id.as_str()).collect();
+        let ids: Vec<_> = d
+            .month
+            .iter()
+            .flat_map(|c| c.items.iter())
+            .map(|i| i.id.as_str())
+            .collect();
         assert_eq!(ids, ["M1"]);
     }
 }

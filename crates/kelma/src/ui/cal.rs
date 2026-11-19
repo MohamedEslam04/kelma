@@ -555,14 +555,12 @@ pub fn wire(window: &AppWindow, tx: UnboundedSender<Cmd>) {
     {
         let tx = tx.clone();
         let weak = window.as_weak();
-        window
-            .global::<CalStore>()
-            .on_command(move |name, arg| {
-                let Some(w) = weak.upgrade() else { return };
-                if let Some(c) = command(&w, &name, &arg) {
-                    let _ = tx.send(Cmd::Calendar(c));
-                }
-            });
+        window.global::<CalStore>().on_command(move |name, arg| {
+            let Some(w) = weak.upgrade() else { return };
+            if let Some(c) = command(&w, &name, &arg) {
+                let _ = tx.send(Cmd::Calendar(c));
+            }
+        });
     }
     {
         // Save: the form says what is wrong before anything is sent.
@@ -642,10 +640,7 @@ pub fn wire(window: &AppWindow, tx: UnboundedSender<Cmd>) {
                 .upgrade()
                 .map(|w| w.get_current_title().to_string())
                 .unwrap_or_default();
-            let _ = tx.send(Cmd::Calendar(CalCmd::ScheduleFromChat(
-                chat.into(),
-                title,
-            )));
+            let _ = tx.send(Cmd::Calendar(CalCmd::ScheduleFromChat(chat.into(), title)));
         });
     }
 }
@@ -873,25 +868,29 @@ mod tests {
         };
         store.set_categories(model(vec!["Blue category".into(), "Green category".into()]));
         store.set_filter_opts(model(
-            filter_opts(&calendar::EventFilter::default(), &["Blue category".into(), "Green category".into()])
-                .into_iter()
-                .map(|o| crate::CalFilterOpt {
-                    on: o.key == "meeting",
-                    group: o.group.into(),
-                    key: o.key.into(),
-                    label: o.label.into(),
-                })
-                .collect(),
+            filter_opts(
+                &calendar::EventFilter::default(),
+                &["Blue category".into(), "Green category".into()],
+            )
+            .into_iter()
+            .map(|o| crate::CalFilterOpt {
+                on: o.key == "meeting",
+                group: o.group.into(),
+                key: o.key.into(),
+                label: o.label.into(),
+            })
+            .collect(),
         ));
         store.set_filtered(true);
-        let row = |id: &str, name: &str, header: bool, checked: bool, c: u32| crate::CalCalendarRow {
-            id: id.into(),
-            name: name.into(),
-            owner: "".into(),
-            color: rgb(c),
-            checked,
-            header,
-        };
+        let row =
+            |id: &str, name: &str, header: bool, checked: bool, c: u32| crate::CalCalendarRow {
+                id: id.into(),
+                name: name.into(),
+                owner: "".into(),
+                color: rgb(c),
+                checked,
+                header,
+            };
         store.set_calendars(model(vec![
             row("", "My calendars", true, false, 0),
             row("c1", "Calendar", false, true, 0x5b5fc7),
@@ -930,7 +929,9 @@ mod tests {
                         .map(|a| crate::backend::AttendeeRow {
                             name: a.name.clone(),
                             email: a.email.clone(),
-                            response: format!("{:?}", a.response).to_lowercase().replace("notresponded", "none"),
+                            response: format!("{:?}", a.response)
+                                .to_lowercase()
+                                .replace("notresponded", "none"),
                             kind: "required".into(),
                         })
                         .collect(),
@@ -942,7 +943,8 @@ mod tests {
             "form" | "sched" | "rooms" => {
                 let mut f = FormFields::blank(Date::new(2026, 11, 19), 10 * 60);
                 f.subject = "Quarterly planning".into();
-                f.required = "Sara Hassan <sara@example.com>; Omar Khaled <omar@example.com>".into();
+                f.required =
+                    "Sara Hassan <sara@example.com>; Omar Khaled <omar@example.com>".into();
                 f.teams_meeting = true;
                 f.repeat = "weekly".into();
                 f.repeat_days = vec![false, false, false, true, false, false, false];
@@ -971,8 +973,16 @@ mod tests {
                     ]}));
                     let who = [
                         ("You".to_string(), "demo@contoso.com".to_string(), "me"),
-                        ("Sara Hassan".to_string(), "sara@example.com".to_string(), "required"),
-                        ("Omar Khaled".to_string(), "omar@example.com".to_string(), "required"),
+                        (
+                            "Sara Hassan".to_string(),
+                            "sara@example.com".to_string(),
+                            "required",
+                        ),
+                        (
+                            "Omar Khaled".to_string(),
+                            "omar@example.com".to_string(),
+                            "required",
+                        ),
                         ("Atlas".to_string(), "atlas@contoso.com".to_string(), "room"),
                     ];
                     set_sched(
@@ -1008,7 +1018,10 @@ mod tests {
                     set_rooms(
                         app,
                         RoomsPush {
-                            lists: vec![("HQ".into(), "hq@contoso.com".into()), ("Annex".into(), "annex@contoso.com".into())],
+                            lists: vec![
+                                ("HQ".into(), "hq@contoso.com".into()),
+                                ("Annex".into(), "annex@contoso.com".into()),
+                            ],
                             rooms: crate::backend::room_rows(&rooms, &sched),
                             ..Default::default()
                         },
@@ -1027,8 +1040,20 @@ mod tests {
             "share" => {
                 store.set_modal("share".into());
                 store.set_perms(model(vec![
-                    crate::CalPerm { id: "p1".into(), name: "Dana Reyes".into(), email: "dana@contoso.com".into(), role: "read".into(), removable: true },
-                    crate::CalPerm { id: "p2".into(), name: "My Organization".into(), email: "".into(), role: "freebusy".into(), removable: false },
+                    crate::CalPerm {
+                        id: "p1".into(),
+                        name: "Dana Reyes".into(),
+                        email: "dana@contoso.com".into(),
+                        role: "read".into(),
+                        removable: true,
+                    },
+                    crate::CalPerm {
+                        id: "p2".into(),
+                        name: "My Organization".into(),
+                        email: "".into(),
+                        role: "freebusy".into(),
+                        removable: false,
+                    },
                 ]));
             }
             _ => {}
@@ -1119,7 +1144,10 @@ mod tests {
     }
 
     fn log_of(log: &Rc<RefCell<Vec<(String, String)>>>) -> Vec<String> {
-        log.borrow().iter().map(|(n, a)| format!("{n} {a}")).collect()
+        log.borrow()
+            .iter()
+            .map(|(n, a)| format!("{n} {a}"))
+            .collect()
     }
 
     fn invitation(response: &str) -> Event {
@@ -1167,9 +1195,8 @@ mod tests {
         // Title, when, who invited you and the response counts are on show.
         for text in ["Alice Chen invited you", "Accepted 1, Didn't respond 1"] {
             assert!(
-                ElementHandle::find_by_element_type_name(&app, "Text").any(|t| t
-                    .accessible_label()
-                    .is_some_and(|l| l == text)),
+                ElementHandle::find_by_element_type_name(&app, "Text")
+                    .any(|t| t.accessible_label().is_some_and(|l| l == text)),
                 "{text}"
             );
         }
@@ -1228,7 +1255,13 @@ mod tests {
         assert!(!has_button(&app, "Accept"), "the organizer answers nothing");
 
         // My own appointment is deleted.
-        let appt = ev("Dentist", 1, 9.0, 10.0, json!({"responseStatus": {"response": "organizer"}}));
+        let appt = ev(
+            "Dentist",
+            1,
+            9.0,
+            10.0,
+            json!({"responseStatus": {"response": "organizer"}}),
+        );
         show_peek(&app, &appt);
         assert!(has_button(&app, "Delete"));
         assert!(!has_button(&app, "Cancel meeting"));
@@ -1253,7 +1286,10 @@ mod tests {
         assert_eq!(store.get_modal(), "prompt");
         assert_eq!(store.get_prompt_kind(), "cancel");
         assert_eq!(store.get_prompt_check_label(), "Cancel the whole series");
-        assert!(log.borrow().is_empty(), "nothing is sent until it is confirmed");
+        assert!(
+            log.borrow().is_empty(),
+            "nothing is sent until it is confirmed"
+        );
         store.set_prompt_text1("Sorry, plans changed".into());
         store.set_prompt_check(true);
         click(&button(&app, "Cancel meeting"));
@@ -1268,18 +1304,30 @@ mod tests {
         store.set_prompt_text1("a@x.com, b@x.com".into());
         store.set_prompt_text2("Please join".into());
         click(&button(&app, "Forward"));
-        assert_eq!(log_of(&log).last().unwrap(), "forward a@x.com, b@x.com|Please join|0");
+        assert_eq!(
+            log_of(&log).last().unwrap(),
+            "forward a@x.com, b@x.com|Please join|0"
+        );
     }
 
     #[test]
     fn deleting_an_appointment_needs_a_confirmation() {
-        let appt = ev("Dentist", 1, 9.0, 10.0, json!({"responseStatus": {"response": "organizer"}}));
+        let appt = ev(
+            "Dentist",
+            1,
+            9.0,
+            10.0,
+            json!({"responseStatus": {"response": "organizer"}}),
+        );
         let app = app(View::WorkWeek, std::slice::from_ref(&appt));
         let log = commands(&app);
         show_peek(&app, &appt);
         click(&button(&app, "…"));
         click(&button(&app, "Delete"));
-        assert_eq!(app.global::<CalStore>().get_prompt_message(), "Delete \"Dentist\"? This can't be undone.");
+        assert_eq!(
+            app.global::<CalStore>().get_prompt_message(),
+            "Delete \"Dentist\"? This can't be undone."
+        );
         click(&button(&app, "Not now"));
         assert!(log.borrow().is_empty());
         assert_eq!(app.global::<CalStore>().get_modal(), "");
@@ -1292,7 +1340,13 @@ mod tests {
 
     #[test]
     fn show_as_and_category_are_changed_from_the_peek() {
-        let e = ev("Mine", 0, 9.0, 10.0, json!({"responseStatus": {"response": "organizer"}}));
+        let e = ev(
+            "Mine",
+            0,
+            9.0,
+            10.0,
+            json!({"responseStatus": {"response": "organizer"}}),
+        );
         let app = app(View::WorkWeek, std::slice::from_ref(&e));
         let log = commands(&app);
         app.global::<CalStore>()
@@ -1360,7 +1414,11 @@ mod tests {
                 "{want}"
             );
         }
-        assert!(ElementHandle::find_by_accessible_label(&app, "Attachment plan.pdf").next().is_some());
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, "Attachment plan.pdf")
+                .next()
+                .is_some()
+        );
     }
 
     #[test]
@@ -1404,7 +1462,10 @@ mod tests {
         store.set_filtered(true);
         click(&button(&app, "Clear filters"));
         assert_eq!(log_of(&log).last().unwrap(), "filter-clear ");
-        assert_eq!(button(&app, "Filter ●").accessible_label().unwrap(), "Filter ●");
+        assert_eq!(
+            button(&app, "Filter ●").accessible_label().unwrap(),
+            "Filter ●"
+        );
     }
 
     #[test]
@@ -1436,7 +1497,14 @@ mod tests {
         let log = commands(&app);
         click(&button(&app, "New event ▾"));
         assert_eq!(app.global::<CalStore>().get_popup(), "new");
-        for label in ["Event", "Channel meeting", "Webinar", "Town hall", "Virtual appointment", "Live event"] {
+        for label in [
+            "Event",
+            "Channel meeting",
+            "Webinar",
+            "Town hall",
+            "Virtual appointment",
+            "Live event",
+        ] {
             assert!(has_button(&app, label), "{label}");
         }
         click(&button(&app, "Channel meeting"));
@@ -1472,11 +1540,23 @@ mod tests {
         let evs: Vec<Event> = vec![];
         let app = app(View::WorkWeek, &evs);
         let log = commands(&app);
-        click(&ElementHandle::find_by_accessible_label(&app, "Pick dates").next().unwrap());
+        click(
+            &ElementHandle::find_by_accessible_label(&app, "Pick dates")
+                .next()
+                .unwrap(),
+        );
         assert_eq!(app.global::<CalStore>().get_popup(), "range");
-        click(&ElementHandle::find_by_accessible_label(&app, "Pick 2026-11-16").next().unwrap());
+        click(
+            &ElementHandle::find_by_accessible_label(&app, "Pick 2026-11-16")
+                .next()
+                .unwrap(),
+        );
         assert!(log.borrow().is_empty(), "one pick is not a range");
-        click(&ElementHandle::find_by_accessible_label(&app, "Pick 2026-11-18").next().unwrap());
+        click(
+            &ElementHandle::find_by_accessible_label(&app, "Pick 2026-11-18")
+                .next()
+                .unwrap(),
+        );
         assert_eq!(log_of(&log), ["range 2026-11-16|2026-11-18"]);
         assert_eq!(app.global::<CalStore>().get_popup(), "");
     }
@@ -1493,13 +1573,21 @@ mod tests {
         click(&button(&app, "Views ▾"));
         click(&button(&app, "Planning"));
         click(&button(&app, "Views ▾"));
-        click(&ElementHandle::find_by_accessible_label(&app, "Delete view Planning").next().unwrap());
+        click(
+            &ElementHandle::find_by_accessible_label(&app, "Delete view Planning")
+                .next()
+                .unwrap(),
+        );
         click(&button(&app, "Save current view…"));
         store.set_prompt_text1("Wide".into());
         click(&button(&app, "Save"));
         assert_eq!(
             log_of(&log),
-            ["saved-apply Planning", "saved-delete Planning", "saved-save Wide||0"]
+            [
+                "saved-apply Planning",
+                "saved-delete Planning",
+                "saved-save Wide||0"
+            ]
         );
     }
 
@@ -1530,7 +1618,11 @@ mod tests {
     fn a_day_header_sets_the_work_location_for_that_day() {
         let app = app(View::WorkWeek, &[]);
         let log = commands(&app);
-        click(&ElementHandle::find_by_accessible_label(&app, "Work location for 2026-11-18").next().unwrap());
+        click(
+            &ElementHandle::find_by_accessible_label(&app, "Work location for 2026-11-18")
+                .next()
+                .unwrap(),
+        );
         assert_eq!(app.global::<CalStore>().get_popup(), "work-location");
         click(&button(&app, "Remote"));
         assert_eq!(log_of(&log), ["work-location 2026-11-18|remote"]);
@@ -1538,7 +1630,10 @@ mod tests {
 
     // The form
 
-    fn open_blank_form() -> (AppWindow, tokio::sync::mpsc::UnboundedReceiver<crate::backend::Cmd>) {
+    fn open_blank_form() -> (
+        AppWindow,
+        tokio::sync::mpsc::UnboundedReceiver<crate::backend::Cmd>,
+    ) {
         let app = app(View::WorkWeek, &[]);
         app.window().set_size(LogicalSize::new(1400., 1400.));
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1573,20 +1668,28 @@ mod tests {
         app.global::<CalForm>().set_subject("Design sync".into());
         app.global::<CalForm>().set_end_time("09:00".into());
         click(&button(&app, "Save"));
-        assert_eq!(app.global::<CalForm>().get_error(), "The end is before the start");
+        assert_eq!(
+            app.global::<CalForm>().get_error(),
+            "The end is before the start"
+        );
         app.global::<CalForm>().set_end_time("11:00".into());
-        app.global::<CalForm>().set_required("alice@contoso.com; nobody".into());
+        app.global::<CalForm>()
+            .set_required("alice@contoso.com; nobody".into());
         click(&button(&app, "Save"));
         assert_eq!(
             app.global::<CalForm>().get_error(),
             "\"nobody\" is not an email address"
         );
-        app.global::<CalForm>().set_required("alice@contoso.com".into());
+        app.global::<CalForm>()
+            .set_required("alice@contoso.com".into());
         click(&button(&app, "Save"));
         assert_eq!(app.global::<CalForm>().get_error(), "");
         let f = submitted(&mut rx);
         let e = f.to_new_event("Africa/Cairo", None).unwrap();
-        assert_eq!((e.subject.as_str(), e.start.as_str(), e.end.as_str()), ("Design sync", "2026-12-18T10:00:00", "2026-12-18T11:00:00"));
+        assert_eq!(
+            (e.subject.as_str(), e.start.as_str(), e.end.as_str()),
+            ("Design sync", "2026-12-18T10:00:00", "2026-12-18T11:00:00")
+        );
         assert_eq!(e.required[0].email, "alice@contoso.com");
         assert!(e.recurrence.is_none());
     }
@@ -1622,7 +1725,11 @@ mod tests {
         click(&button(&app, "On date"));
         g.set_end_value("2027-01-29".into());
         click(&button(&app, "Save"));
-        let r = submitted(&mut rx).to_new_event("UTC", None).unwrap().recurrence.unwrap();
+        let r = submitted(&mut rx)
+            .to_new_event("UTC", None)
+            .unwrap()
+            .recurrence
+            .unwrap();
         assert_eq!(r.pattern, Pattern::weekdays());
         assert_eq!(r.end, RecurrenceEnd::On(Date::new(2027, 1, 29)));
         click(&button(&app, "Never"));
@@ -1649,7 +1756,10 @@ mod tests {
         assert_eq!(e.show_as, calendar::ShowAs::Oof);
         assert_eq!(e.reminder, calendar::Reminder::Minutes(60));
         assert_eq!(e.categories, ["Blue category"]);
-        assert_eq!(e.end, "2026-12-19T00:00:00", "an all-day event ends at the next midnight");
+        assert_eq!(
+            e.end, "2026-12-19T00:00:00",
+            "an all-day event ends at the next midnight"
+        );
     }
 
     #[test]
@@ -1673,7 +1783,11 @@ mod tests {
         ]}));
         let who = [
             ("You".to_string(), "me@contoso.com".to_string(), "me"),
-            ("Alice".to_string(), "alice@contoso.com".to_string(), "required"),
+            (
+                "Alice".to_string(),
+                "alice@contoso.com".to_string(),
+                "required",
+            ),
             ("Bob".to_string(), "bob@contoso.com".to_string(), "optional"),
         ];
         set_sched(
@@ -1693,7 +1807,11 @@ mod tests {
         assert_eq!(cell("You 11:00 tentative"), 1);
         assert_eq!(cell("Alice 09:00 out of office"), 1);
         assert_eq!(cell("Alice 09:30 working elsewhere"), 1);
-        assert_eq!(cell("Bob 10:00 unknown"), 1, "an unreadable calendar is unknown");
+        assert_eq!(
+            cell("Bob 10:00 unknown"),
+            1,
+            "an unreadable calendar is unknown"
+        );
         let all = ElementHandle::find_by_element_type_name(&app, "Rectangle")
             .filter_map(|e| e.accessible_label())
             .filter(|l| l.ends_with(" busy"))
@@ -1718,8 +1836,16 @@ mod tests {
             },
         );
         g.set_sched_open(true);
-        assert_eq!((g.get_sel_start(), g.get_sel_end()), (600, 690), "the form's slot is outlined");
-        click(&ElementHandle::find_by_accessible_label(&app, "Start at 12:00").next().unwrap());
+        assert_eq!(
+            (g.get_sel_start(), g.get_sel_end()),
+            (600, 690),
+            "the form's slot is outlined"
+        );
+        click(
+            &ElementHandle::find_by_accessible_label(&app, "Start at 12:00")
+                .next()
+                .unwrap(),
+        );
         assert_eq!(
             (g.get_start_time().to_string(), g.get_end_time().to_string()),
             ("12:00".to_string(), "13:30".to_string())
@@ -1735,8 +1861,16 @@ mod tests {
         }]));
         click(&button(&app, "Thu 19, 14:00 – 14:30"));
         assert_eq!(
-            (g.get_start_date().to_string(), g.get_start_time().to_string(), g.get_end_time().to_string()),
-            ("2026-12-19".to_string(), "14:00".to_string(), "14:30".to_string())
+            (
+                g.get_start_date().to_string(),
+                g.get_start_time().to_string(),
+                g.get_end_time().to_string()
+            ),
+            (
+                "2026-12-19".to_string(),
+                "14:00".to_string(),
+                "14:30".to_string()
+            )
         );
     }
 
@@ -1763,11 +1897,26 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(ElementHandle::find_by_accessible_label(&app, "Atlas, free").next().is_some());
-        assert!(ElementHandle::find_by_accessible_label(&app, "Boreas, busy").next().is_some());
-        click(&ElementHandle::find_by_accessible_label(&app, "Atlas, free").next().unwrap());
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, "Atlas, free")
+                .next()
+                .is_some()
+        );
+        assert!(
+            ElementHandle::find_by_accessible_label(&app, "Boreas, busy")
+                .next()
+                .is_some()
+        );
+        click(
+            &ElementHandle::find_by_accessible_label(&app, "Atlas, free")
+                .next()
+                .unwrap(),
+        );
         assert_eq!(
-            (g.get_room_name().to_string(), g.get_room_email().to_string()),
+            (
+                g.get_room_name().to_string(),
+                g.get_room_email().to_string()
+            ),
             ("Atlas".to_string(), "atlas@contoso.com".to_string())
         );
         assert!(!g.get_rooms_open(), "the picker closes");
@@ -1788,27 +1937,52 @@ mod tests {
         let grab = LogicalPosition::new(p.x + sz.width / 2., p.y + 10.);
         let win = app.window();
         win.dispatch_event(WindowEvent::PointerMoved { position: grab });
-        win.dispatch_event(WindowEvent::PointerPressed { position: grab, button: PointerEventButton::Left });
+        win.dispatch_event(WindowEvent::PointerPressed {
+            position: grab,
+            button: PointerEventButton::Left,
+        });
         // Half way through the drag the target shows where it would land.
-        win.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(grab.x, grab.y + 40.) });
+        win.dispatch_event(WindowEvent::PointerMoved {
+            position: LogicalPosition::new(grab.x, grab.y + 40.),
+        });
         assert!(
-            ElementHandle::find_by_accessible_label(&app, "Move to 09:45 – 10:45").next().is_some()
-                || ElementHandle::find_by_accessible_label(&app, "Move to 09:30 – 10:30").next().is_some(),
+            ElementHandle::find_by_accessible_label(&app, "Move to 09:45 – 10:45")
+                .next()
+                .is_some()
+                || ElementHandle::find_by_accessible_label(&app, "Move to 09:30 – 10:30")
+                    .next()
+                    .is_some(),
             "a ghost shows the snapped target"
         );
         let drop = LogicalPosition::new(grab.x, grab.y + 64.);
         win.dispatch_event(WindowEvent::PointerMoved { position: drop });
-        win.dispatch_event(WindowEvent::PointerReleased { position: drop, button: PointerEventButton::Left });
-        assert_eq!(log_of(&log), ["move Alpha|2026-11-18|600|60"], "09:00 plus an hour, same length");
-        assert!(!app.global::<CalStore>().get_peek_open(), "a drag is not a click");
+        win.dispatch_event(WindowEvent::PointerReleased {
+            position: drop,
+            button: PointerEventButton::Left,
+        });
+        assert_eq!(
+            log_of(&log),
+            ["move Alpha|2026-11-18|600|60"],
+            "09:00 plus an hour, same length"
+        );
+        assert!(
+            !app.global::<CalStore>().get_peek_open(),
+            "a drag is not a click"
+        );
 
         // Dragging a column to the right moves it to the next day.
         let col_w = label(&app, "Gamma").absolute_position().x - p.x;
         let drop = LogicalPosition::new(grab.x + col_w, grab.y);
         win.dispatch_event(WindowEvent::PointerMoved { position: grab });
-        win.dispatch_event(WindowEvent::PointerPressed { position: grab, button: PointerEventButton::Left });
+        win.dispatch_event(WindowEvent::PointerPressed {
+            position: grab,
+            button: PointerEventButton::Left,
+        });
         win.dispatch_event(WindowEvent::PointerMoved { position: drop });
-        win.dispatch_event(WindowEvent::PointerReleased { position: drop, button: PointerEventButton::Left });
+        win.dispatch_event(WindowEvent::PointerReleased {
+            position: drop,
+            button: PointerEventButton::Left,
+        });
         assert_eq!(log_of(&log).last().unwrap(), "move Alpha|2026-11-19|540|60");
     }
 
@@ -1822,19 +1996,31 @@ mod tests {
         // The grip is the bottom 6 px: drag it half an hour down.
         let grip = LogicalPosition::new(p.x + sz.width / 2., p.y + sz.height - 3.);
         win.dispatch_event(WindowEvent::PointerMoved { position: grip });
-        win.dispatch_event(WindowEvent::PointerPressed { position: grip, button: PointerEventButton::Left });
+        win.dispatch_event(WindowEvent::PointerPressed {
+            position: grip,
+            button: PointerEventButton::Left,
+        });
         let end = LogicalPosition::new(grip.x, grip.y + 32.);
         win.dispatch_event(WindowEvent::PointerMoved { position: end });
-        win.dispatch_event(WindowEvent::PointerReleased { position: end, button: PointerEventButton::Left });
+        win.dispatch_event(WindowEvent::PointerReleased {
+            position: end,
+            button: PointerEventButton::Left,
+        });
         assert_eq!(log_of(&log), ["move Alpha|2026-11-18|540|90"]);
 
         // A 2 px wiggle is a click, not a move.
         let grab = LogicalPosition::new(p.x + sz.width / 2., p.y + 10.);
         win.dispatch_event(WindowEvent::PointerMoved { position: grab });
-        win.dispatch_event(WindowEvent::PointerPressed { position: grab, button: PointerEventButton::Left });
+        win.dispatch_event(WindowEvent::PointerPressed {
+            position: grab,
+            button: PointerEventButton::Left,
+        });
         let wiggle = LogicalPosition::new(grab.x + 2., grab.y + 1.);
         win.dispatch_event(WindowEvent::PointerMoved { position: wiggle });
-        win.dispatch_event(WindowEvent::PointerReleased { position: wiggle, button: PointerEventButton::Left });
+        win.dispatch_event(WindowEvent::PointerReleased {
+            position: wiggle,
+            button: PointerEventButton::Left,
+        });
         assert_eq!(log_of(&log).last().unwrap(), "peek Alpha");
     }
 
@@ -1846,10 +2032,17 @@ mod tests {
         app.set_current_title("Design team".into());
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         wire(&app, tx);
-        click(&ElementHandle::find_by_accessible_label(&app, "Schedule a meeting").next().unwrap());
+        click(
+            &ElementHandle::find_by_accessible_label(&app, "Schedule a meeting")
+                .next()
+                .unwrap(),
+        );
         match rx.try_recv() {
             Ok(crate::backend::Cmd::Calendar(CalCmd::ScheduleFromChat(id, title))) => {
-                assert_eq!((id.as_str(), title.as_str()), ("19:abc@thread.v2", "Design team"));
+                assert_eq!(
+                    (id.as_str(), title.as_str()),
+                    ("19:abc@thread.v2", "Design team")
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -1865,13 +2058,20 @@ mod tests {
         };
         let app = app_with(View::Week, &[], &prefs);
         let store = app.global::<CalStore>();
-        assert_eq!(store.get_days().row_count(), 5, "Saturday and Sunday are hidden");
-        let heads =
-            ElementHandle::find_by_element_id(&app, "TimeGrid::today-marker").count();
+        assert_eq!(
+            store.get_days().row_count(),
+            5,
+            "Saturday and Sunday are hidden"
+        );
+        let heads = ElementHandle::find_by_element_id(&app, "TimeGrid::today-marker").count();
         assert_eq!(heads, 5, "one header per day");
         assert_eq!(store.get_week_label(), "Week 47");
         assert_eq!(store.get_second_title(), "UTC+05:00");
         assert_eq!(store.get_second_labels().row_count(), 24);
-        assert_eq!(store.get_mini_weeks().row_count(), 6, "Oct 26 to Dec 6 is six rows");
+        assert_eq!(
+            store.get_mini_weeks().row_count(),
+            6,
+            "Oct 26 to Dec 6 is six rows"
+        );
     }
 }

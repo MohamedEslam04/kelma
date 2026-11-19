@@ -4,7 +4,7 @@
 
 use super::grid::{Offset, WEEKDAYS, hhmm, local_date, month_short};
 use ::calendar::{
-    Attachment, Availability, AttendeeKind, CalendarInfo, Date, Event, EventDetail, EventFilter,
+    Attachment, AttendeeKind, Availability, CalendarInfo, Date, Event, EventDetail, EventFilter,
     EventKind, FoundTimes, RecurrenceFilter, Response, ResponseCounts, Room, Schedule, ShowAs,
 };
 
@@ -35,7 +35,12 @@ pub struct PeekData {
 
 fn day_label(d: Date) -> String {
     // Weekday of a calendar date is the same in every zone.
-    format!("{}, {} {}", WEEKDAYS[d.weekday() as usize], month_short(d), d.day)
+    format!(
+        "{}, {} {}",
+        WEEKDAYS[d.weekday() as usize],
+        month_short(d),
+        d.day
+    )
 }
 
 /// "Wed, Nov 18 · 09:00 – 10:00", "Wed, Nov 18 · All day", or a span across days.
@@ -97,10 +102,7 @@ fn response_key(r: Response) -> &'static str {
 
 pub fn peek_data(e: &Event, off: Offset) -> PeekData {
     let organizer = e.response == Response::Organizer;
-    let has_attendees = e
-        .attendees
-        .iter()
-        .any(|a| a.kind != AttendeeKind::Resource);
+    let has_attendees = e.attendees.iter().any(|a| a.kind != AttendeeKind::Resource);
     let name = if e.organizer_name.is_empty() {
         &e.organizer_email
     } else {
@@ -219,7 +221,10 @@ pub fn detail_data(d: &EventDetail) -> DetailData {
         dial.push(format!("Phone: {n}"));
     }
     if !d.dial_in.toll_free_numbers.is_empty() {
-        dial.push(format!("Toll free: {}", d.dial_in.toll_free_numbers.join(", ")));
+        dial.push(format!(
+            "Toll free: {}",
+            d.dial_in.toll_free_numbers.join(", ")
+        ));
     }
     if let Some(id) = &d.dial_in.conference_id {
         dial.push(format!("Conference ID: {id}"));
@@ -474,7 +479,14 @@ pub fn sched_rows(
                 .find(|s| s.email.eq_ignore_ascii_case(email));
             let cells = match s {
                 Some(s) if s.error.is_none() => (first_slot..first_slot + slots)
-                    .map(|i| cell(s.availability.get(i).copied().unwrap_or(Availability::Unknown)))
+                    .map(|i| {
+                        cell(
+                            s.availability
+                                .get(i)
+                                .copied()
+                                .unwrap_or(Availability::Unknown),
+                        )
+                    })
                     .collect(),
                 _ => vec![5; slots],
             };
@@ -488,7 +500,11 @@ pub fn sched_rows(
                 kind: (*kind).into(),
                 cells,
                 error: match s {
-                    Some(s) => s.error.clone().map(|_| "Can't see this calendar".into()).unwrap_or_default(),
+                    Some(s) => s
+                        .error
+                        .clone()
+                        .map(|_| "Can't see this calendar".into())
+                        .unwrap_or_default(),
                     None => "No answer".into(),
                 },
             }
@@ -747,7 +763,10 @@ mod tests {
                 &event(json!({"responseStatus": {"response": response}, "showAs": "free"})),
                 &utc,
             );
-            assert!(p.can_edit && p.can_delete && !p.can_cancel && !p.can_respond, "{response}");
+            assert!(
+                p.can_edit && p.can_delete && !p.can_cancel && !p.can_respond,
+                "{response}"
+            );
             assert_eq!(p.organizer, "");
             assert_eq!((p.show_as.as_str(), p.counts.as_str()), ("free", ""));
         }
@@ -769,7 +788,10 @@ mod tests {
         let span = event(json!({"isAllDay": true,
             "start": {"dateTime": "2026-11-18T00:00:00.0000000", "timeZone": "UTC"},
             "end": {"dateTime": "2026-11-20T00:00:00.0000000", "timeZone": "UTC"}}));
-        assert_eq!(when_label(&span, &utc), "Wed, Nov 18 – Thu, Nov 19 · All day");
+        assert_eq!(
+            when_label(&span, &utc),
+            "Wed, Nov 18 – Thu, Nov 19 · All day"
+        );
         let overnight = event(json!({
             "end": {"dateTime": "2026-11-19T01:00:00.0000000", "timeZone": "UTC"}}));
         assert_eq!(
@@ -799,13 +821,23 @@ mod tests {
         }))
         .unwrap();
         let v = detail_data(&d);
-        assert!(v.body.contains("Agenda") && !v.body.contains('<'), "{}", v.body);
+        assert!(
+            v.body.contains("Agenda") && !v.body.contains('<'),
+            "{}",
+            v.body
+        );
         assert_eq!(v.attendees.len(), 2);
         assert_eq!(
-            (v.attendees[0].response.as_str(), v.attendees[1].kind.as_str()),
+            (
+                v.attendees[0].response.as_str(),
+                v.attendees[1].kind.as_str()
+            ),
             ("accepted", "resource")
         );
-        assert_eq!(v.attachments, [("plan.pdf".to_string(), "2 KB".to_string())]);
+        assert_eq!(
+            v.attachments,
+            [("plan.pdf".to_string(), "2 KB".to_string())]
+        );
         assert_eq!(
             v.dial_in,
             "Phone: +1 555 0100\nToll free: 800 1\nConference ID: 123 456"
@@ -845,7 +877,11 @@ mod tests {
         assert!(f.in_person);
         assert_eq!(f.categories, ["Blue category"]);
         let opts = filter_opts(&f, &["Red category".into(), "blue category".into()]);
-        let on: Vec<_> = opts.iter().filter(|o| o.on).map(|o| (o.group.as_str(), o.key.as_str())).collect();
+        let on: Vec<_> = opts
+            .iter()
+            .filter(|o| o.on)
+            .map(|o| (o.group.as_str(), o.key.as_str()))
+            .collect();
         assert_eq!(
             on,
             [
@@ -856,7 +892,11 @@ mod tests {
                 ("cat", "blue category")
             ]
         );
-        assert_eq!(opts.iter().filter(|o| o.group == "cat").count(), 2, "case-insensitive dedupe");
+        assert_eq!(
+            opts.iter().filter(|o| o.group == "cat").count(),
+            2,
+            "case-insensitive dedupe"
+        );
         // Toggling again clears; "Clear filters" empties everything.
         toggle_filter(&mut f, "kind", "meeting");
         assert!(f.kinds.is_empty());
@@ -877,7 +917,13 @@ mod tests {
         let mut f = EventFilter::default();
         assert_eq!(f.apply(&all).len(), 2);
         toggle_filter(&mut f, "kind", "meeting");
-        assert_eq!(f.apply(&all).iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["M"]);
+        assert_eq!(
+            f.apply(&all)
+                .iter()
+                .map(|e| e.id.as_str())
+                .collect::<Vec<_>>(),
+            ["M"]
+        );
         toggle_filter(&mut f, "kind", "appointment");
         assert_eq!(f.apply(&all).len(), 2, "alternatives inside a group");
         f.clear();
@@ -923,20 +969,46 @@ mod tests {
     fn scheduler_rows_shade_each_attendee_by_slot_from_a_fixture() {
         let who = [
             ("Me".to_string(), "me@contoso.com".to_string(), "me"),
-            ("Alice".to_string(), "ALICE@contoso.com".to_string(), "required"),
-            ("Secret".to_string(), "secret@contoso.com".to_string(), "optional"),
-            ("Nobody".to_string(), "nobody@contoso.com".to_string(), "optional"),
+            (
+                "Alice".to_string(),
+                "ALICE@contoso.com".to_string(),
+                "required",
+            ),
+            (
+                "Secret".to_string(),
+                "secret@contoso.com".to_string(),
+                "optional",
+            ),
+            (
+                "Nobody".to_string(),
+                "nobody@contoso.com".to_string(),
+                "optional",
+            ),
         ];
         let rows = sched_rows(&who, &fixture_schedules(), 1, 5);
-        assert_eq!(rows[0].cells, [0, 2, 2, 1, 0], "free, busy, busy, tentative, free from the second slot");
-        assert_eq!(rows[1].cells, [4, 0, 0, 0, 0], "out of office, then working elsewhere... from slot 1");
+        assert_eq!(
+            rows[0].cells,
+            [0, 2, 2, 1, 0],
+            "free, busy, busy, tentative, free from the second slot"
+        );
+        assert_eq!(
+            rows[1].cells,
+            [4, 0, 0, 0, 0],
+            "out of office, then working elsewhere... from slot 1"
+        );
         assert_eq!(rows[2].cells, [5; 5], "an unreadable calendar is unknown");
         assert_eq!(rows[2].error, "Can't see this calendar");
-        assert_eq!((rows[3].cells.len(), rows[3].error.as_str()), (5, "No answer"));
+        assert_eq!(
+            (rows[3].cells.len(), rows[3].error.as_str()),
+            (5, "No answer")
+        );
         assert_eq!(rows[1].kind, "required");
         assert_eq!(rows[0].tz, "Egypt Standard Time");
         // Past the end of the answer is unknown.
-        assert_eq!(sched_rows(&who[..1], &fixture_schedules(), 5, 4)[0].cells, [0, 0, 5, 5]);
+        assert_eq!(
+            sched_rows(&who[..1], &fixture_schedules(), 5, 4)[0].cells,
+            [0, 0, 5, 5]
+        );
     }
 
     #[test]
@@ -951,7 +1023,10 @@ mod tests {
         ]}));
         let s = suggestions(&found, &|_| 2 * H, 5);
         assert_eq!(s[0].label, "Thu 19, 14:00 – 14:30");
-        assert_eq!((s[0].date.as_str(), s[0].start.as_str(), s[0].end.as_str()), ("2026-11-19", "14:00", "14:30"));
+        assert_eq!(
+            (s[0].date.as_str(), s[0].start.as_str(), s[0].end.as_str()),
+            ("2026-11-19", "14:00", "14:30")
+        );
         assert_eq!(s[1].score, "50%");
         assert_eq!(suggestions(&found, &|_| 0, 1).len(), 1);
     }
@@ -973,7 +1048,10 @@ mod tests {
             [0, 1, 2],
             "free, busy, unknown (no answer)"
         );
-        assert_eq!((rows[0].capacity.as_str(), rows[0].place.as_str()), ("8", "HQ, 2"));
+        assert_eq!(
+            (rows[0].capacity.as_str(), rows[0].place.as_str()),
+            ("8", "HQ, 2")
+        );
         assert_eq!(rows[1].capacity, "");
     }
 }

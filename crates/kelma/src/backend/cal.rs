@@ -31,9 +31,9 @@ use std::time::Duration;
 use teams_proto::broker::Audience;
 use teams_proto::time::now_ms;
 
+pub use forms::{FormFields, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes};
 #[cfg(test)]
 pub use model::{AttendeeRow, SuggestRow, filter_opts, peek_data, room_rows, sched_rows};
-pub use forms::{FormFields, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes};
 
 const SYNC_EVERY: Duration = Duration::from_secs(120);
 const TICK_EVERY: Duration = Duration::from_secs(15);
@@ -1231,7 +1231,10 @@ mod tests {
         );
         assert_eq!(
             CalCmd::parse("range", "2026-11-16|2026-11-18"),
-            Some(CalCmd::Range(Date::new(2026, 11, 16), Date::new(2026, 11, 18)))
+            Some(CalCmd::Range(
+                Date::new(2026, 11, 16),
+                Date::new(2026, 11, 18)
+            ))
         );
         assert_eq!(CalCmd::parse("range", "2026-11-16"), None);
         assert_eq!(
@@ -1273,8 +1276,14 @@ mod tests {
                 loc: "remote".into()
             })
         );
-        assert_eq!(CalCmd::parse("open-attachment", "2"), Some(CalCmd::OpenAttachment(2)));
-        assert_eq!(CalCmd::parse("new", "channel"), Some(CalCmd::New("channel".into())));
+        assert_eq!(
+            CalCmd::parse("open-attachment", "2"),
+            Some(CalCmd::OpenAttachment(2))
+        );
+        assert_eq!(
+            CalCmd::parse("new", "channel"),
+            Some(CalCmd::New("channel".into()))
+        );
         // The Scheduler and the rooms read the form, so the UI layer builds those.
         assert_eq!(CalCmd::parse("sched", ""), None);
     }
@@ -1287,9 +1296,17 @@ mod tests {
         assert!(s.apply(&CalCmd::Range(day(16), day(18)), NOV_18));
         assert_eq!((s.view, s.date), (View::Day(3), day(16)));
         s.apply(&CalCmd::Range(day(20), day(17)), NOV_18);
-        assert_eq!((s.view, s.date), (View::Day(4), day(17)), "reversed picks are fine");
+        assert_eq!(
+            (s.view, s.date),
+            (View::Day(4), day(17)),
+            "reversed picks are fine"
+        );
         s.apply(&CalCmd::Range(day(1), day(30)), NOV_18);
-        assert_eq!(s.view, View::Day(7), "a longer range keeps the first seven days");
+        assert_eq!(
+            s.view,
+            View::Day(7),
+            "a longer range keeps the first seven days"
+        );
         s.apply(&CalCmd::Range(day(5), day(5)), NOV_18);
         assert_eq!(s.view, View::Day(1));
     }
@@ -1301,7 +1318,10 @@ mod tests {
         s.apply(&CalCmd::SetView("day:3".into()), NOV_18);
         s.apply(&CalCmd::SetScale(15), NOV_18);
         assert!(s.apply(&CalCmd::SavedSave("  Planning ".into()), NOV_18));
-        assert!(!s.apply(&CalCmd::SavedSave("  ".into()), NOV_18), "a blank name is ignored");
+        assert!(
+            !s.apply(&CalCmd::SavedSave("  ".into()), NOV_18),
+            "a blank name is ignored"
+        );
         s.apply(&CalCmd::SetView("month".into()), NOV_18);
         s.apply(&CalCmd::SetScale(60), NOV_18);
         assert!(s.apply(&CalCmd::SavedApply("Planning".into()), NOV_18));
@@ -1354,7 +1374,11 @@ mod tests {
         {
             let mut g = s.lock();
             g.date = NOV_18;
-            g.cache.apply(evs.into_iter().map(::calendar::EventChange::Upsert).collect());
+            g.cache.apply(
+                evs.into_iter()
+                    .map(::calendar::EventChange::Upsert)
+                    .collect(),
+            );
         }
         s
     }
@@ -1363,10 +1387,19 @@ mod tests {
     fn filters_narrow_what_the_grid_shows_and_clear_brings_it_back() {
         let s = with_events(vec![
             ev("Solo", serde_json::json!({"categories": ["Blue category"]})),
-            ev("Sync", serde_json::json!({"isOnlineMeeting": true, "showAs": "free"})),
+            ev(
+                "Sync",
+                serde_json::json!({"isOnlineMeeting": true, "showAs": "free"}),
+            ),
         ]);
         let mut g = s.lock();
-        let ids = |g: &Inner| g.data(0).blocks.iter().map(|b| b.id.clone()).collect::<Vec<_>>();
+        let ids = |g: &Inner| {
+            g.data(0)
+                .blocks
+                .iter()
+                .map(|b| b.id.clone())
+                .collect::<Vec<_>>()
+        };
         assert_eq!(ids(&g).len(), 2);
         assert!(!g.panels().filtered);
         g.apply(&CalCmd::Filter("kind".into(), "meeting".into()), NOV_18);
@@ -1374,7 +1407,10 @@ mod tests {
         assert!(g.panels().filtered);
         g.apply(&CalCmd::FilterClear, NOV_18);
         assert_eq!(ids(&g).len(), 2);
-        g.apply(&CalCmd::Filter("cat".into(), "Blue category".into()), NOV_18);
+        g.apply(
+            &CalCmd::Filter("cat".into(), "Blue category".into()),
+            NOV_18,
+        );
         assert_eq!(ids(&g), ["Solo"]);
         g.apply(&CalCmd::FilterClear, NOV_18);
         g.apply(&CalCmd::Filter("show".into(), "free".into()), NOV_18);
@@ -1399,16 +1435,30 @@ mod tests {
             owner_email: "dana@contoso.com".into(),
         }];
         let (a, b) = g.range();
-        g.extras
-            .insert("cal-2".into(), (vec![ev("Theirs", serde_json::json!({}))], (a, b)));
+        g.extras.insert(
+            "cal-2".into(),
+            (vec![ev("Theirs", serde_json::json!({}))], (a, b)),
+        );
         g.tones.insert("Theirs".into(), 0x6bb700);
-        assert_eq!(g.data(0).blocks.len(), 1, "unticked calendars are not shown");
+        assert_eq!(
+            g.data(0).blocks.len(),
+            1,
+            "unticked calendars are not shown"
+        );
         g.visible.insert("cal-2".into());
         let data = g.data(0);
         assert_eq!(data.blocks.len(), 2);
         let theirs = data.blocks.iter().find(|b| b.id == "Theirs").unwrap();
         assert_eq!(theirs.look.color, 0x6bb700);
-        assert_ne!(data.blocks.iter().find(|b| b.id == "Mine").unwrap().look.color, 0x6bb700);
+        assert_ne!(
+            data.blocks
+                .iter()
+                .find(|b| b.id == "Mine")
+                .unwrap()
+                .look
+                .color,
+            0x6bb700
+        );
         assert!(g.is_extra("Theirs") && !g.is_extra("Mine"));
         assert!(g.find("Theirs").is_some());
         let rows = g.panels().calendars;
@@ -1427,14 +1477,25 @@ mod tests {
         let d = g.data(0);
         assert_eq!(d.days.len(), 5);
         assert_eq!(d.week_label, "Week 47");
-        assert_eq!((d.work_start, d.work_end), (480, 17 * 60), "mailbox/default end, own start");
+        assert_eq!(
+            (d.work_start, d.work_end),
+            (480, 17 * 60),
+            "mailbox/default end, own start"
+        );
         assert_eq!(d.second_title, "UTC-05:00");
         let p = g.panels().settings;
-        assert_eq!((p.work_start.as_str(), p.second_tz.as_str()), ("08:00", "-300"));
+        assert_eq!(
+            (p.work_start.as_str(), p.second_tz.as_str()),
+            ("08:00", "-300")
+        );
         assert!(!p.weekends && p.week_numbers);
         g.mailbox_hours = Some((7 * 60, 15 * 60));
         g.settings.work_start_min = None;
         g.settings.work_end_min = None;
-        assert_eq!(g.work_hours(), (420, 900), "the mailbox's hours when the user set none");
+        assert_eq!(
+            g.work_hours(),
+            (420, 900),
+            "the mailbox's hours when the user set none"
+        );
     }
 }

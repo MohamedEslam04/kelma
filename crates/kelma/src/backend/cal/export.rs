@@ -38,7 +38,14 @@ pub fn agenda_lines(title: &str, events: &[&Event], off: Offset) -> Vec<String> 
         } else {
             format!("{} - {}", hhmm(e.start_ms, off), hhmm(e.end_ms, off))
         };
-        let mut line = format!("  {when}  {}", if e.subject.is_empty() { "(No title)" } else { &e.subject });
+        let mut line = format!(
+            "  {when}  {}",
+            if e.subject.is_empty() {
+                "(No title)"
+            } else {
+                &e.subject
+            }
+        );
         if !e.location.is_empty() {
             line.push_str(&format!(" ({})", e.location));
         }
@@ -61,10 +68,18 @@ fn wrap(lines: &[String]) -> Vec<String> {
         }
         let mut start = 0;
         while start < chars.len() {
-            let len = if start == 0 { WIDTH_CHARS } else { WIDTH_CHARS - 6 };
+            let len = if start == 0 {
+                WIDTH_CHARS
+            } else {
+                WIDTH_CHARS - 6
+            };
             let end = (start + len).min(chars.len());
             let text: String = chars[start..end].iter().collect();
-            out.push(if start == 0 { text } else { format!("      {text}") });
+            out.push(if start == 0 {
+                text
+            } else {
+                format!("      {text}")
+            });
             start = end;
         }
     }
@@ -105,13 +120,26 @@ pub fn pdf_bytes(lines: &[String]) -> Vec<u8> {
     };
     // Objects: 1 catalog, 2 pages, 3 font, 4 bold font, then a (page, content) pair per page.
     let mut objs: Vec<Vec<u8>> = Vec::new();
-    let kids: Vec<String> = (0..pages.len()).map(|i| format!("{} 0 R", 5 + 2 * i)).collect();
+    let kids: Vec<String> = (0..pages.len())
+        .map(|i| format!("{} 0 R", 5 + 2 * i))
+        .collect();
     objs.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
     objs.push(
-        format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), pages.len()).into_bytes(),
+        format!(
+            "<< /Type /Pages /Kids [{}] /Count {} >>",
+            kids.join(" "),
+            pages.len()
+        )
+        .into_bytes(),
     );
-    objs.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec());
-    objs.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".to_vec());
+    objs.push(
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_vec(),
+    );
+    objs.push(
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"
+            .to_vec(),
+    );
     for (i, page) in pages.iter().enumerate() {
         let mut content: Vec<u8> = Vec::new();
         for (n, line) in page.iter().enumerate() {
@@ -230,7 +258,10 @@ mod tests {
         assert!(text.trim_end().ends_with("%%EOF"));
         assert!(text.contains("/Count 1"));
         assert!(text.contains("(  09:00 - 09:15  Standup) Tj"), "{text}");
-        assert!(text.contains("Lunch \\(with Dana\\)"), "parentheses are escaped");
+        assert!(
+            text.contains("Lunch \\(with Dana\\)"),
+            "parentheses are escaped"
+        );
         // Every xref entry points at "N 0 obj".
         let xref_at: usize = text
             .rsplit("startxref\n")
@@ -243,8 +274,16 @@ mod tests {
             .unwrap();
         assert_eq!(&pdf[xref_at..xref_at + 4], b"xref");
         let table = &text[xref_at..];
-        let entries: Vec<&str> = table.lines().skip(3).take_while(|l| l.ends_with(" n ")).collect();
-        assert_eq!(entries.len(), 6, "catalog, pages, two fonts, a page and its content");
+        let entries: Vec<&str> = table
+            .lines()
+            .skip(3)
+            .take_while(|l| l.ends_with(" n "))
+            .collect();
+        assert_eq!(
+            entries.len(),
+            6,
+            "catalog, pages, two fonts, a page and its content"
+        );
         for (i, e) in entries.iter().enumerate() {
             let off: usize = e[..10].parse().unwrap();
             assert!(
@@ -260,7 +299,10 @@ mod tests {
     fn long_agendas_paginate_and_long_lines_wrap() {
         let many: Vec<String> = (0..120).map(|i| format!("line {i}")).collect();
         let text = String::from_utf8_lossy(&pdf_bytes(&many)).into_owned();
-        assert!(text.contains("/Count 3"), "120 lines of {LINES_PER_PAGE} per page");
+        assert!(
+            text.contains("/Count 3"),
+            "120 lines of {LINES_PER_PAGE} per page"
+        );
         let wrapped = wrap(&["x".repeat(200)]);
         assert_eq!(wrapped.len(), 3);
         assert!(wrapped[1].starts_with("      x"));
@@ -269,7 +311,10 @@ mod tests {
 
     #[test]
     fn text_outside_latin_1_degrades_to_question_marks_not_broken_bytes() {
-        assert_eq!(pdf_text("Café – «x» مرحبا"), b"Caf\xe9 - \xabx\xbb ?????".to_vec());
+        assert_eq!(
+            pdf_text("Café – «x» مرحبا"),
+            b"Caf\xe9 - \xabx\xbb ?????".to_vec()
+        );
         assert_eq!(pdf_text("a\\b"), b"a\\\\b".to_vec());
     }
 

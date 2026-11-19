@@ -20,8 +20,8 @@ use std::sync::atomic::Ordering;
 
 /// Calendars shown in demo mode.
 pub(super) fn demo_calendars() -> Vec<CalendarInfo> {
-    let c = |id: &str, name: &str, color: &str, default: bool, owner: &str, email: &str| {
-        CalendarInfo {
+    let c =
+        |id: &str, name: &str, color: &str, default: bool, owner: &str, email: &str| CalendarInfo {
             id: id.into(),
             name: name.into(),
             color: color.into(),
@@ -31,12 +31,32 @@ pub(super) fn demo_calendars() -> Vec<CalendarInfo> {
             can_share: default,
             owner_name: owner.into(),
             owner_email: email.into(),
-        }
-    };
+        };
     vec![
-        c("demo-1", "Calendar", "auto", true, "Demo", "demo@contoso.com"),
-        c("demo-2", "Birthdays", "lightPink", false, "Demo", "demo@contoso.com"),
-        c("demo-3", "Design team", "lightGreen", false, "Dana Reyes", "dana@contoso.com"),
+        c(
+            "demo-1",
+            "Calendar",
+            "auto",
+            true,
+            "Demo",
+            "demo@contoso.com",
+        ),
+        c(
+            "demo-2",
+            "Birthdays",
+            "lightPink",
+            false,
+            "Demo",
+            "demo@contoso.com",
+        ),
+        c(
+            "demo-3",
+            "Design team",
+            "lightGreen",
+            false,
+            "Dana Reyes",
+            "dana@contoso.com",
+        ),
     ]
 }
 
@@ -137,7 +157,9 @@ fn synth_event(f: &FormFields, id: &str, existing: Option<&Event>) -> Option<Eve
     if f.teams_meeting {
         v["onlineMeeting"] = json!({"joinUrl": "https://teams.example/join"});
     }
-    let mut e = ::calendar::parse_events(&json!({ "value": [v] })).into_iter().next()?;
+    let mut e = ::calendar::parse_events(&json!({ "value": [v] }))
+        .into_iter()
+        .next()?;
     if let Some(old) = existing {
         e.is_recurring = old.is_recurring;
     }
@@ -283,9 +305,15 @@ impl Engine {
                 .await
             }
             CalCmd::Category(name) => {
-                let cats = if name.is_empty() { vec![] } else { vec![name.clone()] };
-                self.cal_patch(json!({ "categories": cats }), |e| e.categories = cats.clone())
-                    .await
+                let cats = if name.is_empty() {
+                    vec![]
+                } else {
+                    vec![name.clone()]
+                };
+                self.cal_patch(json!({ "categories": cats }), |e| {
+                    e.categories = cats.clone()
+                })
+                .await
             }
             CalCmd::Edit { series } => self.cal_edit(series, false).await,
             CalCmd::Duplicate => self.cal_edit(false, true).await,
@@ -469,7 +497,8 @@ impl Engine {
             && let Err(err) = respond(&self.client, &e.id, rsvp, comment, send, proposed).await
         {
             tracing::warn!(%err, "respond failed");
-            self.ui.cal_prompt_error(format!("Couldn't send your answer: {}", friendly(&err)));
+            self.ui
+                .cal_prompt_error(format!("Couldn't send your answer: {}", friendly(&err)));
             self.cal_note("Couldn't send your answer");
             return;
         }
@@ -497,7 +526,11 @@ impl Engine {
         if e <= s {
             return bad("The new end must be after the new start.");
         }
-        let rsvp = if decline { Rsvp::Decline } else { Rsvp::Tentative };
+        let rsvp = if decline {
+            Rsvp::Decline
+        } else {
+            Rsvp::Tentative
+        };
         self.cal_rsvp(rsvp, true, "", Some((s, e))).await;
     }
 
@@ -511,7 +544,13 @@ impl Engine {
             let prefer = ("Prefer", "outlook.timezone=\"UTC\", IdType=\"ImmutableId\"");
             let r = self
                 .client
-                .request_as(&Audience::Graph, reqwest::Method::PATCH, &url, Some(&body), &[prefer])
+                .request_as(
+                    &Audience::Graph,
+                    reqwest::Method::PATCH,
+                    &url,
+                    Some(&body),
+                    &[prefer],
+                )
                 .await;
             match r {
                 Ok((status, _)) if (200..300).contains(&status) => {}
@@ -598,7 +637,8 @@ impl Engine {
         let people = match forms::parse_people(to) {
             Ok(p) if !p.is_empty() => p,
             Ok(_) => {
-                self.ui.cal_prompt_error("Add at least one email address.".into());
+                self.ui
+                    .cal_prompt_error("Add at least one email address.".into());
                 return;
             }
             Err(m) => {
@@ -610,7 +650,8 @@ impl Engine {
             && let Err(err) = forward_event(&self.client, &e.id, &people, comment).await
         {
             tracing::warn!(%err, "forward failed");
-            self.ui.cal_prompt_error(format!("Couldn't forward: {}", friendly(&err)));
+            self.ui
+                .cal_prompt_error(format!("Couldn't forward: {}", friendly(&err)));
             return;
         }
         self.ui.cal_modal("");
@@ -626,7 +667,8 @@ impl Engine {
             && let Err(err) = cancel_event(&self.client, &id, comment).await
         {
             tracing::warn!(%err, "cancel failed");
-            self.ui.cal_prompt_error(format!("Couldn't cancel: {}", friendly(&err)));
+            self.ui
+                .cal_prompt_error(format!("Couldn't cancel: {}", friendly(&err)));
             return;
         }
         let ids = if series {
@@ -653,7 +695,8 @@ impl Engine {
             && let Err(err) = delete_event(&self.client, &e.id).await
         {
             tracing::warn!(%err, "delete failed");
-            self.ui.cal_prompt_error(format!("Couldn't delete: {}", friendly(&err)));
+            self.ui
+                .cal_prompt_error(format!("Couldn't delete: {}", friendly(&err)));
             return;
         }
         self.cal_remove(&[e.id]);
@@ -665,14 +708,18 @@ impl Engine {
         let Some(e) = self.cal_open_event() else {
             return;
         };
-        let ics = to_ics(&[e.clone()], now_ms());
+        let ics = to_ics(std::slice::from_ref(&e), now_ms());
         let name = format!("{}.ics", e.subject.replace(['/', '\\', ':'], "-"));
         self.save_file(&name, ics.into_bytes()).await;
     }
 
     /// Asks where to save (a native dialog) and writes the bytes.
     async fn save_file(self: &Arc<Self>, name: &str, bytes: Vec<u8>) {
-        let Some(file) = rfd::AsyncFileDialog::new().set_file_name(name).save_file().await else {
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .set_file_name(name)
+            .save_file()
+            .await
+        else {
             return;
         };
         match file.write(&bytes).await {
@@ -816,8 +863,7 @@ impl Engine {
     }
 
     fn cal_settings(self: &Arc<Self>, arg: &str) {
-        let current = self.cal.lock().settings.clone();
-        match parse_settings(arg, &current) {
+        match parse_settings(arg) {
             Ok(settings) => {
                 self.cal.lock().settings = settings;
                 self.ui.cal_modal("");
@@ -840,7 +886,10 @@ impl Engine {
             self.cal_note("Open that calendar's own view to change its events");
             return;
         }
-        let meeting = e.attendees.iter().any(|a| a.kind != ::calendar::AttendeeKind::Resource);
+        let meeting = e
+            .attendees
+            .iter()
+            .any(|a| a.kind != ::calendar::AttendeeKind::Resource);
         if meeting && e.response != ::calendar::Response::Organizer {
             self.cal_note("Only the organizer can move this meeting");
             return;
@@ -862,7 +911,10 @@ impl Engine {
             self.ui.cal_ask(
                 "move-ok",
                 "Move meeting",
-                &format!("Move \"{}\" to {when}? The attendees get an update.", e.subject),
+                &format!(
+                    "Move \"{}\" to {when}? The attendees get an update.",
+                    e.subject
+                ),
                 "Move",
             );
             return;
@@ -892,7 +944,13 @@ impl Engine {
         }
     }
 
-    fn cal_open_blank(&self, date: Date, start_min: u32, channel_mode: bool, channels: Vec<String>) {
+    fn cal_open_blank(
+        &self,
+        date: Date,
+        start_min: u32,
+        channel_mode: bool,
+        channels: Vec<String>,
+    ) {
         let categories = {
             let mut s = self.cal.lock();
             s.editing = None;
@@ -905,7 +963,12 @@ impl Engine {
         self.ui.cal_close_all();
         self.ui.cal_form_open(FormOpen {
             fields,
-            heading: if channel_mode { "New channel meeting" } else { "New event" }.into(),
+            heading: if channel_mode {
+                "New channel meeting"
+            } else {
+                "New event"
+            }
+            .into(),
             editing: false,
             channel_mode,
             categories,
@@ -936,7 +999,9 @@ impl Engine {
                         .teams
                         .iter()
                         .flat_map(|t| {
-                            t.channels.iter().map(|c| format!("{} › {}", t.name, c.name))
+                            t.channels
+                                .iter()
+                                .map(|c| format!("{} › {}", t.name, c.name))
                         })
                         .collect(),
                     Err(err) => {
@@ -960,16 +1025,14 @@ impl Engine {
             }
         };
         let tz = forms::local_tz();
-        let new = match fields.to_new_event(
-            &tz,
-            body.as_ref().map(|(p, h)| (p.as_str(), h.as_str())),
-        ) {
-            Ok(n) => n,
-            Err(m) => {
-                self.ui.cal_form_error(m);
-                return;
-            }
-        };
+        let new =
+            match fields.to_new_event(&tz, body.as_ref().map(|(p, h)| (p.as_str(), h.as_str()))) {
+                Ok(n) => n,
+                Err(m) => {
+                    self.ui.cal_form_error(m);
+                    return;
+                }
+            };
         if self.is_offline() {
             let id = editing_id.unwrap_or_else(|| format!("demo-{}", now_ms()));
             let old = self.cal.lock().find(&id).cloned();
@@ -1017,7 +1080,11 @@ impl Engine {
             who.push(("You".into(), me, "me"));
         }
         let name = |p: &::calendar::Person| {
-            if p.name.is_empty() { p.email.clone() } else { p.name.clone() }
+            if p.name.is_empty() {
+                p.email.clone()
+            } else {
+                p.name.clone()
+            }
         };
         for p in &req.required {
             who.push((name(p), p.email.clone(), "required"));
@@ -1085,7 +1152,12 @@ impl Engine {
                     (Some(_), true) => "No time suits everyone in the next three days.",
                     _ => "",
                 };
-                push(rows, model::suggestions(&found, &local_offset, 5), note, false);
+                push(
+                    rows,
+                    model::suggestions(&found, &local_offset, 5),
+                    note,
+                    false,
+                );
             }
             Err(err) => tracing::warn!(%err, "find meeting times failed"),
         }
@@ -1110,7 +1182,8 @@ impl Engine {
         match room_lists(&self.client).await {
             Ok(l) if l.is_empty() => push(vec![], false, "Your organization has no room lists."),
             Ok(l) => {
-                let lists: Vec<(String, String)> = l.into_iter().map(|r| (r.name, r.email)).collect();
+                let lists: Vec<(String, String)> =
+                    l.into_iter().map(|r| (r.name, r.email)).collect();
                 self.cal.lock().room_lists = lists.clone();
                 push(lists, false, "")
             }
@@ -1169,7 +1242,11 @@ impl Engine {
             }
             _ => vec![],
         };
-        let note = if list.is_empty() { "No rooms in this list." } else { "" };
+        let note = if list.is_empty() {
+            "No rooms in this list."
+        } else {
+            ""
+        };
         push(model::room_rows(&list, &schedules), false, note);
     }
 
@@ -1177,10 +1254,15 @@ impl Engine {
 
     async fn cal_meet_now(self: &Arc<Self>, subject: &str) {
         if self.is_offline() {
-            self.ui.cal_prompt_error("Demo mode: no meeting is created.".into());
+            self.ui
+                .cal_prompt_error("Demo mode: no meeting is created.".into());
             return;
         }
-        let subject = if subject.is_empty() { "Meet now" } else { subject };
+        let subject = if subject.is_empty() {
+            "Meet now"
+        } else {
+            subject
+        };
         match meet_now(&self.client, subject).await {
             Ok(m) => {
                 self.cal.lock().meet_link = Some(m.join_url.clone());
@@ -1224,7 +1306,8 @@ impl Engine {
             return;
         }
         let Some(cal) = self.default_calendar_id() else {
-            self.ui.cal_perms(vec![], "Couldn't find your calendar.".into());
+            self.ui
+                .cal_perms(vec![], "Couldn't find your calendar.".into());
             return;
         };
         match calendar_permissions(&self.client, &cal).await {
@@ -1242,7 +1325,8 @@ impl Engine {
             ),
             Err(err) => {
                 tracing::warn!(%err, "calendar permissions failed");
-                self.ui.cal_perms(vec![], "Couldn't read who can see your calendar.".into());
+                self.ui
+                    .cal_perms(vec![], "Couldn't read who can see your calendar.".into());
             }
         }
     }
@@ -1252,7 +1336,8 @@ impl Engine {
             return;
         };
         if !email.contains('@') {
-            self.cal_share_reload("Type an email address to share with.").await;
+            self.cal_share_reload("Type an email address to share with.")
+                .await;
             return;
         }
         let inside = {
@@ -1324,7 +1409,11 @@ impl Engine {
     }
 
     async fn cal_work_location(self: &Arc<Self>, day: &str, loc: &str) {
-        let date = if day == "today" { Some(today()) } else { parse_date(day) };
+        let date = if day == "today" {
+            Some(today())
+        } else {
+            parse_date(day)
+        };
         let Some(date) = date else { return };
         let pin: Option<&'static str> = match loc {
             "office" => Some("office"),
@@ -1463,10 +1552,7 @@ fn free_busy_events(s: &::calendar::Schedule) -> Vec<Event> {
 }
 
 /// Reads the settings dialog's `first|start|end|weekends|weeks|tz`.
-pub(super) fn parse_settings(
-    arg: &str,
-    current: &session::CalendarSettings,
-) -> Result<session::CalendarSettings, String> {
+pub(super) fn parse_settings(arg: &str) -> Result<session::CalendarSettings, String> {
     let p: Vec<&str> = arg.splitn(6, '|').collect();
     if p.len() < 6 {
         return Err("The settings could not be read.".into());
@@ -1498,7 +1584,6 @@ pub(super) fn parse_settings(
         show_weekends: p[3] == "1",
         week_numbers: p[4] == "1",
         second_tz_min: tz,
-        ..current.clone()
     })
 }
 
@@ -1508,22 +1593,37 @@ mod tests {
 
     #[test]
     fn settings_parse_validate_and_keep_the_rest() {
-        let cur = session::CalendarSettings::default();
-        let s = parse_settings("0|08:30|16:00|0|1|180", &cur).unwrap();
+        let s = parse_settings("0|08:30|16:00|0|1|180").unwrap();
         assert_eq!(s.first_day, 0);
         assert_eq!((s.work_start_min, s.work_end_min), (Some(510), Some(960)));
         assert!(!s.show_weekends && s.week_numbers);
         assert_eq!(s.second_tz_min, Some(180));
-        assert_eq!(parse_settings("1|09:00|17:00|1|0|", &cur).unwrap().second_tz_min, None);
         assert_eq!(
-            parse_settings("1|09:00|17:00|1|0|-330", &cur).unwrap().second_tz_min,
+            parse_settings("1|09:00|17:00|1|0|").unwrap().second_tz_min,
+            None
+        );
+        assert_eq!(
+            parse_settings("1|09:00|17:00|1|0|-330")
+                .unwrap()
+                .second_tz_min,
             Some(-330)
         );
-        assert!(parse_settings("9|09:00|17:00|1|0|", &cur).is_err(), "no such weekday");
-        assert!(parse_settings("1|17:00|09:00|1|0|", &cur).unwrap_err().contains("after"));
-        assert!(parse_settings("1|nine|17:00|1|0|", &cur).unwrap_err().contains("09:00"));
-        assert!(parse_settings("1|09:00|17:00|1|0|900", &cur).is_err());
-        assert!(parse_settings("1|09:00", &cur).is_err());
+        assert!(
+            parse_settings("9|09:00|17:00|1|0|").is_err(),
+            "no such weekday"
+        );
+        assert!(
+            parse_settings("1|17:00|09:00|1|0|")
+                .unwrap_err()
+                .contains("after")
+        );
+        assert!(
+            parse_settings("1|nine|17:00|1|0|")
+                .unwrap_err()
+                .contains("09:00")
+        );
+        assert!(parse_settings("1|09:00|17:00|1|0|900").is_err());
+        assert!(parse_settings("1|09:00").is_err());
     }
 
     #[test]
@@ -1537,14 +1637,14 @@ mod tests {
     #[test]
     fn a_colleague_who_shares_free_busy_shows_as_busy_blocks() {
         let s = ::calendar::parse_schedules(&json!({"value": [{
-            "scheduleId": "dana@contoso.com", "availabilityView": "22",
-            "scheduleItems": [
-                {"status": "busy", "start": {"dateTime": "2026-11-18T09:00:00.0000000", "timeZone": "UTC"},
-                 "end": {"dateTime": "2026-11-18T10:00:00.0000000", "timeZone": "UTC"}},
-                {"status": "oof", "subject": "Away", "isPrivate": true,
-                 "start": {"dateTime": "2026-11-18T12:00:00.0000000", "timeZone": "UTC"},
-                 "end": {"dateTime": "2026-11-18T13:00:00.0000000", "timeZone": "UTC"}}
-            ]}]}));
+        "scheduleId": "dana@contoso.com", "availabilityView": "22",
+        "scheduleItems": [
+            {"status": "busy", "start": {"dateTime": "2026-11-18T09:00:00.0000000", "timeZone": "UTC"},
+             "end": {"dateTime": "2026-11-18T10:00:00.0000000", "timeZone": "UTC"}},
+            {"status": "oof", "subject": "Away", "isPrivate": true,
+             "start": {"dateTime": "2026-11-18T12:00:00.0000000", "timeZone": "UTC"},
+             "end": {"dateTime": "2026-11-18T13:00:00.0000000", "timeZone": "UTC"}}
+        ]}]}));
         let evs = free_busy_events(&s[0]);
         assert_eq!(evs.len(), 2);
         assert_eq!(evs[0].subject, "Busy");
@@ -1712,7 +1812,9 @@ mod tests {
     #[test]
     fn deleting_an_appointment_removes_it_and_closes_the_peek() {
         let r = Rig::new();
-        r.seed(json!({"value": [ev_json("A1", json!({"responseStatus": {"response": "organizer"}}))]}));
+        r.seed(
+            json!({"value": [ev_json("A1", json!({"responseStatus": {"response": "organizer"}}))]}),
+        );
         assert_eq!(r.ids(), ["A1"]);
         r.app.global::<CalStore>().set_peek_open(true);
         r.run(CalCmd::Peek("A1".into()));
@@ -1733,7 +1835,12 @@ mod tests {
             }),
         ]}));
         let day = Date::new(2026, 11, 19);
-        r.run(CalCmd::Move { id: "A1".into(), date: day, start_min: 14 * 60, dur_min: 45 });
+        r.run(CalCmd::Move {
+            id: "A1".into(),
+            date: day,
+            start_min: 14 * 60,
+            dur_min: 45,
+        });
         let moved = r.engine.cal.lock().find("A1").unwrap().clone();
         assert_eq!(moved.end_ms - moved.start_ms, 45 * 60_000);
         assert_eq!(
@@ -1743,10 +1850,21 @@ mod tests {
         );
         // A meeting with attendees waits for a yes.
         let before = r.engine.cal.lock().find("M1").unwrap().start_ms;
-        r.run(CalCmd::Move { id: "M1".into(), date: day, start_min: 600, dur_min: 60 });
+        r.run(CalCmd::Move {
+            id: "M1".into(),
+            date: day,
+            start_min: 600,
+            dur_min: 60,
+        });
         let s = r.app.global::<CalStore>();
-        assert_eq!((s.get_modal().as_str(), s.get_prompt_kind().as_str()), ("prompt", "move-ok"));
-        assert!(s.get_prompt_message().contains("The attendees get an update"));
+        assert_eq!(
+            (s.get_modal().as_str(), s.get_prompt_kind().as_str()),
+            ("prompt", "move-ok")
+        );
+        assert!(
+            s.get_prompt_message()
+                .contains("The attendees get an update")
+        );
         assert_eq!(r.engine.cal.lock().find("M1").unwrap().start_ms, before);
         r.run(CalCmd::MoveOk);
         assert_ne!(r.engine.cal.lock().find("M1").unwrap().start_ms, before);
@@ -1758,9 +1876,19 @@ mod tests {
         let r = Rig::new();
         r.seed(json!({"value": [ev_json("M1", meeting_extra("accepted"))]}));
         let before = r.engine.cal.lock().find("M1").unwrap().start_ms;
-        r.run(CalCmd::Move { id: "M1".into(), date: Date::new(2026, 11, 19), start_min: 600, dur_min: 60 });
+        r.run(CalCmd::Move {
+            id: "M1".into(),
+            date: Date::new(2026, 11, 19),
+            start_min: 600,
+            dur_min: 60,
+        });
         assert_eq!(r.engine.cal.lock().find("M1").unwrap().start_ms, before);
-        assert!(r.app.global::<CalStore>().get_status().contains("Only the organizer"));
+        assert!(
+            r.app
+                .global::<CalStore>()
+                .get_status()
+                .contains("Only the organizer")
+        );
     }
 
     #[test]
@@ -1777,7 +1905,13 @@ mod tests {
         r.run(CalCmd::Submit(Box::new(f)));
         assert!(!g.get_open());
         assert!(r.ids().len() == 1, "{:?}", r.ids());
-        let e = r.engine.cal.lock().cache.in_range(i64::MIN / 2, i64::MAX / 2)[0].clone();
+        let e = r
+            .engine
+            .cal
+            .lock()
+            .cache
+            .in_range(i64::MIN / 2, i64::MAX / 2)[0]
+            .clone();
         assert_eq!((e.subject.as_str(), e.attendees.len()), ("Design sync", 1));
         assert!(e.is_online_meeting);
     }
@@ -1796,8 +1930,10 @@ mod tests {
     #[test]
     fn editing_fills_the_form_from_the_event_and_saving_changes_it_in_place() {
         let r = Rig::new();
-        r.seed(json!({"value": [ev_json("A1", json!({"responseStatus": {"response": "organizer"},
-            "location": {"displayName": "Room 4"}}))]}));
+        r.seed(
+            json!({"value": [ev_json("A1", json!({"responseStatus": {"response": "organizer"},
+            "location": {"displayName": "Room 4"}}))]}),
+        );
         r.run(CalCmd::Peek("A1".into()));
         r.run(CalCmd::Edit { series: false });
         let g = r.app.global::<CalForm>();
@@ -1815,7 +1951,9 @@ mod tests {
     #[test]
     fn duplicating_opens_a_new_event_with_the_same_details() {
         let r = Rig::new();
-        r.seed(json!({"value": [ev_json("A1", json!({"responseStatus": {"response": "organizer"}}))]}));
+        r.seed(
+            json!({"value": [ev_json("A1", json!({"responseStatus": {"response": "organizer"}}))]}),
+        );
         r.run(CalCmd::Peek("A1".into()));
         r.run(CalCmd::Duplicate);
         let g = r.app.global::<CalForm>();
@@ -1833,12 +1971,21 @@ mod tests {
         r.run(CalCmd::Peek("M1".into()));
         let s = r.app.global::<CalStore>();
         s.set_modal("prompt".into());
-        r.run(CalCmd::Forward { to: "  ".into(), comment: String::new() });
+        r.run(CalCmd::Forward {
+            to: "  ".into(),
+            comment: String::new(),
+        });
         assert_eq!(s.get_prompt_error(), "Add at least one email address.");
         assert_eq!(s.get_modal(), "prompt");
-        r.run(CalCmd::Forward { to: "nobody".into(), comment: String::new() });
+        r.run(CalCmd::Forward {
+            to: "nobody".into(),
+            comment: String::new(),
+        });
         assert!(s.get_prompt_error().contains("not an email address"));
-        r.run(CalCmd::Forward { to: "a@x.com".into(), comment: "hi".into() });
+        r.run(CalCmd::Forward {
+            to: "a@x.com".into(),
+            comment: "hi".into(),
+        });
         assert_eq!(s.get_modal(), "");
     }
 
@@ -1847,7 +1994,10 @@ mod tests {
         let r = Rig::new();
         r.seed(json!({"value": [ev_json("M1", meeting_extra("organizer"))]}));
         r.run(CalCmd::Peek("M1".into()));
-        r.run(CalCmd::CancelMeeting { comment: "Sorry".into(), series: false });
+        r.run(CalCmd::CancelMeeting {
+            comment: "Sorry".into(),
+            series: false,
+        });
         assert!(r.ids().is_empty());
     }
 
@@ -1890,7 +2040,10 @@ mod tests {
         r.run(CalCmd::SavedApply("Three days".into()));
         assert_eq!(s.get_view_kind(), "day");
         assert_eq!(s.get_day_count(), 3);
-        r.run(CalCmd::Range(Date::new(2026, 11, 17), Date::new(2026, 11, 20)));
+        r.run(CalCmd::Range(
+            Date::new(2026, 11, 17),
+            Date::new(2026, 11, 20),
+        ));
         assert_eq!(s.get_day_count(), 4);
         r.run(CalCmd::SavedDelete("Three days".into()));
         assert_eq!(s.get_saved_views().row_count(), 0);
@@ -1899,22 +2052,47 @@ mod tests {
     #[test]
     fn the_work_location_pins_the_day_header() {
         let r = Rig::new();
-        r.run(CalCmd::WorkLocation { day: "2026-11-18".into(), loc: "remote".into() });
-        let pins: Vec<String> = r.app.global::<CalStore>().get_days().iter().map(|d| d.pin.to_string()).collect();
+        r.run(CalCmd::WorkLocation {
+            day: "2026-11-18".into(),
+            loc: "remote".into(),
+        });
+        let pins: Vec<String> = r
+            .app
+            .global::<CalStore>()
+            .get_days()
+            .iter()
+            .map(|d| d.pin.to_string())
+            .collect();
         assert_eq!(pins, ["", "", "remote", "", ""]);
-        r.run(CalCmd::WorkLocation { day: "2026-11-18".into(), loc: "unset".into() });
-        assert!(r.app.global::<CalStore>().get_days().iter().all(|d| d.pin.is_empty()));
+        r.run(CalCmd::WorkLocation {
+            day: "2026-11-18".into(),
+            loc: "unset".into(),
+        });
+        assert!(
+            r.app
+                .global::<CalStore>()
+                .get_days()
+                .iter()
+                .all(|d| d.pin.is_empty())
+        );
     }
 
     #[test]
     fn schedule_a_meeting_from_a_chat_opens_the_form_with_the_other_member() {
         let r = Rig::new();
         r.app.set_view("chat".into());
-        r.run(CalCmd::ScheduleFromChat("19:aaa_bbb@unq.gbl.spaces".into(), "Bob Lee".into()));
+        r.run(CalCmd::ScheduleFromChat(
+            "19:aaa_bbb@unq.gbl.spaces".into(),
+            "Bob Lee".into(),
+        ));
         assert_eq!(r.app.get_view(), "calendar");
         let g = r.app.global::<CalForm>();
         assert!(g.get_open());
-        assert_eq!(g.get_required(), "Bob Lee <bob@contoso.com>", "me is left out");
+        assert_eq!(
+            g.get_required(),
+            "Bob Lee <bob@contoso.com>",
+            "me is left out"
+        );
         assert!(g.get_teams_meeting());
         assert_eq!(g.get_subject(), "", "a 1:1 has no title to borrow");
     }
@@ -1953,7 +2131,10 @@ mod tests {
         let r = Rig::new();
         let s = r.app.global::<CalStore>();
         s.set_modal("prompt".into());
-        r.run(CalCmd::JoinId { id: "not an id!".into(), passcode: String::new() });
+        r.run(CalCmd::JoinId {
+            id: "not an id!".into(),
+            passcode: String::new(),
+        });
         assert!(s.get_prompt_error().contains("meeting ID"));
         assert_eq!(s.get_modal(), "prompt");
         r.run(CalCmd::CalendarToggle("demo-3".into()));

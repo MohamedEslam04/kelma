@@ -303,9 +303,10 @@ mod tests {
         assert!(c.calendar_saved_views.is_empty());
 
         // A partial settings object keeps the defaults of what it leaves out.
-        let c: Config = serde_json::from_str(
-            &old.replace('}', r#","calendar_settings":{"first_day":0,"second_tz_min":-300}}"#),
-        )
+        let c: Config = serde_json::from_str(&old.replace(
+            '}',
+            r#","calendar_settings":{"first_day":0,"second_tz_min":-300}}"#,
+        ))
         .unwrap();
         assert_eq!(c.calendar_settings.first_day, 0);
         assert_eq!(c.calendar_settings.second_tz_min, Some(-300));

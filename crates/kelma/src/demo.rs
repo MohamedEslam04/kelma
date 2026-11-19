@@ -355,7 +355,12 @@ pub fn calendar_events(week_start_ms: i64, now_ms: i64) -> serde_json::Value {
             who("Demo User", "demo@contoso.com", "required", "notResponded"),
             who("Sara Hassan", "sara@example.com", "required", "accepted"),
             who("Omar Khaled", "omar@example.com", "optional", "declined"),
-            who("Mona Adel", "mona@example.com", "required", "tentativelyAccepted"),
+            who(
+                "Mona Adel",
+                "mona@example.com",
+                "required",
+                "tentativelyAccepted"
+            ),
         ]),
     );
     items.push(ev(
