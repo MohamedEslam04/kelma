@@ -965,7 +965,7 @@ fn the_read_receipts_setting_turns_the_marks_off_and_on() {
 fn the_composer_menu_has_the_read_receipts_switch() {
     let app = app_with_messages(vec![]);
     let log = record(&app);
-    click(&toolbar(&app)[3]); // the "…" button
+    click(&toolbar(&app)[4]); // the "…" button
     let on = find_label(&app, "Read receipts");
     assert!(!on.is_empty());
     click(&on[0]);
