@@ -36,6 +36,45 @@ pub enum OpenChatAt {
     Newest,
 }
 
+/// Local calendar display settings (Calendar settings in the toolbar menu). Every field has a
+/// default so config files written before it still load.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CalendarSettings {
+    /// First day of the week: 0 for Sunday up to 6 for Saturday (Monday by default).
+    pub first_day: u8,
+    /// Work hours as minutes after midnight; `None` takes the mailbox's, then 09:00 to 17:00.
+    pub work_start_min: Option<u32>,
+    pub work_end_min: Option<u32>,
+    /// Week and month views include Saturday and Sunday.
+    pub show_weekends: bool,
+    /// Show week numbers in the toolbar, the mini calendar and the month view.
+    pub week_numbers: bool,
+    /// A second time column in the day and week views, as a fixed UTC offset in minutes.
+    pub second_tz_min: Option<i32>,
+}
+
+impl Default for CalendarSettings {
+    fn default() -> Self {
+        CalendarSettings {
+            first_day: 1,
+            work_start_min: None,
+            work_end_min: None,
+            show_weekends: true,
+            week_numbers: false,
+            second_tz_min: None,
+        }
+    }
+}
+
+/// A named calendar view: the view key (`workweek`, `week`, `month`, `day:N`) and time scale.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SavedView {
+    pub name: String,
+    pub view: String,
+    pub scale: u32,
+}
+
 /// Non-secret settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
@@ -60,6 +99,12 @@ pub struct Config {
     /// The calendar time scale in minutes (15, 30 or 60).
     #[serde(default)]
     pub calendar_scale: Option<u32>,
+    /// First day, work hours, weekends, week numbers and second time zone.
+    #[serde(default)]
+    pub calendar_settings: CalendarSettings,
+    /// Views saved by name.
+    #[serde(default)]
+    pub calendar_saved_views: Vec<SavedView>,
     /// Composer: Enter sends the message (default). When false, Enter starts a new line and
     /// Ctrl+Enter sends.
     #[serde(default = "default_true")]
@@ -87,6 +132,8 @@ impl Default for Config {
             open_chat_at: OpenChatAt::default(),
             calendar_view: None,
             calendar_scale: None,
+            calendar_settings: CalendarSettings::default(),
+            calendar_saved_views: Vec::new(),
             enter_sends: true,
             skin_tone: 0,
             recent_emoji: Vec::new(),
@@ -241,6 +288,36 @@ mod tests {
             calendar_scale: Some(15),
             ..c
         };
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
+    }
+
+    #[test]
+    fn calendar_settings_and_saved_views_default_for_old_files_and_roundtrip() {
+        let old = r#"{"account":"default","tenant":"organizations","epid":"e"}"#;
+        let c: Config = serde_json::from_str(old).unwrap();
+        assert_eq!(c.calendar_settings, CalendarSettings::default());
+        assert_eq!(c.calendar_settings.first_day, 1, "Monday");
+        assert!(c.calendar_settings.show_weekends);
+        assert!(!c.calendar_settings.week_numbers);
+        assert!(c.calendar_saved_views.is_empty());
+
+        // A partial settings object keeps the defaults of what it leaves out.
+        let c: Config = serde_json::from_str(&old.replace(
+            '}',
+            r#","calendar_settings":{"first_day":0,"second_tz_min":-300}}"#,
+        ))
+        .unwrap();
+        assert_eq!(c.calendar_settings.first_day, 0);
+        assert_eq!(c.calendar_settings.second_tz_min, Some(-300));
+        assert!(c.calendar_settings.show_weekends);
+
+        let mut c = c;
+        c.calendar_saved_views.push(SavedView {
+            name: "Planning".into(),
+            view: "day:3".into(),
+            scale: 15,
+        });
         let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
         assert_eq!(back, c);
     }
