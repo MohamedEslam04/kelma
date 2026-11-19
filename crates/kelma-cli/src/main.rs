@@ -688,6 +688,16 @@ async fn main() -> Result<()> {
                 .await?;
             println!("sent (clientmessageid {cmid})");
         }
+        Some("gifs") => {
+            // `gifs [query]`: GIF search, read only (an empty query gives the trending ones).
+            let (client, _) = connect(&paths).await?;
+            let q = args[1..].join(" ");
+            let found = client.search_gifs(&q, "en-us").await?;
+            println!("{} GIF(s)", found.len());
+            for g in found.iter().take(5) {
+                println!("  {} {}x{}", g.title, g.width, g.height);
+            }
+        }
         Some("schedule") => {
             // `schedule <conversation id> <minutes> <text>`: a scheduled send (live checks use
             // 48:notes). `schedule list` and `schedule cancel <id>`.
