@@ -49,7 +49,7 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
         favorite: false,
         read_horizon_ms: 0,
     };
-    let team = ("19:team1@thread.tacv2", "Velents Technologies Inc.");
+    let team = ("19:team1@thread.tacv2", "Contoso Ltd.");
     st.upsert_team(&TeamRow {
         id: team.0.into(),
         name: team.1.into(),
@@ -61,7 +61,7 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
             "Mohamed Eslam (You)",
             None,
             3 * min,
-            "You: velents-docs-demo.mp4",
+            "You: contoso-docs-demo.mp4",
             false,
         ),
         conv(
@@ -259,8 +259,8 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
         ME,
         "Mohamed Eslam",
         day + 60 * min,
-        "<p><a href=\"https://velentstechnologiesinc-my.sharepoint.com/\">https://velentstechnologiesinc-my.sharepoint.com/:v:/g/personal/demo</a></p><p>Safha-archive Saudi voice</p>",
-        json!({"f":[{"name":"Safha-archive Saudi voice.m4a","url":"https://velentstechnologiesinc-my.sharepoint.com/","type":"m4a"}]}),
+        "<p><a href=\"https://contoso-my.sharepoint.com/\">https://contoso-my.sharepoint.com/:v:/g/personal/demo</a></p><p>archive voice note</p>",
+        json!({"f":[{"name":"archive voice note.m4a","url":"https://contoso-my.sharepoint.com/","type":"m4a"}]}),
     )?;
     msg(
         notes,
@@ -268,8 +268,8 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
         ME,
         "Mohamed Eslam",
         3 * min,
-        "<p>velents-docs-demo.mp4</p>",
-        json!({"f":[{"name":"velents-docs-demo.mp4","url":"https://velentstechnologiesinc-my.sharepoint.com/","type":"mp4"}]}),
+        "<p>contoso-docs-demo.mp4</p>",
+        json!({"f":[{"name":"contoso-docs-demo.mp4","url":"https://contoso-my.sharepoint.com/","type":"mp4"}]}),
     )?;
 
     let ch = "19:team1@thread.tacv2";

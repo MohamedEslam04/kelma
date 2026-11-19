@@ -26,45 +26,56 @@ channels (posts, replies, files, cards) is in `plans/chat.md` phase 8. This file
 - [ ] **T1.1 "Your teams and channels" page.** Impact 4, effort 2.
   - **What.** The Teams, Pending invites and Analytics tabs, the filters, sort and search, and per-team rows with their channels.
   - **How.** Graph `/me/joinedTeams`, `/teams/{id}/channels` and `/teams/{id}/members` (counts), plus CSA (already used).
-- [ ] **T1.2 Discover and join.** Impact 3, effort 3.
+  - **Status.** Done: the Teams, Discover, Analytics and Communities tabs, filters, sort, search, rows with their channels (`ui_tests::teams::page_lists_teams_with_counts_and_filters_sorts_and_searches`, `expanding_a_team_shows_all_its_channels_with_the_hidden_one_flagged`, `tabs_load_their_data_and_analytics_counts_the_list`; live: the list loads and filters in the sandbox run).
+  - **BLOCKED: pending invites.** The tab lists only the join requests made in this session (with Cancel). Nothing returns the invites sent to you, and the owner view `POST MT/beta/teams/findJoinRequests` answered `500 groupList cannot be null` for nine body shapes (`docs/protocol.md`). Not ticked until a body is found.
+- [x] **T1.2 Discover and join.** Impact 3, effort 3.
   - **What.** Browse public teams and join them; "Join team" with a code.
   - **How.** Browsing: `GET /groups?$filter=resourceProvisioningOptions/Any(x:x eq 'Team') and visibility eq 'Public'`. Joining: T0.
-- [ ] **T1.3 Channel list control.** Impact 3, effort 2.
+  - **Evidence.** `ui_tests::teams::discover_lists_public_teams_and_joins_requests_or_cancels` and `join_with_a_code_sends_the_code_and_shows_the_answer`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: suggestions and keyword search listed, and a join by the sandbox team's own code answered with its info. Joining or requesting a real team was not run (rule: no joins), so `joinRequest` is covered by unit tests of its URL only.
+- [x] **T1.3 Channel list control.** Impact 3, effort 2.
   - **What.**
     - Show and hide channels and teams.
     - See all channels, with the hidden ones.
     - Leave a channel (private) or a team.
     - Go to team.
   - **How.** T0 (user state); leaving uses `DELETE /teams/{id}/members/{me}`.
+  - **Evidence.** `ui_tests::teams::channel_menu_shows_hides_and_pins`, `team_menu_goes_to_the_team_hides_it_and_leaving_asks_first`, `hidden_channels_and_teams_leave_the_sidebar_and_pinned_come_first`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: hide, show, pin, unpin, "show for everyone" on and off, for a standard and a private channel. Leaving a team or a private channel is unit and UI tested only: it would remove the account from the sandbox team.
 
 ## Phase T2: create and manage
 
-- [ ] **T2.1 New channel.** Impact 4, effort 2.
+- [x] **T2.1 New channel.** Impact 4, effort 2.
   - **What.**
     - Name, description.
     - Type: Standard, Private (choose members) or Shared.
     - Posts or threaded-chat layout.
     - "Show for everyone automatically".
   - **How.** `POST /teams/{id}/channels` with `membershipType` and `members` (granted).
-- [ ] **T2.2 Edit, delete, restore and archive channels; moderation.** Impact 3, effort 3.
+  - **Evidence.** `ui_tests::teams::new_channel_dialog_sends_name_description_layout_and_default`, `private_channel_asks_for_the_roster_and_picks_people`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: a standard channel in the threaded layout and a private channel were created and removed. A shared channel is UI and unit tested only.
+- [x] **T2.2 Edit, delete, restore and archive channels; moderation.** Impact 3, effort 3.
   - **What.**
     - Edit name and description.
     - Delete (with Deleted channels and Restore within 21 days).
     - Archive a channel.
     - Moderation: who can start posts, reply permissions, bot posts, moderators.
   - **How.** T0 (the Graph scopes are missing).
+  - **Evidence.** `ui_tests::teams::edit_channel_sends_the_new_name_and_description`, `delete_and_archive_ask_first_and_deleted_channels_can_be_restored`, `moderation_dialog_changes_who_can_post_reply_and_pin`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: rename (standard and private), moderation stored and read back, archive and unarchive, delete, listed under deleted, restore.
 - [ ] **T2.3 Members.** Impact 4, effort 2.
   - **What.** Team and channel members with Owner / Member / Guest roles: add, remove, change role, pending requests.
   - **How.** `/teams/{id}/members` and `/channels/{id}/members` (granted). Inviting a new guest goes to the web host.
-- [ ] **T2.4 Tags.** Impact 3, effort 3.
+  - **Status.** Done in the UI: team and channel rosters with names, add (people search), change role, remove (`ui_tests::teams::members_dialog_changes_roles_removes_and_adds_people`, `a_plain_member_cannot_change_roles_or_remove_team_members`). Live in the sandbox: rosters of the team and of a private channel, and the people search (read only). Adding, removing and changing members were not run live (rule: no changes to the sandbox members).
+  - **BLOCKED: pending requests.** Same endpoint as T1.1: `findJoinRequests` answers `500 groupList cannot be null` for every body tried. Guests: the invite call is not wired.
+- [x] **T2.4 Tags.** Impact 3, effort 3.
   - **What.** Create, edit and delete tags, and add members. Tags can be @mentioned in chat (chat plan 6.1).
   - **How.** T0.
-- [ ] **T2.5 Channel email address.** Impact 2, effort 2.
+  - **Evidence.** `ui_tests::teams::tags_dialog_creates_selects_adds_removes_and_deletes`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: create (with ourselves as first member), add, rename, delete. A deleted tag keeps its name until purged, so creating the same name again answers `409 DeletedTagHasSameTagName`; the dialog shows that text.
+- [x] **T2.5 Channel email address.** Impact 2, effort 2.
   - **What.** Get the address, copy it, remove it, and restrict senders.
   - **How.** Read it from Graph `channel.email`; write through T0.
+  - **Evidence.** `ui_tests::teams::email_dialog_gets_copies_restricts_and_removes_the_address`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: address created, senders changed to members, address removed. Copy goes to the clipboard through `arboard`, not run headless.
 - [ ] **T2.6 New team.** Impact 3, effort 3.
   - **What.** From scratch (private, public or org-wide), from a group or team, or from a template; name, description, privacy.
   - **How.** T0, with the web host as a fallback.
+  - **Status.** Done: the New team dialog (name, description, private, public or org-wide), which checks the name first (`ui_tests::teams::new_team_dialog_sends_name_description_and_privacy`; the create call itself was run live by T0.1). Not run again live: a new team is created outside the sandbox team. Not wired: from a group, a team or a template.
 - [ ] **T2.7 Manage team.** Impact 3, effort 4.
   - **What.**
     - Members, pending requests, channels.
@@ -72,12 +83,17 @@ channels (posts, replies, files, cards) is in `plans/chat.md` phase 8. This file
     - Apps, tags, analytics.
     - Archive and unarchive; delete the team; get a link to the team.
   - **How.** T0, with the web host as a fallback.
-- [ ] **T2.8 Channel notifications** (all activity, off, custom) and per-channel settings. Shared with the chat plan.
-- [ ] **T2.9 Storyline posts** (the "New storyline post" in the new menu) through the Viva Engage token (`plans/store-and-apps.md`). Impact 2, effort 3.
+  - **Status.** Done in the UI and live in the sandbox: edit name and description, member and guest permissions (10 and 3 stored keys), the team code (generate, reset, remove), members, tags, deleted channels, link to the team (`ui_tests::teams::manage_team_edits_details_code_permissions_and_copies_the_link`).
+  - **BLOCKED: archive team.** `POST MT/beta/teams/<id>/archive` answers `500 ArchiveUnarchiveEnqueuePsOperationFailed` on three more tries from the UI command. The chat-level flag does not archive the group, so the UI menu offers it and shows that error. Delete team is UI and unit tested only (the sandbox team must stay). Not wired: team picture, apps, retention labels.
+- [x] **T2.8 Channel notifications** (all activity, off, custom) and per-channel settings. Shared with the chat plan.
+  - **Evidence.** `ui_tests::teams::notification_dialog_sets_the_level_and_replies`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: banner and feed, off and feed set and read back.
+- [ ] BLOCKED: no way to verify a storyline post without a write on the work account (see the note below). **T2.9 Storyline posts** (the "New storyline post" in the new menu) through the Viva Engage token (`plans/store-and-apps.md`). Impact 2, effort 3.
+  - **BLOCKED (2026-11-19).** It cannot be verified without a write. The only unpublished state is a draft (`createUserWallMessage` with `isDraft:true` over Engage GraphQL), which is still a write on the work account, so it waits for the user to approve one throwaway draft. The current REST body is a guess that may post to All Company: `team storyline` now refuses to run. Evidence: `docs/research/storyline.md`.
 
 ## Phase T3: Communities
 
-- [ ] **T3.1** The Communities section in the chat list (All Company, Join communities), opening a community's feed natively through `api.yammer.com`, with a web host fallback. Impact 3, effort 3.
+- [x] **T3.1** The Communities section in the chat list (All Company, Join communities), opening a community's feed natively through `api.yammer.com`, with a web host fallback. Impact 3, effort 3.
+  - **Evidence.** `ui_tests::teams::communities_tab_lists_communities_and_opens_a_read_only_feed`, `the_chat_list_has_a_communities_section_that_opens_the_feed`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: the community list and the first page of its feed loaded (read only). Each post has an "Open in browser" link as the web fallback.
 
 ## Order
 

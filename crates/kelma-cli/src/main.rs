@@ -8,11 +8,13 @@
 //! kelma-cli read <conv> [n]       print the last n messages
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
+//! kelma-cli images <conv> [<msg id>|last] [--out <dir>] [--list]  fetch and save the images of one message
 //! kelma-cli calendar [days]       count upcoming events per day and per show-as (read-only)
 //! kelma-cli calendar <check>      live checks of the calendar data layer (calendars, rooms, mailbox, schedule, ...)
 //! kelma-cli calendar permissions --dry-run <role>  print the sharing writes without sending them
 //! kelma-cli audiences             mint a token for every audience (prints no tokens)
 //! kelma-cli people <query>        search people (prints the count first)
+//! kelma-cli search <query> [--kind messages|files|people|events] [--page N]  global search (read-only)
 //! kelma-cli presence [mri...]     presence of the given people, default yourself
 //! kelma-cli card [mri]            profile card of a person, default yourself
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
@@ -25,6 +27,8 @@
 //! kelma-cli onenote [<notebook> [<section> [<page>]]]  read OneNote notebooks, sections, pages
 //! kelma-cli lists [<site> [<list>]]  SharePoint lists of your teams' sites (read-only)
 //! kelma-cli store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>  app bar and Store (writes are dry runs)
+//! kelma-cli settings <notifications|quiet|priority|privacy|blocked|shape>  notification and privacy settings (read-only)
+//! kelma-cli settings set <what> ... --dry-run  print the settings write without sending it
 //! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
@@ -32,8 +36,11 @@
 //! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
 //! kelma-cli accounts [tenants|use <label>|add <label>|remove <label>|org <tenant-id|home>]
 //!                                 several accounts and organizations (list and tenants are read-only)
+//! kelma-cli preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F.png]
+//!                                 render a PDF or Office page to PNG (read-only; prints sizes, not names)
 //! kelma-cli devices [audio|cameras|test-sound|mic-level]  list sound devices and cameras; test-sound plays a tone, mic-level shows the mic level
 //! kelma-cli appearance [show|watch]  saved appearance prefs, the desktop portal theme/accent and the resolved result (read-only)
+//! kelma-cli tray-demo [--step S|autostart <enable|disable|status>]  show the tray icon, unread badge and launcher badge for a few seconds; autostart writes the login entry
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
@@ -41,10 +48,16 @@ mod accounts;
 mod appearance;
 mod apps;
 mod chatx;
+mod delivery;
 mod devices;
 mod drive;
+mod images;
+mod preview_file;
+mod search;
+mod settings;
 mod store;
 mod team;
+mod tray;
 mod web;
 
 use anyhow::{Context, Result, bail};
@@ -509,6 +522,7 @@ async fn main() -> Result<()> {
         Some("web") => web::run(&paths, &args[1..]).await?,
         Some("devices") => devices::run(&args[1..])?,
         Some("appearance") => appearance::run(&args[1..]).await?,
+        Some("tray-demo") => tray::run(&args[1..])?,
         Some("logout") => {
             let cfg = paths.load_config()?;
             session::delete_refresh_token(&cfg.account)?;
@@ -916,9 +930,46 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
+        Some("deliver") => {
+            let (client, cfg) = connect(&paths).await?;
+            let name = cfg.display_name.clone().unwrap_or_default();
+            let r = delivery::run(&client, &name, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("images") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = images::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("preview") => {
             let (client, cfg) = connect(&paths).await?;
             let r = chatx::preview(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("settings") if settings::is_offline(&args[1..]) => settings::quiet(&args[2..])?,
+        Some("settings") => {
+            // A `set` is a dry run: the settings are read, never written.
+            let (client, cfg) = connect(&paths).await?;
+            let r = settings::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("preview-file") if preview_file::is_offline(&args[1..]) => {
+            preview_file::offline(&args[1..])?
+        }
+        Some("preview-file") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = preview_file::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("search") => {
+            let (client, cfg) = connect(&paths).await?;
+            let me = self_mri(&client, &cfg).await?;
+            let r = search::run(&client, &me, &args[1..]).await;
             session::persist(&cfg, &client).await?;
             r?;
         }
@@ -1061,6 +1112,7 @@ async fn main() -> Result<()> {
                    pins <chat>\n\
                    audiences\n\
                    people <q>\n\
+                   search <q> [--kind messages|files|people|events] [--page N]\n\
                    presence [mri..]\n\
                    card [mri]\n\
                    horizons <conv>\n\
@@ -1072,7 +1124,11 @@ async fn main() -> Result<()> {
                    lists [<site> [<list>]]\n\
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
                    translate <languages|settings|message|channel>\n\
+                   images <conv> [<msg id>|last] [--out <dir>] [--list]\n\
                    preview <url> [--image]\n\
+                   settings <notifications|quiet|priority|privacy|blocked|shape>\n\
+                   settings set <notify|pause|sound|meeting-chat|meeting-rsvp|privacy|block|unblock|priority-add|priority-remove> ... --dry-run\n\
+                   preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F]\n\
                    store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>\n\
                    tail"
             );

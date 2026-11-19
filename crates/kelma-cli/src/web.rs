@@ -1,11 +1,15 @@
-//! `kelma-cli web <url> [--shim] [--theme T] [--browser PATH] [--profile DIR]`: opens a page in
-//! the web host window (crate `webhost`) and prints what the page asks for until the window is
-//! closed or Ctrl+C. Nothing is signed in here: the host profile keeps whatever the user signs
-//! into inside the window. App SSO tokens are not minted yet (requests are printed and refused).
+//! `kelma-cli web <url> [--shim] [--sso-resource R] [--valid-domain D]... [--theme T]
+//! [--browser PATH] [--profile DIR]`: opens a page in the web host window (crate `webhost`) and
+//! prints what the page asks for until the window is closed or Ctrl+C. The host profile keeps
+//! whatever the user signs into inside the window. With `--shim` and a kelma session, app SSO
+//! tokens (`getAuthToken`) are minted by the session for the app's own `api://<domain>/<app id>`
+//! resource (`--sso-resource`, the manifest's `webApplicationInfo.resource`) after the web host
+//! has checked that it belongs to the page's domain; without a session they are refused.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use session::Paths;
 use std::path::PathBuf;
+use teams_proto::Client;
 
 #[derive(Debug, Default, PartialEq)]
 struct WebArgs {
@@ -14,6 +18,8 @@ struct WebArgs {
     theme: Option<String>,
     browser: Option<PathBuf>,
     profile: Option<PathBuf>,
+    sso_resource: Option<String>,
+    valid_domains: Vec<String>,
 }
 
 fn parse(args: &[String]) -> Result<WebArgs> {
@@ -31,6 +37,8 @@ fn parse(args: &[String]) -> Result<WebArgs> {
             "--theme" => a.theme = Some(value()?),
             "--browser" => a.browser = Some(value()?.into()),
             "--profile" => a.profile = Some(value()?.into()),
+            "--sso-resource" => a.sso_resource = Some(value()?),
+            "--valid-domain" => a.valid_domains.push(value()?),
             flag if flag.starts_with("--") => bail!("unknown flag {flag}"),
             url if a.url.is_empty() => a.url = url.to_string(),
             extra => bail!("only one url, got another: {extra}"),
@@ -38,7 +46,7 @@ fn parse(args: &[String]) -> Result<WebArgs> {
     }
     if a.url.is_empty() {
         bail!(
-            "usage: kelma-cli web <url> [--shim] [--theme default|dark|contrast] [--browser PATH] [--profile DIR]"
+            "usage: kelma-cli web <url> [--shim] [--sso-resource api://<domain>/<app id>] [--valid-domain D]... [--theme default|dark|contrast] [--browser PATH] [--profile DIR]"
         );
     }
     Ok(a)
@@ -73,14 +81,28 @@ pub async fn run(paths: &Paths, args: &[String]) -> Result<()> {
         opts.shim = Some(webhost::ShimConfig {
             context,
             allowed_origins: Vec::new(),
+            sso_resource: a.sso_resource.clone(),
+            valid_domains: a.valid_domains.clone(),
         });
-        opts.token = Some(std::sync::Arc::new(|req: webhost::TokenRequest| {
+        let client = match signed_in(paths).await {
+            Ok(c) => Some(c),
+            Err(e) => {
+                println!("app SSO tokens will be refused: {e:#}");
+                None
+            }
+        };
+        opts.token = Some(std::sync::Arc::new(move |req: webhost::TokenRequest| {
+            let client = client.clone();
             Box::pin(async move {
-                println!(
-                    "token request from {}: resources {:?}, silent {} (refused: no app SSO broker yet)",
-                    req.origin, req.resources, req.silent
-                );
-                Err("kelma-cli web does not mint app tokens".to_string())
+                let (origin, resources) = (req.origin.clone(), req.resources.clone());
+                let result = app_token(client.as_ref(), req).await;
+                match &result {
+                    Ok(_) => println!("token for {resources:?} served to {origin}"),
+                    Err(reason) => {
+                        println!("token for {resources:?} refused to {origin}: {reason}")
+                    }
+                }
+                result
             })
         }));
     }
@@ -106,6 +128,31 @@ pub async fn run(paths: &Paths, args: &[String]) -> Result<()> {
     }
     println!("window closed");
     Ok(())
+}
+
+/// The signed-in kelma session, if there is one.
+async fn signed_in(paths: &Paths) -> Result<Client> {
+    let cfg = paths.load_config()?;
+    let sess = session::stored_session(&cfg)?.context("not signed in: run `kelma-cli login`")?;
+    let client = Client::resume(sess).await?;
+    session::persist(&cfg, &client).await?;
+    Ok(client)
+}
+
+/// Answers a `getAuthToken` request the web host has already checked (one resource, on the
+/// page's domain) with a token from the session, or the reason for teams-js.
+async fn app_token(
+    client: Option<&Client>,
+    req: webhost::TokenRequest,
+) -> std::result::Result<String, String> {
+    let client = client.ok_or("kelma is not signed in, so it cannot get app tokens")?;
+    let resource = req.resources.first().ok_or("no resource")?;
+    let claims = webhost::shim::merge_claims(&req.claims);
+    client
+        .app_token(resource, claims.as_deref())
+        .await
+        .map(|t| t.access_token)
+        .map_err(|e| webhost::shim::token_failure_reason(&e.to_string()))
 }
 
 #[cfg(test)]
@@ -137,8 +184,58 @@ mod tests {
                 theme: Some("dark".into()),
                 browser: Some("/usr/bin/vivaldi".into()),
                 profile: Some("/tmp/p".into()),
+                ..WebArgs::default()
             }
         );
+    }
+
+    #[test]
+    fn parses_the_app_sso_resource_and_valid_domains() {
+        let a = parse(&args(&[
+            "https://app.example.com/tab",
+            "--sso-resource",
+            "api://app.example.com/abc",
+            "--valid-domain",
+            "example.com",
+            "--valid-domain",
+            "*.example.net",
+        ]))
+        .unwrap();
+        assert_eq!(a.sso_resource.as_deref(), Some("api://app.example.com/abc"));
+        assert_eq!(a.valid_domains, vec!["example.com", "*.example.net"]);
+    }
+
+    #[tokio::test]
+    async fn app_tokens_are_refused_without_a_session() {
+        let req = webhost::TokenRequest {
+            resources: vec!["api://app.example.com/abc".into()],
+            claims: Vec::new(),
+            silent: true,
+            tenant_id: None,
+            origin: "https://app.example.com".into(),
+        };
+        let err = app_token(None, req).await.unwrap_err();
+        assert!(err.contains("not signed in"), "{err}");
+    }
+
+    /// The generic app path against the live service with a first-party resource kelma already
+    /// uses. Needs `kelma-cli login`; prints only the expiry, never the token.
+    #[tokio::test]
+    #[ignore = "mints a live token"]
+    async fn live_app_token_generic_path() {
+        teams_proto::client::install_crypto_provider();
+        let paths = Paths::new().unwrap();
+        let client = signed_in(&paths).await.expect("signed in");
+        let t = client
+            .app_token("https://graph.microsoft.com", None)
+            .await
+            .expect("minted");
+        let left = t
+            .expires_at
+            .duration_since(std::time::SystemTime::now())
+            .unwrap_or_default();
+        assert!(!t.access_token.is_empty());
+        println!("app path token minted, expires in {} s", left.as_secs());
     }
 
     #[test]

@@ -74,6 +74,13 @@ pub struct ShimConfig {
     /// other origin are dropped, so a page the app navigates to cannot ask for tokens. Empty
     /// means the origin of the URL passed to `open`.
     pub allowed_origins: Vec<String>,
+    /// The app's `webApplicationInfo.resource` (`api://<domain>/<app id>`). When set, it is the
+    /// only resource `getAuthToken` serves, as in Teams; when not, the one resource the app
+    /// asks for. Either way it must be on the page's own domain, see [`check_token_request`].
+    pub sso_resource: Option<String>,
+    /// The manifest's `validDomains` (`contoso.com`, `*.contoso.com`, `localhost:3000`): other
+    /// domains an app resource may name besides the page's own host.
+    pub valid_domains: Vec<String>,
 }
 
 /// An `authentication.getAuthToken` call, for the caller's token callback.
@@ -255,6 +262,155 @@ fn legacy_context(c: &HostContext) -> Value {
     })
 }
 
+/// Checks a `getAuthToken` request before anything is minted and returns it with `resources`
+/// set to the one resource to mint. An app token may only go to the app's own origin:
+///
+/// - one resource per request: the manifest's [`ShimConfig::sso_resource`] when known (an app
+///   may then only ask for that one), else the single resource the app asked for;
+/// - it has the tab SSO form `api://<domain>/<app id>` (or `/botid-<id>`); forms without a domain
+///   (`api://<app id>`, `api://botid-<id>`) cannot be tied to a page, and first-party resources
+///   (`https://…`) are never handed to an app;
+/// - the page is https and `<domain>` (with its port, 443 when none) is the page's host and
+///   port, or one of [`ShimConfig::valid_domains`];
+/// - a requested tenant must be the signed-in one.
+///
+/// The `Err` is the reason given to the app.
+pub fn check_token_request(
+    cfg: &ShimConfig,
+    mut req: TokenRequest,
+) -> Result<TokenRequest, String> {
+    let tenant = &cfg.context.tenant_id;
+    if let Some(t) = req.tenant_id.as_deref().filter(|t| !t.is_empty())
+        && !tenant.is_empty()
+        && !t.eq_ignore_ascii_case(tenant)
+    {
+        return Err(format!("kelma cannot get tokens for tenant {t}"));
+    }
+    let resource = match (&cfg.sso_resource, req.resources.as_slice()) {
+        (Some(own), []) => own.clone(),
+        (Some(own), [asked]) if asked == own => own.clone(),
+        (Some(own), _) => return Err(format!("this app can only get a token for {own}")),
+        (None, [asked]) => asked.clone(),
+        (None, []) => return Err("no resource: the app has no webApplicationInfo.resource".into()),
+        (None, _) => return Err("kelma gets a token for one resource at a time".into()),
+    };
+    let (host, port) = app_resource_authority(&resource)?;
+    let page = url::Url::parse(&req.origin)
+        .ok()
+        .filter(|u| u.scheme() == "https")
+        .ok_or_else(|| {
+            format!(
+                "app tokens are only given to https pages, not {}",
+                req.origin
+            )
+        })?;
+    let same_page = page.host_str().map(str::to_ascii_lowercase).as_deref() == Some(host.as_str())
+        && page.port_or_known_default() == Some(port.unwrap_or(443));
+    let authority = match port {
+        Some(p) => format!("{host}:{p}"),
+        None => host.clone(),
+    };
+    let valid_domain = cfg.valid_domains.iter().any(|d| {
+        let d = d.to_ascii_lowercase();
+        match d.strip_prefix('*') {
+            // `*.contoso.com`: exactly one more label, and only without a port.
+            Some(suffix) => {
+                port.is_none()
+                    && suffix.starts_with('.')
+                    && suffix.len() > 1
+                    && host
+                        .strip_suffix(suffix)
+                        .is_some_and(|label| !label.is_empty() && !label.contains('.'))
+            }
+            None => d == authority,
+        }
+    });
+    if !same_page && !valid_domain {
+        return Err(format!(
+            "the app resource {resource} is not on the domain of this page ({})",
+            req.origin
+        ));
+    }
+    req.resources = vec![resource];
+    Ok(req)
+}
+
+/// `(host, port)` of an `api://<domain>[:port]/<app id>` resource.
+fn app_resource_authority(resource: &str) -> Result<(String, Option<u16>), String> {
+    let bad = || format!("{resource:?} is not an app resource of the form api://<domain>/<app id>");
+    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '/' | ':');
+    if !resource.chars().all(plain) {
+        return Err(bad());
+    }
+    let u = url::Url::parse(resource).map_err(|_| bad())?;
+    let host = u.host_str().ok_or_else(bad)?.to_ascii_lowercase();
+    let app_id = u.path().trim_start_matches('/');
+    if u.scheme() != "api" || !u.username().is_empty() || u.password().is_some() {
+        return Err(bad());
+    }
+    if app_id.is_empty() || app_id.ends_with('/') {
+        return Err(format!(
+            "{resource} has no domain, so kelma cannot tell which page it belongs to"
+        ));
+    }
+    Ok((host, u.port()))
+}
+
+/// The `claims` request parameter for a token: the JSON objects among teams-js `claims`
+/// (conditional access challenges) merged into one, or `None`. Entries that are not JSON
+/// objects are ignored.
+pub fn merge_claims(claims: &[String]) -> Option<String> {
+    fn merge(into: &mut serde_json::Map<String, Value>, from: serde_json::Map<String, Value>) {
+        for (k, v) in from {
+            match (into.get_mut(&k), v) {
+                (Some(Value::Object(a)), Value::Object(b)) => merge(a, b),
+                (_, v) => {
+                    into.insert(k, v);
+                }
+            }
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for c in claims {
+        if let Ok(Value::Object(o)) = serde_json::from_str(c) {
+            merge(&mut out, o);
+        }
+    }
+    (!out.is_empty()).then(|| Value::Object(out).to_string())
+}
+
+/// The reason a failed app token request gives the app, from the sign-in error text. Teams
+/// answers with these names, so apps can fall back to their own sign-in popup on consent and
+/// multi-factor errors.
+pub fn token_failure_reason(error: &str) -> String {
+    let codes: Vec<u32> = error
+        .match_indices("AADSTS")
+        .filter_map(|(i, _)| {
+            let digits: String = error[i + 6..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            digits.parse().ok()
+        })
+        .collect();
+    let any = |list: &[u32]| codes.iter().any(|c| list.contains(c));
+    let reason = if any(&[50076, 50079]) {
+        "resourceRequiresMfa"
+    } else if any(&[50173, 70043, 700082]) {
+        "tokenRevoked"
+    } else if any(&[500011, 65002, 650057]) || error.contains("invalid_resource") {
+        "resourceDisabled"
+    } else if any(&[65001, 65004])
+        || error.contains("consent_required")
+        || error.contains("interaction_required")
+    {
+        "resourceRequiresConsent"
+    } else {
+        return format!("kelma could not get a token: {error}");
+    };
+    reason.to_string()
+}
+
 /// The response to an `authentication.getAuthToken` request.
 pub fn token_response(to: &ReplyTo, result: Result<String, String>) -> Value {
     match result {
@@ -346,6 +502,7 @@ mod tests {
                 ..HostContext::default()
             },
             allowed_origins: vec!["https://app.example.com".into()],
+            ..ShimConfig::default()
         }
     }
 
@@ -464,6 +621,207 @@ mod tests {
         );
         let err = token_response(&to, Err("consent required".into()));
         assert_eq!(err["args"], json!([false, "consent required"]));
+    }
+
+    fn token_req(resources: &[&str], origin: &str) -> TokenRequest {
+        TokenRequest {
+            resources: resources.iter().map(|r| r.to_string()).collect(),
+            claims: Vec::new(),
+            silent: false,
+            tenant_id: None,
+            origin: origin.into(),
+        }
+    }
+
+    fn checked(cfg: &ShimConfig, resources: &[&str], origin: &str) -> Result<String, String> {
+        check_token_request(cfg, token_req(resources, origin)).map(|r| {
+            assert_eq!(r.resources.len(), 1, "one validated resource");
+            r.resources[0].clone()
+        })
+    }
+
+    #[test]
+    fn app_resources_on_the_page_origin_are_accepted() {
+        let c = cfg();
+        for r in [
+            "api://app.example.com/0d5e1a2b-3c4d",
+            "api://app.example.com/botid-0d5e1a2b-3c4d",
+            "api://App.Example.com/0d5e1a2b-3c4d",
+        ] {
+            assert_eq!(checked(&c, &[r], ORIGIN), Ok(r.to_string()), "{r}");
+        }
+        assert_eq!(
+            checked(
+                &c,
+                &["api://app.example.com:8443/abc"],
+                "https://app.example.com:8443"
+            ),
+            Ok("api://app.example.com:8443/abc".into())
+        );
+        assert_eq!(
+            checked(
+                &c,
+                &["api://app.example.com/abc"],
+                "https://app.example.com:443"
+            ),
+            Ok("api://app.example.com/abc".into()),
+            "the default port is the same origin"
+        );
+    }
+
+    #[test]
+    fn app_resources_of_another_origin_are_refused() {
+        let c = cfg();
+        let refused = |resources: &[&str], origin: &str| {
+            let e = checked(&c, resources, origin).expect_err(&format!("{resources:?} {origin}"));
+            assert!(!e.is_empty());
+            e
+        };
+        // Another host, and lookalikes either way round.
+        assert!(refused(&["api://other.example.com/abc"], ORIGIN).contains("app.example.com"));
+        refused(&["api://example.com/abc"], ORIGIN);
+        refused(&["api://app.example.com.evil.com/abc"], ORIGIN);
+        refused(
+            &["api://app.example.com/abc"],
+            "https://app.example.com.evil.com",
+        );
+        refused(&["api://evil.com/app.example.com"], ORIGIN);
+        refused(&["api://app.example.com@evil.com/abc"], ORIGIN);
+        // Plain http, and a port the resource does not name (or the other way round).
+        refused(&["api://app.example.com/abc"], "http://app.example.com");
+        refused(
+            &["api://app.example.com/abc"],
+            "https://app.example.com:8443",
+        );
+        refused(&["api://app.example.com:8443/abc"], ORIGIN);
+        // Forms without a domain, first-party resources and broken ones.
+        refused(&["api://0d5e1a2b-3c4d"], ORIGIN);
+        refused(&["api://botid-0d5e1a2b-3c4d"], ORIGIN);
+        refused(&["api://app.example.com"], ORIGIN);
+        refused(&["api://app.example.com/"], ORIGIN);
+        refused(&["https://graph.microsoft.com"], ORIGIN);
+        refused(&["https://app.example.com/abc"], ORIGIN);
+        refused(&["api://app.example.com/abc?x=1"], ORIGIN);
+        refused(&["api://app.example.com/a b"], ORIGIN);
+        refused(&["not a url"], ORIGIN);
+        // One resource per request.
+        refused(&[], ORIGIN);
+        refused(
+            &["api://app.example.com/a", "api://app.example.com/b"],
+            ORIGIN,
+        );
+    }
+
+    #[test]
+    fn the_manifest_resource_is_the_only_one_served_when_known() {
+        let mut c = cfg();
+        c.sso_resource = Some("api://app.example.com/abc".into());
+        assert_eq!(
+            checked(&c, &[], ORIGIN),
+            Ok("api://app.example.com/abc".into())
+        );
+        assert_eq!(
+            checked(&c, &["api://app.example.com/abc"], ORIGIN),
+            Ok("api://app.example.com/abc".into())
+        );
+        assert!(checked(&c, &["api://app.example.com/other"], ORIGIN).is_err());
+        // The manifest resource is still bound to the page origin.
+        c.sso_resource = Some("api://elsewhere.example.net/abc".into());
+        assert!(checked(&c, &[], ORIGIN).is_err());
+    }
+
+    #[test]
+    fn valid_domains_from_the_manifest_extend_the_page_host() {
+        let mut c = cfg();
+        c.valid_domains = vec!["contoso.com".into(), "*.tabs.contoso.net".into()];
+        assert!(checked(&c, &["api://contoso.com/abc"], ORIGIN).is_ok());
+        assert!(checked(&c, &["api://a.tabs.contoso.net/abc"], ORIGIN).is_ok());
+        assert!(checked(&c, &["api://www.contoso.com/abc"], ORIGIN).is_err());
+        assert!(checked(&c, &["api://tabs.contoso.net/abc"], ORIGIN).is_err());
+        assert!(checked(&c, &["api://a.tabs.contoso.net.evil.com/abc"], ORIGIN).is_err());
+        assert!(checked(&c, &["api://evil-tabs.contoso.net/abc"], ORIGIN).is_err());
+        // Still https only.
+        assert!(checked(&c, &["api://contoso.com/abc"], "http://app.example.com").is_err());
+        // A bare wildcard allows nothing.
+        c.valid_domains = vec!["*".into()];
+        assert!(checked(&c, &["api://evil.com/abc"], ORIGIN).is_err());
+    }
+
+    #[test]
+    fn a_token_for_another_tenant_is_refused() {
+        let c = cfg();
+        let mut req = token_req(&["api://app.example.com/abc"], ORIGIN);
+        req.tenant_id = Some("TENANT-1".into());
+        assert!(check_token_request(&c, req.clone()).is_ok());
+        req.tenant_id = Some("other-tenant".into());
+        assert!(check_token_request(&c, req).is_err());
+    }
+
+    #[test]
+    fn claims_challenges_are_merged_into_one_claims_parameter() {
+        assert_eq!(merge_claims(&[]), None);
+        assert_eq!(merge_claims(&["email".into(), "".into()]), None, "not json");
+        let one = r#"{"access_token":{"acrs":{"essential":true,"value":"c1"}}}"#;
+        let merged: Value = serde_json::from_str(&merge_claims(&[one.into()]).unwrap()).unwrap();
+        assert_eq!(merged, serde_json::from_str::<Value>(one).unwrap());
+        let two = r#"{"access_token":{"xms_cc":{"values":["cp1"]}}}"#;
+        let merged: Value =
+            serde_json::from_str(&merge_claims(&[one.into(), "junk".into(), two.into()]).unwrap())
+                .unwrap();
+        assert_eq!(
+            merged,
+            json!({"access_token": {
+                "acrs": {"essential": true, "value": "c1"},
+                "xms_cc": {"values": ["cp1"]}
+            }})
+        );
+    }
+
+    #[test]
+    fn sign_in_errors_become_teams_js_reasons() {
+        let cases = [
+            (
+                "auth: invalid_grant: AADSTS65001: The user or administrator has not consented",
+                "resourceRequiresConsent",
+            ),
+            (
+                "auth: consent_required: AADSTS65004: User declined to consent",
+                "resourceRequiresConsent",
+            ),
+            (
+                "auth: interaction_required: AADSTS50158: External security challenge not satisfied",
+                "resourceRequiresConsent",
+            ),
+            (
+                "auth: interaction_required: AADSTS50076: Due to a configuration change made by your administrator, you must use multi-factor authentication",
+                "resourceRequiresMfa",
+            ),
+            (
+                "auth: invalid_grant: AADSTS50079: Due to a configuration change, you must enroll in multi-factor authentication",
+                "resourceRequiresMfa",
+            ),
+            (
+                "auth: invalid_resource: AADSTS500011: The resource principal named api://x.com/abc was not found",
+                "resourceDisabled",
+            ),
+            (
+                "auth: invalid_client: AADSTS65002: Consent between first party application and first party resource must be configured via preauthorization",
+                "resourceDisabled",
+            ),
+            (
+                "auth: invalid_grant: AADSTS700082: The refresh token has expired due to inactivity",
+                "tokenRevoked",
+            ),
+            (
+                "auth: invalid_grant: AADSTS50173: The provided grant has expired due to it being revoked",
+                "tokenRevoked",
+            ),
+        ];
+        for (err, reason) in cases {
+            assert_eq!(token_failure_reason(err), reason, "{err}");
+        }
+        let other = token_failure_reason("http: error sending request");
+        assert!(other.contains("error sending request"), "{other}");
     }
 
     #[test]

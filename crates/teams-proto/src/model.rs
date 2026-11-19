@@ -42,6 +42,10 @@ pub struct Message {
     pub subject: Option<String>,
     /// People, channels, teams and tags this message mentions.
     pub mentions: Vec<crate::mentions::Mention>,
+    /// Delivery importance (`properties.importance`): Standard, Important or Urgent.
+    pub importance: crate::delivery::Importance,
+    /// Headline and banner of a channel announcement, if the message is one.
+    pub announcement: Option<crate::delivery::Announcement>,
 }
 
 impl Message {
@@ -218,6 +222,8 @@ pub fn message_from_json(v: &Value, fallback_conversation: &str) -> Option<Messa
             .filter(|s| !s.is_empty())
             .map(str::to_owned),
         mentions: crate::mentions::parse_mentions(props),
+        importance: crate::delivery::Importance::from_properties(props),
+        announcement: crate::delivery::parse_announcement(props),
     })
 }
 
@@ -440,7 +446,7 @@ mod tests {
             "content": "<p>تمام 👍</p>",
             "properties": {
                 "emotions": "[{\"key\":\"like\",\"users\":[{\"mri\":\"8:orgid:aaa\",\"time\":1,\"value\":\"1\"}]},{\"key\":\"heart\",\"users\":[]}]",
-                "files": "[{\"fileName\":\"velents-docs-demo.mp4\",\"fileType\":\"mp4\",\"objectUrl\":\"https://x.sharepoint.com/a.mp4\",\"fileInfo\":{\"shareUrl\":\"https://x.sharepoint.com/:v:/g/a\"}}]",
+                "files": "[{\"fileName\":\"contoso-docs-demo.mp4\",\"fileType\":\"mp4\",\"objectUrl\":\"https://x.sharepoint.com/a.mp4\",\"fileInfo\":{\"shareUrl\":\"https://x.sharepoint.com/:v:/g/a\"}}]",
                 "edittime": "1795001090000"
             }
         })
@@ -464,9 +470,38 @@ mod tests {
                 users: vec!["8:orgid:aaa".into()]
             }]
         );
-        assert_eq!(m.files[0].name, "velents-docs-demo.mp4");
+        assert_eq!(m.files[0].name, "contoso-docs-demo.mp4");
         assert_eq!(m.files[0].url, "https://x.sharepoint.com/:v:/g/a");
         assert!(m.is_chat_content());
+    }
+
+    #[test]
+    fn message_carries_importance_and_announcement() {
+        use crate::delivery::Importance;
+        let plain = message_from_json(&msg_json(), "").unwrap();
+        assert_eq!(plain.importance, Importance::Standard);
+        assert!(plain.announcement.is_none());
+
+        let mut v = msg_json();
+        v["properties"]["importance"] = json!("urgent");
+        assert_eq!(
+            message_from_json(&v, "").unwrap().importance,
+            Importance::Urgent
+        );
+        v["properties"]["importance"] = json!("high");
+        assert_eq!(
+            message_from_json(&v, "").unwrap().importance,
+            Importance::Important
+        );
+
+        v["properties"]["title"] = json!("Town hall");
+        v["properties"]["cards"] = json!(
+            r#"[{"appId":"announcement-card","contentType":"application/vnd.microsoft.teams.messaging-announcementBanner","content":{"colorTheme":"3"}}]"#
+        );
+        let m = message_from_json(&v, "").unwrap();
+        let a = m.announcement.unwrap();
+        assert_eq!(a.title, "Town hall");
+        assert_eq!(a.color_theme.as_deref(), Some("3"));
     }
 
     #[test]
