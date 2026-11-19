@@ -88,6 +88,12 @@ export component GeneralPage inherits VerticalLayout {
 
 export component AccountsPage inherits VerticalLayout {
     alignment: start;
+    // First, so the notice is seen right after a switch (and stays on screen in short windows).
+    if SettingsStore.restart-needed: SSection {
+        title: @tr("Restart needed");
+        hint: @tr("The change is saved. kelma uses it after a restart.");
+        SButton { label: @tr("Restart kelma"); primary: true; clicked => { SettingsStore.command("restart", ""); } }
+    }
     SSection {
         title: @tr("Accounts");
         hint: @tr("The account kelma signs in with. Switching restarts kelma. Each account keeps its own chats on this computer.");
@@ -146,11 +152,6 @@ export component AccountsPage inherits VerticalLayout {
         title: @tr("License");
         hint: @tr("Asks Microsoft for your sign-in and license details again, then restarts kelma. Use it after an admin changed your license or your organization's settings.");
         SButton { label: @tr("Refresh license and restart"); clicked => { SettingsStore.command("refresh-license", ""); } }
-    }
-    if SettingsStore.restart-needed: SSection {
-        title: @tr("Restart needed");
-        hint: @tr("The change is saved. kelma uses it after a restart.");
-        SButton { label: @tr("Restart kelma"); primary: true; clicked => { SettingsStore.command("restart", ""); } }
     }
     if SettingsStore.accounts-status != "": Para { text: SettingsStore.accounts-status; }
 }
