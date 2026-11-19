@@ -1,0 +1,37 @@
+# A quick kelma binary for trying a branch on the desktop, where the GUI crate needs more memory
+# than the machine has. Push the branch as ci/build-<name> (it must contain this file); the run
+# reuses the dependency cache of the CI `check` job, builds the debug `kelma` binary and uploads it
+# as the `kelma-bin` artifact. Fetch it with `gh run download <run> -n kelma-bin`.
+name: Test build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ci/build-*']
+
+concurrency:
+  group: test-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Named like the CI job so Swatinem/rust-cache restores that job's cache.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libdbus-1-dev libasound2-dev cmake pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - run: cargo build -p kelma --bin kelma
+      - run: strip target/debug/kelma
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kelma-bin
+          path: target/debug/kelma
+          retention-days: 3
