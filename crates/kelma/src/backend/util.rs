@@ -137,6 +137,15 @@ pub(super) fn one_on_one_members(id: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The 1:1 chat id of two people (`8:orgid:` MRIs): `19:<a>_<b>@unq.gbl.spaces`, the GUIDs in
+/// sorted order. `None` for anyone else (guests, bots).
+#[cfg(feature = "calls")]
+pub(super) fn one_on_one_chat_id(a: &str, b: &str) -> Option<String> {
+    let mut ids = [a.strip_prefix("8:orgid:")?, b.strip_prefix("8:orgid:")?];
+    ids.sort_unstable();
+    Some(format!("19:{}_{}@unq.gbl.spaces", ids[0], ids[1]))
+}
+
 pub(super) fn decode_image(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Pixels> {
     let img = image::load_from_memory(bytes).ok()?;
     let img = if img.width() > max_w || img.height() > max_h {
@@ -189,6 +198,18 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 11, day, h, m, 0)
             .unwrap()
             .timestamp_millis()
+    }
+
+    #[cfg(feature = "calls")]
+    #[test]
+    fn a_one_on_one_chat_id_sorts_both_members() {
+        let id = one_on_one_chat_id("8:orgid:f74e", "8:orgid:a1b2");
+        assert_eq!(id.as_deref(), Some("19:a1b2_f74e@unq.gbl.spaces"));
+        assert_eq!(
+            one_on_one_members(id.as_deref().unwrap()),
+            ["8:orgid:a1b2", "8:orgid:f74e"]
+        );
+        assert_eq!(one_on_one_chat_id("8:orgid:a1b2", "28:bot"), None);
     }
 
     #[test]

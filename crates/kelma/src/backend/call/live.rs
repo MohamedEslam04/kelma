@@ -26,6 +26,9 @@ use calling::audio::{
 use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::{AudioSender, MediaEvents, MediaOptions, MediaSession, MediaState};
 use calling::ngc_trouter::{CallPush, NgcEvent, NgcTrouter};
+use calling::signaling::call_ops::{
+    TransferOutcome, hold_offer, keep_media_running, parse_transfer_completion,
+};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::roster::{Presence, roster_snapshot};
 use calling::signaling::{CallSession, Controls, NgcClient, Roster};
@@ -465,6 +468,8 @@ async fn join_meeting(
         controls: Controls::default(),
         meeting: true,
         keep_alive: None,
+        pending_offer: None,
+        transferring: None,
         link: Link::New,
         bots,
     };
@@ -513,6 +518,8 @@ pub fn adopt(
             controls: Controls::default(),
             meeting: false,
             keep_alive: None,
+            pending_offer: None,
+            transferring: None,
             link: Link::Connected,
             bots: Bots::new(None, false),
         };
@@ -603,6 +610,8 @@ fn mic_chain<S: calling::audio::FrameSource + 'static>(
 struct Audio {
     sender: watch::Receiver<AudioSender>,
     muted: Arc<AtomicBool>,
+    /// On hold: nothing is sent or played.
+    held: Arc<AtomicBool>,
     play: watch::Sender<Option<mpsc::Sender<OpusPacket>>>,
     send_task: Option<JoinHandle<()>>,
     playback: Option<JoinHandle<calling::Result<()>>>,
@@ -628,11 +637,11 @@ impl Audio {
         }
         .context("speaker")?;
         self.play_into(out);
-        let (sender, muted) = (self.sender.clone(), self.muted.clone());
+        let (sender, muted, held) = (self.sender.clone(), self.muted.clone(), self.held.clone());
         self.send_task = Some(tokio::spawn(async move {
             while let Some(p) = encoded.recv().await {
-                // Muting is also local: the packets stop here.
-                if muted.load(Ordering::Relaxed) {
+                // Muting and hold are also local: the packets stop here.
+                if muted.load(Ordering::Relaxed) || held.load(Ordering::Relaxed) {
                     continue;
                 }
                 let s = sender.borrow().clone();
@@ -658,13 +667,17 @@ impl Audio {
     }
 }
 
-/// Moves one media session's incoming packets to whatever playback is current.
+/// Moves one media session's incoming packets to whatever playback is current (none on hold).
 fn forward(
     play: watch::Receiver<Option<mpsc::Sender<OpusPacket>>>,
+    held: Arc<AtomicBool>,
     mut incoming: mpsc::Receiver<OpusPacket>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(p) = incoming.recv().await {
+            if held.load(Ordering::Relaxed) {
+                continue;
+            }
             let tx = play.borrow().clone();
             if let Some(tx) = tx {
                 let _ = tx.send(p).await;
@@ -755,6 +768,11 @@ struct Call {
     link: Link,
     /// Captions, recording and transcription (the recorder bot).
     bots: Bots,
+    /// Our re-offer (hold, resume) as the media session made it, while its answer is due on the
+    /// `call/mediaAnswer` callback.
+    pending_offer: Option<String>,
+    /// Who we are transferring the call to, until `call/transferCompletion`.
+    transferring: Option<String>,
 }
 
 impl Call {
@@ -831,6 +849,26 @@ impl Call {
                 self.bots.ask(&c);
                 self.step_bots(sink).await;
             }
+            Control::Hold(on) => self.hold(on, audio, sink).await,
+            Control::AddPerson { mri, name } => {
+                if let Err(e) = self
+                    .ngc
+                    .add_participant(s, links, controller, &mri, &name)
+                    .await
+                {
+                    tracing::warn!(%e, "add person failed");
+                    sink.send(Event::Error(format!("Couldn't add {name} to the call.")));
+                }
+            }
+            Control::Transfer { mri, name } => match self.ngc.transfer(s, links, &mri).await {
+                Ok(()) => self.transferring = Some(name),
+                Err(e) => {
+                    tracing::warn!(%e, "transfer failed");
+                    sink.send(Event::Error(format!(
+                        "Couldn't transfer the call to {name}."
+                    )));
+                }
+            },
             Control::Leave => {}
         }
     }
@@ -839,6 +877,69 @@ impl Call {
     async fn step_bots(&mut self, sink: &EventSink) {
         let (s, links, controller) = (&self.s, &self.links, self.controller.as_str());
         self.bots.step(&self.ngc, s, links, controller, sink).await;
+    }
+
+    /// Hold (`on`) or resume: silence our side at once, then re-offer the media on the same
+    /// peer connection, every line `inactive` to hold (see [`calling::signaling::call_ops`]).
+    /// A refused re-offer puts the hold back as it was.
+    async fn hold(&mut self, on: bool, audio: &mut Audio, sink: &EventSink) {
+        audio.held.store(on, Ordering::Relaxed);
+        let sent = async {
+            let ours = self.media.create_offer().await?;
+            let signaled = if on { hold_offer(&ours) } else { ours.clone() };
+            let inline = self
+                .ngc
+                .renegotiate(&self.s, &self.links, &MODALITIES, &SdpBlob::ngc(signaled))
+                .await?;
+            anyhow::Ok((ours, inline))
+        }
+        .await;
+        match sent {
+            Ok((ours, Some(answer))) => {
+                self.apply_reoffer_answer(&answer, &ours, &Links::default(), sink)
+                    .await
+            }
+            Ok((ours, None)) => self.pending_offer = Some(ours),
+            Err(e) => {
+                tracing::warn!("hold {on} failed: {e:#}");
+                audio.held.store(!on, Ordering::Relaxed);
+                sink.send(Event::Held(!on));
+                sink.send(Event::Error(if on {
+                    "Couldn't put the call on hold.".into()
+                } else {
+                    "Couldn't resume the call.".into()
+                }));
+            }
+        }
+    }
+
+    /// Applies the answer to our hold or resume re-offer `ours`, with our directions mirrored
+    /// back so the media keeps running locally, and acknowledges it.
+    async fn apply_reoffer_answer(
+        &mut self,
+        answer: &SdpBlob,
+        ours: &str,
+        links: &Links,
+        sink: &EventSink,
+    ) {
+        let applied = match answer.decode() {
+            Ok(sdp) => self
+                .media
+                .set_answer(&keep_media_running(&sdp, ours))
+                .await
+                .map_err(anyhow::Error::from),
+            Err(e) => Err(anyhow::Error::from(e)),
+        };
+        if let Err(e) = applied {
+            tracing::warn!("hold answer not applied: {e:#}");
+            sink.send(Event::Error("The call's media update was refused.".into()));
+            return;
+        }
+        if let Some(url) = links.get("mediaAcknowledgement")
+            && let Err(e) = self.ngc.acknowledge_media(&self.s, url).await
+        {
+            tracing::warn!(%e, "media answer not acknowledged");
+        }
     }
 
     /// The rest of `call join`: audio, then controls, media state and callbacks until the call
@@ -857,6 +958,7 @@ impl Call {
         let mut audio = Audio {
             sender: sender_rx,
             muted: Arc::new(AtomicBool::new(!opts.mic_on)),
+            held: Arc::new(AtomicBool::new(false)),
             play: play_tx,
             send_task: None,
             playback: None,
@@ -864,7 +966,7 @@ impl Call {
         if let Err(e) = audio.start(opts.mic.as_deref(), opts.speaker.as_deref()) {
             sink.send(Event::Error(format!("Audio device: {e:#}")));
         }
-        let mut forwarders = vec![forward(play_rx.clone(), events.audio)];
+        let mut forwarders = vec![forward(play_rx.clone(), audio.held.clone(), events.audio)];
         let mut state_rx = events.state;
         let mut speakers_rx = events.speakers;
         let mut talk = Talk::default();
@@ -879,6 +981,8 @@ impl Call {
         let (mut in_lobby, mut was_in_call) = (false, false);
         let mut shown: Option<Phase> = None;
         let mut own_hand: Option<bool> = None;
+        // A finished transfer ends the call, and we still leave our leg.
+        let mut hang_up = false;
         let ended: Option<String> = loop {
             let mut roster_changed = false;
             tokio::select! {
@@ -916,8 +1020,11 @@ impl Call {
                             self.start_keep_alive(keep_alive_interval_s);
                         }
                         CallEvent::MediaAnswer { answer, links } => {
+                            match self.pending_offer.take() {
+                                Some(ours) => self.apply_reoffer_answer(&answer, &ours, &links, &sink).await,
+                                None => self.apply_answer(&answer).await,
+                            }
                             self.links.0.extend(links.0);
-                            self.apply_answer(&answer).await;
                         }
                         CallEvent::MediaRenegotiation { offer, links } => {
                             let swapped = self.renegotiate(&offer, &links, &sender_tx, &sink).await;
@@ -925,7 +1032,7 @@ impl Call {
                                 state_rx = ev.state;
                                 speakers_rx = ev.speakers;
                                 speakers_open = true;
-                                forwarders.push(forward(play_rx.clone(), ev.audio));
+                                forwarders.push(forward(play_rx.clone(), audio.held.clone(), ev.audio));
                             }
                             self.links.0.extend(links.0);
                             // Admission re-offers the media; we are out of the lobby.
@@ -954,8 +1061,32 @@ impl Call {
                             self.step_bots(&sink).await;
                         }
                         CallEvent::Other { event, body, .. } if event == "addParticipantFailure" => {
-                            for ev in self.bots.bot_refused(&body) {
+                            // The recorder bot's invitation when one is pending, else a person
+                            // from the invite box.
+                            let refused = self.bots.bot_refused(&body);
+                            if refused.is_empty() {
+                                tracing::warn!("adding a person failed");
+                                sink.send(Event::Error("Couldn't add that person to the call.".into()));
+                            }
+                            for ev in refused {
                                 sink.send(ev);
+                            }
+                        }
+                        CallEvent::Other { scope, event, body }
+                            if scope == "call" && event == "transferCompletion" =>
+                        {
+                            match parse_transfer_completion(&body) {
+                                Some(TransferOutcome::Done) => {
+                                    let to = self.transferring.take().unwrap_or_default();
+                                    hang_up = true;
+                                    break Some(format!("You transferred the call to {to}."));
+                                }
+                                Some(TransferOutcome::Failed { code, sub_code }) => {
+                                    tracing::warn!(code, sub_code, "transfer failed");
+                                    self.transferring = None;
+                                    sink.send(Event::Error("The transfer didn't go through. The call is still on hold.".into()));
+                                }
+                                None => {}
                             }
                         }
                         CallEvent::Progress { .. }
@@ -987,7 +1118,7 @@ impl Call {
             }
         };
 
-        if ended.is_none() {
+        if ended.is_none() || hang_up {
             let leave = if self.links.get("leave").is_some() || self.links.get("callLeg").is_some()
             {
                 self.ngc.hang_up(&self.s, &self.links).await
