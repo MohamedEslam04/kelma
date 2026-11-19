@@ -13,6 +13,7 @@
 //! what the speaker plays, as `call join --mic --speaker` runs it (`KELMA_NO_AEC=1` turns it off,
 //! like `--no-aec`). `KELMA_CALL_DUMP=<dir>` writes every raw calling push there.
 
+use super::camera::{self, Camera, CameraMsg};
 use super::share::{self, Share, ShareMsg};
 use super::{
     CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
@@ -465,6 +466,7 @@ async fn join_meeting(
         keep_alive: None,
         link: Link::New,
         share: Share::default(),
+        camera: Camera::default(),
     };
     Ok((call, events, pushes))
 }
@@ -513,6 +515,7 @@ pub fn adopt(
             keep_alive: None,
             link: Link::Connected,
             share: Share::default(),
+            camera: Camera::default(),
         };
         call.start_keep_alive(None);
         call.run(events, pushes, opts, sink, rx, vec![]).await;
@@ -737,6 +740,7 @@ struct Call {
     keep_alive: Option<JoinHandle<()>>,
     link: Link,
     share: Share,
+    camera: Camera,
 }
 
 impl Call {
@@ -810,7 +814,8 @@ impl Call {
                 }
             }
             // Handled by the run loop (`share_control`), which owns the picker's channel.
-            Control::Share(_) | Control::Leave => {}
+            // Share and Camera are handled by the run loop, which owns their channels.
+            Control::Share(_) | Control::Camera(_) | Control::Leave => {}
         }
     }
 
@@ -840,6 +845,7 @@ impl Call {
         let mut forwarders = vec![forward(play_rx.clone(), events.audio)];
         let mut state_rx = events.state;
         let mut speakers_rx = events.speakers;
+        self.camera.show_remote(events.video, &sink);
         let mut talk = Talk::default();
         let mut speakers_open = true;
         if !opts.mic_on {
@@ -853,15 +859,20 @@ impl Call {
         let mut shown: Option<Phase> = None;
         let mut own_hand: Option<bool> = None;
         let (share_tx, mut share_rx) = mpsc::unbounded_channel();
+        let (camera_tx, mut camera_rx) = mpsc::unbounded_channel();
+        // Joined with the camera on: it starts once the call can send it.
+        let mut camera_wanted = opts.camera;
         let ended: Option<String> = loop {
             let mut roster_changed = false;
             tokio::select! {
                 c = ctl.recv() => match c {
                     None | Some(Control::Leave) => break None,
                     Some(Control::Share(on)) => self.share_control(on, &share_tx, &sink).await,
+                    Some(Control::Camera(on)) => self.camera_control(on, &camera_tx, &sink).await,
                     Some(c) => self.control(c, &mut audio, &sink).await,
                 },
                 Some(m) = share_rx.recv() => self.share_msg(m, &share_tx, &sink).await,
+                Some(m) = camera_rx.recv() => self.camera_msg(m, &camera_tx, &sink).await,
                 heard = speakers_rx.changed(), if speakers_open => match heard {
                     Ok(()) => {
                         let sources = speakers_rx.borrow_and_update().clone();
@@ -902,6 +913,9 @@ impl Call {
                                 if self.share.stop().await {
                                     sink.send(Event::Error("Screen sharing stopped: the call's media restarted.".into()));
                                 }
+                                // So was the camera: it comes back on the new session's line.
+                                camera_wanted |= self.camera.stop(&sink).await;
+                                self.camera.show_remote(ev.video, &sink);
                                 state_rx = ev.state;
                                 speakers_rx = ev.speakers;
                                 speakers_open = true;
@@ -927,6 +941,7 @@ impl Call {
                         CallEvent::MediaAcknowledgement { links } => self.links.0.extend(links.0),
                         CallEvent::Other { event, body, .. } if event == "controlVideoStreaming" => {
                             self.share.sender_control(&body);
+                            self.camera.sender_control(&body);
                         }
                         CallEvent::Progress { .. } | CallEvent::Other { .. } => {}
                     }
@@ -946,6 +961,14 @@ impl Call {
                 && share::available(&self.media, &self.links, self.meeting);
             if let Some((available, sharing)) = self.share.changed(can_share) {
                 sink.send(Event::Share { available, sharing });
+            }
+            let can_camera = self.link == Link::Connected
+                && camera::available(&self.media, &self.links, self.meeting);
+            if can_camera && std::mem::take(&mut camera_wanted) {
+                self.camera.open(&camera_tx);
+            }
+            if let Some((available, on)) = self.camera.changed(can_camera) {
+                sink.send(Event::Camera { available, on });
             }
             let phase = live_phase(self.link, in_lobby && self.meeting, was_in_call);
             was_in_call |= phase == Phase::Connected;
@@ -975,6 +998,8 @@ impl Call {
             k.abort();
         }
         self.share.stop().await;
+        self.camera.stop(&sink).await;
+        self.camera.stop_remote(&sink);
         audio.stop();
         let _ = self.media.close().await;
         for f in forwarders {
@@ -1067,6 +1092,93 @@ impl Call {
                 self.share.stop().await;
                 sink.send(Event::Error(
                     "Others can't see your screen: the call refused the share.".into(),
+                ));
+            }
+        }
+    }
+
+    /// Camera on / off: the portal opens without blocking the call (its answer comes as a
+    /// [`CameraMsg`]); turning it off tells the service at once.
+    async fn camera_control(
+        &mut self,
+        on: bool,
+        tx: &mpsc::UnboundedSender<CameraMsg>,
+        sink: &EventSink,
+    ) {
+        if on {
+            self.camera.open(tx);
+        } else if self.camera.stop(sink).await {
+            self.tell_camera(false, sink).await;
+        }
+    }
+
+    async fn camera_msg(
+        &mut self,
+        m: CameraMsg,
+        tx: &mpsc::UnboundedSender<CameraMsg>,
+        sink: &EventSink,
+    ) {
+        match m {
+            CameraMsg::Opened(Ok(capture)) => {
+                match self.camera.start(capture, &self.media, tx, sink) {
+                    Ok(()) => self.tell_camera(true, sink).await,
+                    Err(e) => {
+                        tracing::warn!(%e, "camera not started");
+                        self.camera.stop(sink).await;
+                        sink.send(Event::Error(format!("Couldn't turn on your camera: {e}")));
+                    }
+                }
+            }
+            CameraMsg::Opened(Err(e)) => {
+                self.camera.open_failed();
+                tracing::warn!(%e, "camera not opened");
+                sink.send(Event::Error(format!("Couldn't turn on your camera: {e}")));
+            }
+            CameraMsg::Ended => {
+                if self.camera.stop(sink).await {
+                    self.tell_camera(false, sink).await;
+                }
+            }
+        }
+    }
+
+    /// Tells the service our camera sends (or stopped): `UpdateMediaDescriptions` in a meeting,
+    /// a re-offer in a 1:1 call.
+    async fn tell_camera(&mut self, on: bool, sink: &EventSink) {
+        let r = if self.meeting {
+            camera::tell_meeting(
+                &self.ngc,
+                &self.s,
+                &self.links,
+                &self.media,
+                &mut self.camera,
+                on,
+            )
+            .await
+        } else {
+            // The answer comes inline or on `call/mediaAnswer/`, which `apply_answer` takes.
+            self.answered = false;
+            let sharing = self.share.sharing();
+            match camera::reoffer_direct(&self.ngc, &self.s, &self.links, &self.media, on, sharing)
+                .await
+            {
+                Ok(Some(a)) => {
+                    self.apply_answer(&a).await;
+                    Ok(())
+                }
+                Ok(None) => Ok(()),
+                Err(e) => {
+                    self.answered = true;
+                    Err(e)
+                }
+            }
+        };
+        if let Err(e) = r {
+            tracing::warn!("camera not signalled: {e:#}");
+            if on {
+                self.camera.stop(sink).await;
+                sink.send(Event::Error(
+                    "Others can't see your video: the call refused it.".into(),
                 ));
             }
         }

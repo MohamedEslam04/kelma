@@ -14,6 +14,8 @@ export struct CallPerson {
     role: string,
     // Heard right now.
     speaking: bool,
+    // This tile shows the other side's video (CallStore.remote-video) when there is one.
+    video: bool,
 }
 
 export global CallStore {
@@ -30,6 +32,18 @@ export global CallStore {
     // The call negotiated a screen-sharing line (Share works), and we are sharing.
     in property <bool> can-share;
     in property <bool> sharing;
+    // This build negotiates camera video (KELMA_CAMERA=1); the call negotiated a main-video line
+    // (Camera works); the camera is on.
+    in property <bool> camera-available;
+    in property <bool> can-camera;
+    in property <bool> camera;
+    // The pre-join camera switch.
+    in property <bool> prejoin-camera;
+    // Our camera, drawn small in our tile, and the other side's video in theirs.
+    in property <image> self-view;
+    in property <bool> has-self-view;
+    in property <image> remote-video;
+    in property <bool> has-remote-video;
     // The pre-join microphone switch.
     in property <bool> prejoin-mic: true;
     // Shown only when the call state says the meeting is recorded.
@@ -64,7 +78,7 @@ export global CallStore {
     in-out property <length> mini-dx;
     in-out property <length> mini-dy;
     // (name, argument): join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
-    // share, leave, close, rejoin, dismiss-error. See `backend/call.rs` `CallCmd::parse`.
+    // share, camera, prejoin-camera, leave, close, rejoin, dismiss-error. See `backend/call.rs` `CallCmd::parse`.
     callback command(string, string);
     // The conversation is a meeting's chat (its header shows Join).
     pure callback is-meeting-chat(string) -> bool;

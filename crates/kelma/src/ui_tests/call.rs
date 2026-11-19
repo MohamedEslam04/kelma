@@ -296,13 +296,49 @@ fn share_asks_the_engine_and_follows_what_it_reports() {
 }
 
 #[test]
+fn camera_asks_the_engine_and_follows_what_it_reports() {
+    let c = CallHarness::new();
+    c.connected();
+    assert_eq!(c.button("Camera").accessible_enabled(), Some(false));
+    c.fake.emit(Event::Camera {
+        available: true,
+        on: false,
+    });
+    click(&c.button("Camera"));
+    // The portal may still refuse; the button turns only when the engine says it is on.
+    assert_eq!(c.button("Camera").accessible_checked(), Some(false));
+    c.fake.emit(Event::Camera {
+        available: true,
+        on: true,
+    });
+    assert_eq!(c.button("Camera").accessible_checked(), Some(true));
+    click(&c.button("Camera"));
+    assert_eq!(
+        c.fake.calls()[1..],
+        ["camera on", "camera off"].map(String::from)
+    );
+}
+
+#[test]
+fn the_prejoin_camera_switch_works_when_the_build_has_video() {
+    let c = CallHarness::new();
+    c.open_prejoin();
+    cs(&c.h.app).set_camera_available(true);
+    let camera = c.button("Camera");
+    assert_eq!(camera.accessible_enabled(), Some(true));
+    click(&camera);
+    assert!(c.shows("Your camera turns on when you join"));
+    assert!(c.sent().contains(&"prejoin-camera on".to_owned()));
+}
+
+#[test]
 fn unavailable_controls_are_shown_disabled_and_say_why() {
     let c = CallHarness::new();
     c.connected();
     for (label, why) in [
         ("React", "Reactions aren't available yet"),
         ("View", "Only this view is available"),
-        ("Camera", "Video isn't available yet"),
+        ("Camera", "Video isn't available in this call"),
         ("Share", "Screen sharing isn't available in this call"),
     ] {
         let b = c.button(label);

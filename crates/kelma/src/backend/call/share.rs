@@ -31,10 +31,18 @@ fn wanted_by(v: Option<&std::ffi::OsStr>) -> bool {
     v.is_some_and(|v| !v.is_empty() && v != "0")
 }
 
-/// The media options of a call's session: audio, plus the sharing line when [`wanted`].
+/// The media options of a call's session: audio, plus the camera's main-video line when
+/// [`super::camera::wanted`] and the sharing line when [`wanted`].
 pub fn media_options() -> MediaOptions {
+    let mut video = Vec::new();
+    if super::camera::wanted() {
+        video.push(super::camera::ROLE);
+    }
+    if wanted() {
+        video.push(ROLE);
+    }
     MediaOptions {
-        video: if wanted() { vec![ROLE] } else { vec![] },
+        video,
         ..MediaOptions::default()
     }
 }
@@ -160,7 +168,7 @@ pub fn available(media: &MediaSession, links: &Links, meeting: bool) -> bool {
 
 /// The call leg's `updateMediaDescriptions` link, or `{callLeg}/updateMediaDescriptions` (equal
 /// in the web client's capture, mautrix-teams openapi).
-fn update_link(links: &Links) -> Option<String> {
+pub(super) fn update_link(links: &Links) -> Option<String> {
     links
         .get("updateMediaDescriptions")
         .map(str::to_owned)

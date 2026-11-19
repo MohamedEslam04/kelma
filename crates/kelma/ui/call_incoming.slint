@@ -1,9 +1,11 @@
 // 1:1 calls (plans/calls.md K1.5, K2.1): the shared store and the incoming-call toast. The toast
 // sits in the bottom-right corner of the window, like Teams' call notification: the caller's
 // avatar and name, "Incoming call" or "Incoming video call", and Accept with video, Accept with
-// audio and Decline. Video is not available yet, so both accepts answer with audio.
+// audio and Decline. Accept with video answers with audio and turns the camera on once the call
+// runs (only in builds that negotiate camera video, KELMA_CAMERA=1; else it answers with audio).
 import { Theme } from "theme.slint";
 import { Avatar, Icon } from "widgets.slint";
+import { CallStore } from "call_store.slint";
 
 export global DirectCallStore {
     // Incoming call (the toast).
@@ -123,7 +125,7 @@ export component CallIncoming inherits Rectangle {
             CallRoundButton {
                 icon: @image-url("icons/video.svg");
                 label: "Accept with video";
-                note: "Video isn't available yet: answers with audio";
+                note: CallStore.camera-available ? "" : "Video isn't available yet: answers with audio";
                 tone: #237b4b;
                 clicked => { DirectCallStore.command("accept-video", ""); }
             }
@@ -140,7 +142,7 @@ export component CallIncoming inherits Rectangle {
                 clicked => { DirectCallStore.command("decline", ""); }
             }
         }
-        if DirectCallStore.incoming-status == "": Text {
+        if DirectCallStore.incoming-status == "" && !CallStore.camera-available: Text {
             text: "Video isn't available yet: Accept with video answers with audio.";
             color: Theme.fg-subtle;
             font-size: 11px * Theme.font-scale;
