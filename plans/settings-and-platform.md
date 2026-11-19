@@ -58,6 +58,7 @@ rest of Teams' settings plus app-wide platform work.
     - The org list comes from the Teams middle tier (discover).
     - Each tenant gets an isolated store and keyring entry. Changes `crates/session`.
   - **Done when.** Two orgs show side by side with separate unread counts.
+  - **Evidence (session layer).** 2026-11-19: `session::Config.accounts` (label, upn, display name, home tenant, chosen tenant, epid, last used, cached org list) with `add_account`, `switch_account`, `remove_account`, `switch_tenant`, `set_orgs`; the legacy `account`/`tenant`/`epid`/`self_mri`/`display_name` fields mirror the active account, and an old `config.json` loads as one account with the old label and keyring entry (no writes). Keyring access goes through a `TokenStore` trait (`SystemKeyring`, in-memory `MemoryStore` for tests); the token key is `label` for the home tenant and `label@tenant` for a guest tenant, and a guest tenant without its own token starts from the home token. `Client::tenants()` (`GET MT/beta/users/tenants`, `teams_proto::tenants`) run live read-only: 1 tenant, the home one. `kelma-cli accounts [tenants|use|add|remove|org]`. Not run live: `add`, `remove`, `use`, `org`, and any guest tenant (the account has none, so the guest shape and the CA/MFA step-up are unverified). The box stays unticked: no profile menu, per-org unread counts or "Refresh license and restart" exist yet. The UI still has to show it.
 
 ## Phase X3: platform
 

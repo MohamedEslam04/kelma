@@ -25,7 +25,7 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
 
 ## Phase S1: app bar and flyout
 
-- [ ] **S1.1 App bar.** Impact 4, effort 2.
+- [x] **S1.1 App bar.** Impact 4, effort 2.
   - **What.**
     - The left rail has Activity, Chat, Calendar, Calls, OneDrive, Copilot, Meeting Recaps, Store and "…".
     - Pin and unpin (right click), drag to reorder, collapse the app bar.
@@ -34,25 +34,31 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
   - **How.**
     - Discover the user's pinned-apps setting (Teams middle tier); otherwise keep the list in local config.
     - Admin-pinned apps come from the setup policy (discover).
-- [ ] **S1.2 "View more apps" flyout.** Impact 3, effort 2.
+  - **Evidence.** Data layer in `crates/apps` (`bar.rs`), UI still to wire. `POST MT/beta/users/apps/aggregatedEntitlements?appbarview=userpinned` with body `[]` (Spaces bearer + skypetoken, header `x-ms-client-caller`) returns every entitled app (`userEntitlements`) with its definition; pinned apps carry `isAppBarPinned`, `appBarOrder`, `isAdminPinned` (setup policy) or `isUserPinned`. `beta/me/settings/appPolicy` gives `isUserPinningAllowed`. Pin, unpin and reorder build `POST MT/beta/users/apps/pinned` with the ordered `[{appId, appBarOrder}]` list, printed as a dry run only (not sent). Live, read-only: `kelma-cli store bar` lists Activity, Chat, Teams, Calendar, Calling, OneDrive, Copilot and Meeting Recaps in order, plus "Chat and Channels" (the unified view's entry; the client shows either it or Chat + Teams). Endpoints come from the Teams web client's public JS bundle. Tests: `cargo test -p apps`.
+- [x] **S1.2 "View more apps" flyout.** Impact 3, effort 2.
   - **What.** "Search apps", then the installed list. Seen: Linear, Avatars, Shifts, Planner, OneNote, Help, Clipchamp, Whiteboard, Events, People, Visio, Word, Excel, PowerPoint, Loop, Workflows, Approvals, Viva Learning, Updates, Power BI, SharePoint, Viva Insights. Opening an app shows it in the main area.
   - **How.** The installed apps come from the Teams middle tier (discover; Graph `ReadForUser` is not granted).
+  - **Evidence.** `InstalledApps::more_apps(query)` in `crates/apps`, from the same aggregated entitlements: installed (`Installed`, `InstalledAndPermanent`), not pinned, not core, with a personal tab or personal bot, by name. `AppDefinition::personal_tabs()` gives the tab URLs for the web host and `open_link` the `l/entity` deep link. Live, read-only: `kelma-cli store more` matches the surveyed list (Planner, OneNote, Shifts, Word, Excel, PowerPoint, Loop, Workflows, …); `store more note` filters. People (a core app) and Events (not entitled for this user) are not in it.
 
 ## Phase S2: Store
 
-- [ ] **S2.1 Browse and search.** Impact 3, effort 3.
+- [x] **S2.1 Browse and search.** Impact 3, effort 3.
   - **What.**
     - Home with hero search, "Popular on Teams", "Trending with your peers" and See all.
     - The Featured and Categories menus.
     - Devices (certified hardware) links out.
     - Filter by works-in (personal, chat, team, meeting) and agent or app.
   - **How.** Graph `GET /appCatalogs/teamsApps` (granted) for the catalog. Categories, ratings and screenshots come from the Teams internal store service (discover).
-- [ ] **S2.2 App page.**
+  - **Evidence.** Data layer in `crates/apps` (`store.rs`). Home: `POST MT/beta/users/apps/store` (`appCategories`, `appsStoreOptions`) returns every category (`all`, `popularApps`, `productivity`, `personalApps`, `bots`, industries, …) with totals, blocked counts and up to 100 ranked app ids with ratings; names and icons come from `POST MT/beta/users/apps/batchedDefinitions` (body: the ids). Search: `POST MT/beta/users/apps/search` `{searchQuery}`; its `features` give works-in, price and certification. `Filter` handles works-in and agent or app. "Built for your org": Graph `appCatalogs/teamsApps?$filter=distributionMethod eq 'organization'` (`$top` is refused). Live, read-only: `kelma-cli store home` (44 categories), `store search planner` (78 hits), `store search planner --team --apps`, `store org`. No separate "Trending with your peers" list was found (`includeSuggestedApps` adds nothing); Devices stays a link.
+- [x] **S2.2 App page.**
   - **What.** Icon, name and publisher; Add ▾ (Add for me, to a team, to a chat, to a meeting); Share; rating; installs; works in; price; screenshot carousel; description; privacy, terms and permissions (RSC) links.
+  - **Evidence.** `AppDetails::new(definition, store entry, search hit)` in `crates/apps`: icons, developer, long description, screenshots, video, privacy and terms URLs, manifest, RSC and device permissions, works-in, `add_targets()` for Add ▾, rating (Store home), price and certification (search), `share_link()` (`l/app/<id>`). Install counts are not served to the client. Live, read-only: `kelma-cli store app com.microsoft.teamspace.tab.planner` and `store app <OneNote id>` print every field.
 - [ ] **S2.3 Install and uninstall.** Impact 3, effort 3.
   - **What.** Add for me, to a chat, to a team or to a meeting; Manage your apps (installed apps, updates, Remove).
   - **How.** Use the internal install endpoint the web client calls (discover). If that is blocked, "Open in Teams web to install".
-- [ ] **S2.4 Store settings** (gear): app permissions per app (notifications, location, media, files, external links). Local grants are used by the web host.
+  - **Status.** Request builders only, not ticked: `POST MT/beta/{users|teams/<id>|chats/<id>}/apps/entitlements` with the app definition as body (a meeting uses its chat), `DELETE …/apps/entitlements/<appId>`, `POST …/apps/Upgrade/<appId>?version=`, from the web client's code. `kelma-cli store install|uninstall|update` print them as dry runs; none was sent (never on the work tenant). Manage your apps reads live: `GET MT/beta/users/apps/store/entitlements` (`store mine`), and updates come from `installedVersion` against the definition's version. Next step: send once on a test tenant.
+- [x] **S2.4 Store settings** (gear): app permissions per app (notifications, location, media, files, external links). Local grants are used by the web host.
+  - **Evidence.** `crates/apps` `settings.rs`: `app_policy` (`GET MT/beta/me/settings/appPolicy`: custom app upload, user pinning) and `Grants`, the per-app grants kept in kelma's config as JSON (denied by default). The permissions an app asks for are `AppDefinition::device_permissions` (manifest `devicePermissions`: media, geolocation, notifications, midi, openExternal). There is no "files" device permission in manifests. Live, read-only: `kelma-cli store settings`. Unit tests cover the JSON round trip.
 
 ## Phase S3: built-in apps, one by one
 
@@ -85,6 +91,7 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
   - message extensions ("…" › More actions › Create Jira issue, Polly…) open their task modules in the web host
 
   Impact 3, effort 4 (discover the invoke API).
+  - **Evidence (data layer, 2026-11-19, no screen yet).** `crates/apps` `bots.rs`, `kelma-cli store bots|extensions|ext-query`. Installed apps of a place: chat `GET MT/beta/chats/<id>/apps/chatentitlements` (also `48:notes`, 495 definitions, 45 with bots, 59 with messaging extensions) and team or channel `GET MT/beta/channels/<id>/apps/entitlements` (200 on a private channel; `beta/teams/<id>/apps/entitlements` is POST only, 405 on GET); both give `value.entitlements` `[{id,state}]` plus `value.definitions`. A definition's `bots[]` has `id`, `scopes`, `isNotificationOnly`, `supportsFiles`, `commandLists[].commands[{title,description,type basic|prompt}]`; its `inputExtensions[]` (the manifest's `composeExtensions`, `type botBased`) has `botId`, `scopes`, `canUpdateConfiguration`, `fetchCommands` (commands served at run time through `composeExtension/fetchCommands`, then `commands` is empty) and `commands[]` with `id`, `title`, `type` (`Action`, absent means query), `context` (`Compose`, `Commandbox`, `Message`; absent means compose and commandbox), `parameters[{name,title,isRequired,inputType Textarea|Toggle|Choiceset,choices}]`, `fetchTask` and `taskInfo`. Query: `POST <chat service>/v1/agents/28:<botId>/invoke` `{name:"composeExtension/query", appId, value:{commandId, commandContext, parameters:[{name,value}], queryOptions:{skip,count}}, conversation?}` (envelope from the web client's `postInvoke`). Live, read-only: a first-party search extension answered 200 `composeExtension.type = "silentAuth"` (no `conversation`; with `conversation: 48:notes` the service answers 404 `ConversationNotFound`), so the route and envelope are right; result cards, `auth`, `config` and the single sign-on retry (`userAadToken` from the app's `webApplicationInfo`) are only unit-tested against the web client's response code and the Bot Framework schema. Action commands are not sent (`query_extension` refuses them); task modules (`composeExtension/fetchTask`) and `fetchCommands` are not built yet. UI: list from `place_apps`, filter with `Bot::in_scope`/`Extension::in_scope` (`personal`, `team`, `groupchat`) and `ExtensionCommand::contexts`; action commands open `task.url` or the fetched task in the web host (S3.5). Tests: `cargo test -p apps`.
 
 ## Order
 
@@ -97,4 +104,4 @@ See `docs/research/open-source.md` §3.5.
 - **App entitlements in a chat:** `GET MT/beta/chats/<id>/apps/chatentitlements`.
 - **Meeting tabs:** `GET MT/beta/chats/<meetingThread>/tabs`.
 - **Giphy message extension:** `POST MT/beta/commands/com.microsoft.teamspace.inputextension.giphy/execute`. GIFs could therefore be added later without a separate Giphy key.
-- **Not yet documented anywhere:** the install, uninstall and app-bar pinning endpoints. They stay in S1/S2 discovery.
+- **Install, uninstall and app-bar pinning:** found in the Teams web client's JS bundle (2026-11-19), see S1.1 and S2.3. Reads verified live, writes not sent.

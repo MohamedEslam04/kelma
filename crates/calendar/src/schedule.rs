@@ -374,6 +374,92 @@ pub fn parse_rooms(v: &Value) -> Vec<Room> {
         .unwrap_or_default()
 }
 
+/// The answer of Graph beta `findRoomLists`: `{"value": [{"name", "address"}]}`. The address
+/// doubles as the id.
+pub fn parse_found_room_lists(v: &Value) -> Vec<RoomList> {
+    found(v)
+        .into_iter()
+        .map(|(name, email)| RoomList {
+            id: email.clone(),
+            name,
+            email,
+        })
+        .collect()
+}
+
+/// The answer of Graph beta `findRooms`: names and addresses only, no capacity or building.
+pub fn parse_found_rooms(v: &Value) -> Vec<Room> {
+    found(v)
+        .into_iter()
+        .map(|(name, email)| Room {
+            id: email.clone(),
+            name,
+            email,
+            capacity: None,
+            building: None,
+            floor_label: None,
+            floor_number: None,
+            wheelchair_accessible: false,
+            tags: vec![],
+            has_video: false,
+        })
+        .collect()
+}
+
+fn found(v: &Value) -> Vec<(String, String)> {
+    v.get("value")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| Some((text(r, "name").unwrap_or_default(), text(r, "address")?)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+const GRAPH_BETA: &str = "https://graph.microsoft.com/beta";
+
+/// Graph beta `findRooms`, of one room list or (empty `list_email`) of the tenant.
+pub fn find_rooms_url(list_email: &str) -> String {
+    if list_email.is_empty() {
+        format!("{GRAPH_BETA}/me/findRooms")
+    } else {
+        format!("{GRAPH_BETA}/me/findRooms(RoomList='{}')", enc(list_email))
+    }
+}
+
+/// Whether a schedule has nothing but free time between two instants; `None` when Graph could
+/// not read it.
+pub fn free_between(s: &Schedule, start_ms: i64, end_ms: i64) -> Option<bool> {
+    if s.error.is_some() {
+        return None;
+    }
+    Some(
+        !s.items
+            .iter()
+            .any(|i| i.status != ShowAs::Free && i.start_ms < end_ms && i.end_ms > start_ms),
+    )
+}
+
+/// `getSchedule` takes at most this many addresses per call.
+const SCHEDULES_PER_CALL: usize = 20;
+
+/// Free/busy of any number of rooms (or people), `getSchedule` 20 addresses at a time.
+pub async fn room_schedules(
+    client: &Client,
+    rooms: &[Room],
+    start_ms: i64,
+    end_ms: i64,
+    interval_minutes: u32,
+) -> Result<Vec<Schedule>> {
+    let emails: Vec<String> = rooms.iter().map(|r| r.email.clone()).collect();
+    let mut out = Vec::with_capacity(emails.len());
+    for chunk in emails.chunks(SCHEDULES_PER_CALL) {
+        out.extend(get_schedule(client, chunk, start_ms, end_ms, interval_minutes).await?);
+    }
+    Ok(out)
+}
+
 /// A safety stop for `nextLink` loops.
 const MAX_PAGES: usize = 50;
 
@@ -402,19 +488,51 @@ async fn pages(client: &Client, context: &'static str, first: String) -> Result<
     )))
 }
 
-/// The room lists (buildings) of the tenant.
+/// The room lists (buildings) of the tenant, from Graph places; when that is refused or empty,
+/// from Graph beta `findRoomLists` (Outlook's room finder, no extra scope).
 pub async fn room_lists(client: &Client) -> Result<Vec<RoomList>> {
     let pages = pages(
         client,
         "room lists",
         format!("{GRAPH}/places/microsoft.graph.roomList"),
     )
-    .await?;
-    Ok(pages.iter().flat_map(parse_room_lists).collect())
+    .await;
+    match pages {
+        Ok(p) if p.iter().any(|p| !parse_room_lists(p).is_empty()) => {
+            Ok(p.iter().flat_map(parse_room_lists).collect())
+        }
+        // No `Place.Read.All` or no places directory: Outlook's own room finder.
+        other => {
+            let found = graph_beta(client, "find room lists", "/me/findRoomLists").await;
+            match (other, found) {
+                (_, Ok(v)) => Ok(parse_found_room_lists(&v)),
+                (Ok(_), Err(_)) => Ok(vec![]),
+                (Err(e), Err(_)) => Err(e),
+            }
+        }
+    }
+}
+
+async fn graph_beta(client: &Client, context: &'static str, url: &str) -> Result<Value> {
+    let url = if url.starts_with("https://") {
+        url.to_string()
+    } else {
+        format!("{GRAPH_BETA}{url}")
+    };
+    crate::graph::send(
+        client,
+        &teams_proto::broker::Audience::Graph,
+        context,
+        Method::GET,
+        &url,
+        None,
+    )
+    .await
 }
 
 /// The rooms of one list, by the list's email address. An empty `list_email` returns every
-/// room of the tenant.
+/// room of the tenant. Falls back to Graph beta `findRooms` like [`room_lists`]; those rooms
+/// carry only a name and an address.
 pub async fn rooms(client: &Client, list_email: &str) -> Result<Vec<Room>> {
     let url = if list_email.is_empty() {
         format!("{GRAPH}/places/microsoft.graph.room")
@@ -424,8 +542,19 @@ pub async fn rooms(client: &Client, list_email: &str) -> Result<Vec<Room>> {
             enc(list_email)
         )
     };
-    let pages = pages(client, "rooms", url).await?;
-    Ok(pages.iter().flat_map(parse_rooms).collect())
+    match pages(client, "rooms", url).await {
+        Ok(p) if p.iter().any(|p| !parse_rooms(p).is_empty()) => {
+            Ok(p.iter().flat_map(parse_rooms).collect())
+        }
+        other => match (
+            other,
+            graph_beta(client, "find rooms", &find_rooms_url(list_email)).await,
+        ) {
+            (_, Ok(v)) => Ok(parse_found_rooms(&v)),
+            (Ok(_), Err(_)) => Ok(vec![]),
+            (Err(e), Err(_)) => Err(e),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -550,6 +679,54 @@ mod tests {
             "emptySuggestionsReason": "attendeesUnavailable"}));
         assert!(none.suggestions.is_empty());
         assert_eq!(none.empty_reason.as_deref(), Some("attendeesUnavailable"));
+    }
+
+    #[test]
+    fn parses_find_rooms_answers() {
+        let l = parse_found_room_lists(&json!({"value": [
+            {"name": "Building 4", "address": "b4@contoso.example"},
+            {"name": "no address"}]}));
+        assert_eq!(
+            l,
+            [RoomList {
+                id: "b4@contoso.example".into(),
+                name: "Building 4".into(),
+                email: "b4@contoso.example".into()
+            }]
+        );
+        let r = parse_found_rooms(&json!({"value": [
+            {"name": "Room 4B", "address": "room4b@contoso.example"}]}));
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].id, "room4b@contoso.example");
+        assert_eq!(r[0].name, "Room 4B");
+        assert_eq!(r[0].capacity, None);
+        assert_eq!(
+            find_rooms_url("b4@contoso.example"),
+            "https://graph.microsoft.com/beta/me/findRooms(RoomList='b4%40contoso.example')"
+        );
+        assert_eq!(
+            find_rooms_url(""),
+            "https://graph.microsoft.com/beta/me/findRooms"
+        );
+    }
+
+    #[test]
+    fn free_between_reads_the_items() {
+        let s = &parse_schedules(&json!({"value": [
+            {"scheduleId": "room4b@contoso.example", "availabilityView": "0200",
+             "scheduleItems": [
+                {"status": "busy",
+                 "start": {"dateTime": "2026-11-18T10:00:00", "timeZone": "UTC"},
+                 "end": {"dateTime": "2026-11-18T11:00:00", "timeZone": "UTC"}},
+                {"status": "free",
+                 "start": {"dateTime": "2026-11-18T12:00:00", "timeZone": "UTC"},
+                 "end": {"dateTime": "2026-11-18T13:00:00", "timeZone": "UTC"}}]},
+            {"scheduleId": "x@contoso.example", "error": {"message": "nope"}}]}));
+        let t = |h: &str| parse_iso_ms(&format!("2026-11-18T{h}:00Z")).unwrap();
+        assert_eq!(free_between(&s[0], t("09:00"), t("10:00")), Some(true));
+        assert_eq!(free_between(&s[0], t("10:30"), t("11:30")), Some(false));
+        assert_eq!(free_between(&s[0], t("11:00"), t("13:00")), Some(true));
+        assert_eq!(free_between(&s[1], t("09:00"), t("10:00")), None);
     }
 
     #[test]

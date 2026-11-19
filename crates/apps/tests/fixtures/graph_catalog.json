@@ -1,0 +1,55 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#appCatalogs/teamsApps(appDefinitions())",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/appCatalogs/teamsApps?$expand=appDefinitions&$skiptoken=page2",
+  "value": [
+    {
+      "id": "com.microsoft.teamspace.tab.planner",
+      "externalId": null,
+      "displayName": "Planner",
+      "distributionMethod": "store",
+      "appDefinitions": [
+        {
+          "id": "Y29tLm1pY3Jvc29mdC50ZWFtc3BhY2UudGFiLnBsYW5uZXIjIzEuMA==",
+          "teamsAppId": "com.microsoft.teamspace.tab.planner",
+          "displayName": "Planner",
+          "version": "1.0",
+          "publishingState": "published",
+          "shortDescription": "Plan and track work",
+          "description": "Organize tasks for you and your team.",
+          "lastModifiedDateTime": null,
+          "createdBy": null,
+          "authorization": {
+            "requiredPermissionSet": {
+              "resourceSpecificPermissions": [
+                { "permissionValue": "ChannelMessage.Read.Group", "permissionType": "application" }
+              ]
+            }
+          },
+          "bot": { "id": "00000000-0000-0000-0000-0000000000b1" }
+        }
+      ]
+    },
+    {
+      "id": "11111111-2222-3333-4444-555555555555",
+      "externalId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "displayName": "Contoso Helpdesk",
+      "distributionMethod": "organization",
+      "appDefinitions": [
+        {
+          "id": "ZGVmLTE=",
+          "teamsAppId": "11111111-2222-3333-4444-555555555555",
+          "displayName": "Contoso Helpdesk",
+          "version": "2.3.0",
+          "publishingState": "published",
+          "shortDescription": "Raise a ticket",
+          "description": "",
+          "createdBy": {
+            "user": { "id": "99999999-0000-0000-0000-000000000001", "displayName": null }
+          }
+        }
+      ]
+    },
+    { "id": "no-definitions", "displayName": "Bare", "distributionMethod": "sideloaded" },
+    { "displayName": "No Id" }
+  ]
+}

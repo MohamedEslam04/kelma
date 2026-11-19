@@ -343,6 +343,26 @@ pub fn calendar_events(week_start_ms: i64, now_ms: i64) -> serde_json::Value {
         "organizer".into(),
         json!({"emailAddress": {"name": "Ahmed Ali", "address": "ahmed@example.com"}}),
     );
+    // An invitation I have not answered, so the peek shows the answer buttons.
+    let who = |name: &str, mail: &str, kind: &str, response: &str| {
+        json!({"emailAddress": {"name": name, "address": mail}, "type": kind,
+            "status": {"response": response}})
+    };
+    design.insert("responseStatus".into(), json!({"response": "notResponded"}));
+    design.insert(
+        "attendees".into(),
+        json!([
+            who("Demo User", "demo@contoso.com", "required", "notResponded"),
+            who("Sara Hassan", "sara@example.com", "required", "accepted"),
+            who("Omar Khaled", "omar@example.com", "optional", "declined"),
+            who(
+                "Mona Adel",
+                "mona@example.com",
+                "required",
+                "tentativelyAccepted"
+            ),
+        ]),
+    );
     items.push(ev(
         "Design review",
         at(1, 10, 0),
@@ -365,7 +385,10 @@ pub fn calendar_events(week_start_ms: i64, now_ms: i64) -> serde_json::Value {
         "Sprint review",
         at(2, 11, 0),
         at(2, 12, 0),
-        json!({"showAs": "tentative", "categories": ["Green category"]}),
+        json!({"showAs": "tentative", "categories": ["Green category"],
+            "responseStatus": {"response": "organizer"},
+            "attendees": [who("Sara Hassan", "sara@example.com", "required", "accepted"),
+                who("Ahmed Ali", "ahmed@example.com", "required", "notResponded")]}),
     ));
     items.push(ev(
         "Lunch with Mona",
