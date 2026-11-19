@@ -22,6 +22,8 @@ mod cal;
 pub(crate) mod call;
 #[cfg(feature = "calls")]
 pub(crate) mod call_direct;
+#[cfg(feature = "calls")]
+pub(crate) mod calls_page;
 mod channels;
 pub(crate) mod composer_apps;
 mod drafts;
@@ -61,6 +63,8 @@ pub use cal::{
 };
 #[cfg(feature = "calls")]
 pub use call_direct::CallCmd as DirectCallCmd;
+#[cfg(feature = "calls")]
+pub use calls_page::{CallsCmd, CallsData};
 pub use channels::ChannelCmd;
 pub use composer_apps::ComposerAppsCmd;
 pub use drive::DriveCmd;
@@ -160,6 +164,9 @@ pub enum Cmd {
     /// 1:1 calls: the incoming toast and the outgoing ringing screen.
     #[cfg(feature = "calls")]
     DirectCall(DirectCallCmd),
+    /// The Calls page: history, speed dial, voicemail (plans/calls.md K1.1 to K1.3).
+    #[cfg(feature = "calls")]
+    CallsPage(CallsCmd),
 }
 
 #[derive(Default)]
@@ -251,6 +258,9 @@ pub struct Engine {
     /// 1:1 calls: the incoming toast and the outgoing ringing screen.
     #[cfg(feature = "calls")]
     direct_calls: call_direct::Calls,
+    /// The Calls page's history, search and voicemail.
+    #[cfg(feature = "calls")]
+    calls_page: Mutex<calls_page::State>,
     composer_apps: Mutex<composer_apps::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
@@ -315,6 +325,8 @@ impl Engine {
             apps: Mutex::new(appstore::Apps::default()),
             #[cfg(feature = "calls")]
             direct_calls: call_direct::Calls::default(),
+            #[cfg(feature = "calls")]
+            calls_page: Mutex::default(),
             composer_apps: Mutex::new(composer_apps::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
@@ -623,6 +635,8 @@ impl Engine {
             Cmd::Call(c) => self.call_cmd(c).await?,
             #[cfg(feature = "calls")]
             Cmd::DirectCall(c) => self.direct_call_cmd(c).await?,
+            #[cfg(feature = "calls")]
+            Cmd::CallsPage(c) => self.calls_page_cmd(c).await?,
             Cmd::ComposerApps(c) => self.composer_apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
