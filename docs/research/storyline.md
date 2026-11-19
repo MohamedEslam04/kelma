@@ -55,8 +55,8 @@ use it, so they must not be run. They should be replaced or disabled.
 
 - **Draft privacy.** That a draft is author-only (plus any reviewers added) is inferred from the client UI: the draft thread page, the pending-posts page and the reviewers list. It was not observed on the server.
 - **Feature flag.** Save-as-draft is behind a client flag (probably the `SharedDrafts` flight), which was not resolved. If the flag is off for the tenant, the server might ignore `isDraft`, so the read-only capability query must come first.
-- **Token audience.** kelma's `Audience::Yammer` uses resource `https://api.yammer.com`. Whether `engage.cloud.microsoft/graphql` accepts that token, or needs `https://www.yammer.com`, is unverified. A read-only GraphQL query settles it.
-- **Transport.** The exact GraphQL transport (query string, headers, persisted-query handling) is unconfirmed, because the Relay environment chunk was not reachable.
+- **Token audience (settled 2026-11-19).** A token for `https://www.yammer.com` (`Audience::Engage`) is accepted by `engage.cloud.microsoft/graphql`: the read-only `StorylineSettingsClients` query answered live.
+- **Transport (settled 2026-11-19).** `{"operationName", "query", "variables", "extensions": {"persistedQuery": {"version": 1, "sha256Hash"}}}` is accepted. The query text and hash come from the public `yammer-teams-app` bundle (`3-render-renderer.js`).
 
 ## Safe test, only with the user's approval
 

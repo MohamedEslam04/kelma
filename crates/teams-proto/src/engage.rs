@@ -191,6 +191,61 @@ pub fn storyline_body(text: &str) -> Value {
     json!({"body": text, "is_storyline_post": true})
 }
 
+/// The Viva Engage GraphQL endpoint (the web app's `hosts.graphql`).
+pub const ENGAGE_GRAPHQL: &str = "https://engage.cloud.microsoft/graphql";
+
+/// The Engage web app's read-only `StorylineSettingsClients` query, copied from its public
+/// bundle with its persisted-query hash (docs/research/storyline.md).
+pub const STORYLINE_SETTINGS_QUERY: &str = "query StorylineSettingsClients {\n  viewer {\n    user {\n      wallFeed {\n        viewerCanStartThread\n      }\n    }\n  }\n  settings {\n    stories {\n      viewerCanAccessStories\n    }\n    storyline {\n      viewerCanAccessStoryline\n      viewerCanPostStorylineAnnouncement\n      canUseDelegateTeamsOnStoryline\n      viewerCanPromoteConversationInStoryline\n      isStorylineMultiTenantOrganizationEnabled\n    }\n  }\n}";
+const STORYLINE_SETTINGS_SHA256: &str =
+    "c920dbda9957329ab0fd5dc6238fbb3382500d170745e3abc60c8699e8ab15db";
+
+/// What the viewer may do with their storyline, from `StorylineSettingsClients`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StorylineSettings {
+    pub can_access_storyline: bool,
+    /// `viewer.user.wallFeed.viewerCanStartThread`: the viewer may post to their storyline.
+    pub can_post: bool,
+    pub can_post_announcement: bool,
+    pub can_access_stories: bool,
+}
+
+/// Body of the `StorylineSettingsClients` request: the query text plus its persisted-query hash.
+pub fn storyline_settings_body() -> Value {
+    json!({
+        "operationName": "StorylineSettingsClients",
+        "query": STORYLINE_SETTINGS_QUERY,
+        "variables": {},
+        "extensions": {"persistedQuery": {"version": 1, "sha256Hash": STORYLINE_SETTINGS_SHA256}},
+    })
+}
+
+/// Reads a `StorylineSettingsClients` answer. GraphQL errors, or a missing `settings.storyline`,
+/// are an error.
+pub fn parse_storyline_settings(v: &Value) -> Result<StorylineSettings> {
+    if let Some(errs) = v["errors"].as_array().filter(|e| !e.is_empty()) {
+        let msgs: Vec<&str> = errs.iter().filter_map(|e| e["message"].as_str()).collect();
+        return Err(Error::Protocol(format!(
+            "storyline settings: {}",
+            msgs.join("; ")
+        )));
+    }
+    let d = &v["data"];
+    let st = &d["settings"]["storyline"];
+    if !st.is_object() {
+        return Err(Error::Protocol(
+            "storyline settings: no settings.storyline in the answer".into(),
+        ));
+    }
+    let b = |x: &Value| x.as_bool().unwrap_or(false);
+    Ok(StorylineSettings {
+        can_access_storyline: b(&st["viewerCanAccessStoryline"]),
+        can_post: b(&d["viewer"]["user"]["wallFeed"]["viewerCanStartThread"]),
+        can_post_announcement: b(&st["viewerCanPostStorylineAnnouncement"]),
+        can_access_stories: b(&d["settings"]["stories"]["viewerCanAccessStories"]),
+    })
+}
+
 /// Storyline posting stays off until the GraphQL draft route is verified (plan T2.9).
 const STORYLINE_POST_DISABLED: bool = true;
 
@@ -225,6 +280,20 @@ impl Client {
             .json_as("community feed", &Audience::Yammer, Method::GET, &url, None)
             .await?;
         Ok(parse_feed(&v))
+    }
+
+    /// What the viewer may do with their storyline. Read only: one GraphQL query.
+    pub async fn storyline_settings(&self) -> Result<StorylineSettings> {
+        let v = self
+            .json_as(
+                "storyline settings",
+                &Audience::Engage,
+                Method::POST,
+                ENGAGE_GRAPHQL,
+                Some(&storyline_settings_body()),
+            )
+            .await?;
+        parse_storyline_settings(&v)
     }
 
     /// Posts to our storyline. Disabled: the REST body is a guess the Engage client never sends,
@@ -310,6 +379,52 @@ mod tests {
         assert_eq!((posts[0].thread_messages, posts[1].thread_messages), (3, 3));
         assert_eq!(posts[1].replied_to_id, Some(5));
         assert_eq!(posts[1].sender_name, "");
+    }
+
+    #[test]
+    fn storyline_settings_body_is_the_read_only_query() {
+        let b = storyline_settings_body();
+        assert_eq!(b["operationName"], "StorylineSettingsClients");
+        let q = b["query"].as_str().unwrap();
+        assert!(q.starts_with("query StorylineSettingsClients {"));
+        assert!(!q.contains("mutation"));
+        assert_eq!(
+            b["extensions"]["persistedQuery"]["sha256Hash"],
+            STORYLINE_SETTINGS_SHA256
+        );
+    }
+
+    #[test]
+    fn storyline_settings_parse() {
+        let v = json!({"data": {
+            "viewer": {"user": {"wallFeed": {"viewerCanStartThread": true}}},
+            "settings": {
+                "stories": {"viewerCanAccessStories": false},
+                "storyline": {"viewerCanAccessStoryline": true,
+                    "viewerCanPostStorylineAnnouncement": false}
+            }
+        }});
+        assert_eq!(
+            parse_storyline_settings(&v).unwrap(),
+            StorylineSettings {
+                can_access_storyline: true,
+                can_post: true,
+                can_post_announcement: false,
+                can_access_stories: false,
+            }
+        );
+        // No wall feed (storyline off for the user): cannot post.
+        let v = json!({"data": {"viewer": {"user": {"wallFeed": null}},
+            "settings": {"storyline": {"viewerCanAccessStoryline": false}}}});
+        assert!(!parse_storyline_settings(&v).unwrap().can_post);
+        let e = json!({"errors": [{"message": "PersistedQueryNotFound"}]});
+        assert!(
+            parse_storyline_settings(&e)
+                .unwrap_err()
+                .to_string()
+                .contains("PersistedQueryNotFound")
+        );
+        assert!(parse_storyline_settings(&json!({"data": {}})).is_err());
     }
 
     #[test]

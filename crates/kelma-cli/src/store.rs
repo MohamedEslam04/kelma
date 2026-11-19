@@ -419,14 +419,34 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
         }
         Some("more") => {
             let installed = app_store::installed_apps(client).await?;
-            let more = installed.more_apps(arg(1).unwrap_or_default());
+            let filter = arg(1).filter(|a| !a.starts_with("--")).unwrap_or_default();
+            let more = installed.more_apps(filter);
             println!("{} more apps", more.len());
+            let tabs = args.iter().any(|a| a == "--tabs");
             for d in more {
                 println!(
                     "  {:<28} {} personal tab(s)",
                     d.name,
                     d.personal_tabs().count()
                 );
+                if tabs {
+                    // What the web host needs to open each tab: its URL, the app's SSO
+                    // resource and its valid domains.
+                    for t in d.personal_tabs() {
+                        println!(
+                            "    tab {}: {}",
+                            t.name,
+                            t.content_url.as_deref().unwrap_or("-")
+                        );
+                    }
+                    let sso = d.raw["webApplicationInfo"]["resource"]
+                        .as_str()
+                        .unwrap_or("-");
+                    println!(
+                        "    sso: {sso}, valid domains: {}",
+                        d.valid_domains.join(" ")
+                    );
+                }
             }
         }
         Some("home") => {

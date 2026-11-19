@@ -2,8 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Feature branches too: local builds are memory-bound, so CI does the full check.
+    branches: [main, 'feat/**']
   pull_request:
+
+# A newer push to the same branch cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
