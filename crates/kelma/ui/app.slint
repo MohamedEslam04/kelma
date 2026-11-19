@@ -22,6 +22,7 @@ import { ProfileCard } from "profile_card.slint";
 import { TeamsStore } from "teams_store.slint";
 import { TeamsPage } from "teams_page.slint";
 import { TeamsDialogs } from "teams_dialogs.slint";
+import { OneDriveView, DriveStore } from "onedrive.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -29,7 +30,8 @@ export { EmojiApi } from "composer.slint";
 export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
-export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
+export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
+export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
 
 export component AppWindow inherits Window {
     title: root.window-title;
@@ -50,7 +52,7 @@ export component AppWindow inherits Window {
     in property <bool> connected: true;
     in property <string> banner;
 
-    in-out property <string> view: "chat"; // chat | teams | activity | calendar
+    in-out property <string> view: "chat"; // chat | teams | activity | calendar | onedrive
     in-out property <string> filter: "all";
     in property <[ChatRow]> chats-favorites;
     in property <[ChatRow]> chats-main;
@@ -171,6 +173,8 @@ export component AppWindow inherits Window {
     callback jump-to-newest();
     callback retry-send(string);
     callback discard-send(string);
+    // The chat header's "Schedule a meeting": opens the calendar's new-event form with the chat's members.
+    callback schedule-meeting(string);
     callback activity-refresh();
     callback activity-select(string);
     callback activity-set-filter(string);
@@ -281,7 +285,7 @@ export component AppWindow inherits Window {
                     padding-top: 8px;
                     spacing: 4px;
                     alignment: start;
-                    for item in [{key: "activity", label: "Activity", icon: @image-url("icons/activity.svg")}, {key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}, {key: "calendar", label: "Calendar", icon: @image-url("icons/calendar.svg")}]: ri := Rectangle {
+                    for item in [{key: "activity", label: "Activity", icon: @image-url("icons/activity.svg")}, {key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}, {key: "calendar", label: "Calendar", icon: @image-url("icons/calendar.svg")}, {key: "onedrive", label: "OneDrive", icon: @image-url("icons/cloud.svg")}]: ri := Rectangle {
                         property <int> badge-count: item.key == "activity" ? root.activity-unread : (item.key == "chat" ? root.chats-unread : 0);
                         height: 56px;
                         Rectangle {
@@ -314,6 +318,7 @@ export component AppWindow inherits Window {
                             clicked => {
                                 root.view = item.key;
                                 if item.key == "activity" { root.activity-refresh(); }
+                                if item.key == "onedrive" { DriveStore.command("enter", ""); }
                             }
                         }
                     }
@@ -321,7 +326,7 @@ export component AppWindow inherits Window {
             }
 
             // Sidebar
-            if root.view != "calendar": Sidebar {
+            if root.view != "calendar" && root.view != "onedrive": Sidebar {
                 visible: root.view != "activity";
                 width: root.view == "activity" ? 0px : 320px;
                 max-height: 100000px;
@@ -354,9 +359,10 @@ export component AppWindow inherits Window {
             }
 
             if root.view == "calendar": CalendarView { horizontal-stretch: 1; }
+            if root.view == "onedrive": OneDriveView { horizontal-stretch: 1; }
 
             // Conversation
-            if root.view != "calendar": Rectangle {
+            if root.view != "calendar" && root.view != "onedrive": Rectangle {
                 background: Theme.main;
                 if root.view == "activity": ActivityView {
                     z: 20;
@@ -502,6 +508,12 @@ export component AppWindow inherits Window {
                                 alignment: center;
                                 Text { text: tab; color: tab == "Chat" || tab == "Posts" ? Theme.fg : Theme.fg-muted; font-size: 14px; font-weight: tab == "Chat" || tab == "Posts" ? 600 : 400; }
                                 Rectangle { height: 3px; border-radius: 1px; background: tab == "Chat" || tab == "Posts" ? Theme.accent : transparent; }
+                            }
+                            if root.thread-root == "" && !root.current-is-channel: IconButton {
+                                icon: @image-url("icons/calendar.svg");
+                                y: 14px;
+                                tooltip: "Schedule a meeting";
+                                clicked => { root.schedule-meeting(root.current-id); }
                             }
                             Rectangle { horizontal-stretch: 1; }
                             if PeopleStore.header-group && root.thread-root == "": people-btn := Rectangle {

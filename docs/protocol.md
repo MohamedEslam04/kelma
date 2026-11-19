@@ -173,7 +173,13 @@ Browse (Graph):
 | `GET /me/drive/sharedWithMe` | Shared with you | ✅ 500 items, no paging link |
 | `POST /search/query` `{requests:[{entityTypes:["driveItem","listItem"], query:{queryString}, from, size, sortProperties?}]}` | search; `sortProperties:[{name:"lastModifiedDateTime",isDescending:true}]` is the recent fallback; `* AND NOT path:"<my site url>"` is the shared fallback | ✅ search and sorted search; the exclusion query is accepted (200, 50 hits) but its result was not compared with the real list |
 | `GET …/thumbnails` | small, medium and large URLs; `$expand=thumbnails` on listings gives them in one call | ✅ |
-| `GET /me/insights/used` | not used | ✅ answers |
+| `GET /me/insights/used?$orderby=LastUsed/LastAccessedDateTime desc&$top=n` | "For you": documents the user opened | ✅ 2026-11-19, pages with `@odata.nextLink`. Lists sites too (`resourceReference.type: microsoft.graph.siteItem`, `resourceVisualization.type: spsite`), which kelma drops from the cards |
+| `GET /me/insights/trending?$top=n` | "For you": trending around the user | ✅ 2026-11-19. Has `weight` and **no** `lastModifiedDateTime` in practice, although the docs show one |
+| `GET /me/insights/shared?$top=n` | "For you" shares, "Shared by you", People | ✅ 2026-11-19, 40 sampled: `sharingType` `Attachment` 32, `Link` 5, `Direct` 3; `sharingReference.type` `microsoft.graph.message` with a `webUrl` on `teams.microsoft.com` (34, a Teams chat) or `outlook.office.com` (3); `resourceReference.type` `microsoft.graph.driveItem` (37) or `microsoft.graph.fileAttachment` (3, mail attachments, no drive item). Lists shares **by** the user too: "Shared by you" is this list filtered on `lastShared.sharedBy.id` = the user's id (67 of 200) |
+| `GET /me?$select=id,displayName,mail,userPrincipalName` | tells the user's own shares apart | ✅ |
+| `POST /search/query` with `(FileType:jpg OR … OR FileType:mkv) AND path:"<my site url>"`, newest first | "Browse files by Media" | ✅ 50 hits per page, all in My files (`parentReference.driveId` = the user's drive); seen: mp4, png, webm |
+| `GET /me/joinedTeams?$select=id,displayName`, `GET /teams/{t}/channels?$select=id,displayName`, `GET /teams/{t}/channels/{c}/filesFolder`, `GET /drives/{d}/items/{folder}:/Recordings:/children` | Meetings: the channel libraries' `Recordings` folders (404 when a channel has none) | ✅ 1 channel recording found, plus 3 in My files. Two calls per channel. `/me/joinedTeams` refuses `$top` (400) |
+| `GET /me/onenote/notebooks?$select=id,displayName,links` | proves the Graph bearer reaches OneNote (`Notes.ReadWrite.All`) | ✅ 200 (0 notebooks) |
 
 A search hit is a `driveItem` (with `parentReference.driveId` and `id`) or a `listItem` whose file
 name is in `fields.fileLeafRef` and whose drive item is in `driveItem.id`. Remote items (shared
@@ -224,8 +230,49 @@ Recycle bin (SharePoint REST on `<tenant>-my.sharepoint.com`, `Accept: applicati
 
 Deleting a folder puts one folder entry (and, depending on timing, its children) in the bin.
 
-Around files: meeting recordings are the children of `Recordings` in My files (✅ 3 items). Sync is
+Around files: meeting recordings are the children of `Recordings` in My files (✅ 3 items) and in
+each channel's files folder (✅ 1, see Meetings above). Sync is
 a text (`onedrive::sync_help`) that points at the `onedrive` client and `rclone`.
+
+Which view uses which call (the OneDrive app of the rail, `crates/kelma/src/backend/drive.rs`):
+
+| View | Call | Notes |
+|---|---|---|
+| Home (Recent) | `browse::recent` (`/me/drive/recent`, Search when empty) | the type pills and the filter box work on this list on the client |
+| Shared, "Shared with you" | `browse::shared_with_me` (`/me/drive/sharedWithMe`) | a shared folder opens as its own root |
+| My files, folders | `browse::children` | breadcrumbs are kept on the client, each crumb is a (drive id, item id) |
+| Favorites | `browse::following` | the star on a row calls `follow` or `unfollow` |
+| Libraries, Quick access | `followed_sites` (joined teams as the fallback) and `site_drives` | the first drive of each site, at most 12 sites |
+| Recycle bin | `bin::recycle_bin`, `restore`, `delete_forever` | SharePoint REST on the `-my` host |
+| Meetings | `recordings` | the `Recordings` folder of My files |
+| Search | `browse::search` | `driveItem` and `listItem` hits |
+| Preview | `ops::download` for images, text and markdown; `ops::preview_url` for Office files and PDFs | the preview URL opens in the browser |
+
+"For you", "Shared by you", People, Media and the channel recordings (`crates/onedrive`, not yet
+wired in the UI; `kelma-cli drive for-you|shared-by-me|people|media|meetings`):
+
+| View | Call | Notes |
+|---|---|---|
+| Home, "For you" cards | `insights::for_you` (used, trending, shared) | shares with the user first, then used and trending, in turn, without duplicates; drive items only. Reason: "You frequently open this", "Trending around you", "<name> shared this in a Teams chat" (sharing reference on a Teams host) or "<name> shared this with you". `previewImageUrl` needs a SharePoint token: take thumbnails from `Insight::item` with `browse::thumbnails` |
+| Shared, "Shared by you" | `insights::shared_by_me` | `Insight::to_drive_item` gives the file list row |
+| Browse by People | `insights::people` | the shared insights grouped by `sharedBy`, newest first; falls back to `remoteItem.shared.sharedBy` (else `owner`) of `/me/drive/sharedWithMe` when the insights give nobody |
+| Browse by Media | `browse::media(from, size)` | Search over the user's own site, filtered to photo and video extensions |
+| Meetings | `around::meeting_recordings` | My files plus every channel's `Recordings`, each with its place (`My files` or `<team> › <channel>`) |
+
+The "New" menu's other items (`create::plan` gives the request, `create::create` sends it;
+`kelma-cli drive new <kind> … --dry-run` prints it without a session):
+
+| Item | Request | Status |
+|---|---|---|
+| Visio drawing | `PUT …/<parent>:/<name>.vsdx:/content` with a blank VSDX built in code (`package`: document, pages, one page) | 🧪 not created live (by instruction); the package is checked by unit tests. `drive selftest` creates one in its throwaway folder |
+| Link | `PUT …/<parent>:/<name>.url:/content` with `[InternetShortcut]\r\nURL=<url>\r\n` (what OneDrive's "Link" saves) | 🧪 not created live; in `drive selftest` |
+| OneNote notebook | `POST /me/onenote/notebooks` `{displayName}` on the Graph bearer; the answer's `links.oneNoteWebUrl.href` opens it | 🧪 not created live. Graph places the notebook in the user's notebooks, not in the open folder |
+| Forms survey | none: Forms has no API for this client, so kelma opens `https://forms.office.com/` | n/a |
+
+O0.1 note: these calls were confirmed read-only with `kelma-cli drive shape <graph path> [n]`, which
+prints an answer's structure with every value redacted (URLs reduced to their host, the tenant label
+hidden). The internal endpoints of the Teams web OneDrive app itself were still not captured in a
+browser; the Graph calls above answer for every view, so none is needed today.
 
 Pitfalls found live:
 - A `reqwest` error message contains the request URL, and upload session and monitor URLs carry a
@@ -252,6 +299,30 @@ Pitfalls found live:
    resyncs. This was verified by freezing the process for 3 minutes: a message sent during the
    freeze was in the cache after resume, and a message sent after resume arrived live. Token expiry
    uses wall-clock time, because a monotonic clock stops during suspend.
+
+## Built-in apps, read only (`planner`, `workflows`, `onenote`, `lists`) 2026-11-19
+
+`kelma-cli tasks | flows | onenote | lists` run these. All calls are GETs. The tenant is a work
+tenant, so nothing was created, edited or run. Probed live with the auth broker.
+
+| App | Call | Live |
+|---|---|---|
+| To Do | Graph `GET /me/todo/lists`, `/me/todo/lists/{id}/tasks` (`dueDateTime` is a `dateTimeTimeZone`, read as UTC) | ✅ 200, 1 list, 0 tasks |
+| Planner | Graph `GET /me/planner/tasks`, `/me/planner/plans`, `/groups/{id}/planner/plans`, `/planner/plans/{id}/{tasks,buckets}` | ✅ 200, but 0 tasks and 0 plans, so only the shapes from the Graph docs back the parsers |
+| Planner, `tasks.office.com` token | `/taskAPI/beta/me/{tasks,lists}`, `/taskAPI/v1.0/me/plans` → 404, `/api/v1/me/tasks` → 503 | ❌ 3 attempts, no usable path. kelma uses Graph instead. `/me/planner/favoritePlans` and `rosterPlans` → 400 |
+| Workflows | `GET https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments?api-version=2016-11-01`, `…/environments/{env}/flows?…`, `…/flows/{flow}/runs?…&$top=N` | ✅ 200: 1 environment, 4 flows, runs with `status`, `startTime`, `endTime`, `trigger.name` |
+| OneNote | Graph `GET /me/onenote/notebooks`, `/groups/{id}/onenote/notebooks`, then the `sectionsUrl`, `sectionGroupsUrl`, `pagesUrl` and `contentUrl` links each object carries; `/pages/{id}/content` answers HTML, not JSON | ✅ notebooks: 0 personal, 2 in the teams' groups. Both notebooks have 0 sections and 0 section groups, so sections, pages and page content were **not** checked live |
+| OneNote, `onenote.com` token | `GET https://www.onenote.com/api/v1.0/me/notes/{notebooks,sections,pages}` | ✅ 200, empty. Graph covers the same data, so it is not used |
+| Lists | Graph `GET /groups/{id}/sites/root`, `/sites/{id}/lists?$select=…`, `/sites/{id}/lists/{id}/columns`, `/sites/{id}/lists/{id}/items?expand=fields&$top=100` | ✅ 2 team sites; each has only the Documents library (no user lists). Columns and items of a library were read and parsed |
+
+**Audience hosts.** The token audience is not always the API host. `Audience::Flow` mints for
+`service.flow.microsoft.com` (no DNS record) and serves from `api.flow.microsoft.com`;
+`Audience::OneNote` mints for `onenote.com` and serves from `www.onenote.com`. `request_as` now
+accepts those two API hosts as well, and still refuses every other host.
+
+**Team notebooks.** A team's notebook lives under its Microsoft 365 group, so `/me/onenote`
+alone finds none. Sections can sit in nested section groups, so kelma follows `sectionGroupsUrl`
+up to 4 levels.
 
 ## Teams and channels (`teams_proto::teams`, `tags`, `engage`) 2026-11-19
 

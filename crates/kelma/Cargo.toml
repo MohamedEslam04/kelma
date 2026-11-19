@@ -14,8 +14,10 @@ calendar = { version = "0.0.0", path = "../calendar" }
 diag = { version = "0.0.0", path = "../diag" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 emoji = { version = "0.0.0", path = "../emoji" }
+iana-time-zone = "0.1.65"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 notify-rust = "4.19.0"
+onedrive = { version = "0.0.0", path = "../onedrive" }
 open = "5.4.5"
 reqwest = "0.13.5"
 render = { version = "0.0.0", path = "../render" }

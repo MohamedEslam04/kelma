@@ -19,6 +19,7 @@ mod activity;
 mod attach;
 mod cal;
 mod drafts;
+pub(crate) mod drive;
 mod live;
 mod manage;
 mod mentions;
@@ -35,9 +36,16 @@ mod util;
 pub use activity::ActivityCmd;
 #[cfg(test)]
 pub(crate) use activity::{State as ActivityState, row_data as activity_row_data};
-pub use cal::{CalCmd, CalData};
 #[cfg(test)]
-pub use cal::{Ctx, build, parse_view};
+pub use cal::{
+    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, SuggestRow, build, filter_opts, parse_view, peek_data,
+    room_rows, sched_rows,
+};
+pub use cal::{
+    CalCmd, CalData, DetailData, FormFields, FormOpen, Panels, PeekData, PermRow, RoomsPush,
+    SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes,
+};
+pub use drive::DriveCmd;
 pub use manage::{
     CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
     SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
@@ -94,6 +102,7 @@ pub enum Cmd {
     Activity(ActivityCmd),
     People(PeopleCmd),
     Teams(TeamsCmd),
+    Drive(DriveCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -184,6 +193,7 @@ pub struct Engine {
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
     manage: Mutex<manage::State>,
+    drive: Mutex<drive::Drive>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -236,6 +246,7 @@ impl Engine {
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
             manage: Mutex::new(manage::State::default()),
+            drive: Mutex::new(drive::Drive::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -307,6 +318,8 @@ impl Engine {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
             Cmd::Flush => self.flush_draft(),
+            // Selection and view changes run in order with the command that follows them.
+            Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             cmd => {
                 tokio::spawn(self.clone().handle(cmd));
             }
@@ -502,6 +515,7 @@ impl Engine {
             Cmd::Activity(c) => self.activity_cmd(c).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
+            Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

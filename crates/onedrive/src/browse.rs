@@ -225,6 +225,38 @@ pub async fn shared_with_me(client: &Client) -> Result<Vec<DriveItem>> {
     }
 }
 
+/// Photo and video extensions of the "Browse files by Media" view.
+pub const MEDIA_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "heic", "heif", "webp", "bmp", "tif", "tiff", "mp4", "mov", "m4v",
+    "avi", "wmv", "webm", "mkv",
+];
+
+/// True for a photo or a video by its extension.
+pub fn is_media(name: &str) -> bool {
+    name.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty() && MEDIA_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
+    })
+}
+
+/// KQL for the photos and videos inside the user's OneDrive site (`site_url`).
+pub fn media_query(site_url: &str) -> String {
+    let types: Vec<String> = MEDIA_EXTENSIONS
+        .iter()
+        .map(|e| format!("FileType:{e}"))
+        .collect();
+    let site = site_url.replace('"', "");
+    format!("({}) AND path:\"{site}\"", types.join(" OR "))
+}
+
+/// "Browse files by Media": one page of photos and videos in My files, newest first. Hits
+/// that are not media by their name are dropped (Search can match a folder by path).
+pub async fn media(client: &Client, from: u32, size: u32) -> Result<crate::model::SearchPage> {
+    let own = crate::bin::my_site(client).await?;
+    let mut page = search_raw(client, &media_query(&own.site_url), from, size, true).await?;
+    page.items.retain(|i| !i.is_folder && is_media(&i.name));
+    Ok(page)
+}
+
 /// Thumbnail URLs of one item (empty when it has none).
 pub async fn thumbnails(client: &Client, item: &ItemRef) -> Result<Thumbnails> {
     let v = graph(
@@ -274,6 +306,19 @@ mod tests {
             path_url("Documents/تقرير 1/x#y"),
             "https://graph.microsoft.com/v1.0/me/drive/root:/Documents/%D8%AA%D9%82%D8%B1%D9%8A%D8%B1%201/x%23y"
         );
+    }
+
+    #[test]
+    fn media_names_and_query() {
+        assert!(is_media("IMG_0001.JPG") && is_media("clip.mp4") && is_media("a.b.heic"));
+        assert!(!is_media("report.docx") && !is_media(".png") && !is_media("png"));
+        let q = media_query("https://contoso-my.sharepoint.com/personal/ada_contoso_com");
+        assert!(q.starts_with("(FileType:jpg OR FileType:jpeg OR "));
+        assert!(q.contains(" OR FileType:mp4 OR "));
+        assert!(q.ends_with(
+            ") AND path:\"https://contoso-my.sharepoint.com/personal/ada_contoso_com\""
+        ));
+        assert!(!media_query("https://x\" OR \"y").contains("\" OR \""));
     }
 
     #[test]
