@@ -156,12 +156,20 @@ pub(super) fn system_text(m: &MessageRow) -> Option<String> {
     let t = m.message_type.as_str();
     if t.starts_with("ThreadActivity/") {
         let what = t.trim_start_matches("ThreadActivity/");
-        Some(match what {
-            "AddMember" | "MemberJoined" => "A member was added to the chat.".into(),
-            "DeleteMember" | "MemberLeft" => "A member left the chat.".into(),
-            "TopicUpdate" => "The chat name was changed.".into(),
-            _ => format!("{what}."),
-        })
+        Some(
+            match what {
+                "AddMember" | "MemberJoined" => "A member was added to the chat.",
+                "DeleteMember" | "MemberLeft" => "A member left the chat.",
+                "TopicUpdate" | "TopicTopicUpdated" => "The name was changed.",
+                "TopicDescriptionUpdated" => "The description was changed.",
+                "ThreadArchivalUpdate" => "The team was archived or restored.",
+                "PictureUpdate" => "The picture was changed.",
+                "RoleUpdate" => "A member's role was changed.",
+                // Settings changes ("UpdateFavDefault" and the like) read the same way.
+                _ => "The settings were changed.",
+            }
+            .into(),
+        )
     } else if t.starts_with("Event/Call") {
         Some("Call".into())
     } else if t.starts_with("RichText/Media_Call") {
@@ -181,6 +189,33 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 11, day, h, m, 0)
             .unwrap()
             .timestamp_millis()
+    }
+
+    #[test]
+    fn thread_activity_reads_as_a_sentence() {
+        let row = |t: &str| MessageRow {
+            id: "m1".into(),
+            conversation_id: "19:c@thread.tacv2".into(),
+            parent_id: None,
+            sender_mri: String::new(),
+            sender_name: String::new(),
+            compose_ms: 0,
+            edited_ms: None,
+            deleted: false,
+            message_type: t.into(),
+            content_html: String::new(),
+            client_message_id: None,
+            reactions_json: String::new(),
+        };
+        assert_eq!(
+            system_text(&row("ThreadActivity/TopicTopicUpdated")).as_deref(),
+            Some("The name was changed.")
+        );
+        assert_eq!(
+            system_text(&row("ThreadActivity/UpdateFavDefault")).as_deref(),
+            Some("The settings were changed.")
+        );
+        assert_eq!(system_text(&row("RichText/Html")), None);
     }
 
     #[test]
