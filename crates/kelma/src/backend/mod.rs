@@ -18,8 +18,10 @@ mod actions;
 mod activity;
 mod attach;
 mod cal;
+mod channels;
 mod drafts;
 pub(crate) mod drive;
+mod lists;
 mod live;
 mod mentions;
 mod outbox;
@@ -38,7 +40,9 @@ pub(crate) use activity::{State as ActivityState, row_data as activity_row_data}
 pub use cal::{CalCmd, CalData};
 #[cfg(test)]
 pub use cal::{Ctx, build, parse_view};
+pub use channels::ChannelCmd;
 pub use drive::DriveCmd;
+pub use lists::ListsCmd;
 pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
@@ -91,6 +95,10 @@ pub enum Cmd {
     Activity(ActivityCmd),
     People(PeopleCmd),
     Drive(DriveCmd),
+    /// The chat list: sections, item menu, options, channel menu (plan 8.1 to 8.3, 8.5).
+    Lists(ListsCmd),
+    /// The channel Posts tab (plan 8.4).
+    Channels(ChannelCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -181,6 +189,8 @@ pub struct Engine {
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
     drive: Mutex<drive::Drive>,
+    lists: Mutex<lists::State>,
+    channels: Mutex<channels::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -233,6 +243,8 @@ impl Engine {
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
             drive: Mutex::new(drive::Drive::default()),
+            lists: Mutex::new(lists::State::default()),
+            channels: Mutex::new(channels::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -340,6 +352,7 @@ impl Engine {
                 let fav = st.conversation(&id)?.map(|c| c.favorite).unwrap_or(false);
                 st.set_favorite(&id, !fav)?;
                 drop(st);
+                self.lists_clear_assign(&id);
                 self.mark(|d| d.chats = true);
             }
             Cmd::SetFilter(f) => {
@@ -500,6 +513,8 @@ impl Engine {
             Cmd::Activity(c) => self.activity_cmd(c).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
+            Cmd::Lists(c) => self.lists_cmd(c).await?,
+            Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

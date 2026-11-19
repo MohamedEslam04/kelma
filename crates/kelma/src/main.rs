@@ -4,6 +4,7 @@ mod backend;
 mod composer;
 mod data;
 mod demo;
+mod lists_data;
 mod markdown;
 mod mention;
 mod reactions;
@@ -357,6 +358,24 @@ fn main() -> anyhow::Result<()> {
                 let _ = tx.send(Cmd::People(c));
             }
         });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<ListStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::ListsCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Lists(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window
+            .global::<ChannelStore>()
+            .on_command(move |name, arg| {
+                if let Some(c) = backend::ChannelCmd::parse(&name, &arg) {
+                    let _ = tx.send(Cmd::Channels(c));
+                }
+            });
     }
     {
         let tx = tx.clone();

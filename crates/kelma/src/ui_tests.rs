@@ -18,7 +18,9 @@ use store::Store;
 use teams_proto::Client;
 
 mod activity;
+mod channels;
 mod drive;
+mod lists;
 mod people;
 
 type Log = Rc<RefCell<Vec<String>>>;
