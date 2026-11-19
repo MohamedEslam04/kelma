@@ -735,10 +735,22 @@ fn resting_on_a_photo_opens_a_hover_card_whose_quick_message_goes_to_their_chat(
     let h = harness_with_sara_email();
     let _log = wire(&h);
     h.select(BACKEND);
+    // A photo that is on screen (rows above the view are laid out but clipped).
+    let height = h
+        .app
+        .window()
+        .size()
+        .to_logical(h.app.window().scale_factor())
+        .height;
     let avatar = ids(&h.app, "MessageRow::avatar-touch")
         .into_iter()
-        .find(|e| label(e) == "Open profile of Sara Hassan")
-        .expect("Sara's photo");
+        .filter(|e| label(e) == "Open profile of Sara Hassan")
+        .filter(|e| {
+            let y = e.absolute_position().y + e.size().height / 2.;
+            (120. ..height - 120.).contains(&y)
+        })
+        .last()
+        .expect("Sara's photo on screen");
     let (p, s) = (avatar.absolute_position(), avatar.size());
     h.app.window().dispatch_event(WindowEvent::PointerMoved {
         position: LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.),
