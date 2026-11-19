@@ -20,6 +20,7 @@ pub(crate) mod appstore;
 mod attach;
 mod cal;
 mod channels;
+pub(crate) mod composer_apps;
 mod drafts;
 pub(crate) mod drive;
 mod find;
@@ -53,6 +54,7 @@ pub use cal::{
     slot_minutes,
 };
 pub use channels::ChannelCmd;
+pub use composer_apps::ComposerAppsCmd;
 pub use drive::DriveCmd;
 pub use find::FindCmd;
 pub use lists::ListsCmd;
@@ -119,6 +121,8 @@ pub enum Cmd {
     /// The channel Posts tab (plan 8.4).
     Channels(ChannelCmd),
     Apps(AppsCmd),
+    /// The composer's "+" apps picker (plan S3.6).
+    ComposerApps(ComposerAppsCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -214,6 +218,7 @@ pub struct Engine {
     lists: Mutex<lists::State>,
     channels: Mutex<channels::State>,
     apps: Mutex<appstore::Apps>,
+    composer_apps: Mutex<composer_apps::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -272,6 +277,7 @@ impl Engine {
             lists: Mutex::new(lists::State::default()),
             channels: Mutex::new(channels::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
+            composer_apps: Mutex::new(composer_apps::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -550,6 +556,7 @@ impl Engine {
             Cmd::Lists(c) => self.lists_cmd(c).await?,
             Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
+            Cmd::ComposerApps(c) => self.composer_apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

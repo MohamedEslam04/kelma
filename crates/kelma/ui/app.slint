@@ -29,6 +29,7 @@ import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane 
 import { AppsStore } from "apps_store.slint";
 import { RailApps, AppsOverlays } from "apps_rail.slint";
 import { AppsHost } from "apps_host.slint";
+import { ComposerAppsOverlay } from "composer_apps.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -41,6 +42,7 @@ export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { ComposerApps, CaCommand, CaResult, CaCard } from "composer_apps.slint";
 export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
 
 export component AppWindow inherits Window {
@@ -1110,6 +1112,12 @@ export component AppWindow inherits Window {
     }
 
     if root.login-state == "ready": AppsOverlays {
+        width: root.width;
+        height: root.height;
+    }
+
+    // The composer's apps picker (the "+" button).
+    if root.login-state == "ready": ComposerAppsOverlay {
         width: root.width;
         height: root.height;
     }

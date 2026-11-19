@@ -5,6 +5,7 @@ pub use appstore::wire as install_apps;
 #[cfg(test)]
 pub use cal::read_form as read_form_for_test;
 pub use cal::wire as install_calendar;
+pub use composer_apps::wire as install_composer_apps;
 
 use crate::data::{
     AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
@@ -23,6 +24,7 @@ use std::rc::Rc;
 pub(crate) mod activity;
 pub(crate) mod appstore;
 mod channels;
+mod composer_apps;
 pub(crate) mod drive;
 mod find;
 mod lists;

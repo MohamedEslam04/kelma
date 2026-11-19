@@ -4,6 +4,7 @@ import { Edited, ComposerEmoji, PendingAttachment } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
 import { PeopleStore } from "people.slint";
 import { MentionApi, MentionPicker } from "mention_picker.slint";
+import { ComposerAppsButton } from "composer_apps.slint";
 
 // Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
 export global EmojiApi {
@@ -303,6 +304,7 @@ export component Composer inherits Rectangle {
                     IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
                     IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
                     IconButton { icon: @image-url("icons/more.svg"); clicked => { more-popup.show(); } }
+                    ComposerAppsButton { }
                     Rectangle { width: 1px; background: Theme.border; }
                     IconButton {
                         icon: @image-url("icons/send.svg");
