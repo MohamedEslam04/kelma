@@ -3411,7 +3411,6 @@ dependencies = [
  "pastey",
  "serde",
  "task-local",
- "tokio",
  "zbus 5.19.0",
 ]
 
