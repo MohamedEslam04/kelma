@@ -744,12 +744,10 @@ fn resting_on_a_photo_opens_a_hover_card_whose_quick_message_goes_to_their_chat(
         .height;
     let avatar = ids(&h.app, "MessageRow::avatar-touch")
         .into_iter()
-        .filter(|e| label(e) == "Open profile of Sara Hassan")
-        .filter(|e| {
+        .rfind(|e| {
             let y = e.absolute_position().y + e.size().height / 2.;
-            (120. ..height - 120.).contains(&y)
+            label(e) == "Open profile of Sara Hassan" && (120. ..height - 120.).contains(&y)
         })
-        .next_back()
         .expect("Sara's photo on screen");
     let (p, s) = (avatar.absolute_position(), avatar.size());
     h.app.window().dispatch_event(WindowEvent::PointerMoved {
