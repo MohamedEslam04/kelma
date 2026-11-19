@@ -29,6 +29,7 @@ mod people;
 mod people_live;
 mod render;
 mod send;
+pub(crate) mod settings;
 mod sync;
 mod unread;
 mod util;
@@ -102,6 +103,7 @@ pub enum Cmd {
     Activity(ActivityCmd),
     People(PeopleCmd),
     Teams(TeamsCmd),
+    Settings(settings::SettingsCmd),
     Drive(DriveCmd),
     SetEnterSends(bool),
     /// The composer text changed.
@@ -516,6 +518,7 @@ impl Engine {
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
+            Cmd::Settings(c) => self.settings_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

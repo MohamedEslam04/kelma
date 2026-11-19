@@ -23,6 +23,7 @@ import { TeamsStore } from "teams_store.slint";
 import { TeamsPage } from "teams_page.slint";
 import { TeamsDialogs } from "teams_dialogs.slint";
 import { OneDriveView, DriveStore } from "onedrive.slint";
+import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -32,6 +33,7 @@ export { PeopleStore } from "people.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
 
 export component AppWindow inherits Window {
     title: root.window-title;
@@ -41,7 +43,7 @@ export component AppWindow inherits Window {
     min-width: 900px;
     min-height: 560px;
     background: Theme.main;
-    default-font-size: 14px;
+    default-font-size: 14px * Theme.font-scale;
 
     // --- state set from Rust ---
     in property <string> login-state: "checking"; // checking | code | error | ready
@@ -213,6 +215,7 @@ export component AppWindow inherits Window {
                 root.mark-all-read();
                 return accept;
             }
+            if (event.text == "," || event.text == "<") && event.modifiers.control && event.modifiers.shift { SettingsStore.show("general"); return accept; } // Ctrl+Shift+,: Settings.
             // Alt+Shift+N: New chat.
             if ((event.text == "N" || event.text == "n") && event.modifiers.alt && event.modifiers.shift) {
                 root.view = "chat";
@@ -270,7 +273,7 @@ export component AppWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 if !root.connected: Text { text: "Reconnecting…"; color: #ffb900; font-size: 12px; vertical-alignment: center; }
-                Avatar { initials: root.me-initials; size: 30px; y: 9px; }
+                Avatar { initials: root.me-initials; size: 30px; y: 9px; TouchArea { accessible-role: button; accessible-label: "Profile menu"; accessible-action-default => { SettingsStore.open-profile(); } mouse-cursor: pointer; clicked => { SettingsStore.open-profile(); } } }
             }
         }
 
@@ -893,4 +896,6 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
     }
+    if root.login-state == "ready" && SettingsStore.open: SettingsPage { x: 68px; y: 48px; z: 60; width: root.width - 68px; height: root.height - 48px; }
+    if root.login-state == "ready" && SettingsStore.profile-open: ProfileMenu { z: 70; width: root.width; height: root.height; }
 }

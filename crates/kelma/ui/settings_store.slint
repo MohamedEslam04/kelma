@@ -1,0 +1,133 @@
+// State of the Settings page and the profile menu (plans/settings-and-platform.md X1, chat plan
+// 9.1, 9.3 and 9.9). Everything shown comes from this global, filled by the Rust side
+// (`ui/settings.rs`); the UI reports what the user did through `command(name, argument)`.
+// Arguments with several values are joined with the unit separator "\u{1f}".
+
+export struct SOption { v: string, l: string }
+// A switch row. `enabled: false` greys it out; `hint` is the second line.
+export struct SToggle { key: string, label: string, hint: string, on: bool, enabled: bool }
+// A notification type: `value` is banner | feed | off, or "" when Teams has no value yet.
+export struct SNotify { key: string, label: string, group: string, value: string }
+export struct SPerson { mri: string, name: string }
+export struct SAccount { label: string, name: string, upn: string, active: bool }
+export struct SOrg { tenant: string, name: string, home: bool, active: bool }
+export struct SDevice { id: string, name: string }
+export struct SAppPerm { app: string, name: string, perms: [SToggle] }
+// A "Find in Settings" hit: the setting's label and the page that holds it.
+export struct SFind { page: string, page-title: string, label: string }
+
+export global SettingsStore {
+    // --- the page ---
+    in-out property <bool> open: false;
+    // general | accounts | privacy | notifications | appearance | accessibility | devices | files
+    // | permissions | about
+    in-out property <string> page: "general";
+    in-out property <string> query;
+    in-out property <[SFind]> found;
+    // A short message at the bottom of the page (saved, dry run, errors).
+    in-out property <string> notice;
+    // Teams writes that were only planned, newest first (`METHOD url` and the body).
+    in-out property <[string]> dry-runs;
+
+    // --- profile menu (9.9) ---
+    in-out property <bool> profile-open: false;
+    in-out property <string> me-name;
+    in-out property <string> me-email;
+    in-out property <string> me-initials;
+    in-out property <string> me-status;
+    in-out property <string> me-presence;
+    in-out property <bool> confirm-sign-out: false;
+
+    // --- Appearance (9.3) ---
+    in-out property <string> theme: "system"; // light | dark | system
+    in-out property <string> theme-shown;     // light | dark: what is drawn now
+    in-out property <string> accent: "";      // #rrggbb, "" follows the desktop
+    in-out property <string> accent-shown;
+    in-out property <string> density: "comfy"; // comfy | compact
+    in-out property <float> font-scale: 1.0;
+    in-out property <int> skin-tone: 0;
+
+    // --- General (X1.2) ---
+    in-out property <[SOption]> languages;
+    in-out property <string> language: "";     // "" follows the system
+    in-out property <string> language-shown;
+    in-out property <string> date-format: "auto"; // auto | dmy | mdy | ymd
+    in-out property <string> time-format: "auto"; // auto | h12 | h24
+    in-out property <string> time-zone: "";       // "" follows the system
+    in-out property <string> system-time-zone;
+    in-out property <[SToggle]> startup;
+
+    // --- Accessibility (X1.3) ---
+    in-out property <string> high-contrast: "auto"; // auto | on | off
+    in-out property <string> reduced-motion: "auto";
+    in-out property <bool> larger-text: false;
+    in-out property <string> a11y-shown;
+    in-out property <[SToggle]> a11y-flags;
+
+    // --- Notifications and activity (9.1) ---
+    in-out property <[SNotify]> notify;
+    in-out property <bool> paused: false;
+    in-out property <string> notify-status;
+
+    // --- Privacy (X1.5) ---
+    in-out property <[SToggle]> privacy;
+    in-out property <[SPerson]> blocked;
+    in-out property <[SPerson]> priority;
+    in-out property <string> privacy-status;
+
+    // --- Devices (X1.4) ---
+    in-out property <[SDevice]> mics;
+    in-out property <[SDevice]> speakers;
+    in-out property <[SDevice]> cameras;
+    in-out property <string> mic: "";     // "" is the system default
+    in-out property <string> speaker: "";
+    in-out property <string> camera: "";
+    in-out property <bool> all-devices: false;
+    in-out property <float> mic-level;
+    in-out property <bool> mic-testing: false;
+    in-out property <string> devices-status;
+
+    // --- Files and links (X1.6) ---
+    in-out property <string> open-files: "browser"; // kelma | browser | desktop
+    in-out property <string> open-links: "default"; // default | ask
+
+    // --- App permissions (X1.7) ---
+    in-out property <[SAppPerm]> app-perms;
+    in-out property <string> perms-status;
+
+    // --- Accounts and orgs (X2.1) ---
+    in-out property <[SAccount]> accounts;
+    in-out property <[SOrg]> orgs;
+    in-out property <string> accounts-status;
+    in-out property <bool> restart-needed: false;
+
+    // --- About ---
+    in-out property <string> version;
+
+    // (name, argument). See `ui/settings.rs` for the list.
+    callback command(string, string);
+
+    pure public function j2(a: string, b: string) -> string { return a + "\u{1f}" + b; }
+    pure public function j3(a: string, b: string, c: string) -> string { return a + "\u{1f}" + b + "\u{1f}" + c; }
+
+    // Opens the Settings page on `p`.
+    public function show(p: string) {
+        root.page = p;
+        root.query = "";
+        root.profile-open = false;
+        root.open = true;
+        root.command("open", p);
+    }
+
+    // Opens the profile menu under the avatar.
+    public function open-profile() {
+        root.confirm-sign-out = false;
+        root.profile-open = true;
+        root.command("profile", "");
+    }
+
+    public function close() {
+        root.open = false;
+        root.command("close", "");
+    }
+}

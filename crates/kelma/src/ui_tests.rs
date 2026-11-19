@@ -20,6 +20,7 @@ use teams_proto::Client;
 mod activity;
 mod drive;
 mod people;
+mod settings;
 mod teams;
 
 type Log = Rc<RefCell<Vec<String>>>;

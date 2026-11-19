@@ -9,6 +9,12 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.104"
+appearance = { version = "0.0.0", path = "../appearance" }
+apps = { version = "0.0.0", path = "../apps" }
+devices = { version = "0.0.0", path = "../devices" }
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+tray = { version = "0.0.0", path = "../tray" }
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 calendar = { version = "0.0.0", path = "../calendar" }
 diag = { version = "0.0.0", path = "../diag" }

@@ -343,6 +343,7 @@ fn main() -> anyhow::Result<()> {
         });
     }
     ui::install_calendar(&window, tx.clone());
+    ui::settings::install_system(&window, tx.clone());
     {
         let tx = tx.clone();
         window.global::<PeopleStore>().on_command(move |name, arg| {

@@ -22,6 +22,7 @@ use std::rc::Rc;
 pub(crate) mod activity;
 pub(crate) mod drive;
 mod people;
+pub(crate) mod settings;
 mod teams;
 
 thread_local! {

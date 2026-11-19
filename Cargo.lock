@@ -3332,11 +3332,15 @@ name = "kelma"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "appearance",
+ "apps",
  "arboard",
  "calendar",
  "chrono",
+ "devices",
  "diag",
  "emoji",
+ "futures-util",
  "i-slint-backend-testing",
  "iana-time-zone",
  "image",
@@ -3346,6 +3350,7 @@ dependencies = [
  "render",
  "reqwest",
  "rfd",
+ "serde",
  "serde_json",
  "session",
  "slint",
@@ -3355,6 +3360,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "tray",
 ]
 
 [[package]]
