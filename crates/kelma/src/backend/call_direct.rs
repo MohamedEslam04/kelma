@@ -313,6 +313,21 @@ fn later(f: impl Future<Output = ()> + Send + 'static) {
     }
 }
 
+/// What Accept does with a ring that carries no offer: `KELMA_CALL_NO_OFFER=fetch|new-offer|
+/// accept-offer|attach-offer` (see `calling::incoming::NoOffer`), `fetch` by default. For trying
+/// the unverified paths live without a rebuild.
+fn no_offer_mode() -> NoOffer {
+    let mode = std::env::var("KELMA_CALL_NO_OFFER").ok();
+    match mode.as_deref().map(NoOffer::parse) {
+        Some(Some(m)) => m,
+        Some(None) => {
+            tracing::warn!("KELMA_CALL_NO_OFFER: unknown mode; using fetch");
+            NoOffer::default()
+        }
+        None => NoOffer::default(),
+    }
+}
+
 fn manager() -> anyhow::Result<Arc<CallManager>> {
     call::manager().context("calling is not ready yet")
 }
@@ -657,14 +672,14 @@ impl Engine {
                 }
             };
         let (media, media_events) = MediaSession::new(ice).await?;
-        let observe = |name: &str, sdp: &str| call::live::dump_sdp(name, sdp);
+        let observe = |name: &str, text: &str| call::live::dump_answer(name, text);
         let links = match calling::incoming::answer_invitation(
             &ngc,
             &mut s,
             inv,
             &media,
             &mut events,
-            NoOffer::default(),
+            no_offer_mode(),
             &observe,
         )
         .await

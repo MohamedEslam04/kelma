@@ -1,11 +1,11 @@
 //! Answering a ring with or without the caller's offer (offline, synthetic fixtures with the
 //! shape of the live 2026-11-19 capture and fake values).
 
-use calling::incoming::{Answering, NoOffer, Step};
+use calling::incoming::{Answering, NoOffer, OfferVia, Step};
 use calling::invitation::{CallEvent, EndReason, NgcPush, classify, parse_call_event};
 use calling::signaling::bodies::{
-    Attached, attach_body, attach_offer_body, offer_acceptance_body, parse_acceptance_answer,
-    parse_attach,
+    Attached, attach_body, attach_offer_body, mediafree_acceptance_body, negotiation_body,
+    offer_acceptance_body, parse_acceptance_answer, parse_attach, parse_inline_answer,
 };
 use calling::signaling::{CallSession, CallbackLinks, LocalEndpoint};
 use calling::{CallInvitation, Links, Modality, SdpBlob};
@@ -66,6 +66,11 @@ fn attach_answer() -> Attached {
         .unwrap(),
     )
     .unwrap()
+}
+
+/// Where the attach answer fixture says our offer goes.
+fn new_offer_via() -> OfferVia {
+    OfferVia::NewOffer(attach_answer().links.get("newOffer").unwrap().to_owned())
 }
 
 fn attached_without_offer() -> Attached {
@@ -142,6 +147,9 @@ fn an_offer_acceptance_names_where_the_answer_goes() {
     let b = offer_acceptance_body(&s, &[Modality::Audio], &sdp("v=0\r\nour-offer\r\n"));
     let c = &b["callAcceptance"];
     assert_eq!(c["mediaContent"]["blob"], "v=0\r\nour-offer\r\n");
+    // Labelled like place_call's offer, which the service took live.
+    assert_eq!(c["mediaContent"]["contentType"], "application/sdp-ngc-1.0");
+    assert_eq!(c["mediaContent"]["requiredFeatures"], "nonByPass");
     assert_eq!(c["acceptedCallModalities"], json!(["Audio"]));
     assert_eq!(c["links"]["mediaAnswer"], s.callbacks.call("mediaAnswer"));
     assert_eq!(
@@ -149,6 +157,81 @@ fn an_offer_acceptance_names_where_the_answer_goes() {
         s.callbacks.call("mediaAcknowledgement")
     );
     assert!(c["links"]["mediaRenegotiation"].is_string());
+}
+
+#[test]
+fn our_offer_goes_out_as_a_media_negotiation() {
+    let s = session();
+    let b = negotiation_body(&s, &[Modality::Audio], &sdp("v=0\r\nour-offer\r\n"));
+    let n = &b["mediaNegotiation"];
+    assert_eq!(n["callModalities"], json!(["Audio"]));
+    assert_eq!(n["sender"]["id"], s.me.mri);
+    assert_eq!(n["links"]["mediaAnswer"], s.callbacks.call("mediaAnswer"));
+    assert_eq!(n["links"]["rejection"], s.callbacks.call("rejection"));
+    let m = &n["mediaContent"];
+    assert_eq!(m["blob"], "v=0\r\nour-offer\r\n");
+    assert_eq!(m["contentType"], "application/sdp-ngc-1.0");
+    assert_eq!(m["mediaLegId"], "LEG1");
+    assert_eq!(m["requiredFeatures"], "nonByPass");
+    assert_eq!(m["newOffer"], true);
+
+    // The acceptance that follows carries no SDP: our offer is already out.
+    let a = mediafree_acceptance_body(&s, &[Modality::Audio]);
+    let c = &a["callAcceptance"];
+    assert_eq!(c["mediaContent"], Value::Null);
+    assert_eq!(c["acceptedBy"]["id"], s.me.mri);
+    assert_eq!(c["links"]["mediaAnswer"], s.callbacks.call("mediaAnswer"));
+    assert!(c["links"]["mediaRenegotiation"].is_string());
+}
+
+#[test]
+fn an_inline_answer_is_found_where_the_service_may_put_it() {
+    for body in [
+        json!({"mediaAnswer": {"mediaContent": {"contentType": "application/sdp-ngc-1.0", "blob": "v=0\r\nx\r\n"}}}),
+        json!({"callAcceptanceAcknowledgement": {"mediaContent": {"contentType": "application/sdp-ngc-1.0", "blob": "v=0\r\nx\r\n"}}}),
+        json!({"mediaContent": {"contentType": "application/sdp-ngc-1.0", "blob": "v=0\r\nx\r\n"}}),
+    ] {
+        assert_eq!(
+            parse_inline_answer(&body),
+            Some(sdp("v=0\r\nx\r\n")),
+            "{body}"
+        );
+    }
+    assert_eq!(parse_inline_answer(&json!({"links": {}})), None);
+    assert_eq!(parse_inline_answer(&Value::Null), None);
+}
+
+#[test]
+fn modes_parse_and_pick_where_our_offer_goes() {
+    assert_eq!(NoOffer::parse("fetch"), Some(NoOffer::FetchOffer));
+    assert_eq!(NoOffer::parse("new-offer"), Some(NoOffer::NewOffer));
+    assert_eq!(NoOffer::parse("accept-offer"), Some(NoOffer::AcceptOffer));
+    assert_eq!(NoOffer::parse("attach-offer"), Some(NoOffer::OfferInAttach));
+    assert_eq!(NoOffer::parse("nope"), None);
+
+    // new-offer attaches like the web client, without asking for media.
+    let mut a = Answering::new(&no_offer_invitation(), NoOffer::NewOffer);
+    assert_eq!(
+        a.step(),
+        &Step::Attach {
+            require_media: false,
+            with_offer: false
+        }
+    );
+    a.on_attached(attached_without_offer());
+    assert_eq!(a.step(), &Step::SendOffer(new_offer_via()));
+
+    // accept-offer always uses the acceptance.
+    let mut a = Answering::new(&no_offer_invitation(), NoOffer::AcceptOffer);
+    a.on_attached(attached_without_offer());
+    assert_eq!(a.step(), &Step::SendOffer(OfferVia::Acceptance));
+
+    // Without a newOffer link the acceptance is the only place left.
+    let mut a = Answering::new(&no_offer_invitation(), NoOffer::FetchOffer);
+    let mut bare = attached_without_offer();
+    bare.links.0.remove("newOffer");
+    a.on_attached(bare);
+    assert_eq!(a.step(), &Step::SendOffer(OfferVia::Acceptance));
 }
 
 #[test]
@@ -263,7 +346,7 @@ fn without_an_offer_attach_fetches_it_then_we_answer() {
 fn when_no_offer_comes_we_offer_and_wait_for_the_media_answer() {
     let mut a = Answering::new(&no_offer_invitation(), NoOffer::FetchOffer);
     a.on_attached(attached_without_offer());
-    assert_eq!(a.step(), &Step::SendOffer);
+    assert_eq!(a.step(), &Step::SendOffer(new_offer_via()));
     a.on_accepted(links(&[("callLeg", "https://cc.example/leg")]), None);
     assert_eq!(a.step(), &Step::AwaitAnswer);
     // Unrelated callbacks change nothing.
@@ -291,7 +374,7 @@ fn an_inline_or_early_answer_skips_the_wait() {
     let mut early = Answering::new(&no_offer_invitation(), NoOffer::FetchOffer);
     early.on_attached(attached_without_offer());
     early.on_event(&media_answer_event());
-    assert_eq!(early.step(), &Step::SendOffer);
+    assert_eq!(early.step(), &Step::SendOffer(new_offer_via()));
     early.on_accepted(Links::default(), None);
     assert_eq!(early.step(), &Step::Adopt);
 }
@@ -308,7 +391,7 @@ fn offer_in_attach_stays_the_offerer() {
     );
     // Even if an offer came back, our offer is already out on this peer.
     a.on_attached(attach_answer());
-    assert_eq!(a.step(), &Step::SendOffer);
+    assert_eq!(a.step(), &Step::SendOffer(OfferVia::Attach));
     a.on_accepted(Links::default(), None);
     a.on_event(&media_answer_event());
     assert_eq!(a.step(), &Step::Adopt);

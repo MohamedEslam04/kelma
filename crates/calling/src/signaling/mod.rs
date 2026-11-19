@@ -24,6 +24,7 @@ use crate::invitation;
 use crate::types::{CallInvitation, Links, Modality, Participant, SdpBlob};
 use reqwest::Method;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use teams_proto::Client;
 use teams_proto::broker::Audience;
 
@@ -113,16 +114,65 @@ pub struct NgcResponse {
     pub body: Value,
 }
 
+/// One request to the conversation service and what came back, for `--dump` /
+/// `KELMA_CALL_DUMP`. The bodies hold real ids and SDPs with addresses: keep them local.
+#[derive(Debug)]
+pub struct Exchange<'a> {
+    pub op: &'a str,
+    pub method: &'a str,
+    pub url: &'a str,
+    pub request: Option<&'a Value>,
+    /// The HTTP status; 0 when the request never got an answer.
+    pub status: u16,
+    /// The answer body, or the transport error.
+    pub response: &'a str,
+}
+
+/// Sees every [`Exchange`] of an [`NgcClient`].
+pub type ExchangeObserver = Arc<dyn Fn(&Exchange<'_>) + Send + Sync>;
+
 /// Client for the NGC conversation service, on top of a signed-in [`teams_proto::Client`].
 #[derive(Clone)]
 pub struct NgcClient {
     client: Client,
     endpoints: CallingEndpoints,
+    observer: Option<ExchangeObserver>,
 }
 
 impl NgcClient {
     pub fn new(client: Client, endpoints: CallingEndpoints) -> Self {
-        NgcClient { client, endpoints }
+        NgcClient {
+            client,
+            endpoints,
+            observer: None,
+        }
+    }
+
+    /// Reports every request and its answer to `observer` (protocol debugging).
+    pub fn with_observer(mut self, observer: ExchangeObserver) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    fn observe(
+        &self,
+        op: &str,
+        method: &Method,
+        url: &str,
+        request: Option<&Value>,
+        status: u16,
+        response: &str,
+    ) {
+        if let Some(o) = &self.observer {
+            o(&Exchange {
+                op,
+                method: method.as_str(),
+                url,
+                request,
+                status,
+                response,
+            });
+        }
     }
 
     /// Reads the calling endpoints from authz (teams-proto keeps only the chat ones), then builds
@@ -173,7 +223,13 @@ impl NgcClient {
             Some(b) => req.body(serde_json::to_vec(b)?),
             None => req.header("Content-Length", "0"),
         };
-        let resp = req.send().await.map_err(teams_proto::Error::from)?;
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                self.observe(op, &method, &target, body, 0, &e.to_string());
+                return Err(teams_proto::Error::from(e).into());
+            }
+        };
         let status = resp.status().as_u16();
         let location = resp
             .headers()
@@ -181,6 +237,7 @@ impl NgcClient {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         let text = resp.text().await.map_err(teams_proto::Error::from)?;
+        self.observe(op, &method, &target, body, status, &text);
         tracing::debug!(op, %method, status, "ngc request");
         if !(200..300).contains(&status) {
             return Err(status_error(op, status, &text));
@@ -423,8 +480,46 @@ impl NgcClient {
             .await?;
         Ok((
             bodies::parse_acceptance_links(&r.body),
-            bodies::parse_acceptance_answer(&r.body),
+            bodies::parse_inline_answer(&r.body),
         ))
+    }
+
+    /// Accepts after our offer went out on its own (`mediaContent: null`; UNVERIFIED). Returns
+    /// the leg's links and any answer the acknowledgement carries inline.
+    pub async fn accept_without_media(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        modalities: &[Modality],
+    ) -> Result<(Links, Option<SdpBlob>)> {
+        let url = Self::link(links, "acceptance")?;
+        let r = self
+            .post(
+                "accept_without_media",
+                s,
+                url,
+                &bodies::mediafree_acceptance_body(s, modalities),
+            )
+            .await?;
+        Ok((
+            bodies::parse_acceptance_links(&r.body),
+            bodies::parse_inline_answer(&r.body),
+        ))
+    }
+
+    /// Posts OUR offer as a `mediaNegotiation` to `url` (the attach answer's `newOffer`; see
+    /// [`bodies::negotiation_body`]). Returns the answer when it comes inline; otherwise it
+    /// arrives on our `call/mediaAnswer/` callback.
+    pub async fn send_offer(
+        &self,
+        s: &CallSession,
+        url: &str,
+        modalities: &[Modality],
+        offer: &SdpBlob,
+    ) -> Result<Option<SdpBlob>> {
+        let body = bodies::negotiation_body(s, modalities, offer);
+        let r = self.post("new_offer", s, url, &body).await?;
+        Ok(bodies::parse_inline_answer(&r.body))
     }
 
     /// The whole incoming path: attach when the invitation has no `acceptance` of its own (a

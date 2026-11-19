@@ -74,26 +74,45 @@ Accept failed with "the call carries no media offer". The ring's shape (no value
   `ecsEtag`, `potentialCallNotificationSent`
 - `groupContext: null`; no `groupChat`
 
+Second live test (same day, GUI Accept, `KELMA_CALL_DUMP`), shape only:
+
+- No SDP was exchanged: kelma dumped none, so its answer stopped at or before the attach.
+- Callbacks reached kelma's attached session: `call/progress` with `status: forwarded` and
+  `forwardingDestinationType: voicemail`; then `call/end` from a `voicemail` endpoint with
+  `callEnd {code: 1000, subCode: 7106, phrase: SdpParsingFailure, resultCategories:
+  [UnexpectedServerError]}`; then `conversation/conversationEnd` (`subCode` 5002, "all
+  participants left") carrying the same 7106 as `callControllerTransactionEnd`.
+- Reading: the ring went to voicemail unanswered, and the voicemail leg failed on SDP. No SDP of
+  kelma's reached the service, so 7106 says nothing about kelma's SDP. The bodies kelma sent
+  were not recorded; they are now.
+
 What kelma does now (`calling::incoming`, used by the GUI accept and by
-`kelma-cli call listen --accept-audio`):
+`kelma-cli call listen --accept-audio`; the mode is `KELMA_CALL_NO_OFFER` in the GUI and
+`--no-offer` in the CLI):
 
-1. **Fetch the offer** (default). `attach` with `requireMediaContent: true`. The caller's offer is
-   expected in the attach answer's `callInvitation.mediaContent` (with `mediaLegId`), and the
-   answerer path follows: ringing, then `acceptance` with our SDP answer. Evidence: rusty-teams
-   (MIT, `engine.rs` `ring_task`) does exactly this for a ring without an offer, and the mautrix-teams
-   OpenAPI says the web client sends `false` "because the offer came in the ring". Not yet seen live.
-2. **Offer ourselves** (fallback, UNVERIFIED). When the attach answer has no offer either, kelma
-   accepts with its own offer (built as `call dial` builds it, verified live for outgoing calls)
-   and a `mediaAnswer` callback link. The caller's answer is taken from the acknowledgement
-   (`callAcceptanceAcknowledgement.mediaContent`) or from a `call/mediaAnswer/` callback within
-   20 s, applied, and the call is adopted.
-3. `kelma-cli call listen --accept-audio --offer-in-attach` instead sends our offer inside the
-   attach (`attach.mediaContent`, plus a `mediaAnswer` callback link), then accepts with it.
-   UNVERIFIED: no reference sends media with an attach.
+1. **`fetch`** (default). `attach` with `requireMediaContent: true`, bounded to 15 s. An offer in the
+   attach answer's `callInvitation.mediaContent` (with `mediaLegId`) is answered: ringing, then
+   `acceptance` with our SDP answer. Evidence: rusty-teams (MIT, `engine.rs` `ring_task`) does
+   exactly this, and the mautrix-teams OpenAPI says the web client sends `false` "because the offer
+   came in the ring". Without an offer it continues as `new-offer`.
+2. **`new-offer`** (UNVERIFIED). Attach as the web client does (`requireMediaContent: false`), then
+   POST our offer as `{"mediaNegotiation": {callModalities, sender, links {mediaAnswer, rejection},
+   mediaContent {…, newOffer: true}}}` (rusty-teams' shape for a client's own offer) to the attach
+   answer's `newOffer` link, accept with `mediaContent: null`, and apply the caller's answer
+   (inline, or on `call/mediaAnswer/` within 20 s).
+3. **`accept-offer`** (UNVERIFIED, likely wrong). Our offer as the acceptance's `mediaContent`. That
+   slot carries an answer everywhere else, and an answer with offer-only lines draws
+   `SdpParsingFailure` (teams-lite).
+4. **`attach-offer`** (UNVERIFIED). Our offer inside the attach, then accept with `mediaContent: null`.
 
-`--ring-only` now prints whether the attach answer carried an offer. `KELMA_CALL_DUMP=<dir>` makes
-the GUI write every raw calling push (and each SDP of a call being answered) into `<dir>`, like
-`call listen --dump`. Both hold real ids: keep them out of the repo.
+Every offer of ours is built and labelled as `call dial`'s, which the service took live:
+`application/sdp-ngc-1.0`, plain SDP text, `requiredFeatures: nonByPass`, our `mediaLegId`.
+
+`--ring-only` prints whether the attach answer carried an offer. `KELMA_CALL_DUMP=<dir>` makes the
+GUI write every raw calling push, every request it sends to the conversation service with its
+answer (`ngc-<op>.json`), each step of an answer (`step.txt`), every SDP envelope as received
+before decoding (`*-blob.txt`) and every SDP (`.sdp`). `call listen --dump` writes the same. All
+hold real ids and addresses: keep them out of the repo.
 
 ## Open
 

@@ -111,9 +111,12 @@ impl Hub {
         if let Some(n) = self.ngc() {
             return Ok(n);
         }
-        let n = NgcClient::discover(self.client.clone())
+        let mut n = NgcClient::discover(self.client.clone())
             .await
             .context("calling endpoints")?;
+        if dump_dir().is_some() {
+            n = n.with_observer(Arc::new(dump_exchange));
+        }
         *self.ngc.lock().unwrap() = Some(n.clone());
         Ok(n)
     }
@@ -271,10 +274,40 @@ fn dump_push(p: &CallPush) {
     }
 }
 
-/// Writes one SDP of a call being answered (`KELMA_CALL_DUMP`).
-pub(crate) fn dump_sdp(name: &str, sdp: &str) {
+/// Writes what answering a call reports (`KELMA_CALL_DUMP`): a step or a blob as `.txt`, an SDP
+/// as `.sdp` (see `calling::incoming::Observe`).
+pub(crate) fn dump_answer(name: &str, text: &str) {
     if let Some(dir) = dump_dir() {
-        let _ = std::fs::write(dump_path(dir, name, "sdp"), sdp);
+        let ext = if name == "step" || name.ends_with("-blob") {
+            "txt"
+        } else {
+            "sdp"
+        };
+        let _ = std::fs::write(dump_path(dir, name, ext), text);
+    }
+}
+
+/// `{op, method, url, status, request, response}` of one request to the conversation service.
+fn exchange_doc(e: &calling::signaling::Exchange<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "op": e.op,
+        "method": e.method,
+        "url": e.url,
+        "status": e.status,
+        "request": e.request,
+        "response": serde_json::from_str::<serde_json::Value>(e.response)
+            .unwrap_or_else(|_| serde_json::Value::String(e.response.to_owned())),
+    })
+}
+
+/// Writes every request kelma sends to the conversation service, with its answer
+/// (`KELMA_CALL_DUMP`).
+fn dump_exchange(e: &calling::signaling::Exchange<'_>) {
+    if let Some(dir) = dump_dir() {
+        let path = dump_path(dir, &format!("ngc-{}", e.op), "json");
+        if let Ok(bytes) = serde_json::to_vec_pretty(&exchange_doc(e)) {
+            let _ = std::fs::write(path, bytes);
+        }
     }
 }
 
@@ -983,6 +1016,31 @@ mod tests {
         let (mut raw, none) = mic_chain(ToneSource::endless(440.0), false);
         assert!(none.is_none());
         assert!(raw.recv().await.is_some());
+    }
+
+    #[test]
+    fn an_exchange_dump_has_the_request_and_the_parsed_answer() {
+        let request = json!({"attach": {"requireMediaContent": true}});
+        let doc = exchange_doc(&calling::signaling::Exchange {
+            op: "attach",
+            method: "POST",
+            url: "https://cc.example.invalid/attach",
+            request: Some(&request),
+            status: 200,
+            response: r#"{"callInvitation": {"links": {}}}"#,
+        });
+        assert_eq!(doc["request"]["attach"]["requireMediaContent"], true);
+        assert_eq!(doc["response"]["callInvitation"]["links"], json!({}));
+        let failed = exchange_doc(&calling::signaling::Exchange {
+            op: "attach",
+            method: "POST",
+            url: "https://cc.example.invalid/attach",
+            request: None,
+            status: 0,
+            response: "connection reset",
+        });
+        assert_eq!(failed["response"], "connection reset");
+        assert_eq!(failed["request"], json!(null));
     }
 
     #[test]

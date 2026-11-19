@@ -292,16 +292,77 @@ pub fn acceptance_body(s: &CallSession, modalities: &[Modality], answer: &SdpBlo
     }})
 }
 
-/// `POST <acceptance>` when nobody offered media (the offerer path, UNVERIFIED live): the same
-/// acceptance with OUR offer as `mediaContent`, plus a `mediaAnswer` callback link for the
-/// caller's answer (the link shape of a client's own offer, rusty-teams `renegotiation_body`).
-/// The answer comes back inline in the acknowledgement or later on `call/mediaAnswer/`.
+/// `POST <acceptance>` with OUR offer as `mediaContent` (UNVERIFIED). The acceptance's media
+/// slot holds an answer everywhere else, and teams-lite measured `SdpParsingFailure` for an answer
+/// carrying offer-only lines, so this is no longer the default (see [`crate::incoming`]). The
+/// offer is labelled like `place_call`'s (verified live): `requiredFeatures: nonByPass`, plus a
+/// `mediaAnswer` callback link for the caller's answer.
 pub fn offer_acceptance_body(s: &CallSession, modalities: &[Modality], offer: &SdpBlob) -> Value {
     let mut b = acceptance_body(s, modalities, offer);
+    b["callAcceptance"]["mediaContent"] = media_content(s, offer, true);
     b["callAcceptance"]["links"]["mediaAnswer"] = json!(s.callbacks.call("mediaAnswer"));
     b["callAcceptance"]["links"]["mediaAcknowledgement"] =
         json!(s.callbacks.call("mediaAcknowledgement"));
     b
+}
+
+/// `POST <acceptance>` after our offer went out on its own (`newOffer` or the attach): the
+/// acceptance with `mediaContent: null`, plus the `mediaAnswer` callback link. UNVERIFIED.
+pub fn mediafree_acceptance_body(s: &CallSession, modalities: &[Modality]) -> Value {
+    let mut b = json!({"callAcceptance": {
+        "acceptedBy": s.me.wire(),
+        "acceptedCallModalities": modality_names(modalities),
+        "capabilities": null,
+        "endpointCapabilities": ENDPOINT_CAPABILITIES,
+        "clientEndpointCapabilities": DIRECT_CLIENT_CAPABILITIES,
+        "links": s.callbacks.acceptance_links(),
+        "clientContentForMediaController": s.callbacks.call_links(&["controlVideoStreaming", "csrcInfo"]),
+        "mediaContent": null,
+        "pstnContent": {"emergencyCallCountry": "", "platformName": "kelma", "publicApiCall": false},
+        "callKeepAliveInterval": null,
+    }});
+    b["callAcceptance"]["links"]["mediaAnswer"] = json!(s.callbacks.call("mediaAnswer"));
+    b["callAcceptance"]["links"]["mediaAcknowledgement"] =
+        json!(s.callbacks.call("mediaAcknowledgement"));
+    b
+}
+
+/// `POST <newOffer>` (a link of the attach answer) or `<mediaRenegotiation>`: OUR offer, as a
+/// client sends its own (rusty-teams `renegotiation_body`, MIT): `mediaNegotiation` with
+/// `newOffer: true` and our `mediaAnswer`/`rejection` callback links, labelled like
+/// `place_call`'s offer. The answer comes inline or on `call/mediaAnswer/`. UNVERIFIED for a ring
+/// without an offer.
+pub fn negotiation_body(s: &CallSession, modalities: &[Modality], offer: &SdpBlob) -> Value {
+    let mut media = media_content(s, offer, true);
+    media["newOffer"] = json!(true);
+    json!({"mediaNegotiation": {
+        "callModalities": modality_names(modalities),
+        "sender": s.me.wire(),
+        "links": s.callbacks.call_links(&["mediaAnswer", "rejection"]),
+        "mediaContent": media,
+    }})
+}
+
+/// The answer an offer's HTTP answer may carry inline: `mediaAnswer.mediaContent`,
+/// `callAcceptanceAcknowledgement.mediaContent` or a top-level `mediaContent`.
+pub fn parse_inline_answer(body: &Value) -> Option<SdpBlob> {
+    [
+        "/mediaAnswer/mediaContent",
+        "/callAcceptanceAcknowledgement/mediaContent",
+        "/mediaContent",
+    ]
+    .iter()
+    .find_map(|ptr| {
+        let media = body.pointer(ptr)?;
+        let blob = media["blob"].as_str().filter(|s| !s.is_empty())?;
+        Some(SdpBlob {
+            content_type: media["contentType"]
+                .as_str()
+                .unwrap_or("application/sdp")
+                .to_owned(),
+            blob: blob.to_owned(),
+        })
+    })
 }
 
 /// `POST <mediaAnswer>`: our answer to an offer the service made (meeting media, renegotiation).

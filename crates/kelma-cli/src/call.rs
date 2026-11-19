@@ -30,8 +30,12 @@
 //!     --accept-audio on the first incoming call: answer with audio, run it like `join` for
 //!                    --secs (default 30; --mic, --speaker, --out, --turn-tls ... apply), hang up
 //!     --accept       the same (video is not supported yet: answers with audio only)
-//!     --offer-in-attach  when the ring carries no offer: send ours with the attach (UNVERIFIED)
-//!                    instead of asking for the caller's (`requireMediaContent`, the default)
+//!     --no-offer <mode>  when the ring carries no offer: `fetch` (default: attach asking for
+//!                    the caller's offer, else offer ours on `newOffer`), `new-offer`,
+//!                    `accept-offer` or `attach-offer` (see `calling::incoming::NoOffer`;
+//!                    all but the answerer path are UNVERIFIED). `--offer-in-attach` is
+//!                    `--no-offer attach-offer`. With --dump, every request kelma sends and
+//!                    its answer, each step and every SDP are written there too
 //!     --wait <n>     with an action: wait this long for the first call (default: 120)
 //! kelma-cli call dial <mri|email> [opts]  place a 1:1 audio call; prints ringing/connected/ended
 //!     --secs <n>       stay this long after it connects, then hang up (default: 30)
@@ -987,9 +991,14 @@ async fn answer_invitation(
     surl: &str,
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<NgcEvent>,
 ) -> Result<()> {
-    let ngc = NgcClient::discover(client.clone())
+    let mut ngc = NgcClient::discover(client.clone())
         .await
         .context("authz (calling endpoints)")?;
+    if let Some(dir) = opt(args, "--dump").map(str::to_owned) {
+        ngc = ngc.with_observer(std::sync::Arc::new(
+            move |e: &calling::signaling::Exchange<'_>| dump_exchange(&dir, e),
+        ));
+    }
     let me = client.self_mri().await?;
     let s = CallSession::for_invitation(surl, &me, "kelma", inv);
     match action {
@@ -1035,11 +1044,7 @@ async fn answer_invitation(
         }
         ListenAction::Accept => {
             let o = CallOpts::from_args(args, 30)?;
-            let no_offer = if args.iter().any(|a| a == "--offer-in-attach") {
-                NoOffer::OfferInAttach
-            } else {
-                NoOffer::FetchOffer
-            };
+            let no_offer = no_offer_mode(args)?;
             if inv.offer.is_none() {
                 println!("the ring carries no offer: {no_offer:?}");
             }
@@ -1086,9 +1091,16 @@ async fn answer_with_pushes(
     let session = s.callbacks.session_id().to_owned();
     let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
     let dump_dir = o.dump_dir.clone();
-    let observe = move |name: &str, sdp: &str| {
-        println!("{name} ({} bytes)", sdp.len());
-        dump(dump_dir.as_deref(), name, sdp);
+    let observe = move |name: &str, text: &str| {
+        if name == "step" {
+            println!("answer: {text}");
+            dump_text(dump_dir.as_deref(), "step", text);
+        } else if name.ends_with("-blob") {
+            dump_text(dump_dir.as_deref(), name, text);
+        } else {
+            println!("{name} ({} bytes)", text.len());
+            dump(dump_dir.as_deref(), name, text);
+        }
     };
     let drive =
         calling::incoming::answer_invitation(ngc, s, inv, media, &mut events, no_offer, &observe);
@@ -1112,6 +1124,45 @@ async fn answer_with_pushes(
                 }
             }
         }
+    }
+}
+
+/// `--no-offer <mode>` (or `--offer-in-attach`).
+fn no_offer_mode(args: &[String]) -> Result<NoOffer> {
+    if args.iter().any(|a| a == "--offer-in-attach") {
+        return Ok(NoOffer::OfferInAttach);
+    }
+    match opt(args, "--no-offer") {
+        None => Ok(NoOffer::default()),
+        Some(m) => NoOffer::parse(m).with_context(|| {
+            format!("--no-offer {m}: pick fetch, new-offer, accept-offer or attach-offer")
+        }),
+    }
+}
+
+fn dump_text(dir: Option<&str>, name: &str, text: &str) {
+    if let Some(d) = dir {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let _ = std::fs::write(format!("{d}/{n}-{name}.txt"), text);
+    }
+}
+
+/// One request to the conversation service and its answer, as `<ms>-ngc-<op>.json`.
+fn dump_exchange(dir: &str, e: &calling::signaling::Exchange<'_>) {
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let doc = serde_json::json!({
+        "op": e.op, "method": e.method, "url": e.url, "status": e.status, "request": e.request,
+        "response": serde_json::from_str::<Value>(e.response)
+            .unwrap_or_else(|_| Value::String(e.response.to_owned())),
+    });
+    if let Ok(bytes) = serde_json::to_vec_pretty(&doc) {
+        let _ = std::fs::write(format!("{dir}/{n}-ngc-{}.json", e.op), bytes);
     }
 }
 
@@ -1263,6 +1314,20 @@ mod tests {
         assert!(scheduled_controls(&args(&["--mute-at"])).is_err());
         assert!(scheduled_controls(&args(&["--hand-at", "soon"])).is_err());
         assert!(scheduled_controls(&args(&["--unmute-at", "-1"])).is_err());
+    }
+
+    #[test]
+    fn the_no_offer_mode_is_read_from_the_flags() {
+        assert_eq!(no_offer_mode(&args(&[])).unwrap(), NoOffer::FetchOffer);
+        assert_eq!(
+            no_offer_mode(&args(&["--no-offer", "new-offer"])).unwrap(),
+            NoOffer::NewOffer
+        );
+        assert_eq!(
+            no_offer_mode(&args(&["--offer-in-attach"])).unwrap(),
+            NoOffer::OfferInAttach
+        );
+        assert!(no_offer_mode(&args(&["--no-offer", "nope"])).is_err());
     }
 
     #[test]
