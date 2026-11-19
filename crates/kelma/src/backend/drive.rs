@@ -2,6 +2,7 @@
 //! `cmd`; this file runs them against `crates/onedrive` (or an in-memory demo tree offline) and
 //! pushes the result to the UI.
 
+mod chip;
 mod cmd;
 pub(crate) mod state;
 
@@ -244,6 +245,11 @@ fn with_files_pref(
         // Downloads the file and hands it to the desktop's default app.
         OpenFilesIn::Desktop => Preview::Player,
     }
+}
+
+/// Opens a web address in the browser (only logs in demo mode and tests).
+fn drive_open_web_url(url: &str) {
+    let _ = crate::external::open(url);
 }
 
 /// `expirationDateTime` for a link that lasts `days` days.
@@ -1236,7 +1242,7 @@ impl Engine {
 
     fn drive_open_web(&self, item: &DriveItem) {
         if item.web_url.starts_with("https://") {
-            let _ = crate::external::open(&item.web_url);
+            drive_open_web_url(&item.web_url);
         } else {
             self.drive_status("This item has no web address");
         }

@@ -245,7 +245,7 @@ export component MessageRow inherits TouchArea {
                     for f in root.m.files: FileCard {
                         f: f;
                         min-width: 280px;
-                        open => { root.open-url(f.url); }
+                        open => { root.open-url("kelma-file:" + f.ext + ":" + f.url); }
                     }
 
                     if root.m.reactions.length > 0: HorizontalLayout {
