@@ -89,6 +89,9 @@ pub struct MediaEvents {
     /// The payload of each incoming Opus RTP packet, in arrival order. Packets are dropped,
     /// not queued without bound, when the reader falls behind.
     pub audio: mpsc::Receiver<OpusPacket>,
+    /// Who is heard right now: the CSRCs of the latest audio packet (the meeting mixer names each
+    /// speaker's `sourceId`), or its SSRC when it names none (one sender). Updated on change only.
+    pub speakers: watch::Receiver<Vec<u32>>,
 }
 
 /// One call's media peer.
@@ -162,10 +165,12 @@ impl MediaSession {
         });
         let (audio_tx, audio_rx) = mpsc::channel(AUDIO_QUEUE);
         let (gathered_tx, gathered) = watch::channel(false);
+        let (speakers_tx, speakers_rx) = watch::channel(Vec::new());
         let handler = Handler {
             state: Arc::clone(&state),
             audio: audio_tx,
             gathered: gathered_tx,
+            speakers: Arc::new(speakers_tx),
         };
         let pc = PeerConnectionBuilder::new()
             .with_configuration(configuration)
@@ -220,6 +225,7 @@ impl MediaSession {
             MediaEvents {
                 state: state_rx,
                 audio: audio_rx,
+                speakers: speakers_rx,
             },
         ))
     }
@@ -383,10 +389,20 @@ impl StateTx {
     }
 }
 
+/// Who a packet carries: the mixer's CSRC list, or the sender itself.
+pub fn heard_sources(csrc: &[u32], ssrc: u32) -> Vec<u32> {
+    if csrc.is_empty() {
+        vec![ssrc]
+    } else {
+        csrc.to_vec()
+    }
+}
+
 struct Handler {
     state: Arc<StateTx>,
     audio: mpsc::Sender<OpusPacket>,
     gathered: watch::Sender<bool>,
+    speakers: Arc<watch::Sender<Vec<u32>>>,
 }
 
 #[async_trait::async_trait]
@@ -423,10 +439,19 @@ impl PeerConnectionEventHandler for Handler {
             return;
         }
         let audio = self.audio.clone();
+        let speakers = Arc::clone(&self.speakers);
         tokio::spawn(async move {
             while let Some(event) = track.poll().await {
                 match event {
                     TrackRemoteEvent::OnRtpPacket(packet) if !packet.payload.is_empty() => {
+                        let heard = heard_sources(&packet.header.csrc, packet.header.ssrc);
+                        speakers.send_if_modified(|now| {
+                            let changed = *now != heard;
+                            if changed {
+                                *now = heard;
+                            }
+                            changed
+                        });
                         // A full queue drops the packet: late audio is worth nothing.
                         if let Err(mpsc::error::TrySendError::Closed(_)) =
                             audio.try_send(packet.payload.to_vec())
@@ -439,5 +464,16 @@ impl PeerConnectionEventHandler for Handler {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::heard_sources;
+
+    #[test]
+    fn the_mixer_names_its_speakers_and_a_lone_sender_names_itself() {
+        assert_eq!(heard_sources(&[7, 9], 1), [7, 9]);
+        assert_eq!(heard_sources(&[], 42), [42]);
     }
 }

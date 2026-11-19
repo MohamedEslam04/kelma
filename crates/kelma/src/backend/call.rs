@@ -142,6 +142,11 @@ pub struct Person {
     pub me: bool,
     /// `organizer`, `presenter`, `attendee` or empty.
     pub role: String,
+    /// Heard right now (the meeting mixer names their audio source).
+    pub speaking: bool,
+    /// When they last spoke, as a rising count (0: not yet); the floating call shows the latest
+    /// speakers first.
+    pub spoke: u64,
 }
 
 /// What a driver reports.
@@ -1140,6 +1145,7 @@ impl FakeDriver {
             lobby,
             me: false,
             role: role.into(),
+            ..Default::default()
         };
         vec![
             p("Amira Hassan", false, false, false, "organizer"),

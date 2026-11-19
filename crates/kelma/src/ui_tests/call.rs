@@ -226,6 +226,7 @@ fn the_roster_lists_people_with_mute_and_hand_and_the_lobby() {
         lobby,
         me,
         role: role.into(),
+        ..Default::default()
     };
     c.fake.emit(Event::Roster(vec![
         p("Guest", false, false, true, false, ""),
@@ -390,6 +391,39 @@ fn the_rail_leaves_the_call_view_and_keeps_the_call_in_its_bar() {
     assert!(cs(&c.h.app).get_minimized());
     assert_eq!(c.h.app.get_view(), "activity");
     assert_eq!(c.phase(), "connected", "the call keeps running");
+}
+
+#[test]
+fn the_floating_call_shows_the_speaker_or_more_people() {
+    use slint::Model;
+    let c = CallHarness::new();
+    c.connected();
+    let p = |name: &str, me, spoke| Person {
+        name: name.into(),
+        me,
+        spoke,
+        speaking: spoke == 2,
+        ..Default::default()
+    };
+    c.fake.emit(Event::Roster(vec![
+        p("Ada Lovelace", false, 1),
+        p("Me", true, 0),
+        p("Bo Ström", false, 2),
+    ]));
+    cs(&c.h.app).set_minimized(true);
+    let mini = cs(&c.h.app).get_mini_people();
+    let names: Vec<String> = mini.iter().map(|p| p.name.to_string()).collect();
+    assert_eq!(
+        names,
+        ["Bo Ström", "Ada Lovelace"],
+        "latest speaker first, without us"
+    );
+    assert!(mini.row_data(0).unwrap().speaking);
+    assert_eq!(cs(&c.h.app).get_mini_layout(), "speaker");
+    click(&c.button("Show more people"));
+    assert_eq!(cs(&c.h.app).get_mini_layout(), "gallery");
+    click(&c.button("Show the speaker"));
+    assert_eq!(cs(&c.h.app).get_mini_layout(), "speaker");
 }
 
 #[test]
