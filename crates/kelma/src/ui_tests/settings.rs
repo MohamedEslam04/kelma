@@ -435,6 +435,27 @@ fn server(privacy: PrivacySettings) -> ServerData {
 }
 
 #[test]
+fn sound_switches_and_meeting_chats_build_the_teams_write() {
+    let ui = window(Home::new("sounds"));
+    let app = &ui.app;
+    open_page(app, "notifications");
+    let mut d = server(PrivacySettings::default());
+    d.notifications = Some(NotificationSettings::from_properties(&serde_json::json!({
+        "userPersonalSettings": serde_json::json!({
+            "toastSettings": {"ShowPreviewInToasts": "On"},
+            "chatSettings": {"meetingChatNotification": "MeetingsUserParticipatesIn"},
+        }).to_string()
+    })));
+    UiHandle::new(app.as_weak()).settings_server(d);
+    assert!(checked(app, "Show message preview"));
+    assert_eq!(store(app).get_meeting_chat(), "participated");
+    press(app, "Show message preview");
+    let first = store(app).get_dry_runs().row_data(0).unwrap().to_string();
+    assert!(first.contains("ShowPreviewInToasts"), "{first}");
+    assert!(first.contains("Off"), "{first}");
+}
+
+#[test]
 fn privacy_toggle_plans_a_dry_run_and_changes_nothing() {
     let ui = window(Home::new("privacy"));
     let app = &ui.app;

@@ -24,8 +24,8 @@ use std::sync::atomic::Ordering;
 use teams_proto::mentions::{Mention, MentionKind};
 use teams_proto::tenants::Tenant;
 use teams_proto::user_settings::{
-    self as us, Change, ContactList, Delivery, Kind, NotificationSettings, PlannedRequest,
-    PrivacyFlag, PrivacySettings,
+    self as us, Change, ContactList, Delivery, Kind, MeetingChatMode, NotificationSettings,
+    PlannedRequest, PrivacyFlag, PrivacySettings, SoundField,
 };
 
 pub const DEVICES_FILE: &str = "devices.json";
@@ -706,6 +706,78 @@ pub fn privacy_rows(p: Option<&PrivacySettings>) -> Vec<ToggleRow> {
 
 // ---------------------------------------------------------------------------------------------
 // Dry runs: Teams changes kelma plans but never sends.
+
+/// The sound and preview switches of Settings › Notifications. Teams keeps them as "On"/"Off".
+const SOUND_SWITCHES: &[(SoundField, &str, &str)] = &[
+    (
+        SoundField::ShowPreviewInToasts,
+        "Show message preview",
+        "Banners show the message text.",
+    ),
+    (
+        SoundField::CallAndMeetingStart,
+        "Sound for incoming calls and meetings starting",
+        "",
+    ),
+    (
+        SoundField::WhenBusyOrInMeetings,
+        "Play sounds when I'm busy or in a meeting",
+        "",
+    ),
+    (
+        SoundField::UrgentAndPriority,
+        "Play sounds for urgent and priority messages",
+        "",
+    ),
+    (
+        SoundField::ShowDuringCallsAndMeetings,
+        "Show notifications during calls and meetings",
+        "",
+    ),
+];
+
+/// The sound and preview switches, as Teams has them.
+pub fn sound_rows(n: Option<&NotificationSettings>) -> Vec<ToggleRow> {
+    SOUND_SWITCHES
+        .iter()
+        .map(|&(f, label, hint)| {
+            let on = n
+                .and_then(|n| n.sound(f))
+                .is_some_and(|v| v.eq_ignore_ascii_case("on"));
+            toggle(f.slug(), label, hint, on, n.is_some())
+        })
+        .collect()
+}
+
+/// The write that turns a sound or preview switch on or off.
+pub fn dry_run_sound(
+    chat_service: &str,
+    current: &NotificationSettings,
+    field: SoundField,
+    on: bool,
+) -> PlannedRequest {
+    let mut planned = current.clone();
+    planned.set_sound(field, if on { "On" } else { "Off" });
+    planned.write_request(chat_service)
+}
+
+/// Which meeting chats notify, as the page's choice (`all`, `participated`, `none`).
+pub fn meeting_chat_slug(n: Option<&NotificationSettings>) -> &'static str {
+    n.and_then(NotificationSettings::meeting_chat_mode)
+        .map(MeetingChatMode::slug)
+        .unwrap_or("")
+}
+
+/// The write that sets which meeting chats notify.
+pub fn dry_run_meeting_chat(
+    chat_service: &str,
+    current: &NotificationSettings,
+    mode: MeetingChatMode,
+) -> PlannedRequest {
+    let mut planned = current.clone();
+    planned.set_meeting_chat_mode(mode);
+    planned.write_request(chat_service)
+}
 
 /// The text shown for a planned request.
 pub fn dry_run_text(r: &PlannedRequest) -> String {

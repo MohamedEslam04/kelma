@@ -1168,3 +1168,18 @@ msgstr "بواسطة GIPHY"
 
 msgid "GIF"
 msgstr "GIF"
+
+msgid "Sounds and previews"
+msgstr "الأصوات والمعاينات"
+
+msgid "Which meeting chats notify you."
+msgstr "أي محادثات الاجتماعات تُرسل لك إشعارات."
+
+msgid "All meetings I'm invited to"
+msgstr "كل الاجتماعات المدعو إليها"
+
+msgid "Meetings I take part in"
+msgstr "الاجتماعات التي أشارك فيها"
+
+msgid "Only ones I unmuted"
+msgstr "فقط التي ألغيت كتمها"

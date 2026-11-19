@@ -222,6 +222,23 @@ export component NotificationsPage inherits VerticalLayout {
         SButton { label: @tr("Test notification"); clicked => { SettingsStore.command("test-notification", ""); } }
     }
     if SettingsStore.notify-status != "": Para { text: SettingsStore.notify-status; }
+    SSection {
+        title: @tr("Sounds and previews");
+        for t in SettingsStore.notify-sounds: SSwitch {
+            label: t.label;
+            hint: t.hint;
+            on: t.on;
+            enabled: t.enabled;
+            toggled(on) => { SettingsStore.command("notify-sound", SettingsStore.j2(t.key, on ? "1" : "0")); }
+        }
+        SChoiceRow {
+            label: @tr("Meeting chats");
+            hint: @tr("Which meeting chats notify you.");
+            options: [{v: "all", l: @tr("All meetings I'm invited to")}, {v: "participated", l: @tr("Meetings I take part in")}, {v: "none", l: @tr("Only ones I unmuted")}];
+            value: SettingsStore.meeting-chat;
+            picked(v) => { SettingsStore.meeting-chat = v; SettingsStore.command("meeting-chat", v); }
+        }
+    }
     for n in SettingsStore.notify: VerticalLayout {
         spacing: 4px;
         padding-bottom: 10px;

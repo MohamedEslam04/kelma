@@ -112,6 +112,9 @@ export global SettingsStore {
     // Opt-in update check (X3.5). `update-status` is the line under the switch.
     in-out property <bool> check-updates: false;
     in-out property <bool> banner-photo: true;
+    // Teams' sound and preview switches, and which meeting chats notify (all | participated | none).
+    in-out property <[SToggle]> notify-sounds;
+    in-out property <string> meeting-chat;
     in-out property <bool> banner-actions: true;
     in-out property <bool> update-checking: false;
     in-out property <bool> update-available: false;

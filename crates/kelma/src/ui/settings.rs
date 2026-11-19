@@ -13,7 +13,7 @@
 //! speaker, mic, camera, noise-suppression, echo-cancellation, all-devices, test-sound, mic-test,
 //! open-files, perm, switch-account, switch-org, add-account, remove-account, refresh-license,
 //! restart, sign-out, view-account, report-problem, check-updates, check-now, release-notes,
-//! status, work-location, status-note, banner-photo, banner-actions.
+//! status, work-location, status-note, banner-photo, banner-actions, notify-sound, meeting-chat.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
@@ -32,7 +32,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use teams_proto::user_settings::{ContactList, Delivery, Kind, NotificationSettings, PrivacyFlag};
+use teams_proto::user_settings::{
+    ContactList, Delivery, Kind, MeetingChatMode, NotificationSettings, PrivacyFlag, SoundField,
+};
 
 /// Polls a running microphone test; `None` when there is no new reading.
 pub type MicPoll = Box<dyn FnMut() -> Option<f32>>;
@@ -545,6 +547,8 @@ fn push_server(w: &AppWindow, c: &Ctl) {
             .collect(),
     ));
     g.set_paused(n.is_some_and(|n| n.paused_until().is_some()));
+    g.set_notify_sounds(toggles(st::sound_rows(n)));
+    g.set_meeting_chat(s(st::meeting_chat_slug(n)));
     let status = match d {
         None => "Reading your Teams settings…".to_string(),
         Some(d) if d.offline => "Offline: your Teams settings were not read.".to_string(),
@@ -993,6 +997,34 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             saved(w, r);
         }
         // --- Notifications (Teams: dry run) ---
+        "notify-sound" | "meeting-chat" => {
+            let mut c = shared.borrow_mut();
+            let Some((base, current)) = with_server_note(&c) else {
+                notice(
+                    w,
+                    "Your Teams settings were not read, so nothing can be changed.",
+                );
+                push_server(w, &c);
+                return;
+            };
+            let req = if name == "notify-sound" {
+                let Some(field) = SoundField::from_slug(parts[0]) else {
+                    return;
+                };
+                st::dry_run_sound(
+                    &base,
+                    &current,
+                    field,
+                    bit(parts.get(1).copied().unwrap_or("")),
+                )
+            } else {
+                let Some(mode) = MeetingChatMode::from_slug(arg) else {
+                    return;
+                };
+                st::dry_run_meeting_chat(&base, &current, mode)
+            };
+            write_or_plan(w, &mut c, req);
+        }
         "notify" | "pause" => {
             let mut c = shared.borrow_mut();
             let Some((base, current)) = with_server_note(&c) else {
