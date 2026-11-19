@@ -133,8 +133,7 @@ pub async fn run(client: &Client, cfg: &session::Config, args: &[String]) -> Res
             )?)?)?;
             let chan = sb["channels"]["tests"].as_str().unwrap_or_default();
             let root = args.get(1).map(String::as_str).unwrap_or_default();
-            let url = feed_url(&client.chat_service().await, chan, "10")
-                .replace("/messages?", "/messages?");
+            let url = feed_url(&client.chat_service().await, chan, "10");
             let v = client
                 .json("props", reqwest::Method::GET, &url, None)
                 .await?;

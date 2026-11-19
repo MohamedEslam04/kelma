@@ -1488,12 +1488,13 @@ impl Engine {
             return;
         };
         let loaded = self.find.lock().unwrap().followed_loaded;
-        if !loaded && !self.offline.load(Ordering::Relaxed) {
-            if let Ok(list) = self.client.followed_threads(100).await {
-                let mut f = self.find.lock().unwrap();
-                f.followed = list;
-                f.followed_loaded = true;
-            }
+        if !loaded
+            && !self.offline.load(Ordering::Relaxed)
+            && let Ok(list) = self.client.followed_threads(100).await
+        {
+            let mut f = self.find.lock().unwrap();
+            f.followed = list;
+            f.followed_loaded = true;
         }
         let on = self
             .followed_now()
