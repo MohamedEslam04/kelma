@@ -60,6 +60,7 @@ mod search;
 mod settings;
 mod store;
 mod team;
+mod tester;
 mod tray;
 mod web;
 
@@ -468,6 +469,7 @@ async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
             println!("cleanup proof: {left} events named 'kelma test*' left in the window");
             outcome?;
         }
+        Some("tester") => tester::run(client, &args[1..]).await?,
         Some("calendar-check") => {
             let made = cal::create_calendar(client, "kelma-test", "lightBlue").await?;
             println!("created calendar, color {}", made.color);
@@ -480,7 +482,7 @@ async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
             println!("cleanup proof: {left} calendars named 'kelma-test' left");
         }
         other => bail!(
-            "unknown calendar check {other:?}; try calendars, rooms, mailbox, schedule, timezones, proposals, permissions, probe-graph, probe-outlook, worklocation, detail, ics, write-check, calendar-check"
+            "unknown calendar check {other:?}; try calendars, rooms, mailbox, schedule, timezones, proposals, permissions, probe-graph, probe-outlook, worklocation, detail, ics, write-check, calendar-check, tester"
         ),
     }
     Ok(())

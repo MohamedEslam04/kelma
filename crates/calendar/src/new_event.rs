@@ -338,11 +338,17 @@ impl NewEvent {
         if let Some(r) = &self.room {
             attendees.push(attendee(r, "resource"));
         }
+        // Exchange refuses a series in an IANA zone (`TimeZoneDefinitionStart`), so a series
+        // goes out in the matching Windows zone.
+        let tz = match &self.recurrence {
+            Some(_) => crate::tz::windows_name(&self.tz).unwrap_or(&self.tz),
+            None => self.tz.as_str(),
+        };
         let mut b = json!({
             "subject": self.subject,
             "body": {"contentType": "html", "content": self.body_html},
-            "start": date_time(&self.start, &self.tz),
-            "end": date_time(&self.end, &self.tz),
+            "start": date_time(&self.start, tz),
+            "end": date_time(&self.end, tz),
             "isAllDay": self.all_day,
             "sensitivity": self.sensitivity.graph(),
             "categories": self.categories,
@@ -368,7 +374,7 @@ impl NewEvent {
             }
         }
         if let Some(r) = &self.recurrence {
-            b["recurrence"] = r.to_json(&self.start[..10], &self.tz);
+            b["recurrence"] = r.to_json(&self.start[..10], tz);
         }
         if with_transaction && let Some(t) = &self.transaction_id {
             b["transactionId"] = t.as_str().into();
@@ -545,6 +551,30 @@ mod tests {
             end,
         });
         e.create_body()["recurrence"].clone()
+    }
+
+    #[test]
+    fn a_series_goes_out_in_the_windows_zone() {
+        // Exchange refuses a series in an IANA zone (`TimeZoneDefinitionStart` invalid), so a
+        // series is sent in the matching Windows zone; a single event keeps the zone it has.
+        let mut e = base();
+        e.tz = "Africa/Cairo".into();
+        assert_eq!(e.create_body()["start"]["timeZone"], "Africa/Cairo");
+        e.recurrence = Some(Recurrence {
+            pattern: Pattern::Daily,
+            interval: 1,
+            end: RecurrenceEnd::After(3),
+        });
+        let b = e.create_body();
+        assert_eq!(b["start"]["timeZone"], "Egypt Standard Time");
+        assert_eq!(b["end"]["timeZone"], "Egypt Standard Time");
+        assert_eq!(
+            b["recurrence"]["range"]["recurrenceTimeZone"],
+            "Egypt Standard Time"
+        );
+        // A zone with no Windows name is sent as it is.
+        e.tz = "Not/AZone".into();
+        assert_eq!(e.create_body()["start"]["timeZone"], "Not/AZone");
     }
 
     #[test]

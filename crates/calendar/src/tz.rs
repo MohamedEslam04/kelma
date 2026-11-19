@@ -180,6 +180,23 @@ pub fn iana_name(zone: &str) -> Option<&'static str> {
         .map(|tz| tz.name())
 }
 
+/// The Windows zone name for a Windows or IANA zone name (`Africa/Cairo` gives
+/// `Egypt Standard Time`), from the same golden rows. `None` when there is none.
+pub fn windows_name(zone: &str) -> Option<&'static str> {
+    let zone = zone.trim();
+    if let Some((w, _)) = WINDOWS_ZONES
+        .iter()
+        .find(|(w, _)| w.eq_ignore_ascii_case(zone))
+    {
+        return Some(w);
+    }
+    let iana = iana_name(zone)?;
+    WINDOWS_ZONES
+        .iter()
+        .find(|(_, i)| *i == iana)
+        .map(|(w, _)| *w)
+}
+
 fn tz(zone: &str) -> Option<Tz> {
     iana_name(zone).and_then(|n| n.parse().ok())
 }
@@ -396,6 +413,21 @@ impl Zone {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn windows_names() {
+        use super::windows_name;
+        assert_eq!(windows_name("Africa/Cairo"), Some("Egypt Standard Time"));
+        assert_eq!(
+            windows_name("egypt standard time"),
+            Some("Egypt Standard Time")
+        );
+        assert_eq!(
+            windows_name("America/Los_Angeles"),
+            Some("Pacific Standard Time")
+        );
+        assert_eq!(windows_name("Not/AZone"), None);
+    }
+
     use super::*;
     use serde_json::json;
 
