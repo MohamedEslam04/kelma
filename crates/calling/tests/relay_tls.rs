@@ -305,6 +305,7 @@ async fn relay_only_media_gathers_a_relay_candidate_through_the_shim() {
     let options = MediaOptions {
         udp_addrs: vec!["127.0.0.1:0".into()],
         relay_only: true,
+        ..Default::default()
     };
     let (session, _events) = MediaSession::with_options(ice, options).await.unwrap();
     let offer = session.create_offer().await.unwrap();

@@ -39,6 +39,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use flate2::{Decompress, FlushDecompress, Status};
 
+use crate::video::VideoRole;
 use crate::{Error, Result, SdpBlob};
 
 /// Plain SDP, as mautrix-teams labels calls through Teams' media servers.
@@ -65,11 +66,14 @@ const TCP_TYPES: [(&str, &str); 3] = [
 const CANDIDATE_EXTRAS: [&str; 3] = ["generation", "network-id", "network-cost"];
 const MAX_INFLATED: usize = 1 << 20;
 const DIRECTIONS: [&str; 4] = ["sendrecv", "sendonly", "recvonly", "inactive"];
-/// The media kinds handed to webrtc-rs. Audio only: no video codec is registered, every other
-/// kind would only be declined, `x-data` fails the whole description (`SdpInvalidValue`), and the
-/// media servers give each kind its own ICE credentials, which webrtc-rs refuses in one bundle
-/// ("multiple conflicting ice-ufrag values"). The rest are answered as stubs.
-const KEPT_KINDS: [&str; 1] = ["audio"];
+// The sections handed to webrtc-rs: every audio section, and for each video role the session has
+// (`MediaOptions::video`) the first video section labelled for it. The rest would only be
+// declined, `x-data` fails the whole description (`SdpInvalidValue`), and the gallery's nine
+// receive-only `main-video` lines need receivers kelma does not have. The rest are answered as
+// stubs. The media servers give each kind its own ICE credentials although one BUNDLE names
+// every mid, which webrtc-rs refuses ("multiple conflicting ice-ufrag values"): kept video
+// sections take the first kept section's credentials, i.e. they are bundled onto the audio
+// transport, as mautrix-teams answers (`teamsmedia/sdp.go` `answerSDP`).
 /// Profiles Teams writes for SRTP lines; with a fingerprint each is DTLS-SRTP.
 const MS_PROFILES: [&str; 4] = [MS_PROFILE, "RTP/SAVPF", "RTP/AVP", "RTP/AVPF"];
 
@@ -220,9 +224,18 @@ fn attr<'a>(line: &'a str, name: &str) -> Option<&'a str> {
 
 // --- inbound ---
 
-/// Teams' SDP (an offer or an answer) rewritten so webrtc-rs accepts it. Fails on SDP keyed with
-/// SDES alone: webrtc-rs only does DTLS-SRTP.
+/// Teams' SDP (an offer or an answer) rewritten so webrtc-rs accepts it, audio only. Fails on
+/// SDP keyed with SDES alone: webrtc-rs only does DTLS-SRTP.
 pub fn from_teams(sdp: &str) -> Result<String> {
+    from_teams_with(sdp, &[], false)
+}
+
+/// [`from_teams`] for a session that also has video lines for `roles`. `offer` is whether `sdp`
+/// is the other side's offer: a kept video section it offers `sendonly` (a media server sending
+/// to us) is read as `sendrecv`, so our transceiver stays able to send on it; the media servers
+/// switch sending with `UpdateMediaDescriptions`, not with SDP directions (mautrix-teams openapi).
+/// [`to_teams_answer`] puts the RFC direction back on the wire.
+pub fn from_teams_with(sdp: &str, roles: &[VideoRole], offer: bool) -> Result<String> {
     let parsed = Parsed::new(sdp);
     if parsed.sections.is_empty() {
         return Err(media("remote SDP has no media section"));
@@ -239,12 +252,15 @@ pub fn from_teams(sdp: &str) -> Result<String> {
     }
     // Sections webrtc-rs is not given go, mids and all; `to_teams_answer` writes them back as
     // stubs from the offer.
+    let keep = kept_sections(&parsed, roles);
     let removed: Vec<&str> = parsed
         .sections
         .iter()
-        .filter(|s| !kept(s))
-        .filter_map(|s| s.iter().find_map(|l| attr(l, "mid")))
+        .zip(&keep)
+        .filter(|(_, k)| !**k)
+        .filter_map(|(s, _)| s.iter().find_map(|l| attr(l, "mid")))
         .collect();
+    let bundle = BundleTransport::of(&parsed, &keep);
     let mut out = Vec::new();
     for line in &parsed.session {
         match line.strip_prefix("a=group:BUNDLE") {
@@ -258,7 +274,7 @@ pub fn from_teams(sdp: &str) -> Result<String> {
             None => out.extend(inbound(line)),
         }
     }
-    for section in parsed.sections.iter().filter(|s| kept(s)) {
+    for (index, section) in parsed.sections.iter().enumerate().filter(|(i, _)| keep[*i]) {
         let m = MediaLine::parse(&section[0]).ok_or_else(|| media("malformed m= line"))?;
         let profile = section[0].split(' ').nth(2).unwrap_or_default();
         if MS_PROFILES.contains(&profile) {
@@ -266,7 +282,20 @@ pub fn from_teams(sdp: &str) -> Result<String> {
         } else {
             out.push(section[0].clone());
         }
-        out.extend(section[1..].iter().filter_map(|l| inbound(l)));
+        let rebundled = bundle.as_ref().filter(|b| b.rewrites(index, section));
+        for line in &section[1..] {
+            if rebundled.is_some() && is_transport_line(line) {
+                continue;
+            }
+            if offer && m.kind == "video" && line == "a=sendonly" {
+                out.push("a=sendrecv".to_owned());
+                continue;
+            }
+            out.extend(inbound(line));
+        }
+        if let Some(b) = rebundled {
+            out.extend(b.credentials.iter().cloned());
+        }
         // Native clients leave the direction out (RFC 4566 default: sendrecv); webrtc-rs then
         // drops the section from its answer.
         let directed = section[1..]
@@ -279,8 +308,92 @@ pub fn from_teams(sdp: &str) -> Result<String> {
     Ok(join(out))
 }
 
-fn kept(section: &[String]) -> bool {
-    MediaLine::parse(&section[0]).is_some_and(|m| KEPT_KINDS.contains(&m.kind))
+/// The video role a section serves, by its `a=label` (a video section without one is
+/// `main-video`, as Teams' default).
+fn role_of(section: &[String]) -> Option<VideoRole> {
+    let m = MediaLine::parse(&section[0])?;
+    if m.kind != "video" {
+        return None;
+    }
+    let label = section
+        .iter()
+        .find_map(|l| attr(l, "label"))
+        .unwrap_or(VideoRole::MainVideo.label());
+    VideoRole::from_label(label)
+}
+
+/// Which sections webrtc-rs is given (see the note on the kept sections above).
+fn kept_sections(parsed: &Parsed, roles: &[VideoRole]) -> Vec<bool> {
+    let mut taken: Vec<VideoRole> = Vec::new();
+    parsed
+        .sections
+        .iter()
+        .map(|s| {
+            let Some(m) = MediaLine::parse(&s[0]) else {
+                return false;
+            };
+            if m.kind == "audio" {
+                return true;
+            }
+            match role_of(s) {
+                Some(r) if roles.contains(&r) && !taken.contains(&r) && m.port != "0" => {
+                    taken.push(r);
+                    true
+                }
+                _ => false,
+            }
+        })
+        .collect()
+}
+
+/// ICE lines that belong to a section's own transport.
+fn is_transport_line(line: &str) -> bool {
+    [
+        "ice-ufrag",
+        "ice-pwd",
+        "candidate",
+        "x-candidate-ipv6",
+        "rtcp",
+    ]
+    .iter()
+    .any(|name| attr(line, name).is_some())
+}
+
+/// The first kept section's ICE credentials, which later kept sections with other credentials
+/// take instead of their own (their candidates go: they belong to another transport).
+struct BundleTransport {
+    first: usize,
+    ufrag: String,
+    credentials: Vec<String>,
+}
+
+impl BundleTransport {
+    fn of(parsed: &Parsed, keep: &[bool]) -> Option<Self> {
+        let first = keep.iter().position(|k| *k)?;
+        let section = &parsed.sections[first];
+        let ufrag = section
+            .iter()
+            .find_map(|l| attr(l, "ice-ufrag"))?
+            .to_owned();
+        let credentials = section
+            .iter()
+            .filter(|l| attr(l, "ice-ufrag").is_some() || attr(l, "ice-pwd").is_some())
+            .cloned()
+            .collect();
+        Some(BundleTransport {
+            first,
+            ufrag,
+            credentials,
+        })
+    }
+
+    fn rewrites(&self, index: usize, section: &[String]) -> bool {
+        index != self.first
+            && section
+                .iter()
+                .find_map(|l| attr(l, "ice-ufrag"))
+                .is_some_and(|u| u != self.ufrag)
+    }
 }
 
 fn inbound(line: &str) -> Option<String> {
@@ -317,32 +430,109 @@ fn candidate_from_teams(value: &str) -> Option<String> {
 
 /// Our (webrtc-rs) offer rewritten into the dialect the Teams calling service reads.
 pub fn to_teams_offer(sdp: &str) -> String {
-    to_teams(sdp, None)
+    to_teams(sdp, None, &[])
 }
 
 /// Our (webrtc-rs) answer to `remote_offer` rewritten into the Teams dialect: one section per
 /// offered section, in the offer's order (those [`from_teams`] removed come back as stubs), each
 /// keeping the `a=label` the offer gave it.
 pub fn to_teams_answer(sdp: &str, remote_offer: &str) -> String {
-    to_teams(sdp, Some(remote_offer))
+    to_teams(sdp, Some(remote_offer), &[])
+}
+
+/// [`to_teams_answer`] for a session with video lines for `roles` (as [`from_teams_with`] read
+/// the offer). Each answered section's direction is made one the offer allows: a line offered
+/// `sendonly` is answered `recvonly` even though webrtc-rs, given `sendrecv`, answered that.
+pub fn to_teams_answer_with(sdp: &str, remote_offer: &str, roles: &[VideoRole]) -> String {
+    to_teams(sdp, Some(remote_offer), roles)
+}
+
+/// The direction an answer may give a line offered `offered`, given what we would do (`ours`).
+pub fn answer_direction(offered: &str, ours: &str) -> &'static str {
+    let we_send = matches!(ours, "sendrecv" | "sendonly");
+    let we_receive = matches!(ours, "sendrecv" | "recvonly");
+    let they_send = matches!(offered, "sendrecv" | "sendonly");
+    let they_receive = matches!(offered, "sendrecv" | "recvonly");
+    match (we_send && they_receive, we_receive && they_send) {
+        (true, true) => "sendrecv",
+        (true, false) => "sendonly",
+        (false, true) => "recvonly",
+        (false, false) => "inactive",
+    }
+}
+
+/// `sdp` (Teams dialect, ours) with the direction of the section labelled for `role` set to
+/// `direction`. A 1:1 re-offer states the sharing line `sendonly` while sharing and `inactive`
+/// otherwise (mautrix-teams `teamsmedia/direct.go`).
+pub fn with_role_direction(sdp: &str, role: VideoRole, direction: &str) -> String {
+    let mut parsed = Parsed::new(sdp);
+    for section in &mut parsed.sections {
+        if role_of(section) != Some(role) {
+            continue;
+        }
+        section.retain(|l| !DIRECTIONS.iter().any(|d| l.strip_prefix("a=") == Some(*d)));
+        let at = section
+            .iter()
+            .position(|l| attr(l, "mid").is_some())
+            .map_or(section.len(), |i| i + 1);
+        section.insert(at, format!("a={direction}"));
+    }
+    let mut lines = parsed.session;
+    lines.extend(parsed.sections.into_iter().flatten());
+    join(lines)
+}
+
+/// The mid of the first section labelled for `role`.
+pub fn mid_of_role(sdp: &str, role: VideoRole) -> Option<String> {
+    Parsed::new(sdp)
+        .sections
+        .iter()
+        .find(|s| role_of(s) == Some(role))
+        .and_then(|s| s.iter().find_map(|l| attr(l, "mid")))
+        .map(str::to_owned)
+}
+
+fn direction_of(section: &[String]) -> &str {
+    section
+        .iter()
+        .find_map(|l| {
+            DIRECTIONS
+                .iter()
+                .find(|d| l.strip_prefix("a=") == Some(**d))
+        })
+        .copied()
+        .unwrap_or("sendrecv")
 }
 
 /// One section per offered section, in the offer's order: ours where we answered a kept section
 /// (matched by mid), else a port-0 stand-in built from the offer's.
-fn in_offer_order(ours: Vec<Vec<String>>, remote_offer: &Parsed) -> Vec<Vec<String>> {
+fn in_offer_order(
+    ours: Vec<Vec<String>>,
+    remote_offer: &Parsed,
+    roles: &[VideoRole],
+) -> Vec<Vec<String>> {
     let mid_of = |s: &[String]| s.iter().find_map(|l| attr(l, "mid")).map(str::to_owned);
     let mut ours: Vec<Option<Vec<String>>> = ours.into_iter().map(Some).collect();
+    let keep = kept_sections(remote_offer, roles);
     let mut out = Vec::new();
-    for theirs in &remote_offer.sections {
+    for (theirs, kept) in remote_offer.sections.iter().zip(keep) {
         let mid = mid_of(theirs);
-        let answered = kept(theirs)
+        let answered = kept
             .then(|| {
                 ours.iter_mut()
                     .find(|s| s.as_ref().is_some_and(|s| mid_of(s) == mid))
                     .and_then(Option::take)
             })
             .flatten();
-        if let Some(section) = answered {
+        if let Some(mut section) = answered {
+            let offered = direction_of(theirs).to_owned();
+            if let Some(i) = section
+                .iter()
+                .position(|l| DIRECTIONS.iter().any(|d| l.strip_prefix("a=") == Some(*d)))
+            {
+                let ours = section[i].trim_start_matches("a=").to_owned();
+                section[i] = format!("a={}", answer_direction(&offered, &ours));
+            }
             out.push(section);
         } else if let Some(m) = MediaLine::parse(&theirs[0]) {
             let mut stub = vec![format!("m={} 0 {MS_PROFILE} {STUB_PAYLOAD}", m.kind)];
@@ -390,12 +580,12 @@ fn bundle_transport(sections: &[Vec<String>]) -> Option<(String, String)> {
     Some((best[5].to_owned(), format!("IN {family} {}", best[4])))
 }
 
-fn to_teams(sdp: &str, remote_offer: Option<&str>) -> String {
+fn to_teams(sdp: &str, remote_offer: Option<&str>, roles: &[VideoRole]) -> String {
     let offer = remote_offer.is_none();
     let mut parsed = Parsed::new(sdp);
     let labels = match remote_offer.map(Parsed::new) {
         Some(theirs) => {
-            parsed.sections = in_offer_order(parsed.sections, &theirs);
+            parsed.sections = in_offer_order(parsed.sections, &theirs, roles);
             labels_by_mid(&theirs)
         }
         None => HashMap::new(),
@@ -434,8 +624,17 @@ fn to_teams(sdp: &str, remote_offer: Option<&str>) -> String {
             continue;
         };
         let mid = section.iter().find_map(|l| attr(l, "mid"));
+        // Our own video lines say what they carry through their stream id (`a=msid:<label> …`).
         let label = mid
             .and_then(|mid| labels.get(mid).map(String::as_str))
+            .or_else(|| {
+                section
+                    .iter()
+                    .find_map(|l| attr(l, "msid"))
+                    .and_then(|v| v.split_whitespace().next())
+                    .and_then(VideoRole::from_label)
+                    .map(VideoRole::label)
+            })
             .or_else(|| default_label(m.kind));
         // A declined section is a stub, offer or answer: the web client keeps the kind, port,
         // profile, mid and label, names payload 34, and the service refuses anything more

@@ -1,6 +1,8 @@
 //! One WebRTC peer (webrtc-rs) carrying a call's audio: Opus over ICE/TURN and DTLS-SRTP.
 //!
-//! [`MediaSession`] wraps one peer connection with a single sendrecv audio transceiver. ICE is
+//! [`MediaSession`] wraps one peer connection with a single sendrecv audio transceiver, plus one
+//! sendrecv H.264 video line per [`VideoRole`] in [`MediaOptions::video`] (a screen share today;
+//! the camera through the same [`VideoSender`] later). ICE is
 //! not trickled: the NGC service carries one SDP blob per direction, so [`MediaSession::create_offer`]
 //! and [`MediaSession::accept_offer`] wait for candidate gathering to finish before they return
 //! the SDP. Every SDP crosses [`sdp`]'s rewrites on the way out and in, so the strings this module
@@ -24,10 +26,10 @@ use rtc::interceptor::Registry;
 use rtc::media::Sample;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
-use rtc::peer_connection::configuration::media_engine::MIME_TYPE_OPUS;
+use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_OPUS};
 use rtc::rtp_transceiver::rtp_sender::{
-    RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
-    RtpCodecKind,
+    RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters,
+    RTCRtpEncodingParameters, RtpCodecKind,
 };
 use tokio::sync::{OnceCell, mpsc, watch};
 use webrtc::media_stream::track_local::TrackLocal;
@@ -40,6 +42,7 @@ use webrtc::peer_connection::{
 };
 use webrtc::rtp_transceiver::RtpSender;
 
+use crate::video::{VideoRole, h264};
 use crate::{Error, IceServer, OpusPacket, Result};
 
 /// The Opus payload type the web client offers.
@@ -61,6 +64,9 @@ pub struct MediaOptions {
     /// Gather and use relayed (TURN) candidates only (ICE transport policy `relay`), to prove
     /// the relay path. Building the session fails when no TURN server is given.
     pub relay_only: bool,
+    /// The video lines the session offers and answers, one per role, each sendrecv H.264. Empty
+    /// (the default) is the audio-only session that was verified live.
+    pub video: Vec<VideoRole>,
 }
 
 impl Default for MediaOptions {
@@ -68,6 +74,7 @@ impl Default for MediaOptions {
         Self {
             udp_addrs: vec!["0.0.0.0:0".to_owned()],
             relay_only: false,
+            video: Vec::new(),
         }
     }
 }
@@ -98,6 +105,7 @@ pub struct MediaEvents {
 pub struct MediaSession {
     pc: Arc<dyn PeerConnection>,
     sender: AudioSender,
+    video: Vec<VideoSender>,
     gathered: watch::Receiver<bool>,
     state: Arc<StateTx>,
 }
@@ -109,6 +117,30 @@ pub struct AudioSender {
     rtp_sender: Arc<dyn RtpSender>,
     ssrc: u32,
     payload_type: Arc<OnceCell<u8>>,
+}
+
+/// Sends encoded video (Annex-B H.264 access units) on the session's line for one [`VideoRole`].
+/// Cheap to clone into a capture task. Frames written before the line is negotiated go nowhere.
+#[derive(Clone)]
+pub struct VideoSender {
+    role: VideoRole,
+    track: Arc<TrackLocalStaticSample>,
+    rtp_sender: Arc<dyn RtpSender>,
+    ssrc: u32,
+}
+
+fn h264_codec(profile_level_id: &str) -> RTCRtpCodec {
+    let fb = |typ: &str, parameter: &str| RTCPFeedback {
+        typ: typ.to_owned(),
+        parameter: parameter.to_owned(),
+    };
+    RTCRtpCodec {
+        mime_type: MIME_TYPE_H264.to_owned(),
+        clock_rate: 90_000,
+        channels: 0,
+        sdp_fmtp_line: h264::fmtp(profile_level_id),
+        rtcp_feedback: vec![fb("nack", ""), fb("nack", "pli"), fb("ccm", "fir")],
+    }
 }
 
 fn media_err(context: &str) -> impl FnOnce(webrtc::error::Error) -> Error + '_ {
@@ -142,6 +174,19 @@ impl MediaSession {
                 RtpCodecKind::Audio,
             )
             .map_err(media_err("register Opus"))?;
+        if !options.video.is_empty() {
+            for (payload_type, profile) in h264::PAYLOADS {
+                media_engine
+                    .register_codec(
+                        RTCRtpCodecParameters {
+                            rtp_codec: h264_codec(profile),
+                            payload_type,
+                        },
+                        RtpCodecKind::Video,
+                    )
+                    .map_err(media_err("register H.264"))?;
+            }
+        }
         let registry = register_default_interceptors(Registry::new(), &mut media_engine)
             .map_err(media_err("interceptors"))?;
         let configuration = RTCConfigurationBuilder::new()
@@ -215,10 +260,15 @@ impl MediaSession {
             ssrc,
             payload_type: Arc::new(OnceCell::new()),
         };
+        let mut video = Vec::new();
+        for role in options.video.iter().copied() {
+            video.push(VideoSender::add_to(&pc, role).await?);
+        }
         Ok((
             Self {
                 pc,
                 sender,
+                video,
                 gathered,
                 state,
             },
@@ -241,9 +291,15 @@ impl MediaSession {
         Ok(sdp::to_teams_offer(&local))
     }
 
+    /// The video roles this session has lines for.
+    pub fn video_roles(&self) -> Vec<VideoRole> {
+        self.video.iter().map(|v| v.role).collect()
+    }
+
     /// Takes the other side's answer to [`Self::create_offer`].
     pub async fn set_answer(&self, answer: &str) -> Result<()> {
-        let desc = RTCSessionDescription::answer(sdp::from_teams(answer)?)
+        let roles = self.video_roles();
+        let desc = RTCSessionDescription::answer(sdp::from_teams_with(answer, &roles, false)?)
             .map_err(media_err("parse answer"))?;
         self.pc
             .set_remote_description(desc)
@@ -279,7 +335,8 @@ impl MediaSession {
                 "offer restarts the media session (audio mid or ICE ufrag changed); answer it on a new MediaSession".into(),
             ));
         }
-        let desc = RTCSessionDescription::offer(sdp::from_teams(offer)?)
+        let roles = self.video_roles();
+        let desc = RTCSessionDescription::offer(sdp::from_teams_with(offer, &roles, true)?)
             .map_err(media_err("parse offer"))?;
         self.pc
             .set_remote_description(desc)
@@ -291,12 +348,31 @@ impl MediaSession {
             .await
             .map_err(media_err("create answer"))?;
         let local = self.set_local(answer).await?;
-        Ok(sdp::to_teams_answer(&local, offer))
+        Ok(sdp::to_teams_answer_with(&local, offer, &roles))
     }
 
     /// A handle for sending our Opus packets from another task.
     pub fn audio_sender(&self) -> AudioSender {
         self.sender.clone()
+    }
+
+    /// The negotiated mid of `role`'s video line (what `UpdateMediaDescriptions` names), once
+    /// an offer or answer placed it.
+    pub async fn video_mid(&self, role: VideoRole) -> Option<String> {
+        for t in self.pc.get_transceivers().await {
+            let Ok(Some(sender)) = t.sender().await else {
+                continue;
+            };
+            if sender.track().stream_id().await == role.label() {
+                return t.mid().await.ok().flatten();
+            }
+        }
+        None
+    }
+
+    /// The sender for `role`'s video line, if the session has one.
+    pub fn video_sender(&self, role: VideoRole) -> Option<VideoSender> {
+        self.video.iter().find(|v| v.role == role).cloned()
     }
 
     /// Sends one 20 ms Opus packet; see [`AudioSender::send`].
@@ -363,6 +439,76 @@ impl AudioSender {
             .write_sample(self.ssrc, payload_type, &sample, &[])
             .await
             .map_err(media_err("send audio"))
+    }
+}
+
+impl VideoSender {
+    /// A sendrecv video line for `role` on `pc`. The track's stream id is the role's label, which
+    /// is how [`sdp::to_teams_offer`] labels the line.
+    async fn add_to(pc: &Arc<dyn PeerConnection>, role: VideoRole) -> Result<Self> {
+        let ssrc = rand::random::<u32>();
+        let track = Arc::new(
+            TrackLocalStaticSample::new(
+                Instant::now(),
+                MediaStreamTrack::new(
+                    role.label().to_owned(),
+                    format!("kelma-{ssrc:08x}"),
+                    role.label().to_owned(),
+                    RtpCodecKind::Video,
+                    vec![RTCRtpEncodingParameters {
+                        rtp_coding_parameters: RTCRtpCodingParameters {
+                            ssrc: Some(ssrc),
+                            ..Default::default()
+                        },
+                        codec: h264_codec(h264::PAYLOADS[0].1),
+                        ..Default::default()
+                    }],
+                ),
+            )
+            .map_err(media_err("video track"))?,
+        );
+        let rtp_sender = pc
+            .add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
+            .await
+            .map_err(media_err("add video track"))?;
+        Ok(VideoSender {
+            role,
+            track,
+            rtp_sender,
+            ssrc,
+        })
+    }
+
+    pub fn role(&self) -> VideoRole {
+        self.role
+    }
+
+    /// Sends one H.264 access unit (Annex-B) that lasts `duration`; the payloader splits it into
+    /// RTP packets (FU-A, STAP-A) with one timestamp.
+    pub async fn send(&self, access_unit: Vec<u8>, duration: Duration) -> Result<()> {
+        // Looked up per frame, not cached: before negotiation the sender lists every registered
+        // H.264 payload type, and a renegotiation can change which one the line uses.
+        let params = self
+            .rtp_sender
+            .get_parameters()
+            .await
+            .map_err(media_err("sender parameters"))?;
+        let payload_type = params
+            .rtp_parameters
+            .codecs
+            .iter()
+            .find(|c| c.rtp_codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_H264))
+            .map(|c| c.payload_type)
+            .ok_or_else(|| Error::Media("video is not negotiated yet".into()))?;
+        let sample = Sample {
+            data: Bytes::from(access_unit),
+            duration,
+            ..Sample::new(Instant::now())
+        };
+        self.track
+            .write_sample(self.ssrc, payload_type, &sample, &[])
+            .await
+            .map_err(media_err("send video"))
     }
 }
 

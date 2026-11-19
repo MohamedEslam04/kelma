@@ -11,6 +11,7 @@ pub mod controls;
 pub mod endpoints;
 pub mod meeting;
 pub mod roster;
+pub mod video;
 
 pub use bodies::{Attached, Conversation, MeetingInfo};
 pub use callbacks::CallbackLinks;

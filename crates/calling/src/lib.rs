@@ -11,6 +11,7 @@
 //! - [`relay`]: TURN credentials from `trap/tokens`.
 //! - [`media`]: one WebRTC peer (webrtc-rs) speaking Opus over ICE/TURN + SRTP.
 //! - [`audio`]: microphone/speaker I/O and the Opus codec.
+//! - [`video`]: video we send (screen share; the camera later): frames, H.264, the portal.
 //! - [`history`]: call history from the `48:calllogs` system thread.
 //!
 //! Protocol sources: rusty-teams `crates/calling` and eisbaw/ost `src/calling` (MIT, code may be
@@ -28,6 +29,7 @@ pub mod ngc_trouter;
 pub mod relay;
 pub mod signaling;
 pub mod types;
+pub mod video;
 
 pub use error::{Error, Result};
 pub use types::*;
