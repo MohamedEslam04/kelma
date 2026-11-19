@@ -19,6 +19,12 @@ export struct CallPerson {
     has-photo: bool,
 }
 
+// One live caption: who speaks and what they said.
+export struct CallCaption {
+    speaker: string,
+    text: string,
+}
+
 export global CallStore {
     // "" (no call) | prejoin | connecting | lobby | connected | reconnecting | ended
     in property <string> phase;
@@ -34,6 +40,13 @@ export global CallStore {
     in property <bool> prejoin-mic: true;
     // Shown only when the call state says the meeting is recorded.
     in property <bool> recording;
+    // The meeting is being transcribed.
+    in property <bool> transcribing;
+    // Live captions are on, and their latest lines (oldest first).
+    in property <bool> captions;
+    in property <[CallCaption]> caption-lines;
+    // Teams' consent notice when recording or transcription starts.
+    in property <string> notice;
     in property <string> error;
     // Why the call ended (the call-ended screen).
     in property <string> ended;
@@ -69,7 +82,8 @@ export global CallStore {
     in-out property <length> mini-dx;
     in-out property <length> mini-dy;
     // (name, argument): join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
-    // leave, close, rejoin, dismiss-error. See `backend/call.rs` `CallCmd::parse`.
+    // leave, close, rejoin, dismiss-error, captions (on|off), recording (start|stop),
+    // transcription (start|stop), dismiss-notice. See `backend/call.rs` `CallCmd::parse`.
     callback command(string, string);
     // The conversation is a meeting's chat (its header shows Join).
     pure callback is-meeting-chat(string) -> bool;

@@ -24,6 +24,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "calls")]
+mod bots;
+#[cfg(feature = "calls")]
 pub(crate) mod live;
 
 /// What kind of call the window shows.
@@ -171,6 +173,23 @@ fn photos(people: &[Person], lookup: impl Fn(&str) -> Option<Pixels>) -> HashMap
 /// Finds a person's profile photo by MRI ([`CallManager::set_photos`]).
 type PhotoLookup = Arc<dyn Fn(&str) -> Option<Pixels> + Send + Sync>;
 
+/// One live caption: who speaks and what they said so far. A later caption with the same `id`
+/// (the utterance) replaces it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Caption {
+    pub id: String,
+    pub speaker: String,
+    pub text: String,
+}
+
+/// How many caption lines the strip shows.
+const CAPTION_LINES: usize = 2;
+
+pub const RECORDING_NOTICE: &str =
+    "Recording has started. By attending this meeting, you consent to being included.";
+pub const TRANSCRIPTION_NOTICE: &str =
+    "Transcription has started. By attending this meeting, you consent to being included.";
+
 /// What a driver reports.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -182,6 +201,12 @@ pub enum Event {
     Roster(Vec<Person>),
     /// The meeting is (not) being recorded.
     Recording(bool),
+    /// The meeting is (not) being transcribed.
+    Transcribing(bool),
+    /// Our live captions are on or off (off: the service refused them, or they stopped).
+    Captions(bool),
+    /// A live caption.
+    Caption(Caption),
     /// Our hand (raised elsewhere, or lowered by an organizer).
     #[cfg(any(test, feature = "calls"))]
     Hand(bool),
@@ -202,6 +227,12 @@ pub enum Control {
         mic: Option<String>,
         speaker: Option<String>,
     },
+    /// Live captions on or off.
+    Captions(bool),
+    /// Start or stop recording the meeting.
+    Recording(bool),
+    /// Start or stop transcribing the meeting.
+    Transcription(bool),
     Leave,
 }
 
@@ -299,6 +330,11 @@ pub struct CallData {
     pub hand: bool,
     pub prejoin_mic: bool,
     pub recording: bool,
+    pub transcribing: bool,
+    pub captions: bool,
+    pub caption_lines: Vec<Caption>,
+    /// Teams' consent notice, shown when recording or transcription starts.
+    pub notice: String,
     pub error: String,
     pub ended: String,
     pub chat_id: String,
@@ -335,6 +371,12 @@ pub struct CallModel {
     pub muted: bool,
     pub hand: bool,
     pub recording: bool,
+    pub transcribing: bool,
+    /// Live captions are on (asked for, and not refused).
+    pub captions: bool,
+    /// The latest captions, oldest first.
+    pub caption_lines: Vec<Caption>,
+    pub notice: String,
     pub roster: Vec<Person>,
     pub error: String,
     pub ended: String,
@@ -457,7 +499,16 @@ impl CallModel {
                 Phase::Reconnecting
             }
             Event::Roster(r) => return replace(&mut self.roster, r),
-            Event::Recording(on) => return replace(&mut self.recording, on),
+            Event::Recording(on) => {
+                self.noticed(on && !self.recording, !on, RECORDING_NOTICE);
+                return replace(&mut self.recording, on);
+            }
+            Event::Transcribing(on) => {
+                self.noticed(on && !self.transcribing, !on, TRANSCRIPTION_NOTICE);
+                return replace(&mut self.transcribing, on);
+            }
+            Event::Captions(on) => return self.set_captions(on),
+            Event::Caption(c) => return self.caption(c),
             #[cfg(any(test, feature = "calls"))]
             Event::Hand(h) => return replace(&mut self.hand, h),
             Event::Error(e) => return replace(&mut self.error, e),
@@ -475,6 +526,41 @@ impl CallModel {
         self.duration = self.connected_at.map(|t| now.saturating_duration_since(t));
         self.hand = false;
         self.recording = false;
+        self.transcribing = false;
+        self.notice.clear();
+        self.set_captions(false);
+    }
+
+    /// Shows `text` as the notice when `show`, clears it when `hide` and it is showing.
+    fn noticed(&mut self, show: bool, hide: bool, text: &str) {
+        if show {
+            self.notice = text.into();
+        } else if hide && self.notice == text {
+            self.notice.clear();
+        }
+    }
+
+    /// Captions on or off; off forgets the lines.
+    pub fn set_captions(&mut self, on: bool) -> bool {
+        if !on {
+            self.caption_lines.clear();
+        }
+        replace(&mut self.captions, on)
+    }
+
+    /// A caption while captions are on: it updates its utterance, or comes last.
+    fn caption(&mut self, c: Caption) -> bool {
+        if !self.captions || c.text.trim().is_empty() {
+            return false;
+        }
+        if let Some(known) = self.caption_lines.iter_mut().find(|l| l.id == c.id) {
+            return replace(known, c);
+        }
+        self.caption_lines.push(c);
+        if self.caption_lines.len() > CAPTION_LINES {
+            self.caption_lines.remove(0);
+        }
+        true
     }
 
     /// "Leave": ends the call on our side at once. False when no call runs.
@@ -575,6 +661,10 @@ impl CallModel {
             hand: self.hand,
             prejoin_mic: self.mic_on,
             recording: self.recording,
+            transcribing: self.transcribing,
+            captions: self.captions,
+            caption_lines: self.caption_lines.clone(),
+            notice: self.notice.clone(),
             error: self.error.clone(),
             ended: self.ended.clone(),
             chat_id: self.chat_id.clone(),
@@ -658,6 +748,13 @@ pub enum CallCmd {
     Close,
     Rejoin,
     DismissError,
+    /// More › Language and speech › Show live captions.
+    Captions(bool),
+    /// More › Record and transcribe › Start/Stop recording.
+    Recording(bool),
+    /// More › Record and transcribe › Start/Stop transcription.
+    Transcription(bool),
+    DismissNotice,
 }
 
 impl CallCmd {
@@ -675,6 +772,10 @@ impl CallCmd {
             "close" => CallCmd::Close,
             "rejoin" => CallCmd::Rejoin,
             "dismiss-error" => CallCmd::DismissError,
+            "captions" => CallCmd::Captions(arg == "on"),
+            "recording" => CallCmd::Recording(arg == "start"),
+            "transcription" => CallCmd::Transcription(arg == "start"),
+            "dismiss-notice" => CallCmd::DismissNotice,
             _ => return None,
         })
     }
@@ -949,6 +1050,18 @@ impl CallManager {
                     m.error.clear();
                     None
                 }
+                CallCmd::Captions(on) => {
+                    let active = m.phase.active();
+                    (active && m.set_captions(on)).then_some(Control::Captions(on))
+                }
+                CallCmd::Recording(start) => m.phase.active().then_some(Control::Recording(start)),
+                CallCmd::Transcription(start) => {
+                    m.phase.active().then_some(Control::Transcription(start))
+                }
+                CallCmd::DismissNotice => {
+                    m.notice.clear();
+                    None
+                }
             }
         };
         if let Some(c) = control {
@@ -1200,6 +1313,12 @@ impl FakeDriver {
 struct FakeHandle {
     log: Arc<Mutex<Vec<String>>>,
     sink: EventSink,
+    /// The demo answers recording, transcription and captions as the service would.
+    demo: bool,
+}
+
+fn start_stop(on: bool) -> &'static str {
+    if on { "start" } else { "stop" }
 }
 
 impl CallHandle for FakeHandle {
@@ -1213,9 +1332,24 @@ impl CallHandle for FakeHandle {
                 mic.as_deref().unwrap_or("default"),
                 speaker.as_deref().unwrap_or("default")
             ),
+            Control::Captions(on) => format!("captions {}", if *on { "on" } else { "off" }),
+            Control::Recording(on) => format!("recording {}", start_stop(*on)),
+            Control::Transcription(on) => format!("transcription {}", start_stop(*on)),
             Control::Leave => "leave".into(),
         };
         self.log.lock().unwrap().push(line);
+        if self.demo {
+            match c {
+                Control::Recording(on) => self.sink.send(Event::Recording(on)),
+                Control::Transcription(on) => self.sink.send(Event::Transcribing(on)),
+                Control::Captions(true) => self.sink.send(Event::Caption(Caption {
+                    id: "demo".into(),
+                    speaker: "Amira Hassan".into(),
+                    text: "Let's start with the design review.".into(),
+                })),
+                _ => {}
+            }
+        }
         if c == Control::Leave {
             self.sink.send(Event::Ended(YOU_LEFT_MEETING.into()));
         }
@@ -1276,6 +1410,7 @@ impl CallDriver for FakeDriver {
         Box::new(FakeHandle {
             log: self.log.clone(),
             sink,
+            demo: self.script.is_some(),
         })
     }
 }
@@ -1489,6 +1624,77 @@ mod tests {
         assert!(!m.apply(Event::Recording(false), t0));
         assert!(m.apply(Event::Recording(true), t0));
         assert!(m.data(t0).recording);
+    }
+
+    #[test]
+    fn recording_shows_the_consent_notice_until_it_stops_or_is_dismissed() {
+        let t0 = Instant::now();
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Connected, t0);
+        m.apply(Event::Recording(true), t0);
+        assert_eq!(m.notice, RECORDING_NOTICE);
+        assert!(!m.apply(Event::Recording(true), t0), "no change, no notice");
+        m.apply(Event::Transcribing(true), t0);
+        assert_eq!(m.notice, TRANSCRIPTION_NOTICE);
+        m.apply(Event::Recording(false), t0);
+        assert_eq!(m.notice, TRANSCRIPTION_NOTICE, "not the recording's");
+        m.apply(Event::Transcribing(false), t0);
+        assert_eq!(m.notice, "");
+        m.apply(Event::Recording(true), t0);
+        m.leave(t0);
+        assert!(!m.recording && m.notice.is_empty());
+    }
+
+    #[test]
+    fn captions_keep_the_latest_lines_and_only_while_on() {
+        let t0 = Instant::now();
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Connected, t0);
+        let c = |id: &str, text: &str| {
+            Event::Caption(Caption {
+                id: id.into(),
+                speaker: "Ada".into(),
+                text: text.into(),
+            })
+        };
+        assert!(!m.apply(c("u0", "ignored"), t0), "captions are off");
+        m.set_captions(true);
+        assert!(m.apply(c("u1", "a"), t0));
+        assert!(m.apply(c("u1", "ab"), t0));
+        assert!(!m.apply(c("u1", "ab"), t0));
+        assert!(!m.apply(c("u9", "  "), t0), "empty");
+        m.apply(c("u2", "b"), t0);
+        m.apply(c("u3", "c"), t0);
+        let texts: Vec<&str> = m.caption_lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["b", "c"]);
+        assert!(m.apply(Event::Captions(false), t0));
+        assert!(m.data(t0).caption_lines.is_empty());
+    }
+
+    #[test]
+    fn the_more_commands_parse() {
+        assert_eq!(
+            CallCmd::parse("captions", "on"),
+            Some(CallCmd::Captions(true))
+        );
+        assert_eq!(
+            CallCmd::parse("captions", "off"),
+            Some(CallCmd::Captions(false))
+        );
+        assert_eq!(
+            CallCmd::parse("recording", "start"),
+            Some(CallCmd::Recording(true))
+        );
+        assert_eq!(
+            CallCmd::parse("transcription", "stop"),
+            Some(CallCmd::Transcription(false))
+        );
+        assert_eq!(
+            CallCmd::parse("dismiss-notice", ""),
+            Some(CallCmd::DismissNotice)
+        );
     }
 
     #[test]
