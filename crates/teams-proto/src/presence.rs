@@ -1,13 +1,14 @@
 //! Presence: read people's availability, set ours, and publish a status note.
 //!
-//! `presence.teams.microsoft.com/v1`, endpoints from `docs/research/open-source.md` §3.1 (rusty,
-//! teams-lite, better-teams, purple-teams). Requests carry the presence-audience bearer token
-//! ([`Audience::Presence`]) and the `x-ms-*` client headers the service insists on. Push updates
-//! arrive on trouter and are already parsed into [`crate::model::Event::Presence`].
+//! The regional unified presence service named in the sign-in answer (`regionGtms.presenceUPS`,
+//! e.g. `teams.cloud.microsoft/ups/noam/v1`, as Teams web uses it), endpoints from
+//! `docs/research/open-source.md` §3.1 (rusty, teams-lite, better-teams, purple-teams). Requests
+//! carry the presence-audience bearer token ([`Audience::Presence`]) and the `x-ms-*` client
+//! headers the service insists on. Push updates arrive on trouter and are already parsed into
+//! [`crate::model::Event::Presence`].
 //!
-//! Live status (2026-11-18, one work tenant): the service answers 401 to every request here,
-//! even with a freshly minted `PresenceRW` token whose `aud` is the presence host, so only the
-//! bodies and parsers are covered (by the shapes in the research notes).
+//! Live status (2026-11-19, one work tenant): the global `presence.teams.microsoft.com` host
+//! answers 401 to this token; the regional service answers `getpresence` with 200.
 
 use crate::broker::Audience;
 use crate::client::Client;
@@ -16,7 +17,6 @@ use crate::error::{Error, Result};
 use reqwest::Method;
 use serde_json::{Value, json};
 
-const BASE: &str = "https://presence.teams.microsoft.com/v1";
 /// Presence lookups per request. Teams web uses 200; the service accepts more.
 const LOOKUP_CHUNK: usize = 200;
 /// Expiry Teams sends for a status note that never expires.
@@ -185,15 +185,16 @@ pub fn activity_body(endpoint_id: &str, active: bool) -> Value {
 }
 
 impl Client {
-    /// One presence request with the audience token and client headers.
-    async fn presence_json(
+    /// One presence request with the audience token and client headers. `path` is relative to
+    /// the regional presence service's `/v1/`.
+    pub async fn presence_json(
         &self,
         context: &'static str,
         method: Method,
         path: &str,
         body: Option<&Value>,
     ) -> Result<Value> {
-        let url = format!("{BASE}/{path}");
+        let url = format!("{}/{path}", self.presence_service().await);
         let corr = uuid::Uuid::new_v4().to_string();
         let (status, text) = self
             .request_as(
