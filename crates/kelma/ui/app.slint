@@ -864,9 +864,11 @@ export component AppWindow inherits Window {
             can-pin: !root.current-is-channel;
             can-follow: root.current-is-channel && root.thread-root == "";
             following: FindStore.menu-following;
+            // One follow path for channel posts: the same call as the post card's menu.
             toggle-follow => {
                 root.menu-open = false;
-                FindStore.command(FindStore.menu-following ? "unfollow-msg" : "follow", root.menu-msg.id);
+                ChannelStore.command(FindStore.menu-following ? "unfollow" : "follow-msg", root.menu-msg.id);
+                FindStore.menu-following = !FindStore.menu-following;
             }
             reply => { root.menu-open = false; root.reply(root.menu-msg.id); }
             forward-one => {

@@ -367,9 +367,11 @@ fn followed_threads_list_new_replies_on_top_and_unfollow_removes_one() {
 }
 
 #[test]
-fn channel_posts_offer_follow_and_unfollow_in_their_menu() {
+fn channel_posts_offer_follow_in_their_menu_and_chats_do_not() {
+    // Following itself goes through the channel post path (ChannelStore), covered by
+    // ui_tests::channels::the_post_menu_can_follow_a_thread_and_the_card_can_unfollow_it.
     let h = Harness::new();
-    let log = wire(&h);
+    let _log = wire(&h);
     h.select(CHANNEL);
     let root = h
         .engine
@@ -382,23 +384,7 @@ fn channel_posts_offer_follow_and_unfollow_in_their_menu() {
             .unwrap(),
     );
     h.app.set_menu_open(true);
-    click(&labelled(&h.app, "Follow thread"));
-    assert_eq!(
-        log.borrow().last().unwrap(),
-        &format!("follow {}", root.id),
-        "the menu follows the post"
-    );
-    assert!(fs(&h.app).get_menu_following());
-
-    // Now it offers Unfollow.
-    h.app.set_menu_open(true);
-    assert!(!find_label(&h.app, "Unfollow thread").is_empty());
-    click(&labelled(&h.app, "Unfollow thread"));
-    assert_eq!(
-        log.borrow().last().unwrap(),
-        &format!("unfollow-msg {}", root.id)
-    );
-    assert!(!fs(&h.app).get_menu_following());
+    assert!(!find_label(&h.app, "Follow thread").is_empty());
 
     // Chats have no Follow item.
     h.select(BACKEND);
