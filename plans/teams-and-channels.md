@@ -87,7 +87,7 @@ channels (posts, replies, files, cards) is in `plans/chat.md` phase 8. This file
   - **BLOCKED: archive team.** `POST MT/beta/teams/<id>/archive` answers `500 ArchiveUnarchiveEnqueuePsOperationFailed` on three more tries from the UI command. The chat-level flag does not archive the group, so the UI menu offers it and shows that error. Delete team is UI and unit tested only (the sandbox team must stay). Not wired: team picture, apps, retention labels.
 - [x] **T2.8 Channel notifications** (all activity, off, custom) and per-channel settings. Shared with the chat plan.
   - **Evidence.** `ui_tests::teams::notification_dialog_sets_the_level_and_replies`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: banner and feed, off and feed set and read back.
-- [ ] **T2.9 Storyline posts** (the "New storyline post" in the new menu) through the Viva Engage token (`plans/store-and-apps.md`). Impact 2, effort 3.
+- [ ] BLOCKED: no way to verify a storyline post without a write on the work account (see the note below). **T2.9 Storyline posts** (the "New storyline post" in the new menu) through the Viva Engage token (`plans/store-and-apps.md`). Impact 2, effort 3.
   - **BLOCKED (2026-11-19).** It cannot be verified without a write. The only unpublished state is a draft (`createUserWallMessage` with `isDraft:true` over Engage GraphQL), which is still a write on the work account, so it waits for the user to approve one throwaway draft. The current REST body is a guess that may post to All Company: `team storyline` now refuses to run. Evidence: `docs/research/storyline.md`.
 
 ## Phase T3: Communities

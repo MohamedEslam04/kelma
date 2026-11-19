@@ -21,6 +21,7 @@ pub mod files;
 pub mod global_search;
 pub mod graph;
 pub mod http;
+pub mod images;
 pub mod lists;
 pub mod mentions;
 pub mod model;

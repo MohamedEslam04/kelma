@@ -110,6 +110,31 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
   1. `POST as-prod.asyncgw.teams.microsoft.com/v1/objects/` `{type:"pish/image", permissions:{<conv>:["read"]}, filename, sharingMode:"Inline"}` → `id`
   2. `PUT …/v1/objects/{id}/content/imgpsh` with the bytes
   3. Send `<img itemtype="http://schema.skype.com/AMSImage" src=".../views/imgo">` ✅ (self notes)
+- **Views of one object** (`GET …/v1/objects/<id>/views/<view>`, `teams_proto::images`) ✅ 2026-11-19 live, on images in the own notes chat:
+
+  | View | Answer |
+  |---|---|
+  | `imgpsh_fullsize` | the **original**: 2160x2880 JPEG, 993309 bytes (a 1732x1299 JPEG answered 132802 bytes). The Teams web viewer uses this one. Content type is right (`image/jpeg`, `image/png`) |
+  | `imgo` | what inline `<img src>` points at: a downscaled copy, 95308 bytes for the same 2160x2880 picture |
+  | `imgt1` | thumbnail, 23249 bytes for the same picture |
+  | `imgpsh` | HTTP 400 (it is the upload content name, not a view) |
+
+  `<img>` tags carry the object id twice (`itemid` and `id="x_<id>"`) and a display size in
+  `width`/`height`. The size can be a fraction (`383.0313014827018`) and its aspect ratio equals the
+  original's, so it is good for sizing a placeholder; only the original has the real pixel size.
+  Pasted images say `alt="image"`, forwarded ones `alt="Media"` or `"shared image"`. kelma tries
+  `imgpsh_fullsize`, then `imgo`.
+- **Token for AMS:** no bearer audience. The request carries the skypetoken twice, as
+  `Cookie: skypetoken_asm=<skypetoken>` and `X-Skypetoken: <skypetoken>` (what `Client::bytes` adds
+  for AMS hosts). The credential only goes to hosts in the AMS allow-list (`ams::is_ams_url`). The region of the object id
+  (`0-eus-d11-…` is `eus`, United States) matches the host in the tag (`us-api.asm.skype.com`);
+  the mapping for ids without a `src` (`ams_url_for_object`) is only checked for `eus`.
+- **OneDrive/SharePoint images** (an image attached as a file, `properties.files`): 🧪 not run live, the
+  own notes chat has no image file. kelma asks Graph first,
+  `GET graph.microsoft.com/v1.0/shares/u!<base64url of the file URL>/driveItem/content` with the
+  Graph bearer (the documented shares API; the redirect to the pre-authenticated download URL
+  drops the bearer), and falls back to the file URL with a bearer for the SharePoint host.
+  Images from any other host are fetched without any credential.
 - **Files** are not AMS: see [Files](#files--2026-11-18) below.
 
 ## Files ✅ 2026-11-18

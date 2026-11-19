@@ -8,6 +8,7 @@
 //! kelma-cli read <conv> [n]       print the last n messages
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
+//! kelma-cli images <conv> [<msg id>|last] [--out <dir>] [--list]  fetch and save the images of one message
 //! kelma-cli calendar [days]       count upcoming events per day and per show-as (read-only)
 //! kelma-cli calendar <check>      live checks of the calendar data layer (calendars, rooms, mailbox, schedule, ...)
 //! kelma-cli calendar permissions --dry-run <role>  print the sharing writes without sending them
@@ -51,6 +52,7 @@ mod drive;
 mod preview_file;
 mod search;
 mod settings;
+mod images;
 mod store;
 mod team;
 mod tray;
@@ -932,6 +934,12 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
+        Some("images") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = images::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("preview") => {
             let (client, cfg) = connect(&paths).await?;
             let r = chatx::preview(&client, &args[1..]).await;
@@ -1113,6 +1121,7 @@ async fn main() -> Result<()> {
                    lists [<site> [<list>]]\n\
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
                    translate <languages|settings|message|channel>\n\
+                   images <conv> [<msg id>|last] [--out <dir>] [--list]\n\
                    preview <url> [--image]\n\
                    settings <notifications|quiet|priority|privacy|blocked|shape>\n\
                    settings set <notify|pause|sound|meeting-chat|meeting-rsvp|privacy|block|unblock|priority-add|priority-remove> ... --dry-run\n\
