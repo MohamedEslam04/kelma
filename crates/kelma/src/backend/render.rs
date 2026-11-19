@@ -125,6 +125,12 @@ impl Engine {
         None
     }
 
+    /// Puts a decoded photo in the avatar cache, as a finished lookup would.
+    #[cfg(test)]
+    pub(crate) fn test_set_avatar(&self, mri: &str, px: Pixels) {
+        self.avatars.lock().unwrap().insert(mri.into(), Some(px));
+    }
+
     pub(super) fn inline_image(self: &Arc<Self>, url: &str) -> Option<Pixels> {
         let mut cache = self.images.lock().unwrap();
         if let Some(p) = cache.get(url) {
