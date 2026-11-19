@@ -79,6 +79,7 @@ impl UiHandle {
         self.run(move |w| {
             w.set_activity_unread(activity);
             w.set_chats_unread(chats);
+            crate::tray_wiring::unread_changed(crate::tray_wiring::unread_total(activity, chats));
         });
     }
 

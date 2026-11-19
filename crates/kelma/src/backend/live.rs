@@ -195,6 +195,9 @@ impl Engine {
     }
 
     fn notify(&self, st: &Store, m: &Message) {
+        if crate::tray_wiring::notifications_muted() {
+            return;
+        }
         let title = st
             .conversation(&m.conversation_id)
             .ok()

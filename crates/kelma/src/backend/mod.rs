@@ -233,6 +233,7 @@ impl Engine {
             me,
             my_name,
             view: Mutex::new(View {
+                collapsed_teams: crate::window_state::collapsed_teams(),
                 filter: "all".into(),
                 limit: PAGE,
                 at_bottom: true,
@@ -347,6 +348,7 @@ impl Engine {
                 {
                     v.collapsed_teams.insert(id);
                 }
+                crate::window_state::remember_collapsed_teams(&v.collapsed_teams);
                 drop(v);
                 self.mark(|d| d.teams = true);
             }
