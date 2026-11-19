@@ -343,6 +343,9 @@ Moved to its own plan: `plans/activity.md`.
     - Sections sync with Teams.
   - **How.** Discover the CSA folders API (the sections already show in Teams' list). Replace the local favorites star with the real Favorites section.
   - **Done when.** kelma shows the same sections and order as Teams, and a move shows up in Teams.
+  - **Status.** Read side and local sections done; the write side is BLOCKED.
+    - Done: kelma reads the account's sections (`GET csa/api/v1/teams/users/me/conversationFolders`, checked live: the 5 sections and their order match Teams) and shows them between Favorites and Chats, each collapsible. New section, Move to section, Remove from section, rename, delete and Alt+Q work. UI tests: `ui_tests/lists.rs`.
+    - BLOCKED: a move does not reach Teams. The web client defines the write calls (`POST`, `PUT /<id>`, `DELETE` on the same URL) but builds their bodies inside its GraphQL layer, which is not in its public JavaScript. A probe would change the real account's sections, which the run rules forbid. Needs a DevTools capture of the create and move requests, then a test on a test account. Until then, changes stay on this computer and win over what Teams has (`docs/protocol.md`, "Chat list sections").
 
 ### 8.2 Chat item menu
 - [ ] Impact 4, effort 2. Seen: right click on a chat.
@@ -352,13 +355,17 @@ Moved to its own plan: `plans/activity.md`.
     - Leave: 6.3.
     - Copy link: `https://teams.microsoft.com/l/chat/{id}/0`.
   - **Done when.** Mute in kelma silences notifications both in kelma and in Teams web.
+  - **Status.** Built, with a DEFERRED live check.
+    - Done: the right-click menu has Mark as unread, Move to section, Remove from section, Mute or Unmute, Copy link, Leave (group chats) and Hide. Mute writes the `alerts` property, reads the state back from the aggregator and silences desktop notifications; Hide writes `unpinnedTime` and keeps the chat out of the list until its next message. UI tests: `ui_tests/lists.rs`.
+    - DEFERRED: needs test tenant (the Done when needs a chat that can be muted and a Teams web session to look at it. `48:notes` refuses the property with `The Thread Id is invalid`, and the run rules forbid muting real chats).
 
 ### 8.3 Filters and list options
-- [ ] Impact 3, effort 1. Seen: filter pills, "…" › Customize view, settings › Chats.
+- [x] Impact 3, effort 1. Seen: filter pills, "…" › Customize view, settings › Chats.
   - **What.**
     - Pills: Unread, Channels, Chats, Meeting chats, plus the filter text box.
     - Options: show message previews, show time stamps, chats and channels combined or separate.
   - **Done when.** UI tests cover each pill and toggle.
+  - **Evidence.** `ui_tests::lists` clicks each pill (Unread, Channels, Chats, Meeting chats, Drafts) and each option (previews, time stamps, chats and channels together) in the "…" menu and checks the rows. The filter text box is the search field above the list.
 
 ### 8.4 Channel posts like Teams
 - [ ] Impact 4, effort 3. Seen: channel Posts tab.
@@ -372,23 +379,31 @@ Moved to its own plan: `plans/activity.md`.
     - Replies come from the existing `;messageid=` threads, and subjects already work.
     - Announcement and "also send to channel" need discovery.
   - **Done when.** The test channel looks and behaves like Teams.
+  - **Status.** Mostly built; not ticked because two entries have no known call and the test channel was not compared with Teams side by side.
+    - Done: post cards with the first two replies inline and "See N more replies" (fetches the thread), the inline reply box (sent through the outbox into the thread), "Post in channel" with subject and Announcement (headline and banner color; the post was stored and read back in the test channel), "See new posts at top", and Follow thread / Unfollow thread (`rcmetadata` `{"f":1}`, read back 1 then 0). Copy post link, Save and Mark as unread are the existing message menu. UI tests: `ui_tests/channels.rs`.
+    - Not built: "Also send to channel" (no such call or property in the web client's public JavaScript) and Pin for a post (the write call was not captured).
 
 ### 8.5 Channel menu
-- [ ] Impact 3, effort 2. Seen: right click on a channel.
+- [x] Impact 3, effort 2. Seen: right click on a channel.
   - **What.** Manage notifications (all activity, off, custom), Hide, Copy link, Leave channel (private channels), Go to team. Admin items stay in the browser.
   - **Done when.** Hiding and per-channel notifications work and sync.
+  - **Evidence.** Live on the sandbox channel: hide flipped the aggregator's `isFavorite` to false and show back to true; the three notification levels were written and read back, then restored. The menu (Manage notifications, Hide or Show, Copy link, Go to team, Leave channel for private channels after a confirmation) is in the chat list and the Teams view; UI tests in `ui_tests/lists.rs`. Leaving a private channel is unit-tested only (it would remove a real member).
 
 ### 8.6 Files in channels
 - [ ] Impact 4, effort 3.
   - **What.** Attach in a channel uploads to the channel's SharePoint folder and posts the file card.
   - **How.** Graph `PUT /drives/{driveId}/items/{folderId}:/{name}:/content`, where the folder comes from `filesFolder` (7.5), then `properties.files` as for chats. No member invite is needed.
   - **Done when.** A test file posts in the test channel and opens for others. Delete it afterwards.
+  - **Status.** Built and run live; DEFERRED for the last clause.
+    - Done: attaching in a channel uploads to the channel's files folder (`filesFolder`, own call in `teams_proto::channel_files`) and posts the file card; a 25-byte file was posted in the test channel, read back as a file card, then the post and the file were deleted.
+    - DEFERRED: needs test tenant (a second account must open the file; the folder is the one every channel member already sees).
 
 ### 8.7 Attach cloud files
-- [ ] Impact 3, effort 3. Seen: attach menu "Attach cloud files".
+- [x] Impact 3, effort 3. Seen: attach menu "Attach cloud files".
   - **What.** A picker with Recent, My files, Shared with me and team libraries; choose files, then send them as file cards.
   - **How.** Graph `/me/drive/recent`, `/me/drive/root/children` and `/me/drive/sharedWithMe`, then share with members and send as in `files.rs`.
   - **Done when.** Attaching an existing OneDrive file works in 48:notes.
+  - **Evidence.** Live: an existing OneDrive file (from `me/drive/recent`) was posted to 48:notes as a file card with its own name, then the post was deleted. The picker (the composer's "…" menu › Attach cloud files) lists My files, Recent, Shared with me and the team libraries; UI test `attach_cloud_files_opens_the_picker_with_recent_and_shared_and_attaches_the_pick`. The invite to chat members is unit-tested only.
 
 ### 8.8 Adaptive cards like Teams
 - [ ] Impact 4, effort 3. Seen: Workflows posts (Release readiness, run reports).
@@ -401,6 +416,9 @@ Moved to its own plan: `plans/activity.md`.
     - Images.
   - **How.** Add a structured card model in `render` (instead of today's flattened text) and a `CardView` Slint component.
   - **Done when.** The Workflows cards in the test channel match Teams side by side.
+  - **Status.** Built; DEFERRED for the side-by-side check.
+    - Done: `teams_proto::chat_card` keeps the card structure (container styles as colored bands, fact sets as two columns, text size, weight, color and subtle, column sets with auto and stretch widths, images, `ActionSet` and card actions, hero cards, the announcement banner) and `CardView` draws it. `Action.OpenUrl` opens the browser; other actions are drawn disabled. The rows, colors and buttons are checked in `ui_tests/channels.rs`.
+    - DEFERRED: needs test tenant (a Workflows bot posting into a test channel; the sandbox has none, so there was nothing to compare with Teams).
 
 ---
 

@@ -20,7 +20,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(crate) mod activity;
+mod channels;
 pub(crate) mod drive;
+mod lists;
 mod people;
 mod teams;
 
@@ -62,6 +64,8 @@ fn chat_row(c: ChatData) -> ChatRow {
         draft: c.draft,
         mention: c.mention,
         group: c.group,
+        muted: c.muted,
+        channel: c.channel,
     }
 }
 
@@ -139,6 +143,8 @@ fn msg(m: MsgData) -> Msg {
         receipt: m.receipt.into(),
         receipt_names: m.receipt_names.into(),
         flash: m.flash,
+        card: channels::card_rows(m.card),
+        headline: m.headline.into(),
     }
 }
 
@@ -363,10 +369,11 @@ impl UiHandle {
                         channels: model(
                             t.channels
                                 .into_iter()
-                                .map(|(id, name, unread)| ChannelRow {
+                                .map(|(id, name, unread, hidden)| ChannelRow {
                                     id: id.into(),
                                     name: name.into(),
                                     unread,
+                                    hidden,
                                 })
                                 .collect(),
                         ),

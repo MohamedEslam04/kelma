@@ -2,6 +2,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ChatRow, TeamRow } from "types.slint";
 import { Avatar, Icon, IconButton, Pill, SectionHeader } from "widgets.slint";
+import { ChannelMenu, ItemMenu, ListStore, OptionRow, SectionHead } from "lists.slint";
 import { CommunitiesSection } from "teams_page.slint";
 import { TeamsStore } from "teams_store.slint";
 
@@ -53,9 +54,10 @@ component ChatItem inherits Rectangle {
                     horizontal-alignment: root.data.rtl-title ? right : left;
                 }
                 if root.data.mention: Text { text: "@"; color: Theme.accent; font-size: 13px; font-weight: 700; horizontal-stretch: 0; vertical-alignment: center; accessible-role: text; accessible-label: "You were mentioned"; }
-                Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; }
+                if ListStore.show-times: Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; }
+                if root.data.muted: Text { text: "🔕"; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; accessible-role: text; accessible-label: "Muted"; }
             }
-            HorizontalLayout {
+            if ListStore.show-previews: HorizontalLayout {
                 spacing: 4px;
                 if root.data.draft: Text { text: "Draft:"; color: #e97a5f; font-size: 12px; horizontal-stretch: 0; }
                 Text {
@@ -81,6 +83,7 @@ component ChatItem inherits Rectangle {
         clicked => { root.clicked(); }
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.up {
+                if root.data.channel { ListStore.command("channel-menu", root.data.id); }
                 item-menu.show();
             }
         }
@@ -98,17 +101,14 @@ component ChatItem inherits Rectangle {
         x: parent.width - 190px;
         y: parent.height - 8px;
         width: 180px;
-        height: root.data.group ? 72px : 40px;
-        Rectangle {
-            background: #2b2b2b;
-            border-radius: 6px;
-            border-width: 1px;
-            border-color: Theme.border;
-            VerticalLayout {
-                padding: 4px;
-                MenuItem { label: "Mark as unread"; clicked => { root.mark-unread(); } }
-                if root.data.group: MenuItem { label: "Leave"; clicked => { root.leave(); } }
-            }
+        height: menu.menu-height;
+        close-policy: close-on-click-outside;
+        menu := ItemMenu {
+            data: root.data;
+            in-section: root.data.section != "favorites" && root.data.section != "chats" && root.data.section != "channels";
+            mark-unread => { root.mark-unread(); }
+            leave => { root.leave(); }
+            done => { item-menu.close(); }
         }
     }
 }
@@ -134,9 +134,6 @@ export component Sidebar inherits Rectangle {
     callback manage-teams();
     callback open-community(string);
 
-    property <bool> favorites-open: true;
-    property <bool> chats-open: true;
-    property <bool> channels-open: true;
     property <bool> communities-open: true;
 
     width: 320px;
@@ -167,15 +164,23 @@ export component Sidebar inherits Rectangle {
                 clicked => { list-menu.show(); }
             }
         }
-        if root.view == "chat": HorizontalLayout {
+        if root.view == "chat": VerticalLayout {
             padding-left: 12px;
             padding-bottom: 8px;
             spacing: 6px;
-            alignment: start;
-            Pill { label: "Unread"; active: root.filter == "unread"; clicked => { root.filter = root.filter == "unread" ? "all" : "unread"; root.set-filter(root.filter); } }
-            Pill { label: "Channels"; active: root.filter == "channels"; clicked => { root.filter = root.filter == "channels" ? "all" : "channels"; root.set-filter(root.filter); } }
-            Pill { label: "Chats"; active: root.filter == "chats"; clicked => { root.filter = root.filter == "chats" ? "all" : "chats"; root.set-filter(root.filter); } }
-            Pill { label: "Drafts"; active: root.filter == "drafts"; clicked => { root.filter = root.filter == "drafts" ? "all" : "drafts"; root.set-filter(root.filter); } }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Pill { label: "Unread"; active: root.filter == "unread"; clicked => { root.filter = root.filter == "unread" ? "all" : "unread"; root.set-filter(root.filter); } }
+                Pill { label: "Channels"; active: root.filter == "channels"; clicked => { root.filter = root.filter == "channels" ? "all" : "channels"; root.set-filter(root.filter); } }
+                Pill { label: "Chats"; active: root.filter == "chats"; clicked => { root.filter = root.filter == "chats" ? "all" : "chats"; root.set-filter(root.filter); } }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Pill { label: "Meeting chats"; active: root.filter == "meetings"; clicked => { root.filter = root.filter == "meetings" ? "all" : "meetings"; root.set-filter(root.filter); } }
+                Pill { label: "Drafts"; active: root.filter == "drafts"; clicked => { root.filter = root.filter == "drafts" ? "all" : "drafts"; root.set-filter(root.filter); } }
+            }
         }
         Rectangle { height: 1px; background: #2b2b2b; }
 
@@ -184,8 +189,8 @@ export component Sidebar inherits Rectangle {
                 padding: 6px;
                 spacing: 1px;
                 alignment: start;
-                SectionHeader { label: "Favorites"; expanded <=> root.favorites-open; }
-                if root.favorites-open: VerticalLayout { for c in root.chats-favorites: ChatItem {
+                SectionHeader { label: "Favorites"; expanded <=> ListStore.favorites-open; }
+                if ListStore.favorites-open: VerticalLayout { for c in root.chats-favorites: ChatItem {
                     data: c;
                     selected: c.id == root.current-id;
                     clicked => { root.select-chat(c.id); }
@@ -193,8 +198,19 @@ export component Sidebar inherits Rectangle {
                     mark-unread => { root.mark-unread(c.id); }
                     leave => { root.leave-chat(c.id); }
                 } }
-                SectionHeader { label: "Chats"; expanded <=> root.chats-open; }
-                if root.chats-open: VerticalLayout { for c in root.chats-main: ChatItem {
+                for sec in ListStore.sections: VerticalLayout {
+                    SectionHead { section: sec; toggle => { ListStore.command("section-toggle", sec.id); } }
+                    if sec.expanded: VerticalLayout { for c in sec.items: ChatItem {
+                        data: c;
+                        selected: c.id == root.current-id;
+                        clicked => { root.select-chat(c.id); }
+                        toggle-favorite => { root.toggle-favorite(c.id); }
+                        mark-unread => { root.mark-unread(c.id); }
+                        leave => { root.leave-chat(c.id); }
+                    } }
+                }
+                SectionHeader { label: "Chats"; expanded <=> ListStore.chats-open; }
+                if ListStore.chats-open: VerticalLayout { for c in root.chats-main: ChatItem {
                     data: c;
                     selected: c.id == root.current-id;
                     clicked => { root.select-chat(c.id); }
@@ -202,8 +218,8 @@ export component Sidebar inherits Rectangle {
                     mark-unread => { root.mark-unread(c.id); }
                     leave => { root.leave-chat(c.id); }
                 } }
-                SectionHeader { label: "Teams and channels"; expanded <=> root.channels-open; }
-                if root.channels-open: VerticalLayout { for c in root.chats-channels: ChatItem {
+                if !ListStore.combined: SectionHeader { label: "Teams and channels"; expanded <=> ListStore.channels-open; }
+                if ListStore.channels-open && !ListStore.combined: VerticalLayout { for c in root.chats-channels: ChatItem {
                     data: c;
                     selected: c.id == root.current-id;
                     clicked => { root.select-chat(c.id); }
@@ -247,15 +263,33 @@ export component Sidebar inherits Rectangle {
                                 padding-left: 50px;
                                 spacing: 6px;
                                 Text {
-                                    text: ch.name;
-                                    color: Theme.fg;
+                                    text: ch.hidden ? ch.name + " (hidden)" : ch.name;
+                                    color: ch.hidden ? Theme.fg-subtle : Theme.fg;
                                     font-size: 13px;
                                     font-weight: ch.unread ? 700 : 400;
+                                    font-italic: ch.hidden;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
                             }
-                            ct := TouchArea { mouse-cursor: pointer; clicked => { root.select-channel(ch.id, t.name + " › " + ch.name); } }
+                            ct := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.select-channel(ch.id, t.name + " › " + ch.name); }
+                                pointer-event(e) => {
+                                    if e.button == PointerEventButton.right && e.kind == PointerEventKind.up {
+                                        ListStore.command("channel-menu", ch.id);
+                                        ch-menu.show();
+                                    }
+                                }
+                            }
+                            ch-menu := PopupWindow {
+                                x: parent.width - 200px;
+                                y: parent.height - 4px;
+                                width: 190px;
+                                height: cm.menu-height;
+                                close-policy: close-on-click-outside;
+                                cm := ChannelMenu { channel: ch.id; done => { ch-menu.close(); } }
+                            }
                         }
                     }
                 }
@@ -264,10 +298,10 @@ export component Sidebar inherits Rectangle {
     }
 
     list-menu := PopupWindow {
-        x: parent.width - 200px;
+        x: parent.width - 240px;
         y: 48px;
-        width: 188px;
-        height: 40px;
+        width: 228px;
+        height: 6 * 32px + 9px;
         Rectangle {
             background: #2b2b2b;
             border-radius: 6px;
@@ -276,6 +310,12 @@ export component Sidebar inherits Rectangle {
             VerticalLayout {
                 padding: 4px;
                 MenuItem { label: "Mark all as read"; clicked => { root.mark-all-read(); } }
+                MenuItem { label: "New section"; clicked => { ListStore.dialog-target = ""; ListStore.dialog-text = ""; ListStore.dialog = "new-section"; } }
+                MenuItem { label: "Collapse all sections"; clicked => { ListStore.command("collapse-all", ""); } }
+                Rectangle { height: 1px; background: Theme.border; }
+                OptionRow { label: "Show message previews"; checked: ListStore.show-previews; clicked => { ListStore.command("option", "previews\u{9}" + (ListStore.show-previews ? "off" : "on")); } }
+                OptionRow { label: "Show time stamps"; checked: ListStore.show-times; clicked => { ListStore.command("option", "times\u{9}" + (ListStore.show-times ? "off" : "on")); } }
+                OptionRow { label: "Chats and channels together"; checked: ListStore.combined; clicked => { ListStore.command("option", "combined\u{9}" + (ListStore.combined ? "off" : "on")); } }
             }
         }
     }

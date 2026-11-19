@@ -50,6 +50,8 @@ export component MessageMenu inherits Rectangle {
     in property <bool> saved;
     // Pinning for everyone is a chat feature; channel posts use another endpoint.
     in property <bool> can-pin: true;
+    // Channel posts can be followed, so replies to them notify.
+    in property <bool> can-follow: false;
     callback reply();
     callback forward-one();
     callback forward-many();
@@ -57,6 +59,7 @@ export component MessageMenu inherits Rectangle {
     callback toggle-save();
     callback pin();
     callback mark-unread();
+    callback follow();
     callback edit();
     callback delete();
 
@@ -86,6 +89,7 @@ export component MessageMenu inherits Rectangle {
             clicked => { root.toggle-save(); }
         }
         if root.can-pin: MenuItem { label: "Pin for everyone"; icon: @image-url("icons/pin.svg"); clicked => { root.pin(); } }
+        if root.can-follow: MenuItem { label: "Follow thread"; icon: @image-url("icons/thread.svg"); clicked => { root.follow(); } }
         MenuItem { label: "Mark as unread"; icon: @image-url("icons/unread.svg"); clicked => { root.mark-unread(); } }
         if root.mine: MenuItem { label: "Edit"; icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
         if root.mine: MenuItem { label: "Delete"; icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }

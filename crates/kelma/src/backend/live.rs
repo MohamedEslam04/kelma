@@ -195,6 +195,10 @@ impl Engine {
     }
 
     fn notify(&self, st: &Store, m: &Message) {
+        // Muted chats and channels set to "Off" stay silent here, like in Teams.
+        if self.lists_silenced(&m.conversation_id) {
+            return;
+        }
         let title = st
             .conversation(&m.conversation_id)
             .ok()

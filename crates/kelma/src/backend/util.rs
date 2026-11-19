@@ -24,6 +24,8 @@ fn props_json(m: &Message) -> String {
         "f": m.files.iter().map(|f| json!({"name": f.name, "url": f.url, "type": f.file_type})).collect::<Vec<_>>(),
         "s": m.subject,
         "m": super::mentions::store_value(&m.mentions),
+        "c": m.card,
+        "t": m.announcement.as_ref().map(|a| a.title.as_str()),
     })
     .to_string()
 }
