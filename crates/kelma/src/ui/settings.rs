@@ -1081,8 +1081,7 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 return;
             };
             let on = bit(parts.get(2).copied().unwrap_or(""));
-            c.local.grants.set(app, p, on);
-            let r = c.local.save_grants();
+            let r = c.local.set_grant(app, p, on);
             push_perms(w, &c);
             saved(w, r);
         }
