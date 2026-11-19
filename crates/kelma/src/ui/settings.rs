@@ -13,7 +13,7 @@
 //! speaker, mic, camera, noise-suppression, echo-cancellation, all-devices, test-sound, mic-test,
 //! open-files, perm, switch-account, switch-org, add-account, remove-account, refresh-license,
 //! restart, sign-out, view-account, report-problem, check-updates, check-now, release-notes,
-//! status, work-location, status-note.
+//! status, work-location, status-note, banner-photo, banner-actions.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
@@ -446,6 +446,8 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_system_time_zone(s(iana_time_zone::get_timezone().unwrap_or_default()));
     g.set_startup(toggles(st::startup_rows(gp)));
     g.set_check_updates(gp.check_updates);
+    g.set_banner_photo(gp.banner_photo);
+    g.set_banner_actions(gp.banner_actions);
 
     let x = &l.a11y;
     g.set_high_contrast(s(st::switch_slug(x.high_contrast)));
@@ -1145,6 +1147,17 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             push_accounts(w, &c);
         }
         // --- Updates (opt-in; local) ---
+        "banner-photo" | "banner-actions" => {
+            let mut c = shared.borrow_mut();
+            if name == "banner-photo" {
+                c.local.general.banner_photo = bit(arg);
+            } else {
+                c.local.general.banner_actions = bit(arg);
+            }
+            let r = c.local.save_general();
+            push_local(w, &c);
+            saved(w, r);
+        }
         "check-updates" => {
             let mut c = shared.borrow_mut();
             c.local.general.check_updates = bit(arg);

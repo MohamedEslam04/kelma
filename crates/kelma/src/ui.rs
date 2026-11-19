@@ -484,6 +484,17 @@ impl UiHandle {
         });
     }
 
+    /// Brings the window to the front (a notification was clicked); `compose` also puts the
+    /// cursor in the message box.
+    pub fn raise(&self, compose: bool) {
+        self.run(move |w| {
+            crate::tray_wiring::show_and_raise(&w);
+            if compose {
+                w.set_focus_tick(w.get_focus_tick() + 1);
+            }
+        });
+    }
+
     /// Count shown on the "Jump to newest" button.
     pub fn new_count(&self, n: usize) {
         self.run(move |w| w.set_new_count(n as i32));

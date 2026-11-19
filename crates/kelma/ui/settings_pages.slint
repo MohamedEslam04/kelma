@@ -207,6 +207,18 @@ export component NotificationsPage inherits VerticalLayout {
             on: SettingsStore.paused;
             toggled(on) => { SettingsStore.command("pause", on ? "1" : "0"); }
         }
+        SSwitch {
+            label: @tr("Show the sender's photo");
+            hint: @tr("Message notifications show who wrote, like Teams.");
+            on: SettingsStore.banner-photo;
+            toggled(on) => { SettingsStore.command("banner-photo", on ? "1" : "0"); }
+        }
+        SSwitch {
+            label: @tr("Show Reply and Like buttons");
+            hint: @tr("Reply opens the chat with the cursor in the message box. Clicking a notification always opens its chat.");
+            on: SettingsStore.banner-actions;
+            toggled(on) => { SettingsStore.command("banner-actions", on ? "1" : "0"); }
+        }
         SButton { label: @tr("Test notification"); clicked => { SettingsStore.command("test-notification", ""); } }
     }
     if SettingsStore.notify-status != "": Para { text: SettingsStore.notify-status; }

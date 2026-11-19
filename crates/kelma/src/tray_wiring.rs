@@ -144,7 +144,7 @@ fn send_unread() {
 }
 
 /// Shows the window and brings it to the front.
-fn show_and_raise(w: &AppWindow) {
+pub(crate) fn show_and_raise(w: &AppWindow) {
     use slint::winit_030::WinitWindowAccessor;
     let _ = w.show();
     w.window().set_minimized(false);

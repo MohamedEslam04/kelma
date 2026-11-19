@@ -18,6 +18,7 @@ mod actions;
 mod activity;
 pub(crate) mod appstore;
 mod attach;
+mod banner;
 mod cal;
 pub(crate) mod call;
 #[cfg(feature = "calls")]

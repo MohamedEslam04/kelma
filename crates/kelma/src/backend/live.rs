@@ -194,7 +194,7 @@ impl Engine {
         });
     }
 
-    fn notify(&self, st: &Store, m: &Message) {
+    fn notify(self: &Arc<Self>, st: &Store, m: &Message) {
         // Muted chats and channels set to "Off" stay silent here, like in Teams, and so does
         // everything while the tray's Mute is on.
         if self.lists_silenced(&m.conversation_id) || crate::tray_wiring::notifications_muted() {
@@ -210,24 +210,21 @@ impl Engine {
             .flatten()
             .map(|c| c.title)
             .unwrap_or_default();
-        let summary = if title.is_empty() || title == m.sender_name {
-            m.sender_name.clone()
-        } else {
-            format!("{} — {}", m.sender_name, title)
-        };
-        let body: String = render::plain_text(&render::parse_teams_html(&m.content))
+        let text: String = render::plain_text(&render::parse_teams_html(&m.content))
             .chars()
             .take(200)
             .collect();
-        let body = super::settings::banner_body(preview, body);
+        let line = super::settings::banner_body(preview, super::banner::friendly(&text));
+        let photo = st.user(&m.sender_mri).ok().flatten().and_then(|u| u.avatar);
         tracing::info!(conversation = %m.conversation_id, "desktop notification");
-        tokio::task::spawn_blocking(move || {
-            let _ = notify_rust::Notification::new()
-                .appname("kelma")
-                .summary(&summary)
-                .body(&body)
-                .icon("mail-message-new")
-                .show();
+        self.show_banner(super::banner::Pending {
+            conversation: m.conversation_id.clone(),
+            message: m.id.clone(),
+            sender: m.sender_name.clone(),
+            sender_mri: m.sender_mri.clone(),
+            title,
+            line,
+            photo,
         });
     }
 }

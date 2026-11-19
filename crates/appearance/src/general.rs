@@ -198,6 +198,12 @@ pub struct GeneralPrefs {
     /// Ask GitHub once per start whether a newer release exists. Off until the user turns it on.
     #[serde(default, deserialize_with = "lenient")]
     pub check_updates: bool,
+    /// Message notifications show the sender's photo.
+    #[serde(deserialize_with = "lenient")]
+    pub banner_photo: bool,
+    /// Message notifications have Reply and Like buttons (where the desktop supports buttons).
+    #[serde(deserialize_with = "lenient")]
+    pub banner_actions: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -211,6 +217,8 @@ impl Default for GeneralPrefs {
             open_in_background: false,
             keep_running_on_close: true,
             check_updates: false,
+            banner_photo: true,
+            banner_actions: true,
         }
     }
 }
@@ -394,6 +402,12 @@ mod tests {
     }
 
     #[test]
+    fn notification_look_is_on_for_files_saved_before_it_existed() {
+        let p: GeneralPrefs = serde_json::from_str(r#"{"auto_start":true}"#).unwrap();
+        assert!(p.banner_photo && p.banner_actions);
+    }
+
+    #[test]
     fn round_trip_and_corrupt_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
@@ -407,6 +421,8 @@ mod tests {
             open_in_background: true,
             keep_running_on_close: true,
             check_updates: true,
+            banner_photo: false,
+            banner_actions: true,
         };
         p.save_to(&path).unwrap();
         assert_eq!(GeneralPrefs::load_from(&path), p);

@@ -1117,3 +1117,15 @@ msgstr "حفظ الرسالة"
 
 msgid "Clear message"
 msgstr "مسح الرسالة"
+
+msgid "Show the sender's photo"
+msgstr "إظهار صورة المرسل"
+
+msgid "Message notifications show who wrote, like Teams."
+msgstr "تظهر في إشعارات الرسائل صورة الشخص الذي كتب الرسالة، مثل Teams."
+
+msgid "Show Reply and Like buttons"
+msgstr "إظهار زرّي الرد والإعجاب"
+
+msgid "Reply opens the chat with the cursor in the message box. Clicking a notification always opens its chat."
+msgstr "زر الرد يفتح المحادثة والمؤشر في مربع الرسالة. والضغط على أي إشعار يفتح محادثته دائماً."

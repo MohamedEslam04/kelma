@@ -548,6 +548,21 @@ fn autostart_switch_follows_and_writes_the_desktop_entry() {
 }
 
 #[test]
+fn notification_look_switches_start_on_and_save() {
+    let home = Home::new("banner-look");
+    let dir = home.paths().config_dir;
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "notifications");
+    assert!(checked(app, "Show the sender's photo"));
+    assert!(checked(app, "Show Reply and Like buttons"));
+    press(app, "Show the sender's photo");
+    press(app, "Show Reply and Like buttons");
+    let g = Local::load(&dir).general;
+    assert!(!g.banner_photo && !g.banner_actions);
+}
+
+#[test]
 fn call_audio_switches_start_on_and_save_with_the_device_prefs() {
     let home = Home::new("call-audio");
     let dir = home.paths().config_dir;
