@@ -7,12 +7,15 @@ pub(crate) mod state;
 
 pub use cmd::DriveCmd;
 use cmd::LinkSettings;
-use state::{Crumb, FileKind, Library, Preview, Section, State};
+use state::{Card, Crumb, FileKind, Library, Preview, Section, State};
 pub use state::{DriveData, RowData};
 
 use super::Engine;
 use crate::data::Pixels;
-use onedrive::{DriveItem, ItemRef, Permission, Recipient, Role, Version, bin, browse, ops, share};
+use onedrive::{
+    DriveItem, ItemRef, NewItem, Permission, PersonFiles, Recipient, Role, Version, bin, browse,
+    insights, ops, share,
+};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use teams_proto::time::now_ms;
@@ -27,6 +30,10 @@ const MAX_OPEN_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_UPLOAD_BYTES: u64 = 250 * 1024 * 1024;
 /// Thumbnails are fetched for this many items of a listing.
 const MAX_THUMBS: usize = 48;
+/// Cards in Home's "For you" row.
+const MAX_CARDS: usize = 8;
+/// Photos and videos per page of Browse files by Media.
+const MEDIA_PAGE: u32 = 50;
 const SHARE_HELP: &str = "Choose people and what they can do, or create a link.";
 
 /// A person in the share dialog's picker.
@@ -92,6 +99,9 @@ pub struct PreviewData {
     pub kind: &'static str,
     pub image: Option<Pixels>,
     pub text: String,
+    /// Pages previews only: the page shown (from 1) and how many there are.
+    pub page: usize,
+    pub pages: usize,
 }
 
 struct Picker {
@@ -113,11 +123,30 @@ struct Share {
     status: String,
 }
 
+/// A document open page by page in the preview dialog.
+struct OpenPages {
+    doc: Arc<preview::Document>,
+    name: String,
+    /// The page shown, from 0.
+    page: usize,
+}
+
+/// How wide a page is rendered, in pixels.
+const PAGE_WIDTH: u32 = 1000;
+
 /// The OneDrive part of the engine's state.
 #[derive(Default)]
 pub struct Drive {
     s: State,
     entered: bool,
+    /// Libraries, favorites and the "For you" cards load once, from whichever feature needs
+    /// them first (the OneDrive view or the cloud-file picker).
+    background_started: bool,
+    /// Who shared files with the user, from the last People listing (a person's files open
+    /// from it).
+    people: Vec<PersonFiles>,
+    /// The PDF (or converted Office file) open in the preview dialog.
+    pages: Option<OpenPages>,
     my_drive_id: Option<String>,
     picker: Option<Picker>,
     share: Option<Share>,
@@ -314,6 +343,69 @@ fn my_files_item() -> DriveItem {
     }
 }
 
+/// Where a thumbnail comes from: a listing that carries its address, or the item itself.
+#[derive(Clone)]
+enum ThumbSource {
+    Url(String),
+    Item(ItemRef),
+}
+
+/// What the People list calls a person.
+fn person_label(p: &onedrive::insights::Person) -> String {
+    [&p.name, &p.address]
+        .into_iter()
+        .find(|s| !s.is_empty())
+        .cloned()
+        .unwrap_or_else(|| "Unknown".into())
+}
+
+/// The People list as rows: one per person, opening to their files.
+fn people_items(people: &[PersonFiles]) -> Vec<DriveItem> {
+    people
+        .iter()
+        .enumerate()
+        .map(|(n, p)| DriveItem {
+            id: format!("person:{n}"),
+            name: person_label(&p.person),
+            is_folder: true,
+            child_count: u32::try_from(p.files.len()).unwrap_or(u32::MAX),
+            modified_ms: p.latest_ms,
+            ..Default::default()
+        })
+        .collect()
+}
+
+/// "Shared by you" as rows. Only drive items can be acted on, so shares of other things (a
+/// page, a mail attachment) are left out; the sharer is the user, so no name is shown.
+fn shared_by_you_items(shared: Vec<insights::Insight>) -> Vec<DriveItem> {
+    shared
+        .iter()
+        .map(insights::Insight::to_drive_item)
+        .filter(|i| !i.id.is_empty() && !i.drive_id.is_empty())
+        .map(|i| DriveItem {
+            modified_by: String::new(),
+            ..i
+        })
+        .collect()
+}
+
+/// Meeting recordings as rows, with the place (`My files` or `<team> › <channel>`) as their
+/// location. Recordings in My files keep their folder path so Open location still works.
+fn recording_items(recs: Vec<onedrive::Recording>) -> Vec<DriveItem> {
+    recs.into_iter()
+        .map(|r| {
+            if r.place == onedrive::around::MY_FILES {
+                r.item
+            } else {
+                DriveItem {
+                    parent_path: r.place,
+                    ..r.item
+                }
+            }
+        })
+        .collect()
+}
+
 /// `drive_id` of the picker's "Recent" and "Shared with me" entries: lists, not folders.
 const VIRTUAL: &str = "@virtual";
 
@@ -407,8 +499,7 @@ impl Engine {
             Enter => {
                 let first = !std::mem::replace(&mut self.drive.lock().unwrap().entered, true);
                 if first {
-                    let e = self.clone();
-                    tokio::spawn(async move { e.drive_background_load().await });
+                    self.drive_start_background();
                     return self.drive_go(Section::Home).await;
                 }
                 self.drive_push();
@@ -419,6 +510,10 @@ impl Engine {
                 }
             }
             OpenRow(id) => self.drive_open_row(&id).await?,
+            // The first crumb of a person's files is the People list.
+            Crumb(0) if matches!(self.drive.lock().unwrap().s.section, Section::Person(_)) => {
+                self.drive_go(Section::People).await?;
+            }
             Crumb(i) => {
                 let g = self.drive.lock().unwrap().s.go_to_crumb(i);
                 if let Some(g) = g {
@@ -434,6 +529,10 @@ impl Engine {
                     d.s.generation
                 };
                 self.drive_push();
+                if self.drive.lock().unwrap().s.section == Section::Home {
+                    let e = self.clone();
+                    tokio::spawn(async move { e.drive_load_cards().await });
+                }
                 self.drive_load(g).await?;
             }
             LoadMore => self.drive_load_more().await?,
@@ -450,6 +549,10 @@ impl Engine {
             }
             NewFolder(name) => self.drive_new_folder(name.trim()).await?,
             NewDoc(kind) => self.drive_new_doc(kind).await?,
+            NewLink(arg) => self.drive_new_link(&arg).await?,
+            NewNotebook(name) => self.drive_new_notebook(name.trim()).await?,
+            NewForms => self.drive_new_forms(),
+            CardOpen(id) => self.drive_card_open(&id).await?,
             UploadFiles => self.drive_upload_pick(false).await?,
             UploadFolder => self.drive_upload_pick(true).await?,
             Drop(path) => self.drive_upload_paths(vec![path]).await?,
@@ -491,6 +594,7 @@ impl Engine {
                     self.ui.drive_info("Details".into(), details_text(&i, fav));
                 }
             }
+            PreviewPage(which) => self.drive_preview_page(&which).await?,
             Sync => self.ui.drive_info("Sync".into(), onedrive::sync_help()),
             Share => self.drive_share_begin().await?,
             ShareSearch(q) => self.drive_share_search(q.trim()).await?,
@@ -515,6 +619,7 @@ impl Engine {
                 d.picker = None;
                 d.share = None;
                 d.versions_of = None;
+                d.pages = None;
             }
         }
         Ok(())
@@ -558,7 +663,16 @@ impl Engine {
         self.drive_push();
     }
 
-    /// Libraries (Quick access) and favorites, which the list needs but should not wait for.
+    /// Starts the background load (libraries, favorites, cards) unless it already started.
+    fn drive_start_background(self: &Arc<Self>) {
+        if !std::mem::replace(&mut self.drive.lock().unwrap().background_started, true) {
+            let e = self.clone();
+            tokio::spawn(async move { e.drive_background_load().await });
+        }
+    }
+
+    /// Libraries (Quick access), favorites and the "For you" cards, which the list needs but
+    /// should not wait for.
     async fn drive_background_load(self: Arc<Self>) {
         if self.drive_offline() {
             let libs = crate::demo::drive_libraries()
@@ -566,13 +680,17 @@ impl Engine {
                 .map(|(drive_id, name)| Library { drive_id, name })
                 .collect();
             let favs = crate::demo::drive_favorites();
-            let mut d = self.drive.lock().unwrap();
-            d.s.libraries = libs;
-            d.s.favorites = favs;
-            drop(d);
+            {
+                let mut d = self.drive.lock().unwrap();
+                d.s.libraries = libs;
+                d.s.favorites = favs;
+            }
             self.drive_push();
+            self.drive_load_cards().await;
             return;
         }
+        let cards = self.clone();
+        tokio::spawn(async move { cards.drive_load_cards().await });
         if let Ok(p) = browse::following(&self.client).await {
             self.drive.lock().unwrap().s.favorites = p.items.into_iter().map(|i| i.id).collect();
             self.drive_push();
@@ -596,7 +714,14 @@ impl Engine {
 
     async fn drive_go(self: &Arc<Self>, section: Section) -> anyhow::Result<()> {
         // Libraries come from the background load; wait for it on first use.
-        let g = self.drive.lock().unwrap().s.go(section);
+        let g = {
+            let mut d = self.drive.lock().unwrap();
+            // Photos and videos are for looking at: start them as tiles.
+            if section == Section::Media {
+                d.s.grid = true;
+            }
+            d.s.go(section)
+        };
         self.drive_push();
         self.drive_load(g).await
     }
@@ -628,15 +753,68 @@ impl Engine {
         self.drive_push();
         if used {
             self.drive_thumbs();
+            if section == Section::Meetings {
+                let e = self.clone();
+                tokio::spawn(async move { e.drive_meetings_everywhere(generation).await });
+            }
         }
         Ok(())
     }
 
-    async fn drive_load_more(self: &Arc<Self>) -> anyhow::Result<()> {
-        let (generation, trail, next) = {
-            let d = self.drive.lock().unwrap();
-            (d.s.generation, d.s.trail.clone(), d.s.next_link.clone())
+    /// Meetings first lists the `Recordings` folder of My files (one request); this adds the
+    /// channel libraries' recordings, which take a request per channel, and swaps the list.
+    async fn drive_meetings_everywhere(self: Arc<Self>, generation: u64) {
+        let items: Vec<DriveItem> = if self.drive_offline() {
+            let mut v = crate::demo::drive_listing("meetings", "", now_ms());
+            v.extend(crate::demo::drive_channel_recordings(now_ms()));
+            v.sort_by_key(|i| std::cmp::Reverse(i.modified_ms));
+            v
+        } else {
+            match onedrive::meeting_recordings(&self.client).await {
+                Ok(r) => recording_items(r),
+                Err(err) => {
+                    tracing::warn!(%err, "meeting recordings failed");
+                    return;
+                }
+            }
         };
+        let used = self
+            .drive
+            .lock()
+            .unwrap()
+            .s
+            .set_listing(generation, items, None);
+        if used {
+            self.drive_push();
+        }
+    }
+
+    async fn drive_load_more(self: &Arc<Self>) -> anyhow::Result<()> {
+        let (generation, trail, next, section) = {
+            let d = self.drive.lock().unwrap();
+            (
+                d.s.generation,
+                d.s.trail.clone(),
+                d.s.next_link.clone(),
+                d.s.section.clone(),
+            )
+        };
+        if section == Section::Media {
+            // The "next link" of Media is the offset of the next page.
+            let Some(from) = next.and_then(|n| n.parse::<u32>().ok()) else {
+                return Ok(());
+            };
+            let page = browse::media(&self.client, from, MEDIA_PAGE).await?;
+            let next = page.more.then(|| (from + MEDIA_PAGE).to_string());
+            self.drive
+                .lock()
+                .unwrap()
+                .s
+                .append_listing(generation, page.items, next);
+            self.drive_push();
+            self.drive_thumbs();
+            return Ok(());
+        }
         let (Some(next), Some(folder)) = (next, trail.last()) else {
             return Ok(());
         };
@@ -652,6 +830,24 @@ impl Engine {
         Ok(())
     }
 
+    /// Who shared files with the user: fetched by the People list, then kept for the person
+    /// lists that open from it.
+    async fn drive_people(&self) -> anyhow::Result<Vec<PersonFiles>> {
+        let (listing, cached) = {
+            let d = self.drive.lock().unwrap();
+            (d.s.section == Section::People, d.people.clone())
+        };
+        let people = if self.drive_offline() {
+            crate::demo::drive_people_files(now_ms())
+        } else if listing || cached.is_empty() {
+            insights::people(&self.client).await?
+        } else {
+            cached
+        };
+        self.drive.lock().unwrap().people = people.clone();
+        Ok(people)
+    }
+
     async fn drive_fetch(
         &self,
         section: &Section,
@@ -659,6 +855,20 @@ impl Engine {
         libs: &[Library],
         next: Option<&str>,
     ) -> anyhow::Result<(Vec<DriveItem>, Option<String>)> {
+        // The People lists work the same online and in the demo (`drive_people` knows which).
+        match section {
+            Section::People => return Ok((people_items(&self.drive_people().await?), None)),
+            Section::Person(name) => {
+                let files = self
+                    .drive_people()
+                    .await?
+                    .into_iter()
+                    .find(|p| &person_label(&p.person) == name)
+                    .map(|p| p.files);
+                return Ok((files.unwrap_or_default(), None));
+            }
+            _ => {}
+        }
         if self.drive_offline() {
             let folder = trail.last().map_or("", |c| c.item_id.as_str());
             return Ok((
@@ -672,6 +882,13 @@ impl Engine {
             Section::Shared => (browse::shared_with_me(c).await?, None),
             Section::Favorites => (browse::following(c).await?.items, None),
             Section::Meetings => (onedrive::recordings(c).await?, None),
+            Section::SharedByYou => (shared_by_you_items(insights::shared_by_me(c).await?), None),
+            Section::Media => {
+                let page = browse::media(c, 0, MEDIA_PAGE).await?;
+                (page.items, page.more.then(|| MEDIA_PAGE.to_string()))
+            }
+            // Answered above, before the demo check.
+            Section::People | Section::Person(_) => (Vec::new(), None),
             Section::Search(q) => (browse::search(c, q).await?, None),
             Section::Libraries => (libs.iter().map(library_item).collect(), None),
             Section::Bin => (
@@ -692,25 +909,44 @@ impl Engine {
         })
     }
 
-    /// Fetches the thumbnails of the listing in the background (grid view only).
+    /// Fetches thumbnails in the background: the "For you" cards on Home, and the tiles of the
+    /// grid view. Tiles whose listing has no thumbnail address (Search hits, so Media) ask for
+    /// it per item.
     fn drive_thumbs(self: &Arc<Self>) {
         if self.drive_offline() {
             return;
         }
-        let (generation, wanted): (u64, Vec<(String, String)>) = {
+        let (generation, wanted): (u64, Vec<(String, ThumbSource)>) = {
             let d = self.drive.lock().unwrap();
-            if !d.s.grid {
-                return;
+            let mut wanted = Vec::new();
+            if d.s.section == Section::Home {
+                wanted.extend(
+                    d.s.cards
+                        .iter()
+                        .filter(|c| !d.s.thumbs.contains_key(&c.id))
+                        .map(|c| (c.id.clone(), ThumbSource::Item(ItemRef::from(&c.item)))),
+                );
             }
-            (
-                d.s.generation,
-                d.s.items
-                    .iter()
-                    .filter(|i| !d.s.thumbs.contains_key(&i.id))
-                    .filter_map(|i| Some((i.id.clone(), i.thumbnail_url.clone()?)))
-                    .take(MAX_THUMBS)
-                    .collect(),
-            )
+            if d.s.grid {
+                let per_item = d.s.section == Section::Media;
+                wanted.extend(
+                    d.s.items
+                        .iter()
+                        .filter(|i| !d.s.thumbs.contains_key(&i.id))
+                        .filter_map(|i| {
+                            let src = match &i.thumbnail_url {
+                                Some(u) => ThumbSource::Url(u.clone()),
+                                None if per_item && !i.drive_id.is_empty() => {
+                                    ThumbSource::Item(ItemRef::from(i))
+                                }
+                                None => return None,
+                            };
+                            Some((i.id.clone(), src))
+                        })
+                        .take(MAX_THUMBS),
+                );
+            }
+            (d.s.generation, wanted)
         };
         if wanted.is_empty() {
             return;
@@ -719,9 +955,16 @@ impl Engine {
         tokio::spawn(async move {
             for batch in wanted.chunks(4) {
                 let mut set = tokio::task::JoinSet::new();
-                for (id, url) in batch.iter().cloned() {
+                for (id, src) in batch.iter().cloned() {
                     let client = e.client.clone();
                     set.spawn(async move {
+                        let url = match src {
+                            ThumbSource::Url(u) => u,
+                            ThumbSource::Item(r) => {
+                                let t = browse::thumbnails(&client, &r).await.ok()?;
+                                t.medium.or(t.small).or(t.large)?
+                            }
+                        };
                         let bytes = client.bytes(&url, &[], 3 * 1024 * 1024).await.ok()?;
                         let px = tokio::task::spawn_blocking(move || {
                             super::util::decode_image(&bytes, 240, 160)
@@ -745,14 +988,61 @@ impl Engine {
         });
     }
 
+    /// Loads Home's "For you" cards and fetches their thumbnails.
+    async fn drive_load_cards(self: Arc<Self>) {
+        let found = if self.drive_offline() {
+            crate::demo::drive_for_you(now_ms())
+        } else {
+            match insights::for_you(&self.client, MAX_CARDS).await {
+                Ok(c) => c,
+                Err(err) => {
+                    tracing::warn!(%err, "for you failed");
+                    return;
+                }
+            }
+        };
+        let cards: Vec<Card> = found
+            .into_iter()
+            .map(|c| {
+                let item = c.insight.to_drive_item();
+                Card {
+                    id: format!("card:{}/{}", item.drive_id, item.id),
+                    item,
+                    reason: c.reason,
+                }
+            })
+            .collect();
+        self.drive.lock().unwrap().s.cards = cards;
+        self.drive_push();
+        self.drive_thumbs();
+    }
+
+    /// A "For you" card was clicked: open its file like a row of the list.
+    async fn drive_card_open(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let item = {
+            let d = self.drive.lock().unwrap();
+            d.s.cards
+                .iter()
+                .find(|c| c.id == id)
+                .map(|c| c.item.clone())
+        };
+        match item {
+            Some(item) => self.drive_open_item(item).await,
+            None => Ok(()),
+        }
+    }
+
     async fn drive_open_row(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
         let item = self.drive.lock().unwrap().s.item(id).cloned();
         let Some(item) = item else {
             return Ok(());
         };
-        if self.drive.lock().unwrap().s.section == Section::Bin {
+        let section = self.drive.lock().unwrap().s.section.clone();
+        match section {
             // Deleted items cannot be opened; Restore is the way back.
-            return Ok(());
+            Section::Bin => return Ok(()),
+            Section::People => return self.drive_go(Section::Person(item.name)).await,
+            _ => {}
         }
         self.drive_open_item(item).await
     }
@@ -793,11 +1083,113 @@ impl Engine {
                     },
                     image: None,
                     text,
+                    page: 0,
+                    pages: 0,
                 });
+            }
+            Preview::Pages if item.size <= MAX_OPEN_BYTES => {
+                if !self.drive_open_pages(&item).await {
+                    self.drive_open_browser_preview(&item).await?;
+                }
             }
             Preview::Player => self.drive_open_external(item).await?,
             _ => self.drive_open_browser_preview(&item).await?,
         }
+        Ok(())
+    }
+
+    /// Shows a PDF, or an Office file converted to PDF by Graph (a read-only request), page by
+    /// page inside kelma. False when that is not possible (password, a type Graph cannot convert,
+    /// a damaged file): the caller falls back to the browser.
+    async fn drive_open_pages(self: &Arc<Self>, item: &DriveItem) -> bool {
+        self.drive_status(format!("Opening {}...", item.name));
+        let bytes: Vec<u8> = if self.drive_offline() {
+            crate::demo::drive_pdf(&[(612, 792), (612, 792), (612, 792)])
+        } else {
+            let fetched = if FileKind::of(item) == FileKind::Pdf {
+                ops::download(&self.client, item)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                preview::office_to_pdf(&self.client, &item.drive_id, &item.id, &item.name)
+                    .await
+                    .map_err(|e| e.to_string())
+            };
+            match fetched {
+                Ok(b) => b,
+                Err(err) => {
+                    tracing::info!(%err, "no page preview, using the browser");
+                    self.drive_status("");
+                    return false;
+                }
+            }
+        };
+        let doc = match tokio::task::spawn_blocking(move || preview::Document::open(bytes)).await {
+            Ok(Ok(doc)) if doc.page_count() > 0 => Arc::new(doc),
+            _ => {
+                self.drive_status("");
+                return false;
+            }
+        };
+        self.drive.lock().unwrap().pages = Some(OpenPages {
+            doc,
+            name: item.name.clone(),
+            page: 0,
+        });
+        self.drive_status("");
+        self.drive_show_page().await
+    }
+
+    /// Renders the current page of the open document and shows it.
+    async fn drive_show_page(self: &Arc<Self>) -> bool {
+        let Some((doc, name, page)) = self
+            .drive
+            .lock()
+            .unwrap()
+            .pages
+            .as_ref()
+            .map(|p| (p.doc.clone(), p.name.clone(), p.page))
+        else {
+            return false;
+        };
+        let pages = doc.page_count();
+        let image = tokio::task::spawn_blocking(move || {
+            let r = doc.render_page(page, PAGE_WIDTH).ok()?;
+            Some(Pixels::clone_from_slice(&r.pixels, r.width, r.height))
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some(image) = image else {
+            self.drive_status("Couldn't draw this page");
+            return false;
+        };
+        self.ui.drive_preview(PreviewData {
+            title: name,
+            kind: "pages",
+            image: Some(image),
+            text: String::new(),
+            page: page + 1,
+            pages,
+        });
+        true
+    }
+
+    /// Previous or next page of the open document.
+    async fn drive_preview_page(self: &Arc<Self>, which: &str) -> anyhow::Result<()> {
+        {
+            let mut d = self.drive.lock().unwrap();
+            let Some(p) = d.pages.as_mut() else {
+                return Ok(());
+            };
+            let last = p.doc.page_count().saturating_sub(1);
+            p.page = match which {
+                "next" => (p.page + 1).min(last),
+                "prev" => p.page.saturating_sub(1),
+                _ => p.page,
+            };
+        }
+        self.drive_show_page().await;
         Ok(())
     }
 
@@ -945,6 +1337,57 @@ impl Engine {
         self.drive_refresh_select(Some(made.id)).await?;
         self.drive_status("");
         Ok(())
+    }
+
+    /// New > Link: a `.url` file that opens `address`. The argument is `name, a newline, then the address`.
+    async fn drive_new_link(self: &Arc<Self>, arg: &str) -> anyhow::Result<()> {
+        let (name, url) = arg.split_once('\n').unwrap_or((arg, ""));
+        let (name, url) = (name.trim(), url.trim());
+        if name.is_empty() || !(url.starts_with("https://") || url.starts_with("http://")) {
+            self.drive_status("A link needs a name and a web address that starts with https://");
+            return Ok(());
+        }
+        if self.demo_note() {
+            return Ok(());
+        }
+        let parent = self.drive_target();
+        let what = NewItem::Link {
+            name: name.to_owned(),
+            url: url.to_owned(),
+        };
+        match onedrive::create::create(&self.client, &parent, &what).await? {
+            onedrive::Created::Item(made) => self.drive_refresh_select(Some(made.id)).await,
+            onedrive::Created::Notebook(_) => Ok(()),
+        }
+    }
+
+    /// New > OneNote notebook: OneNote keeps notebooks in its own place, not in the open folder,
+    /// so the notebook opens in the browser once it exists.
+    async fn drive_new_notebook(self: &Arc<Self>, name: &str) -> anyhow::Result<()> {
+        if name.is_empty() || self.demo_note() {
+            return Ok(());
+        }
+        let what = NewItem::Notebook {
+            name: name.to_owned(),
+        };
+        self.drive_status(format!("Creating notebook {name}..."));
+        let made = onedrive::create::create(&self.client, &self.drive_target(), &what).await?;
+        if let onedrive::Created::Notebook(nb) = made {
+            if nb.web_url.starts_with("https://") {
+                let _ = open::that_detached(&nb.web_url);
+            }
+            self.drive_status(format!("Created notebook {}", nb.name));
+        }
+        Ok(())
+    }
+
+    /// New > Forms survey: Forms has no API for this client, so it opens in the browser.
+    fn drive_new_forms(&self) {
+        if self.drive_offline() {
+            self.drive_status("Demo mode: Microsoft Forms would open in the browser");
+            return;
+        }
+        let _ = open::that_detached(onedrive::FORMS_NEW_URL);
     }
 
     async fn drive_upload_pick(self: &Arc<Self>, folder: bool) -> anyhow::Result<()> {
@@ -1571,6 +2014,8 @@ impl Engine {
             self.drive_status("Select something first");
             return Ok(());
         }
+        // The chat can open the picker before the OneDrive view ever did.
+        self.drive_start_background();
         {
             let mut d = self.drive.lock().unwrap();
             let libs = d.s.libraries.clone();
@@ -1850,6 +2295,8 @@ fn preview_of(item: &DriveItem, bytes: &[u8]) -> PreviewData {
             kind: "image",
             image: super::util::decode_image(bytes, 1600, 1100),
             text: String::new(),
+            page: 0,
+            pages: 0,
         },
         p => PreviewData {
             title: item.name.clone(),
@@ -1863,6 +2310,8 @@ fn preview_of(item: &DriveItem, bytes: &[u8]) -> PreviewData {
                 .chars()
                 .take(MAX_TEXT_CHARS)
                 .collect(),
+            page: 0,
+            pages: 0,
         },
     }
 }
@@ -2024,5 +2473,71 @@ mod tests {
         let p = preview_of(&img, &png);
         assert_eq!(p.kind, "image");
         assert!(p.image.is_some());
+    }
+    #[test]
+    fn people_become_rows_that_count_their_files() {
+        let people = crate::demo::drive_people_files(1_795_000_000_000);
+        let rows = people_items(&people);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "person:0");
+        assert_eq!(rows[0].name, "Sara Hassan");
+        assert_eq!(rows[0].child_count, 2);
+        assert!(rows[0].is_folder);
+        assert_eq!(rows[0].modified_ms, people[0].latest_ms);
+        // A person with no name is shown by address, then as Unknown.
+        let nameless = onedrive::Person {
+            address: "a@example.test".into(),
+            ..Default::default()
+        };
+        assert_eq!(person_label(&nameless), "a@example.test");
+        assert_eq!(person_label(&onedrive::Person::default()), "Unknown");
+    }
+
+    #[test]
+    fn shared_by_you_keeps_drive_items_and_drops_the_sharer_name() {
+        let me = onedrive::Person {
+            name: "Me".into(),
+            ..Default::default()
+        };
+        let with_item = insights::Insight {
+            title: "Plan.docx".into(),
+            item: Some(ItemRef::new("d1", "i1")),
+            shared_by: Some(me.clone()),
+            ..Default::default()
+        };
+        let page = insights::Insight {
+            title: "A page".into(),
+            shared_by: Some(me),
+            ..Default::default()
+        };
+        let rows = shared_by_you_items(vec![with_item, page]);
+        assert_eq!(rows.len(), 1, "only drive items can be acted on");
+        assert_eq!(
+            (rows[0].name.as_str(), rows[0].id.as_str()),
+            ("Plan.docx", "i1")
+        );
+        assert_eq!(rows[0].modified_by, "");
+    }
+
+    #[test]
+    fn recordings_show_their_place_and_my_files_keeps_its_path() {
+        let item = |name: &str, path: &str| DriveItem {
+            id: name.into(),
+            name: name.into(),
+            parent_path: path.into(),
+            ..Default::default()
+        };
+        let rows = recording_items(vec![
+            onedrive::Recording {
+                item: item("mine.mp4", "/Recordings"),
+                place: "My files".into(),
+            },
+            onedrive::Recording {
+                item: item("team.mp4", "/General/Recordings"),
+                place: "Sales \u{203a} General".into(),
+            },
+        ]);
+        assert_eq!(rows[0].parent_path, "/Recordings");
+        assert_eq!(rows[1].parent_path, "Sales \u{203a} General");
     }
 }
