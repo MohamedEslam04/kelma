@@ -145,7 +145,8 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
         }
         Some("history") => history(client, &args[2..]).await?,
         Some("join") => join(client, &args[2..]).await?,
-        _ => bail!("usage: kelma-cli call <probe|meetings|history|join>"),
+        Some("listen") => listen(client, &args[2..]).await?,
+        _ => bail!("usage: kelma-cli call <probe|meetings|history|join|listen>"),
     }
     Ok(())
 }
@@ -637,6 +638,58 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     );
     if !args.iter().any(|a| a == "--speaker") {
         println!("received audio written to {out}");
+    }
+    drop(trouter);
+    Ok(())
+}
+
+/// `call listen [--secs N] [--dump DIR]`: registers the calling trouter and reports what it pushes
+/// (incoming call invitations and call callbacks) without answering anything. The ringing call is
+/// left to the other clients; nothing is accepted, rejected or redirected from here.
+async fn listen(client: &Client, args: &[String]) -> Result<()> {
+    let secs: u64 = opt(args, "--secs")
+        .map(str::parse)
+        .transpose()?
+        .unwrap_or(120);
+    let dump = opt(args, "--dump").map(std::path::PathBuf::from);
+    if let Some(d) = &dump {
+        std::fs::create_dir_all(d)?;
+    }
+    let (trouter, mut rx) = NgcTrouter::spawn(client.clone(), calling_epid(client.epid()));
+    let mut n = 0u32;
+    let run = tokio::time::timeout(Duration::from_secs(secs), async {
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                NgcEvent::Connected { surl } => {
+                    println!("listening on {} for {secs} s", host(&surl))
+                }
+                NgcEvent::Disconnected(r) => println!("calling trouter: disconnected: {r}"),
+                NgcEvent::Push(p) => {
+                    n += 1;
+                    if let Some(d) = &dump {
+                        let f = d.join(format!("push-{n:03}.json"));
+                        let doc = serde_json::json!({"url": p.url, "body": p.body});
+                        std::fs::write(&f, serde_json::to_vec_pretty(&doc)?)?;
+                    }
+                    match classify(&p.url, &p.body) {
+                        NgcPush::Invitation(inv) => println!(
+                            "#{n} incoming call: modalities {:?}, caller name {}, offer {}, links [{}]",
+                            inv.modalities,
+                            if inv.from.display_name.is_some() { "present" } else { "missing" },
+                            if inv.offer.is_some() { "present" } else { "missing" },
+                            inv.links.0.keys().cloned().collect::<Vec<_>>().join(", "),
+                        ),
+                        NgcPush::Call { event, .. } => println!("#{n} call callback: {event:?}"),
+                        NgcPush::Other { url, .. } => println!("#{n} other push: {}", host(&url)),
+                    }
+                }
+            }
+        }
+        anyhow::Ok(())
+    })
+    .await;
+    if run.is_err() {
+        println!("stopped after {secs} s, {n} push(es)");
     }
     drop(trouter);
     Ok(())
