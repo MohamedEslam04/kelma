@@ -346,7 +346,7 @@ export component SearchView inherits Rectangle {
                 }
                 if FindStore.more && !FindStore.searching: Rectangle {
                     height: 44px;
-                    Pill { label: "Show more messages"; x: 12px; y: 8px; clicked => { FindStore.command("more", ""); } }
+                    Pill { label: FindStore.tab == "all" || FindStore.tab == "messages" ? "Show more messages" : "Show more results"; x: 12px; y: 8px; clicked => { FindStore.command("more", ""); } }
                 }
             }
             if FindStore.searching && FindStore.results.length == 0: Text {

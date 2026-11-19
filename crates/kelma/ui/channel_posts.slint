@@ -154,7 +154,6 @@ component PostCard inherits Rectangle {
             more-reactions(x, y) => { root.more-reactions(root.item.post.id, x, y); }
             menu(x, y) => { root.menu(root.item.post, x, y); }
             open-url(u) => { root.open-url(u); }
-            open-image(u) => { root.open-url(u); }
             profile(id) => { root.profile(id); }
             retry-send => { root.retry-send(root.item.post.id); }
             discard-send => { root.discard-send(root.item.post.id); }
@@ -174,7 +173,6 @@ component PostCard inherits Rectangle {
             more-reactions(x, y) => { root.more-reactions(r.id, x, y); }
             menu(x, y) => { root.menu(r, x, y); }
             open-url(u) => { root.open-url(u); }
-            open-image(u) => { root.open-url(u); }
             profile(id) => { root.profile(id); }
             retry-send => { root.retry-send(r.id); }
             discard-send => { root.discard-send(r.id); }

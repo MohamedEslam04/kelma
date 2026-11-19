@@ -26,6 +26,7 @@ mod find;
 mod lists;
 mod live;
 mod manage;
+mod media;
 mod mentions;
 mod outbox;
 mod people;
@@ -60,6 +61,9 @@ pub use manage::{
     CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
     SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
 };
+pub use media::MediaCmd;
+#[cfg(test)]
+pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
@@ -118,6 +122,8 @@ pub enum Cmd {
     Lists(ListsCmd),
     /// The channel Posts tab (plan 8.4).
     Channels(ChannelCmd),
+    /// The image viewer, Translate and link previews (plan 9.5 to 9.7).
+    Media(MediaCmd),
     Apps(AppsCmd),
     SetEnterSends(bool),
     /// The composer text changed.
@@ -213,6 +219,7 @@ pub struct Engine {
     drive: Mutex<drive::Drive>,
     lists: Mutex<lists::State>,
     channels: Mutex<channels::State>,
+    media: Mutex<media::State>,
     apps: Mutex<appstore::Apps>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
@@ -271,6 +278,7 @@ impl Engine {
             drive: Mutex::new(drive::Drive::default()),
             lists: Mutex::new(lists::State::default()),
             channels: Mutex::new(channels::State::default()),
+            media: Mutex::new(media::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
@@ -549,6 +557,7 @@ impl Engine {
             Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::Lists(c) => self.lists_cmd(c).await?,
             Cmd::Channels(c) => self.channel_cmd(c).await?,
+            Cmd::Media(c) => self.media_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,

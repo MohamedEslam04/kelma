@@ -9,6 +9,7 @@ mod external;
 mod find_data;
 mod lists_data;
 mod markdown;
+mod media_data;
 mod mention;
 mod reactions;
 mod shortcuts;
@@ -390,6 +391,14 @@ fn main() -> anyhow::Result<()> {
         window.global::<TeamsStore>().on_command(move |name, arg| {
             if let Some(c) = backend::TeamsCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Teams(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<MediaStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::MediaCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Media(c));
             }
         });
     }
