@@ -27,6 +27,9 @@ export global CallStore {
     in property <string> timer: "00:00";
     in property <bool> muted;
     in property <bool> hand;
+    // The call negotiated a screen-sharing line (Share works), and we are sharing.
+    in property <bool> can-share;
+    in property <bool> sharing;
     // The pre-join microphone switch.
     in property <bool> prejoin-mic: true;
     // Shown only when the call state says the meeting is recorded.
@@ -61,7 +64,7 @@ export global CallStore {
     in-out property <length> mini-dx;
     in-out property <length> mini-dy;
     // (name, argument): join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
-    // leave, close, rejoin, dismiss-error. See `backend/call.rs` `CallCmd::parse`.
+    // share, leave, close, rejoin, dismiss-error. See `backend/call.rs` `CallCmd::parse`.
     callback command(string, string);
     // The conversation is a meeting's chat (its header shows Join).
     pure callback is-meeting-chat(string) -> bool;

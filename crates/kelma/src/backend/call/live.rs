@@ -13,6 +13,7 @@
 //! what the speaker plays, as `call join --mic --speaker` runs it (`KELMA_NO_AEC=1` turns it off,
 //! like `--no-aec`). `KELMA_CALL_DUMP=<dir>` writes every raw calling push there.
 
+use super::share::{self, Share, ShareMsg};
 use super::{
     CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
     Link, Person, Phase, live_phase, recording_state,
@@ -23,7 +24,7 @@ use calling::audio::{
     spawn_decoder_playback,
 };
 use calling::invitation::{CallEvent, NgcPush, classify};
-use calling::media::{AudioSender, MediaEvents, MediaOptions, MediaSession, MediaState};
+use calling::media::{AudioSender, MediaEvents, MediaSession, MediaState};
 use calling::ngc_trouter::{CallPush, NgcEvent, NgcTrouter};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::roster::{Presence, roster_snapshot};
@@ -418,7 +419,7 @@ async fn join_meeting(
         .await
         .context("the calling connection didn't come up")?;
     let ice = hub.ice_servers(&ngc.endpoints().region).await;
-    let (media, events) = MediaSession::with_options(ice.clone(), MediaOptions::default()).await?;
+    let (media, events) = MediaSession::with_options(ice.clone(), share::media_options()).await?;
     let offer = media.create_offer().await?;
     let me = hub.client.self_mri().await?;
     let s = CallSession::new(&surl, &me, &opts.name);
@@ -463,6 +464,7 @@ async fn join_meeting(
         meeting: true,
         keep_alive: None,
         link: Link::New,
+        share: Share::default(),
     };
     Ok((call, events, pushes))
 }
@@ -510,6 +512,7 @@ pub fn adopt(
             meeting: false,
             keep_alive: None,
             link: Link::Connected,
+            share: Share::default(),
         };
         call.start_keep_alive(None);
         call.run(events, pushes, opts, sink, rx, vec![]).await;
@@ -733,6 +736,7 @@ struct Call {
     meeting: bool,
     keep_alive: Option<JoinHandle<()>>,
     link: Link,
+    share: Share,
 }
 
 impl Call {
@@ -805,7 +809,8 @@ impl Call {
                     sink.send(Event::Error(format!("Audio device: {e:#}")));
                 }
             }
-            Control::Leave => {}
+            // Handled by the run loop (`share_control`), which owns the picker's channel.
+            Control::Share(_) | Control::Leave => {}
         }
     }
 
@@ -847,13 +852,16 @@ impl Call {
         let (mut in_lobby, mut was_in_call) = (false, false);
         let mut shown: Option<Phase> = None;
         let mut own_hand: Option<bool> = None;
+        let (share_tx, mut share_rx) = mpsc::unbounded_channel();
         let ended: Option<String> = loop {
             let mut roster_changed = false;
             tokio::select! {
                 c = ctl.recv() => match c {
                     None | Some(Control::Leave) => break None,
+                    Some(Control::Share(on)) => self.share_control(on, &share_tx, &sink).await,
                     Some(c) => self.control(c, &mut audio, &sink).await,
                 },
+                Some(m) = share_rx.recv() => self.share_msg(m, &share_tx, &sink).await,
                 heard = speakers_rx.changed(), if speakers_open => match heard {
                     Ok(()) => {
                         let sources = speakers_rx.borrow_and_update().clone();
@@ -890,6 +898,10 @@ impl Call {
                         CallEvent::MediaRenegotiation { offer, links } => {
                             let swapped = self.renegotiate(&offer, &links, &sender_tx, &sink).await;
                             if let Some(ev) = swapped {
+                                // The share was sent on the old session's line.
+                                if self.share.stop().await {
+                                    sink.send(Event::Error("Screen sharing stopped: the call's media restarted.".into()));
+                                }
                                 state_rx = ev.state;
                                 speakers_rx = ev.speakers;
                                 speakers_open = true;
@@ -912,9 +924,11 @@ impl Call {
                                 sink.send(Event::Recording(on));
                             }
                         }
-                        CallEvent::Progress { .. }
-                        | CallEvent::MediaAcknowledgement { .. }
-                        | CallEvent::Other { .. } => {}
+                        CallEvent::MediaAcknowledgement { links } => self.links.0.extend(links.0),
+                        CallEvent::Other { event, body, .. } if event == "controlVideoStreaming" => {
+                            self.share.sender_control(&body);
+                        }
+                        CallEvent::Progress { .. } | CallEvent::Other { .. } => {}
                     }
                 }
             }
@@ -927,6 +941,11 @@ impl Call {
                         sink.send(Event::Hand(hand));
                     }
                 }
+            }
+            let can_share = self.link == Link::Connected
+                && share::available(&self.media, &self.links, self.meeting);
+            if let Some((available, sharing)) = self.share.changed(can_share) {
+                sink.send(Event::Share { available, sharing });
             }
             let phase = live_phase(self.link, in_lobby && self.meeting, was_in_call);
             was_in_call |= phase == Phase::Connected;
@@ -955,6 +974,7 @@ impl Call {
         if let Some(k) = self.keep_alive.take() {
             k.abort();
         }
+        self.share.stop().await;
         audio.stop();
         let _ = self.media.close().await;
         for f in forwarders {
@@ -963,6 +983,92 @@ impl Call {
         self.hub.clear_active(self.s.callbacks.session_id());
         if let Some(reason) = ended {
             sink.send(Event::Ended(reason));
+        }
+    }
+
+    /// Share / Stop sharing: the picker opens without blocking the call (its answer comes as a
+    /// [`ShareMsg`]); stopping tells the service at once.
+    async fn share_control(
+        &mut self,
+        on: bool,
+        tx: &mpsc::UnboundedSender<ShareMsg>,
+        sink: &EventSink,
+    ) {
+        if on {
+            self.share.pick(tx);
+        } else if self.share.stop().await {
+            self.tell_share(false, sink).await;
+        }
+    }
+
+    async fn share_msg(
+        &mut self,
+        m: ShareMsg,
+        tx: &mpsc::UnboundedSender<ShareMsg>,
+        sink: &EventSink,
+    ) {
+        match m {
+            ShareMsg::Picked(Ok(Some(capture))) => {
+                match self.share.start(capture, &self.media, tx) {
+                    Ok(()) => self.tell_share(true, sink).await,
+                    Err(e) => {
+                        tracing::warn!(%e, "screen share not started");
+                        self.share.stop().await;
+                        sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
+                    }
+                }
+            }
+            ShareMsg::Picked(Ok(None)) => self.share.picked_nothing(),
+            ShareMsg::Picked(Err(e)) => {
+                self.share.picked_nothing();
+                tracing::warn!(%e, "screen capture failed");
+                sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
+            }
+            ShareMsg::Ended => {
+                if self.share.stop().await {
+                    self.tell_share(false, sink).await;
+                }
+            }
+        }
+    }
+
+    /// Tells the service our sharing line sends (or stopped): `UpdateMediaDescriptions` in a
+    /// meeting, a re-offer in a 1:1 call.
+    async fn tell_share(&mut self, sending: bool, sink: &EventSink) {
+        let r = if self.meeting {
+            share::tell_meeting(
+                &self.ngc,
+                &self.s,
+                &self.links,
+                &self.media,
+                &mut self.share,
+                sending,
+            )
+            .await
+        } else {
+            // The answer comes inline or on `call/mediaAnswer/`, which `apply_answer` takes.
+            self.answered = false;
+            match share::reoffer_direct(&self.ngc, &self.s, &self.links, &self.media, sending).await
+            {
+                Ok(Some(a)) => {
+                    self.apply_answer(&a).await;
+                    Ok(())
+                }
+                Ok(None) => Ok(()),
+                Err(e) => {
+                    self.answered = true;
+                    Err(e)
+                }
+            }
+        };
+        if let Err(e) = r {
+            tracing::warn!("share not signalled: {e:#}");
+            if sending {
+                self.share.stop().await;
+                sink.send(Event::Error(
+                    "Others can't see your screen: the call refused the share.".into(),
+                ));
+            }
         }
     }
 
@@ -999,7 +1105,7 @@ impl Call {
                 if self.ice.is_empty() {
                     self.ice = self.hub.ice_servers(&self.ngc.endpoints().region).await;
                 }
-                match MediaSession::with_options(self.ice.clone(), MediaOptions::default()).await {
+                match MediaSession::with_options(self.ice.clone(), share::media_options()).await {
                     Ok((fresh, ev)) => match fresh.accept_offer(&sdp).await {
                         Ok(ans) => {
                             let old = std::mem::replace(&mut self.media, fresh);

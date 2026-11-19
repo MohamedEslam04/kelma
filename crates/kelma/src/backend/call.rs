@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "calls")]
 pub(crate) mod live;
+#[cfg(feature = "calls")]
+pub(crate) mod share;
 
 /// What kind of call the window shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +165,12 @@ pub enum Event {
     /// Our hand (raised elsewhere, or lowered by an organizer).
     #[cfg(any(test, feature = "calls"))]
     Hand(bool),
+    /// Whether the call can share a screen now, and whether we are sharing.
+    #[cfg(any(test, feature = "calls"))]
+    Share {
+        available: bool,
+        sharing: bool,
+    },
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.
@@ -180,6 +188,8 @@ pub enum Control {
         mic: Option<String>,
         speaker: Option<String>,
     },
+    /// Start (the desktop's ScreenCast picker opens) or stop sharing the screen.
+    Share(bool),
     Leave,
 }
 
@@ -275,6 +285,8 @@ pub struct CallData {
     pub timer: String,
     pub muted: bool,
     pub hand: bool,
+    pub can_share: bool,
+    pub sharing: bool,
     pub prejoin_mic: bool,
     pub recording: bool,
     pub error: String,
@@ -312,6 +324,9 @@ pub struct CallModel {
     pub mic_on: bool,
     pub muted: bool,
     pub hand: bool,
+    /// The driver can share a screen in this call (it negotiated a sharing line).
+    pub can_share: bool,
+    pub sharing: bool,
     pub recording: bool,
     pub roster: Vec<Person>,
     pub error: String,
@@ -438,6 +453,11 @@ impl CallModel {
             Event::Recording(on) => return replace(&mut self.recording, on),
             #[cfg(any(test, feature = "calls"))]
             Event::Hand(h) => return replace(&mut self.hand, h),
+            #[cfg(any(test, feature = "calls"))]
+            Event::Share { available, sharing } => {
+                let a = replace(&mut self.can_share, available);
+                return replace(&mut self.sharing, sharing) || a;
+            }
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
                 self.end(reason, now);
@@ -452,6 +472,8 @@ impl CallModel {
         self.ended = reason;
         self.duration = self.connected_at.map(|t| now.saturating_duration_since(t));
         self.hand = false;
+        self.can_share = false;
+        self.sharing = false;
         self.recording = false;
     }
 
@@ -503,6 +525,13 @@ impl CallModel {
         }
     }
 
+    /// The Share toggle: what to ask the driver while a call that can share runs. The state
+    /// itself follows the driver's [`Event::Share`] (the picker can be cancelled).
+    pub fn toggle_share(&self) -> Option<Control> {
+        (self.phase.active() && (self.can_share || self.sharing))
+            .then_some(Control::Share(!self.sharing))
+    }
+
     /// The hand toggle. Returns the new state while a call runs.
     pub fn toggle_hand(&mut self) -> Option<bool> {
         self.phase.active().then(|| {
@@ -551,6 +580,8 @@ impl CallModel {
             timer: clock(elapsed),
             muted: self.muted,
             hand: self.hand,
+            can_share: self.can_share && self.phase.active(),
+            sharing: self.sharing,
             prejoin_mic: self.mic_on,
             recording: self.recording,
             error: self.error.clone(),
@@ -631,6 +662,7 @@ pub enum CallCmd {
     Speaker(usize),
     ToggleMute,
     ToggleHand,
+    ToggleShare,
     Leave,
     /// Close the call-ended screen.
     Close,
@@ -649,6 +681,7 @@ impl CallCmd {
             "speaker" => CallCmd::Speaker(arg.parse().ok()?),
             "mute" => CallCmd::ToggleMute,
             "hand" => CallCmd::ToggleHand,
+            "share" => CallCmd::ToggleShare,
             "leave" => CallCmd::Leave,
             "close" => CallCmd::Close,
             "rejoin" => CallCmd::Rejoin,
@@ -899,6 +932,7 @@ impl CallManager {
                         Control::LowerHand
                     }
                 }),
+                CallCmd::ToggleShare => m.toggle_share(),
                 CallCmd::Leave => m.leave(now).then_some(Control::Leave),
                 CallCmd::Close => {
                     m.close();
@@ -1174,6 +1208,7 @@ impl CallHandle for FakeHandle {
             Control::Mute(m) => format!("mute {}", if *m { "on" } else { "off" }),
             Control::RaiseHand => "hand up".into(),
             Control::LowerHand => "hand down".into(),
+            Control::Share(on) => format!("share {}", if *on { "on" } else { "off" }),
             Control::Devices { mic, speaker } => format!(
                 "devices {} {}",
                 mic.as_deref().unwrap_or("default"),
@@ -1369,6 +1404,36 @@ mod tests {
         assert_eq!(m.phase, Phase::Connecting);
         assert_eq!(m.error, ALREADY_IN_CALL);
         assert!(!m.adopted(meeting(), devices(), Instant::now()));
+    }
+
+    #[test]
+    fn share_is_asked_only_in_a_call_that_can_share_and_follows_the_driver() {
+        let mut m = ready();
+        assert_eq!(m.toggle_share(), None, "not on the pre-join screen");
+        m.joining();
+        assert_eq!(m.toggle_share(), None, "no sharing line negotiated");
+        let now = Instant::now();
+        assert!(m.apply(
+            Event::Share {
+                available: true,
+                sharing: false
+            },
+            now
+        ));
+        assert_eq!(m.toggle_share(), Some(Control::Share(true)));
+        assert!(!m.sharing, "the picker may still be cancelled");
+        m.apply(
+            Event::Share {
+                available: true,
+                sharing: true,
+            },
+            now,
+        );
+        assert_eq!(m.toggle_share(), Some(Control::Share(false)));
+        assert!(m.data(now).sharing && m.data(now).can_share);
+        m.leave(now);
+        assert!(!m.sharing && !m.can_share);
+        assert_eq!(m.toggle_share(), None);
     }
 
     #[test]

@@ -125,9 +125,12 @@ component TopBar inherits Rectangle {
         }
         CallButton {
             icon: @image-url("icons/screen-share.svg");
-            label: "Share";
-            enabled: false;
-            tip: "Screen sharing isn't available yet";
+            label: CallStore.sharing ? "Stop sharing" : "Share";
+            checkable: true;
+            active: CallStore.sharing;
+            enabled: CallStore.can-share || CallStore.sharing;
+            tip: CallStore.can-share || CallStore.sharing ? "" : "Screen sharing isn't available in this call";
+            clicked => { CallStore.command("share", ""); }
         }
         CallButton {
             icon: @image-url("icons/call-end.svg");
@@ -511,8 +514,10 @@ export component CallMini inherits Rectangle {
             }
             MiniButton {
                 icon: @image-url("icons/screen-share.svg");
-                label: "Share";
-                enabled: false;
+                label: CallStore.sharing ? "Stop sharing" : "Share";
+                active: CallStore.sharing;
+                enabled: CallStore.can-share || CallStore.sharing;
+                clicked => { CallStore.command("share", ""); }
             }
             MiniButton {
                 icon: @image-url("icons/call-end.svg");

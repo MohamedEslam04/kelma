@@ -272,6 +272,30 @@ fn the_roster_lists_people_with_mute_and_hand_and_the_lobby() {
 }
 
 #[test]
+fn share_asks_the_engine_and_follows_what_it_reports() {
+    let c = CallHarness::new();
+    c.connected();
+    assert_eq!(c.button("Share").accessible_enabled(), Some(false));
+    c.fake.emit(Event::Share {
+        available: true,
+        sharing: false,
+    });
+    click(&c.button("Share"));
+    // The picker is the desktop's; the button turns only when the engine says it shares.
+    assert!(c.shows("Share"));
+    c.fake.emit(Event::Share {
+        available: true,
+        sharing: true,
+    });
+    assert_eq!(c.button("Stop sharing").accessible_checked(), Some(true));
+    click(&c.button("Stop sharing"));
+    assert_eq!(
+        c.fake.calls()[1..],
+        ["share on", "share off"].map(String::from)
+    );
+}
+
+#[test]
 fn unavailable_controls_are_shown_disabled_and_say_why() {
     let c = CallHarness::new();
     c.connected();
@@ -279,7 +303,7 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
         ("React", "Reactions aren't available yet"),
         ("View", "Only this view is available"),
         ("Camera", "Video isn't available yet"),
-        ("Share", "Screen sharing isn't available yet"),
+        ("Share", "Screen sharing isn't available in this call"),
     ] {
         let b = c.button(label);
         assert_eq!(b.accessible_enabled(), Some(false), "{label}");
