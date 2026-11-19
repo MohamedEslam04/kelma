@@ -321,6 +321,7 @@ impl Engine {
         self.start_people();
         self.start_apps();
         self.start_manage();
+        self.start_notify_prefs();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -615,7 +616,7 @@ impl Engine {
             return;
         }
         let cfg = self.cfg.lock().unwrap().clone();
-        let saved = session::Paths::new().and_then(|p| p.save_config(&cfg));
+        let saved = session::Paths::new().and_then(|p| p.save_app_prefs(&cfg));
         if let Err(err) = saved {
             tracing::warn!(%err, "saving config failed");
         }

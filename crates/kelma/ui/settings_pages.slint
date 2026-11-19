@@ -49,12 +49,14 @@ export component GeneralPage inherits VerticalLayout {
         }
         SChoiceRow {
             label: "Date format";
+            hint: "Used for dates in the chat list and in OneDrive.";
             options: [{v: "auto", l: "Follow the language"}, {v: "dmy", l: "31/12/2026"}, {v: "mdy", l: "12/31/2026"}, {v: "ymd", l: "2026-12-31"}];
             value: SettingsStore.date-format;
             picked(v) => { SettingsStore.date-format = v; SettingsStore.command("date-format", v); }
         }
         SChoiceRow {
             label: "Time format";
+            hint: "Used for times in the chat list, on messages and in OneDrive.";
             options: [{v: "auto", l: "Follow the language"}, {v: "h12", l: "1:30 PM"}, {v: "h24", l: "13:30"}];
             value: SettingsStore.time-format;
             picked(v) => { SettingsStore.time-format = v; SettingsStore.command("time-format", v); }
@@ -65,7 +67,7 @@ export component GeneralPage inherits VerticalLayout {
             initial: SettingsStore.time-zone;
             committed(t) => { SettingsStore.command("time-zone", t); }
         }
-        Para { text: "An IANA name such as Africa/Cairo. Leave it empty to follow the system."; }
+        Para { text: "An IANA name such as Africa/Cairo. Leave it empty to follow the system. Times are shown in the system zone for now: kelma does not use this choice yet."; }
     }
     SSection {
         title: "Translation";
@@ -87,7 +89,7 @@ export component AccountsPage inherits VerticalLayout {
     alignment: start;
     SSection {
         title: "Accounts";
-        hint: "The account kelma signs in with. Switching restarts kelma.";
+        hint: "The account kelma signs in with. Switching restarts kelma. Each account keeps its own chats on this computer.";
         for a in SettingsStore.accounts: SRadio {
             group: "Account";
             label: a.name != "" ? a.name : a.label;
@@ -95,7 +97,37 @@ export component AccountsPage inherits VerticalLayout {
             checked: a.active;
             picked => { SettingsStore.command("switch-account", a.label); }
         }
-        Para { text: "Adding an account is not in the app yet: use kelma-cli accounts add."; }
+    }
+    SSection {
+        title: "Add an account";
+        hint: "Pick a short name (letters, digits, - _ .), then restart kelma: it shows a code to sign in with, on this computer, for the new account. The accounts stay separate.";
+        new-account := SField {
+            label: "Name for the new account";
+            placeholder: "work";
+        }
+        SButton {
+            label: "Add account";
+            clicked => { SettingsStore.command("add-account", new-account.text); }
+        }
+    }
+    SSection {
+        title: "Remove an account";
+        hint: "Forgets the account's saved sign-in on this computer and takes it off the list. Nothing changes in Teams.";
+        for a in SettingsStore.accounts: SPersonRow {
+            name: a.name != "" ? a.name : a.label;
+            action: "Remove";
+            act => { SettingsStore.confirm-remove = a.label; }
+        }
+        if SettingsStore.confirm-remove != "": VerticalLayout {
+            spacing: 6px;
+            Para { text: "Remove \"" + SettingsStore.confirm-remove + "\" from kelma on this computer? Its saved sign-in is deleted."; }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                SButton { label: "Cancel removal"; clicked => { SettingsStore.confirm-remove = ""; } }
+                SButton { label: "Yes, remove the account"; danger: true; clicked => { SettingsStore.command("remove-account", SettingsStore.confirm-remove); SettingsStore.confirm-remove = ""; } }
+            }
+        }
     }
     SSection {
         title: "Organizations";
@@ -108,6 +140,11 @@ export component AccountsPage inherits VerticalLayout {
             checked: o.active;
             picked => { SettingsStore.command("switch-org", o.tenant); }
         }
+    }
+    SSection {
+        title: "License";
+        hint: "Asks Microsoft for your sign-in and license details again, then restarts kelma. Use it after an admin changed your license or your organization's settings.";
+        SButton { label: "Refresh license and restart"; clicked => { SettingsStore.command("refresh-license", ""); } }
     }
     if SettingsStore.restart-needed: SSection {
         title: "Restart needed";

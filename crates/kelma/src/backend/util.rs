@@ -81,11 +81,15 @@ pub(super) fn chat_time(ms: i64) -> String {
         .signed_duration_since(t.date_naive())
         .num_days();
     match days {
-        0 => t.format("%H:%M").to_string(),
+        0 => t.format(appearance::formats::time_pattern()).to_string(),
         1 => "Yesterday".into(),
         2..=6 => t.format("%a").to_string(),
-        _ if t.year() == now.year() => t.format("%-m/%-d").to_string(),
-        _ => t.format("%-m/%-d/%y").to_string(),
+        _ if t.year() == now.year() => t
+            .format(appearance::formats::date_pattern(false))
+            .to_string(),
+        _ => t
+            .format(appearance::formats::date_pattern(true))
+            .to_string(),
     }
 }
 
