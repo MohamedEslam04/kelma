@@ -18,8 +18,8 @@ use store::Store;
 use teams_proto::Client;
 
 mod activity;
-mod channels;
 mod appstore;
+mod channels;
 mod drive;
 mod find;
 mod lists;

@@ -21,8 +21,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(crate) mod activity;
-mod channels;
 pub(crate) mod appstore;
+mod channels;
 pub(crate) mod drive;
 mod find;
 mod lists;
