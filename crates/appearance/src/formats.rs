@@ -4,7 +4,7 @@
 //! The Settings page calls [`set_from`] at start and whenever the choice changes; code that
 //! writes a time or a date asks [`time_pattern`] or [`date_pattern`] for the `strftime` pattern
 //! instead of hard-coding one. `Auto` keeps what kelma showed before there was a choice (24-hour
-//! clock, month before day): there is no translation catalogue yet to follow a language with.
+//! clock, month before day), whatever the interface language.
 
 use crate::general::{DateFormat, GeneralPrefs, TimeFormat};
 use std::sync::RwLock;

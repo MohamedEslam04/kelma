@@ -27,6 +27,7 @@ mod find;
 mod format;
 mod format_live;
 mod global_search;
+mod language;
 mod lists;
 mod media;
 mod people;
