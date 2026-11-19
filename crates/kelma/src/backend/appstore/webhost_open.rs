@@ -147,6 +147,8 @@ impl Engine {
         if self.apps_offline() || crate::external::suppressed() {
             return true;
         }
+        // The shim does not enforce device grants yet; they are kept on the target for it.
+        tracing::debug!(app = %target.shim.context.app_id, granted = ?target.granted, "opening in the web host");
         let e = self.clone();
         tokio::spawn(async move {
             if let Err(err) = e.run_host_window(target).await {
@@ -352,10 +354,7 @@ mod tests {
         let none = grants_from_text(None);
         let t = plan_tab(&def, "home", &who(), &none).unwrap();
         assert!(t.granted.is_empty());
-        assert!(
-            grants_from_text(Some("not json")).allowed("fake-app-1", DevicePermission::Media)
-                == false
-        );
+        assert!(!grants_from_text(Some("not json")).allowed("fake-app-1", DevicePermission::Media));
 
         let text = r#"{"fake-app-1": {"media": true, "geolocation": false, "midi": true},
                        "other-app": {"geolocation": true}}"#;
