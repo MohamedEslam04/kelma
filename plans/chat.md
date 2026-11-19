@@ -334,7 +334,7 @@ Moved to its own plan: `plans/activity.md`.
 ## Phase 8: chat list and channels
 
 ### 8.1 Custom sections
-- [ ] Impact 4, effort 3. Seen: Favorites, Groups, DevOps, Operation and Chats in the list; "New section"; "Move to section" and "Remove from section".
+- [ ] BLOCKED: section writes (create, move, rename) are built in the web client's GraphQL layer and are not in its public JS; probing would change the user's real sections. Reading and local sections work. Impact 4, effort 3. Seen: Favorites, Groups, DevOps, Operation and Chats in the list; "New section"; "Move to section" and "Remove from section".
   - **What.**
     - User sections that mix chats and channels, each collapsible.
     - "Collapse all sections" (Alt+Q).
@@ -348,7 +348,7 @@ Moved to its own plan: `plans/activity.md`.
     - BLOCKED: a move does not reach Teams. The web client defines the write calls (`POST`, `PUT /<id>`, `DELETE` on the same URL) but builds their bodies inside its GraphQL layer, which is not in its public JavaScript. A probe would change the real account's sections, which the run rules forbid. Needs a DevTools capture of the create and move requests, then a test on a test account. Until then, changes stay on this computer and win over what Teams has (`docs/protocol.md`, "Chat list sections").
 
 ### 8.2 Chat item menu
-- [ ] Impact 4, effort 2. Seen: right click on a chat.
+- [ ] DEFERRED: needs test tenant (48:notes refuses mute and real chats may not be muted; menu built and UI-tested). Impact 4, effort 2. Seen: right click on a chat.
   - **What.** Mark as unread, Move to section, Remove from section, Mute, Copy link, Leave (group), Hide.
   - **How.**
     - Mute and Hide: discover (conversation properties).
@@ -368,7 +368,7 @@ Moved to its own plan: `plans/activity.md`.
   - **Evidence.** `ui_tests::lists` clicks each pill (Unread, Channels, Chats, Meeting chats, Drafts) and each option (previews, time stamps, chats and channels together) in the "…" menu and checks the rows. The filter text box is the search field above the list.
 
 ### 8.4 Channel posts like Teams
-- [ ] Impact 4, effort 3. Seen: channel Posts tab.
+- [ ] DEFERRED: needs test tenant ("Also send to channel" and post pin write calls need a capture; side-by-side check with Teams pending; post cards, replies, follow and announcements built). Impact 4, effort 3. Seen: channel Posts tab.
   - **What.**
     - Posts are cards with replies shown inline under each post (collapsed after 2, with "See N more replies"), and "Reply in thread" opens an inline reply box.
     - The "Post in channel" button opens a composer with "Add a subject", formatting, and the Announcement type (headline and background banner).
@@ -390,7 +390,7 @@ Moved to its own plan: `plans/activity.md`.
   - **Evidence.** Live on the sandbox channel: hide flipped the aggregator's `isFavorite` to false and show back to true; the three notification levels were written and read back, then restored. The menu (Manage notifications, Hide or Show, Copy link, Go to team, Leave channel for private channels after a confirmation) is in the chat list and the Teams view; UI tests in `ui_tests/lists.rs`. Leaving a private channel is unit-tested only (it would remove a real member).
 
 ### 8.6 Files in channels
-- [ ] Impact 4, effort 3.
+- [ ] DEFERRED: needs test tenant (a second account must open the uploaded file; upload, post and delete verified in the sandbox). Impact 4, effort 3.
   - **What.** Attach in a channel uploads to the channel's SharePoint folder and posts the file card.
   - **How.** Graph `PUT /drives/{driveId}/items/{folderId}:/{name}:/content`, where the folder comes from `filesFolder` (7.5), then `properties.files` as for chats. No member invite is needed.
   - **Done when.** A test file posts in the test channel and opens for others. Delete it afterwards.
@@ -406,7 +406,7 @@ Moved to its own plan: `plans/activity.md`.
   - **Evidence.** Live: an existing OneDrive file (from `me/drive/recent`) was posted to 48:notes as a file card with its own name, then the post was deleted. The picker (the composer's "…" menu › Attach cloud files) lists My files, Recent, Shared with me and the team libraries; UI test `attach_cloud_files_opens_the_picker_with_recent_and_shared_and_attaches_the_pick`. The invite to chat members is unit-tested only.
 
 ### 8.8 Adaptive cards like Teams
-- [ ] Impact 4, effort 3. Seen: Workflows posts (Release readiness, run reports).
+- [ ] DEFERRED: needs test tenant (no Workflows bot in the sandbox to compare cards with Teams; model and drawing built and tested). Impact 4, effort 3. Seen: Workflows posts (Release readiness, run reports).
   - **What.**
     - Container styles (the colored "AT RISK" band).
     - FactSet as a two-column table.
