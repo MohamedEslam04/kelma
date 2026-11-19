@@ -13,14 +13,14 @@ component TaskCheck inherits Rectangle {
     border-width: 1.5px;
     border-color: root.done ? #6bd69b : Theme.fg-subtle;
     background: root.done ? #1d3a2a : transparent;
-    Text { text: root.done ? "✓" : ""; color: #6bd69b; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    Text { text: root.done ? "✓" : ""; color: #6bd69b; font-size: 11px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
 }
 
 component TaskRowView inherits Rectangle {
     in property <AppRow> t;
     height: 52px;
     border-radius: 4px;
-    background: hover.has-hover ? #262626 : transparent;
+    background: hover.has-hover ? Theme.surface-hover : transparent;
     accessible-role: list-item;
     accessible-label: root.t.title;
     accessible-description: root.t.badge + (root.t.subtitle != "" ? ", " + root.t.subtitle : "");
@@ -34,8 +34,8 @@ component TaskRowView inherits Rectangle {
             alignment: center;
             horizontal-stretch: 1;
             min-width: 0px;
-            Text { text: root.t.title; color: root.t.done ? Theme.fg-subtle : Theme.fg; font-size: 13px; overflow: elide; }
-            Text { text: root.t.subtitle + (root.t.subtitle != "" && root.t.meta != "" ? " · " : "") + root.t.meta; color: root.t.subtitle.ends-with("(overdue)") ? #ff8a8f : Theme.fg-subtle; font-size: 11px; overflow: elide; }
+            Text { text: root.t.title; color: root.t.done ? Theme.fg-subtle : Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+            Text { text: root.t.subtitle + (root.t.subtitle != "" && root.t.meta != "" ? " · " : "") + root.t.meta; color: root.t.subtitle.ends-with("(overdue)") ? #ff8a8f : Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
         }
         KitBadge { y: 16px; text: root.t.badge; tone: root.t.tone; }
     }
@@ -45,7 +45,7 @@ component BoardCard inherits Rectangle {
     in property <AppRow> t;
     height: card.preferred-height + 20px;
     border-radius: 6px;
-    background: #262626;
+    background: Theme.surface;
     border-width: 1px;
     border-color: Theme.border;
     accessible-role: list-item;
@@ -54,9 +54,9 @@ component BoardCard inherits Rectangle {
     card := VerticalLayout {
         padding: 10px;
         spacing: 3px;
-        Text { text: root.t.title; color: root.t.done ? Theme.fg-subtle : Theme.fg; font-size: 13px; wrap: word-wrap; }
-        if root.t.subtitle != "": Text { text: root.t.subtitle; color: root.t.subtitle.ends-with("(overdue)") ? #ff8a8f : Theme.fg-subtle; font-size: 11px; }
-        if root.t.meta != "": Text { text: root.t.meta; color: Theme.fg-subtle; font-size: 11px; }
+        Text { text: root.t.title; color: root.t.done ? Theme.fg-subtle : Theme.fg; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
+        if root.t.subtitle != "": Text { text: root.t.subtitle; color: root.t.subtitle.ends-with("(overdue)") ? #ff8a8f : Theme.fg-subtle; font-size: 11px * Theme.font-scale; }
+        if root.t.meta != "": Text { text: root.t.meta; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; }
     }
 }
 
@@ -73,7 +73,7 @@ export component TasksView inherits Rectangle {
                     padding: 12px;
                     spacing: 2px;
                     alignment: start;
-                    Text { text: "Tasks"; color: Theme.fg; font-size: 18px; font-weight: 700; height: 36px; vertical-alignment: center; }
+                    Text { text: "Tasks"; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; height: 36px; vertical-alignment: center; }
                     for n in TasksStore.nav: VerticalLayout {
                         if n.header: KitNavHeader { label: n.title; }
                         if !n.header: KitNavRow {
@@ -92,7 +92,7 @@ export component TasksView inherits Rectangle {
                     padding-left: 20px;
                     padding-right: 16px;
                     spacing: 8px;
-                    Text { text: TasksStore.title; color: Theme.fg; font-size: 18px; font-weight: 700; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    Text { text: TasksStore.title; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                     KitButton { y: 12px; label: "List"; active: TasksStore.mode == "list"; clicked => { TasksStore.command("tasks-mode", "list"); } }
                     KitButton { y: 12px; label: "Board"; active: TasksStore.mode == "board"; enabled: TasksStore.can-board; clicked => { TasksStore.command("tasks-mode", "board"); } }
                     IconButton { y: 12px; icon: @image-url("icons/sync.svg"); tooltip: "Refresh tasks"; clicked => { TasksStore.command("tasks-refresh", ""); } }
@@ -105,11 +105,11 @@ export component TasksView inherits Rectangle {
                     padding-right: 20px;
                     spacing: 6px;
                     alignment: center;
-                    Text { text: TasksStore.summary; color: Theme.fg-muted; font-size: 12px; accessible-role: text; }
+                    Text { text: TasksStore.summary; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; accessible-role: text; }
                     Rectangle {
                         height: 6px;
                         border-radius: 3px;
-                        background: #333333;
+                        background: Theme.surface-hover;
                         accessible-role: progress-indicator;
                         accessible-value: Math.round(TasksStore.progress * 100) + "%";
                         accessible-label: "Completed";
@@ -140,7 +140,7 @@ export component TasksView inherits Rectangle {
                         VerticalLayout {
                             spacing: 8px;
                             alignment: start;
-                            Text { text: c.title + " (" + c.count + ")"; color: Theme.fg-muted; font-size: 12px; font-weight: 700; height: 22px; }
+                            Text { text: c.title + " (" + c.count + ")"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 700; height: 22px; }
                             for t in c.cards: BoardCard { t: t; }
                         }
                     }

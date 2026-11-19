@@ -37,8 +37,13 @@ pub struct EngagePost {
     pub sender_name: String,
     pub created_ms: i64,
     pub text: String,
+    /// The rich (HTML) body, empty when the post has only a plain one.
+    pub rich: String,
     pub likes: u32,
     pub attachments: u32,
+    /// Messages in the thread (the post and its replies) according to the thread reference;
+    /// 0 when the answer carries no thread statistics.
+    pub thread_messages: u32,
     pub web_url: String,
 }
 
@@ -120,6 +125,18 @@ pub fn parse_feed(v: &Value) -> Vec<EngagePost> {
             .unwrap_or_default()
             .to_string()
     };
+    let thread_messages = |id: u64| {
+        v.get("references")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|r| {
+                r.get("type").and_then(Value::as_str) == Some("thread")
+                    && r.get("id").and_then(Value::as_u64) == Some(id)
+            })
+            .and_then(|r| r.pointer("/stats/updates").and_then(Value::as_u64))
+            .unwrap_or(0) as u32
+    };
     v.get("messages")
         .and_then(Value::as_array)
         .into_iter()
@@ -142,6 +159,14 @@ pub fn parse_feed(v: &Value) -> Vec<EngagePost> {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string(),
+                rich: m
+                    .pointer("/body/rich")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                thread_messages: thread_messages(
+                    m.get("thread_id").and_then(Value::as_u64).unwrap_or(0),
+                ),
                 likes: m
                     .pointer("/liked_by/count")
                     .and_then(Value::as_u64)
@@ -273,13 +298,16 @@ mod tests {
             ],
             "references": [
                 {"type": "user", "id": 9, "full_name": "Ann Example"},
-                {"type": "thread", "id": 9, "full_name": "not a user"}
+                {"type": "thread", "id": 9, "full_name": "not a user"},
+                {"type": "thread", "id": 5, "stats": {"updates": 3}}
             ]
         }));
         assert_eq!(posts.len(), 2);
         assert_eq!(posts[0].sender_name, "Ann Example");
         assert_eq!(posts[0].text, "hello");
         assert_eq!((posts[0].likes, posts[0].attachments), (2, 1));
+        assert_eq!(posts[0].rich, "<b>hello</b>");
+        assert_eq!((posts[0].thread_messages, posts[1].thread_messages), (3, 3));
         assert_eq!(posts[1].replied_to_id, Some(5));
         assert_eq!(posts[1].sender_name, "");
     }

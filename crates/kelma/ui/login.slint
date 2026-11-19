@@ -13,7 +13,7 @@ export component LoginView inherits Rectangle {
         alignment: center;
         spacing: 18px;
         Image { source: @image-url("icons/logo.svg"); colorize: Theme.accent; width: 64px; height: 64px; x: (parent.width - 64px) / 2; }
-        Text { text: "kelma"; color: Theme.fg; font-size: 28px; font-weight: 700; horizontal-alignment: center; }
+        Text { text: "kelma"; color: Theme.fg; font-size: 28px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; }
         if root.state == "checking": Text { text: "Signing in…"; color: Theme.fg-muted; horizontal-alignment: center; }
         if root.state == "code": VerticalLayout {
             spacing: 12px;
@@ -32,7 +32,7 @@ export component LoginView inherits Rectangle {
                     border-radius: 6px;
                     width: code-text.preferred-width + 40px;
                     height: 56px;
-                    code-text := Text { text: root.user-code; color: Theme.fg; font-size: 28px; font-weight: 700; letter-spacing: 4px; }
+                    code-text := Text { text: root.user-code; color: Theme.fg; font-size: 28px * Theme.font-scale; font-weight: 700; letter-spacing: 4px; }
                 }
                 Rectangle {
                     width: 90px;
@@ -43,7 +43,7 @@ export component LoginView inherits Rectangle {
                     ct := TouchArea { mouse-cursor: pointer; clicked => { root.copy-code(); } }
                 }
             }
-            Text { text: "Waiting for you to finish signing in…"; color: Theme.fg-subtle; font-size: 12px; horizontal-alignment: center; }
+            Text { text: "Waiting for you to finish signing in…"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; horizontal-alignment: center; }
         }
         if root.state == "error": VerticalLayout {
             spacing: 12px;

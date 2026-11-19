@@ -26,24 +26,33 @@ import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
 import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
+import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
+import { MediaStore, ImageViewer } from "media.slint";
 import { AppsStore } from "apps_store.slint";
 import { RailApps, AppsOverlays } from "apps_rail.slint";
 import { AppsHost } from "apps_host.slint";
+import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
+import { EngageView, EngageStore } from "engage.slint";
 import { ComposerAppsOverlay } from "composer_apps.slint";
 
 export { Theme } from "theme.slint";
-export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
+export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, Msg, ChannelRow, TeamRow } from "types.slint";
 export { EmojiApi } from "composer.slint";
+export { FormatApi, FormatEdit } from "composer_format.slint";
+export { ShortcutApi } from "shortcuts.slint";
 export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
 export { ListStore, SectionRow, SectionChoice } from "lists.slint";
 export { ChannelStore, PostItem } from "channel_posts.slint";
 export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
+export { MediaStore } from "media.slint";
+export { EngageStore, EPost } from "engage.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
 export { ComposerApps, CaCommand, CaResult, CaCard } from "composer_apps.slint";
 export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
+export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
 
 export component AppWindow inherits Window {
     title: root.window-title;
@@ -53,7 +62,7 @@ export component AppWindow inherits Window {
     min-width: 900px;
     min-height: 560px;
     background: Theme.main;
-    default-font-size: 14px;
+    default-font-size: 14px * Theme.font-scale;
 
     // --- state set from Rust ---
     in property <string> login-state: "checking"; // checking | code | error | ready
@@ -63,6 +72,9 @@ export component AppWindow inherits Window {
     in property <string> me-initials;
     in property <bool> connected: true;
     in property <string> banner;
+    // An info notice (update available) instead of an error toast, with one action link.
+    in property <bool> banner-info: false;
+    in property <string> banner-action;
 
     in-out property <string> view: "chat"; // chat | teams | activity | calendar | onedrive
     in-out property <string> filter: "all";
@@ -130,6 +142,11 @@ export component AppWindow inherits Window {
     out property <int> badge-total: root.activity-unread + root.chats-unread;
     out property <string> window-title: root.badge-total > 0 ? "(" + root.badge-total + ") kelma" : "kelma";
     in-out property <bool> enter-sends: true;
+    // Ctrl+. shows the shortcut list; Ctrl+Shift+X makes the composer taller (plan chat 5.9).
+    in-out property <bool> shortcuts-open: false;
+    in-out property <bool> composer-expanded: false;
+    in-out property <int> msg-focus-tick: 0;
+    in-out property <bool> composer-focused;
     in-out property <int> skin-tone: 0;
     in property <[ComposerEmoji]> recent-emoji;
     in property <[PendingAttachment]> pending-attachments;
@@ -166,6 +183,7 @@ export component AppWindow inherits Window {
     callback remove-attachment(int);
     callback skin-tone-changed(int);
     callback dismiss-banner();
+    callback banner-action-clicked();
     callback picker-search(string);
     callback copy-link(string);
     callback toggle-save(string);
@@ -219,7 +237,7 @@ export component AppWindow inherits Window {
         retry => { root.retry-login(); }
     }
 
-    if root.login-state == "ready": FocusScope {
+    if root.login-state == "ready": win-keys := FocusScope {
         // Shift+Esc marks every chat read, wherever the focus is. The Activity view handles it
         // itself (marks every Activity item read).
         capture-key-pressed(event) => {
@@ -238,6 +256,7 @@ export component AppWindow inherits Window {
                 FindStore.focus-tick += 1;
                 return accept;
             }
+            if (event.text == "," || event.text == "<") && event.modifiers.control && event.modifiers.shift { SettingsStore.show("general"); return accept; } // Ctrl+Shift+,: Settings.
             // Alt+Shift+N: New chat.
             if ((event.text == "N" || event.text == "n") && event.modifiers.alt && event.modifiers.shift) {
                 root.view = "chat";
@@ -245,12 +264,45 @@ export component AppWindow inherits Window {
                 PeopleStore.command("new-chat-open", "");
                 return accept;
             }
-            // Ctrl+Shift+1 to 9: the nth entry of the app bar.
-            if (event.modifiers.control && event.modifiers.shift && AppsStore.shortcut-index(event.text) > 0) {
+            // Ctrl+Shift+1 to 9: the nth entry of the app bar. In the composer Ctrl+Shift+7 and 8
+            // are the numbered and bullet list (Teams), so they stay with the composer there.
+            if (event.modifiers.control && event.modifiers.shift && AppsStore.shortcut-index(event.text) > 0 && !(root.composer-focused && (AppsStore.shortcut-index(event.text) == 7 || AppsStore.shortcut-index(event.text) == 8))) {
                 AppsStore.command("shortcut", "" + AppsStore.shortcut-index(event.text));
                 return accept;
             }
+            // The other Teams chords (plan chat 5.9); the mapping is in src/shortcuts.rs.
+            if ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift) != "" {
+                win-keys.run-shortcut(ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift));
+                return accept;
+            }
             reject
+        }
+        // Esc, when nothing else took it: closes the shortcut list, then the thread, then the reply.
+        key-pressed(event) => {
+            if event.text == Key.Escape && !event.modifiers.shift {
+                if root.shortcuts-open { root.shortcuts-open = false; return accept; }
+                if root.menu-open { root.menu-open = false; root.focus-tick += 1; return accept; }
+                if root.thread-root != "" { root.close-thread(); return accept; }
+                if root.reply-preview != "" { root.cancel-reply(); return accept; }
+            }
+            reject
+        }
+        function run-shortcut(a: string) {
+            if a == "shortcuts" { root.shortcuts-open = !root.shortcuts-open; }
+            if a == "goto" {
+                root.view = "search";
+                FindStore.command("search-tab", "chats");
+                FindStore.focus-tick += 1;
+            }
+            if a == "filter-box" { root.view = "chat"; search-input.focus(); }
+            if a == "filter-unread" { root.filter = root.filter == "unread" ? "all" : "unread"; root.set-filter(root.filter); }
+            if a == "filter-chats" { root.filter = root.filter == "chats" ? "all" : "chats"; root.set-filter(root.filter); }
+            if a == "filter-channels" { root.filter = root.filter == "channels" ? "all" : "channels"; root.set-filter(root.filter); }
+            if a == "filter-clear" { root.filter = "all"; root.set-filter("all"); }
+            if a == "focus-composer" { root.focus-tick += 1; }
+            if a == "focus-messages" { root.msg-focus-tick += 1; }
+            if a == "expand-composer" { root.composer-expanded = !root.composer-expanded; root.focus-tick += 1; }
+            if a == "attach-file" { root.attach-file(); }
         }
         VerticalLayout {
         // Top bar with search
@@ -265,7 +317,7 @@ export component AppWindow inherits Window {
                     width: 260px;
                     spacing: 8px;
                     Image { source: @image-url("icons/logo.svg"); colorize: Theme.accent; width: 22px; height: 22px; y: 13px; }
-                    Text { text: "kelma"; color: Theme.fg; font-size: 15px; font-weight: 600; vertical-alignment: center; }
+                    Text { text: "kelma"; color: Theme.fg; font-size: 15px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
                 }
                 Rectangle {
                     height: 32px;
@@ -274,7 +326,7 @@ export component AppWindow inherits Window {
                     max-width: 640px;
                     horizontal-stretch: 2;
                     border-radius: 4px;
-                    background: search-input.has-focus ? #1f1f1f : #292929;
+                    background: search-input.has-focus ? Theme.sidebar : Theme.surface;
                     border-width: 1px;
                     border-color: search-input.has-focus ? Theme.accent : Theme.border;
                     HorizontalLayout {
@@ -284,7 +336,7 @@ export component AppWindow inherits Window {
                         Icon { source: @image-url("icons/search.svg"); width: 16px; height: 16px; y: 8px; }
                         search-input := TextInput {
                             color: Theme.fg;
-                            font-size: 13px;
+                            font-size: 13px * Theme.font-scale;
                             vertical-alignment: center;
                             single-line: true;
                             edited => { root.search(self.text); }
@@ -300,13 +352,13 @@ export component AppWindow inherits Window {
                         x: 36px;
                         text: "Search chats";
                         color: Theme.fg-subtle;
-                        font-size: 13px;
+                        font-size: 13px * Theme.font-scale;
                         vertical-alignment: center;
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if !root.connected: Text { text: "Reconnecting…"; color: #ffb900; font-size: 12px; vertical-alignment: center; }
-                Avatar { initials: root.me-initials; size: 30px; y: 9px; }
+                if !root.connected: Text { text: "Reconnecting…"; color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                Avatar { initials: root.me-initials; size: 30px; y: 9px; TouchArea { accessible-role: button; accessible-label: "Profile menu"; accessible-action-default => { SettingsStore.open-profile(); } mouse-cursor: pointer; clicked => { SettingsStore.open-profile(); } } }
             }
         }
 
@@ -335,7 +387,7 @@ export component AppWindow inherits Window {
                             alignment: center;
                             spacing: 2px;
                             Icon { source: item.icon; tint: root.view == item.key || rt.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
-                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px; horizontal-alignment: center; }
+                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px * Theme.font-scale; horizontal-alignment: center; }
                         }
                         if ri.badge-count > 0: Rectangle {
                             x: parent.width / 2 + 2px;
@@ -346,7 +398,7 @@ export component AppWindow inherits Window {
                             background: Theme.unread-badge;
                             accessible-role: text;
                             accessible-label: ri.badge-count + " unread";
-                            badge-text := Text { text: ri.badge-count > 99 ? "99+" : ri.badge-count; color: #ffffff; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            badge-text := Text { text: ri.badge-count > 99 ? "99+" : ri.badge-count; color: #ffffff; font-size: 10px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         rt := TouchArea {
                             mouse-cursor: pointer;
@@ -381,12 +433,7 @@ export component AppWindow inherits Window {
                     PeopleStore.command("new-chat-open", "");
                 }
                 manage-teams => { TeamsStore.open = true; TeamsStore.command("open", ""); }
-                open-community(id) => {
-                    TeamsStore.tab = "communities";
-                    TeamsStore.community = id;
-                    TeamsStore.open = true;
-                    TeamsStore.command("community-open", id);
-                }
+                open-community(id) => { EngageStore.open = true; EngageStore.command("open", id); }
                 select-chat(id) => { FindStore.quick-open = false; root.select-chat(id); }
                 select-channel(id, title) => { FindStore.quick-open = false; root.select-channel(id, title); }
                 toggle-team(i) => { root.toggle-team(i); }
@@ -459,24 +506,32 @@ export component AppWindow inherits Window {
                 }
                 if root.current-id == "": VerticalLayout {
                     alignment: center;
-                    Image { source: @image-url("icons/chat.svg"); colorize: #3d3d3d; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
+                    Image { source: @image-url("icons/chat.svg"); colorize: Theme.border; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
                     Text { text: "Select a chat to start messaging"; color: Theme.fg-subtle; horizontal-alignment: center; }
                 }
                 if root.banner != "": Rectangle {
                     z: 10;
                     x: (parent.width - self.width) / 2;
                     y: 70px;
-                    width: min(parent.width - 40px, banner-text.preferred-width + 60px);
+                    width: min(parent.width - 40px, banner-text.preferred-width + 60px + (root.banner-action != "" ? 110px : 0px));
                     height: 36px;
                     border-radius: 6px;
-                    background: #3b1f22;
+                    background: root.banner-info ? #1f2a3b : #3b1f22;
                     border-width: 1px;
-                    border-color: Theme.danger;
+                    border-color: root.banner-info ? Theme.accent : Theme.danger;
                     HorizontalLayout {
                         padding-left: 14px;
                         padding-right: 6px;
                         spacing: 8px;
-                        banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                        banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+                        if root.banner-action != "": Rectangle {
+                            width: 100px;
+                            accessible-role: button;
+                            accessible-label: root.banner-action;
+                            accessible-action-default => { root.banner-action-clicked(); }
+                            Text { text: root.banner-action; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.banner-action-clicked(); } }
+                        }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 6px; clicked => { root.dismiss-banner(); } }
                     }
                 }
@@ -501,7 +556,7 @@ export component AppWindow inherits Window {
                             if !root.renaming || root.thread-root != "": Text {
                                 text: root.thread-root != "" ? "Thread" : root.current-title;
                                 color: Theme.fg;
-                                font-size: 17px;
+                                font-size: 17px * Theme.font-scale;
                                 font-weight: 700;
                                 vertical-alignment: center;
                                 overflow: elide;
@@ -513,7 +568,7 @@ export component AppWindow inherits Window {
                                 width: 260px;
                                 horizontal-stretch: 0;
                                 border-radius: 4px;
-                                background: #1f1f1f;
+                                background: Theme.sidebar;
                                 border-width: 1px;
                                 border-color: Theme.accent;
                                 FocusScope {
@@ -534,7 +589,7 @@ export component AppWindow inherits Window {
                                         width: parent.width - 20px;
                                         text <=> root.rename-text;
                                         color: Theme.fg;
-                                        font-size: 15px;
+                                        font-size: 15px * Theme.font-scale;
                                         single-line: true;
                                         vertical-alignment: center;
                                         accessible-role: text-input;
@@ -562,7 +617,7 @@ export component AppWindow inherits Window {
                                 accessible-checked: self.active;
                                 VerticalLayout {
                                     alignment: center;
-                                    tab-label := Text { text: tab; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px; font-weight: tab-item.active ? 600 : 400; }
+                                    tab-label := Text { text: tab; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; font-weight: tab-item.active ? 600 : 400; }
                                     Rectangle { height: 3px; border-radius: 1px; background: tab-item.active ? Theme.accent : transparent; }
                                 }
                                 TouchArea {
@@ -611,7 +666,7 @@ export component AppWindow inherits Window {
                                 accessible-role: button;
                                 accessible-label: "Participants";
                                 Icon { source: @image-url("icons/people.svg"); x: 8px; y: 8px; width: 16px; height: 16px; tint: Theme.fg-muted; }
-                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px; vertical-alignment: center; }
+                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                                 people-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => {
@@ -621,7 +676,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
                     }
 
                     if FindStore.chat-find-open && root.thread-root == "": ChatFindBar { channel: root.current-is-channel; }
@@ -700,7 +755,6 @@ export component AppWindow inherits Window {
                                     discard-send => { root.discard-send(m.id); }
                                     open-url(u) => { root.open-url(u); }
                                     open-thread => { root.open-thread(m.id); }
-                                    open-image(u) => { root.open-url(u); }
                                     profile(id) => {
                                         if id != "" {
                                             PeopleStore.command("profile", id);
@@ -733,6 +787,23 @@ export component AppWindow inherits Window {
                             retry-send(id) => { root.retry-send(id); }
                             discard-send(id) => { root.discard-send(id); }
                         }
+                        // Alt+Shift+M lands here: the arrow keys, Page Up/Down, Home and End scroll the list.
+                        msg-scope := FocusScope {
+                            width: 0px;
+                            height: 0px;
+                            property <int> tick: root.msg-focus-tick;
+                            changed tick => { self.focus(); }
+                            key-pressed(event) => {
+                                if event.text == Key.UpArrow { msg-list.content-y = min(0px, msg-list.content-y + 48px); return accept; }
+                                if event.text == Key.DownArrow { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - 48px)); return accept; }
+                                if event.text == Key.PageUp { msg-list.content-y = min(0px, msg-list.content-y + msg-list.visible-height * 0.9); return accept; }
+                                if event.text == Key.PageDown { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - msg-list.visible-height * 0.9)); return accept; }
+                                if event.text == Key.Home { msg-list.content-y = 0px; return accept; }
+                                if event.text == Key.End { root.scroll-tick += 1; return accept; }
+                                if event.text == Key.Escape { root.focus-tick += 1; return accept; }
+                                reject
+                            }
+                        }
                         Timer {
                             interval: 700ms;
                             running: msg-list.aligning;
@@ -751,7 +822,7 @@ export component AppWindow inherits Window {
                             jump-text := Text {
                                 text: root.new-count > 0 ? "↓ Jump to newest · " + root.new-count : "↓ Jump to newest";
                                 color: #ffffff;
-                                font-size: 12px;
+                                font-size: 12px * Theme.font-scale;
                                 font-weight: 600;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -771,13 +842,13 @@ export component AppWindow inherits Window {
                             x: (parent.width - 200px) / 2;
                             border-radius: 12px;
                             background: Theme.surface;
-                            Text { text: "Loading older messages…"; color: Theme.fg-muted; font-size: 12px; }
+                            Text { text: "Loading older messages…"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
                         }
                     }
 
                     if root.typing != "": HorizontalLayout {
                         padding-left: 24px;
-                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px; }
+                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
                     }
 
                     if root.select-mode: SelectBar {
@@ -809,6 +880,11 @@ export component AppWindow inherits Window {
                         post-subject <=> root.post-subject;
                         focus-tick <=> root.focus-tick;
                         enter-sends <=> root.enter-sends;
+                        expanded <=> root.composer-expanded;
+                        input-focus(f) => { root.composer-focused = f; }
+                        edit-last => {
+                            if ShortcutApi.last-own(root.messages) != "" { root.edit(ShortcutApi.last-own(root.messages)); }
+                        }
                         set-enter-sends(on) => { root.set-enter-sends(on); }
                         skin-tone <=> root.skin-tone;
                         recent-emoji: root.recent-emoji;
@@ -872,6 +948,9 @@ export component AppWindow inherits Window {
             y: max(8px, min(root.menu-y, root.height - self.height - 8px));
             mine: root.menu-msg.mine;
             saved: root.menu-msg.saved;
+            translate: root.menu-msg.translate;
+            translate-message => { root.menu-open = false; MediaStore.command("translate", root.menu-msg.id); }
+            see-original => { root.menu-open = false; MediaStore.command("original", root.menu-msg.id); }
             can-pin: !root.current-is-channel;
             can-follow: root.current-is-channel && root.thread-root == "";
             following: FindStore.menu-following;
@@ -902,6 +981,13 @@ export component AppWindow inherits Window {
             edit => { root.menu-open = false; root.edit(root.menu-msg.id); }
             delete => { root.menu-open = false; root.delete(root.menu-msg.id); }
         }
+    }
+
+    if root.login-state == "ready" && root.shortcuts-open: ShortcutsDialog {
+        z: 200;
+        width: root.width;
+        height: root.height;
+        close => { root.shortcuts-open = false; }
     }
 
     if root.login-state == "ready" && root.picker-open: Rectangle {
@@ -1083,16 +1169,24 @@ export component AppWindow inherits Window {
     // Teams management: the "Your teams and channels" page covers the area right of the rail, and
     // its dialogs cover the window (see teams_page.slint and teams_dialogs.slint).
     if root.login-state == "ready" && TeamsStore.open: TeamsPage {
-        x: 68px;
+        x: AppsStore.rail-width;
         y: 48px;
         z: 40;
-        width: root.width - 68px;
+        width: root.width - AppsStore.rail-width;
         height: root.height - 48px;
         go(id, title) => {
             TeamsStore.open = false;
             root.view = "teams";
             root.select-channel(id, title);
         }
+    }
+    // Viva Engage: a community's read-only feed covers the area right of the rail.
+    if root.login-state == "ready" && EngageStore.open && (root.view == "chat" || root.view == "teams"): EngageView {
+        x: 68px;
+        y: 48px;
+        z: 41;
+        width: root.width - 68px;
+        height: root.height - 48px;
     }
     if root.login-state == "ready" && TeamsStore.dialog != "": TeamsDialogs {
         z: 50;
@@ -1112,6 +1206,15 @@ export component AppWindow inherits Window {
     }
 
     if root.login-state == "ready": AppsOverlays {
+        width: root.width;
+        height: root.height;
+    }
+    if root.login-state == "ready" && SettingsStore.open: SettingsPage { x: AppsStore.rail-width; y: 48px; z: 60; width: root.width - AppsStore.rail-width; height: root.height - 48px; }
+    if root.login-state == "ready" && SettingsStore.profile-open: ProfileMenu { z: 70; width: root.width; height: root.height; }
+
+    // The full-size picture viewer (plan chat 9.5), above everything else.
+    if root.login-state == "ready" && MediaStore.viewer-open: ImageViewer {
+        z: 60;
         width: root.width;
         height: root.height;
     }

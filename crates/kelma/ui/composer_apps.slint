@@ -89,7 +89,7 @@ component CaRow inherits Rectangle {
             if !root.has-thumb: Text {
                 text: root.letter;
                 color: #ffffff;
-                font-size: 16px;
+                font-size: 16px * Theme.font-scale;
                 font-weight: 700;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -104,10 +104,10 @@ component CaRow inherits Rectangle {
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;
-            Text { text: root.title; color: Theme.fg; font-size: 13px; overflow: elide; }
-            Text { text: root.detail; color: Theme.fg-muted; font-size: 11px; overflow: elide; }
+            Text { text: root.title; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+            Text { text: root.detail; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; overflow: elide; }
         }
-        if root.hint != "": Text { text: root.hint; color: Theme.fg-subtle; font-size: 11px; vertical-alignment: center; }
+        if root.hint != "": Text { text: root.hint; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: center; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -153,7 +153,7 @@ export component ComposerAppsOverlay inherits Rectangle {
                     Text {
                         text: ComposerApps.command-key == "" ? "Apps for this chat" : ComposerApps.app-name + " · " + ComposerApps.command-title;
                         color: Theme.fg;
-                        font-size: 15px;
+                        font-size: 15px * Theme.font-scale;
                         font-weight: 700;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
@@ -174,8 +174,8 @@ export component ComposerAppsOverlay inherits Rectangle {
                 if ComposerApps.command-key == "": VerticalLayout {
                     spacing: 4px;
                     vertical-stretch: 1;
-                    if ComposerApps.loading: Text { text: "Looking for the apps in this chat…"; color: Theme.fg-subtle; font-size: 13px; }
-                    if !ComposerApps.loading && ComposerApps.status != "": Text { text: ComposerApps.status; color: Theme.fg-subtle; font-size: 13px; wrap: word-wrap; }
+                    if ComposerApps.loading: Text { text: "Looking for the apps in this chat…"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
+                    if !ComposerApps.loading && ComposerApps.status != "": Text { text: ComposerApps.status; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
                     Flickable {
                         vertical-stretch: 1;
                         content-height: cmds.preferred-height;
@@ -185,7 +185,7 @@ export component ComposerAppsOverlay inherits Rectangle {
                                 if c.header: Text {
                                     text: c.app;
                                     color: Theme.fg-muted;
-                                    font-size: 11px;
+                                    font-size: 11px * Theme.font-scale;
                                     font-weight: 600;
                                     height: 28px;
                                     vertical-alignment: bottom;
@@ -215,8 +215,8 @@ export component ComposerAppsOverlay inherits Rectangle {
                         edited(q) => { ComposerApps.command("query", q); }
                         init => { self.focus-input(); }
                     }
-                    if ComposerApps.searching: Text { text: "Searching…"; color: Theme.fg-subtle; font-size: 13px; }
-                    if !ComposerApps.searching && ComposerApps.status != "": Text { text: ComposerApps.status; color: Theme.fg-subtle; font-size: 13px; wrap: word-wrap; }
+                    if ComposerApps.searching: Text { text: "Searching…"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
+                    if !ComposerApps.searching && ComposerApps.status != "": Text { text: ComposerApps.status; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
                     Flickable {
                         vertical-stretch: 1;
                         content-height: found.preferred-height;
@@ -235,18 +235,18 @@ export component ComposerAppsOverlay inherits Rectangle {
                     }
                 }
 
-                if ComposerApps.note != "": Text { text: ComposerApps.note; color: Theme.accent; font-size: 12px; wrap: word-wrap; }
+                if ComposerApps.note != "": Text { text: ComposerApps.note; color: Theme.accent; font-size: 12px * Theme.font-scale; wrap: word-wrap; }
 
                 // The cards already in the message.
                 if ComposerApps.cards.length > 0: VerticalLayout {
                     spacing: 2px;
                     vertical-stretch: 0;
                     Rectangle { height: 1px; background: Theme.border; }
-                    Text { text: "In your message: " + ComposerApps.cards.length; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
+                    Text { text: "In your message: " + ComposerApps.cards.length; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                     for card[i] in ComposerApps.cards: HorizontalLayout {
                         height: 30px;
                         spacing: 8px;
-                        Text { text: card.title; color: Theme.fg; font-size: 12px; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                        Text { text: card.title; color: Theme.fg; font-size: 12px * Theme.font-scale; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
                         IconButton {
                             icon: @image-url("icons/close.svg");
                             size: 24px;

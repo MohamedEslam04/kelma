@@ -5,8 +5,8 @@ use super::outbox::{PENDING_PREFIX, row_from_outbox};
 use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
-    ChatData, FileData, HeaderData, ImgData, MsgData, Pixels, ReactData, Scroll, TeamData,
-    color_for, initials,
+    ChatData, FileData, HeaderData, MsgData, Pixels, ReactData, Scroll, TeamData, color_for,
+    initials,
 };
 use crate::markdown::{reaction_emoji, render_blocks};
 use chrono::{Local, TimeZone};
@@ -535,14 +535,18 @@ impl Engine {
             let system = system_text(r);
             let props: Value =
                 serde_json::from_str(&r.reactions_json).unwrap_or_else(|_| json!({}));
-            let parsed = render_blocks(&render::parse_teams_html(&r.content_html));
+            let mine = r.sender_mri == self.me;
+            let shown = self.translated_html(&r.id);
+            let html = shown.as_deref().unwrap_or(&r.content_html);
+            let mut parsed = render_blocks(&render::parse_teams_html(html));
+            // Headings, tables and colors (the plan's 5.4): the richer model draws the body.
+            crate::markdown::upgrade_rich(&mut parsed, html);
             let headline = props
                 .get("t")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
             let card = self.card_rows(&props, &headline);
-            let mine = r.sender_mri == self.me;
             let new_day = prev.is_none_or(|p| !same_day(p.compose_ms, r.compose_ms));
             let show_header = new_day
                 || divider == Some(i)
@@ -593,25 +597,15 @@ impl Engine {
                         .collect()
                 })
                 .unwrap_or_default();
-            let images = parsed
-                .images
-                .iter()
-                .map(|(url, w, h)| {
-                    let pixels = self.inline_image(url);
-                    // Real pixel size once decoded; the HTML attributes are only a hint.
-                    let (w, h) = match &pixels {
-                        Some(p) => (p.width() as f32, p.height() as f32),
-                        None => (w.unwrap_or(320) as f32, h.unwrap_or(200) as f32),
-                    };
-                    let scale = (420.0 / w.max(1.0)).min(320.0 / h.max(1.0)).min(1.0);
-                    ImgData {
-                        pixels,
-                        url: url.clone(),
-                        w: w * scale,
-                        h: h * scale,
-                    }
-                })
-                .collect();
+            let (images, grid_w, grid_h) = self.grid_images(&parsed.images);
+            let has_text = !r.deleted && system.is_none() && !parsed.plain.trim().is_empty();
+            let tr = self.translate_view(
+                &r.id,
+                props.get("g").and_then(Value::as_str),
+                mine,
+                has_text,
+            );
+            let links = self.link_cards(&props);
             let sender = if r.sender_name.is_empty() {
                 self.store
                     .lock()
@@ -685,6 +679,11 @@ impl Engine {
                 flash: false,
                 card,
                 headline,
+                grid_w,
+                grid_h,
+                translate: tr.state,
+                translate_from: tr.from,
+                links,
             });
             prev = Some(r);
         }

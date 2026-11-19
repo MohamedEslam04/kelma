@@ -758,3 +758,37 @@ fn lists_show_a_lists_columns_and_items() {
     a.click("Documents");
     assert_eq!(l.get_title(), "Documents");
 }
+
+#[test]
+fn a_w_apps_tab_opens_in_the_web_host_and_the_plain_link_stays_in_the_browser() {
+    let a = AppsHarness::open();
+    a.click("More apps");
+    a.click("Shifts");
+    assert_eq!(a.view(), "app");
+    // The tab goes to the web host (demo mode only records it, no Chromium starts).
+    a.send("app-link", "tab:home");
+    let opened = a.h.engine.apps_opened();
+    assert!(
+        opened
+            .iter()
+            .any(|u| u.starts_with("web-host:https://apps.example.invalid/demo-shifts/")),
+        "{opened:?}"
+    );
+    assert!(
+        !opened
+            .iter()
+            .any(|u| u.starts_with("https://apps.example.invalid/")),
+        "the tab URL is not sent to the browser: {opened:?}"
+    );
+    // The about tab has no web URL, so it falls back to the Teams link in the browser.
+    a.send("app-link", "tab:about");
+    // The plain link keeps using the browser.
+    a.send("app-link", "host");
+    let opened = a.h.engine.apps_opened();
+    assert!(
+        opened
+            .iter()
+            .any(|u| u.starts_with("https://teams.microsoft.com/l/entity/demo-shifts/home")),
+        "{opened:?}"
+    );
+}

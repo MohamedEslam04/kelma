@@ -22,9 +22,17 @@ mod appstore;
 mod channels;
 mod composer_apps;
 mod drive;
+mod engage;
 mod find;
+mod format;
+mod format_live;
+mod global_search;
 mod lists;
+mod media;
 mod people;
+mod saved;
+mod settings;
+mod shortcuts;
 mod teams;
 mod window_state;
 

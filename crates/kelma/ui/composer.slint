@@ -4,6 +4,7 @@ import { Edited, ComposerEmoji, PendingAttachment } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
 import { PeopleStore } from "people.slint";
 import { MentionApi, MentionPicker } from "mention_picker.slint";
+import { FormatApi, FormatBar, FormatEdit, FormatPreview, FormatToggle } from "composer_format.slint";
 import { ComposerAppsButton } from "composer_apps.slint";
 
 // Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
@@ -29,7 +30,7 @@ component EmojiGrid inherits Rectangle {
         height: 36px;
         border-radius: 4px;
         background: cell.has-hover ? Theme.surface-hover : transparent;
-        Text { text: e.ch; font-size: 20px; }
+        Text { text: e.ch; font-size: 20px * Theme.font-scale; }
         cell := TouchArea {
             mouse-cursor: pointer;
             clicked => { root.picked(e.ch); }
@@ -53,6 +54,13 @@ export component Composer inherits Rectangle {
     in property <[ComposerEmoji]> recent-emoji;
     in property <[PendingAttachment]> pending-attachments;
     in-out property <int> skin-tone: 0; // 0 default, 1..5 light to dark
+    // Formatting (plan chat 5.4): the toolbar and preview strip, and the taller composer (Ctrl+Shift+X).
+    in-out property <bool> format-open: false;
+    in-out property <bool> expanded: false;
+    // True while the text box has the keyboard focus (the window leaves Ctrl+Shift+7 and 8 to the composer then).
+    property <bool> input-focused: composer-input.has-focus;
+    callback input-focus(bool);
+    changed input-focused => { root.input-focus(root.input-focused); }
 
     callback send(string);
     callback set-enter-sends(bool);
@@ -66,6 +74,8 @@ export component Composer inherits Rectangle {
     callback attach-image();
     callback attach-file();
     callback attach-cloud();
+    // Up in an empty composer: edit my last message.
+    callback edit-last();
 
     property <int> emoji-tab: 0;
     property <string> emoji-query;
@@ -108,6 +118,42 @@ export component Composer inherits Rectangle {
         root.focus-tick += 1;
     }
 
+    // Puts a formatted text back with its selection.
+    function put-selection(e: FormatEdit) {
+        composer-input.text = e.text;
+        composer-input.set-selection-offsets(e.anchor, e.cursor);
+        root.draft-edited(e.text);
+        root.focus-tick += 1;
+    }
+
+    // A toolbar action or shortcut on the selection (`a`, `c`: anchor and cursor byte offsets).
+    function format(act: string, a: int, c: int) {
+        if act == "undo" || act == "redo" {
+            let u = act == "undo" ? FormatApi.undo(composer-input.text, a, c) : FormatApi.redo(composer-input.text, a, c);
+            if u.ok { root.put-selection(u); }
+            return;
+        }
+        let e = FormatApi.apply(act, composer-input.text, a, c);
+        if e.ok { root.put-selection(e); }
+    }
+
+    // Formatting shortcuts (Ctrl+B, Ctrl+Alt+1, ...). False: not one, or an undo or redo the toolbar
+    // has nothing for, so the input's own undo runs.
+    function try-shortcut(event: KeyEvent) -> bool {
+        let act = FormatApi.shortcut(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift);
+        let a = composer-input.anchor-position-byte-offset;
+        let c = composer-input.cursor-position-byte-offset;
+        if act == "" { return false; }
+        if act == "link" { fmt-bar.open-link(); return true; }
+        if act == "undo" || act == "redo" {
+            let u = act == "undo" ? FormatApi.undo(composer-input.text, a, c) : FormatApi.redo(composer-input.text, a, c);
+            if u.ok { root.put-selection(u); return true; }
+            return false;
+        }
+        root.format(act, a, c);
+        return true;
+    }
+
     function pick-emoji(ch: string) {
         root.put(EmojiApi.insert(root.draft, composer-input.cursor-position-byte-offset, ch));
         root.emoji-used(ch);
@@ -142,18 +188,18 @@ export component Composer inherits Rectangle {
             border-radius: 6px;
             background: Theme.surface;
             border-width: 1px;
-            border-color: #3a3a3a;
+            border-color: Theme.border;
             VerticalLayout {
                 if root.reply-preview != "": Rectangle {
-                    background: #1f1f1f;
+                    background: Theme.sidebar;
                     border-radius: 4px;
                     HorizontalLayout {
                         padding: 8px;
                         spacing: 8px;
                         Rectangle { width: 3px; background: Theme.accent; }
                         VerticalLayout {
-                            Text { text: root.editing-id != "" ? "Editing message" : "Replying to " + root.reply-author; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
-                            Text { text: root.reply-preview; color: Theme.fg-muted; font-size: 12px; overflow: elide; }
+                            Text { text: root.editing-id != "" ? "Editing message" : "Replying to " + root.reply-author; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                            Text { text: root.reply-preview; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
                         }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; clicked => { root.cancel-reply(); } }
                     }
@@ -167,7 +213,7 @@ export component Composer inherits Rectangle {
                         width: 200px;
                         height: 48px;
                         border-radius: 6px;
-                        background: #1f1f1f;
+                        background: Theme.sidebar;
                         border-width: 1px;
                         border-color: Theme.border;
                         HorizontalLayout {
@@ -176,15 +222,15 @@ export component Composer inherits Rectangle {
                             Rectangle {
                                 width: 36px;
                                 border-radius: 4px;
-                                background: a.has-preview ? transparent : #333333;
+                                background: a.has-preview ? transparent : Theme.surface-hover;
                                 clip: true;
                                 if a.has-preview: Image { source: a.preview; image-fit: cover; width: parent.width; height: parent.height; }
                                 if !a.has-preview: Icon { source: @image-url("icons/file.svg"); width: 18px; height: 18px; x: 9px; y: 9px; }
                             }
                             VerticalLayout {
                                 alignment: center;
-                                Text { text: a.name; color: Theme.fg; font-size: 12px; font-weight: 600; overflow: elide; }
-                                Text { text: a.detail; color: Theme.fg-muted; font-size: 11px; }
+                                Text { text: a.name; color: Theme.fg; font-size: 12px * Theme.font-scale; font-weight: 600; overflow: elide; }
+                                Text { text: a.detail; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; }
                             }
                             Rectangle {
                                 width: 22px;
@@ -208,19 +254,31 @@ export component Composer inherits Rectangle {
                     TextInput {
                         text <=> root.post-subject;
                         color: Theme.fg;
-                        font-size: 15px;
+                        font-size: 15px * Theme.font-scale;
                         font-weight: 700;
                         single-line: true;
                         vertical-alignment: center;
                     }
                 }
+                fmt-bar := FormatBar {
+                    open: root.format-open;
+                    sel-anchor: composer-input.anchor-position-byte-offset;
+                    sel-cursor: composer-input.cursor-position-byte-offset;
+                    action(a, s, c) => { root.format(a, s, c); }
+                }
+                if root.format-open && FormatApi.has-format(root.draft): FormatPreview {
+                    source: root.draft;
+                }
                 Rectangle {
-                    height: max(44px, min(220px, composer-input.preferred-height + 20px));
+                    height: root.expanded ? max(200px, min(420px, composer-input.preferred-height + 20px)) : max(44px, min(220px, composer-input.preferred-height + 20px));
                     composer-scope := FocusScope {
                         capture-key-pressed(event) => {
                             // Not consumed: a text paste still happens. Rust adds an image if the clipboard holds one.
                             if event.text == "v" && (event.modifiers.control || event.modifiers.meta) {
                                 root.paste-image();
+                            }
+                            if root.try-shortcut(event) {
+                                return accept;
                             }
                             if root.mention-open {
                                 if event.text == Key.DownArrow {
@@ -264,6 +322,10 @@ export component Composer inherits Rectangle {
                                     return accept;
                                 }
                             }
+                            if event.text == Key.UpArrow && composer-input.text == "" && root.editing-id == "" && root.pending-attachments.length == 0 {
+                                root.edit-last();
+                                return accept;
+                            }
                             if (event.text == Key.Return && (root.enter-sends ? !event.modifiers.shift : event.modifiers.control || event.modifiers.meta)) {
                                 root.submit();
                                 return accept;
@@ -278,7 +340,7 @@ export component Composer inherits Rectangle {
                             width: parent.width - 28px;
                             text <=> root.draft;
                             color: Theme.fg;
-                            font-size: 14px;
+                            font-size: 14px * Theme.font-scale;
                             single-line: false;
                             wrap: word-wrap;
                             edited => {
@@ -300,6 +362,7 @@ export component Composer inherits Rectangle {
                     padding-bottom: 6px;
                     spacing: 2px;
                     alignment: end;
+                    FormatToggle { on: root.format-open; clicked => { root.format-open = !root.format-open; } }
                     IconButton { icon: @image-url("icons/emoji.svg"); clicked => { root.emoji-query = ""; emoji-popup.show(); } }
                     IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
                     IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
@@ -336,7 +399,7 @@ export component Composer inherits Rectangle {
         y: -self.height - 4px;
         width: 300px;
         height: root.suggestions.length * 32px + 8px;
-        background: #2b2b2b;
+        background: Theme.surface;
         border-radius: 6px;
         border-width: 1px;
         border-color: Theme.border;
@@ -349,8 +412,8 @@ export component Composer inherits Rectangle {
                 HorizontalLayout {
                     padding-left: 8px;
                     spacing: 10px;
-                    Text { text: s.ch; font-size: 18px; vertical-alignment: center; horizontal-stretch: 0; width: 30px; }
-                    Text { text: ":" + s.name; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: left; vertical-alignment: center; overflow: elide; }
+                    Text { text: s.ch; font-size: 18px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 0; width: 30px; }
+                    Text { text: ":" + s.name; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: left; vertical-alignment: center; overflow: elide; }
                 }
                 sug-area := TouchArea {
                     mouse-cursor: pointer;
@@ -370,7 +433,7 @@ export component Composer inherits Rectangle {
         height: 440px;
         close-policy: close-on-click-outside;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
@@ -380,7 +443,7 @@ export component Composer inherits Rectangle {
                 Rectangle {
                     height: 32px;
                     border-radius: 4px;
-                    background: #1f1f1f;
+                    background: Theme.sidebar;
                     border-width: 1px;
                     border-color: emoji-search.has-focus ? Theme.accent : Theme.border;
                     emoji-search := TextInput {
@@ -388,7 +451,7 @@ export component Composer inherits Rectangle {
                         width: parent.width - 20px;
                         text <=> root.emoji-query;
                         color: Theme.fg;
-                        font-size: 13px;
+                        font-size: 13px * Theme.font-scale;
                         single-line: true;
                         vertical-alignment: center;
                     }
@@ -396,7 +459,7 @@ export component Composer inherits Rectangle {
                         x: 10px;
                         text: "Find something fun";
                         color: Theme.fg-subtle;
-                        font-size: 13px;
+                        font-size: 13px * Theme.font-scale;
                         vertical-alignment: center;
                     }
                 }
@@ -406,13 +469,13 @@ export component Composer inherits Rectangle {
                     for glyph[i] in ["😀", "🧑", "🐻", "🍔", "🚗", "⚽", "💡", "❤️", "🏁"]: Rectangle {
                         width: 36px;
                         border-radius: 4px;
-                        background: root.emoji-tab == i ? Theme.surface-hover : (emoji-tab-area.has-hover ? #333333 : transparent);
+                        background: root.emoji-tab == i ? Theme.surface-hover : (emoji-tab-area.has-hover ? Theme.surface-hover : transparent);
                         Rectangle {
                             y: parent.height - 2px;
                             height: 2px;
                             background: root.emoji-tab == i ? Theme.accent : transparent;
                         }
-                        Text { text: glyph; font-size: 16px; }
+                        Text { text: glyph; font-size: 16px * Theme.font-scale; }
                         emoji-tab-area := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.emoji-tab = i; }
@@ -422,7 +485,7 @@ export component Composer inherits Rectangle {
                 if root.emoji-query == "" && root.recent-emoji.length > 0: VerticalLayout {
                     vertical-stretch: 0;
                     alignment: start;
-                    Text { text: "Recent"; color: Theme.fg-muted; font-size: 11px; font-weight: 600; }
+                    Text { text: "Recent"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                     EmojiGrid {
                         items: root.recent-emoji;
                         picked(ch) => { root.pick-emoji(ch); emoji-popup.close(); }
@@ -441,12 +504,12 @@ export component Composer inherits Rectangle {
                 HorizontalLayout {
                     height: 32px;
                     spacing: 2px;
-                    Text { text: "Skin tone"; color: Theme.fg-muted; font-size: 11px; vertical-alignment: center; width: 70px; }
+                    Text { text: "Skin tone"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; vertical-alignment: center; width: 70px; }
                     for tone-glyph[i] in ["👍", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿"]: Rectangle {
                         width: 36px;
                         border-radius: 4px;
-                        background: root.skin-tone == i ? Theme.surface-hover : (tone.has-hover ? #333333 : transparent);
-                        Text { text: tone-glyph; font-size: 16px; }
+                        background: root.skin-tone == i ? Theme.surface-hover : (tone.has-hover ? Theme.surface-hover : transparent);
+                        Text { text: tone-glyph; font-size: 16px * Theme.font-scale; }
                         tone := TouchArea {
                             mouse-cursor: pointer;
                             clicked => {
@@ -466,14 +529,14 @@ export component Composer inherits Rectangle {
         width: 260px;
         height: 190px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
                 padding: 8px;
                 spacing: 2px;
-                Text { text: "When writing a message, press Enter to"; color: Theme.fg-muted; font-size: 11px; wrap: word-wrap; }
+                Text { text: "When writing a message, press Enter to"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; wrap: word-wrap; }
                 for opt[i] in ["Send the message", "Start a new line"]: Rectangle {
                     height: 32px;
                     border-radius: 4px;
@@ -482,7 +545,7 @@ export component Composer inherits Rectangle {
                         padding-left: 8px;
                         spacing: 8px;
                         Text { text: (i == 0) == root.enter-sends ? "●" : "○"; color: Theme.accent; vertical-alignment: center; }
-                        Text { text: opt; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+                        Text { text: opt; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                     }
                     enter-opt := TouchArea {
                         mouse-cursor: pointer;
@@ -505,7 +568,7 @@ export component Composer inherits Rectangle {
                         padding-left: 8px;
                         spacing: 8px;
                         Text { text: PeopleStore.receipts-on ? "☑" : "☐"; color: Theme.accent; vertical-alignment: center; }
-                        Text { text: "Read receipts"; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+                        Text { text: "Read receipts"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                     }
                     receipts-touch := TouchArea {
                         mouse-cursor: pointer;
@@ -523,7 +586,7 @@ export component Composer inherits Rectangle {
                         padding-left: 8px;
                         spacing: 8px;
                         Icon { source: @image-url("icons/cloud.svg"); width: 16px; height: 16px; y: 8px; tint: Theme.accent; }
-                        Text { text: "Attach cloud files"; color: Theme.fg; font-size: 13px; vertical-alignment: center; accessible-role: none; }
+                        Text { text: "Attach cloud files"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; accessible-role: none; }
                     }
                     cloud-touch := TouchArea {
                         mouse-cursor: pointer;

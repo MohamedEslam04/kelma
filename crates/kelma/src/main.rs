@@ -2,18 +2,22 @@
 
 mod backend;
 mod composer;
+mod composer_format;
 mod data;
 mod demo;
 mod external;
 mod find_data;
 mod lists_data;
 mod markdown;
+mod media_data;
 mod mention;
 mod reactions;
+mod shortcuts;
 mod tray_wiring;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
+mod update_check;
 mod window_state;
 
 slint::include_modules!();
@@ -323,9 +327,6 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_activity_reply, |t| Cmd::Activity(ActivityCmd::Reply(
         t.into()
     )));
-    cmd!(on_activity_settings, || Cmd::Activity(
-        ActivityCmd::Settings
-    ));
     cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
     cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
     cmd!(on_emoji_used, |e| Cmd::EmojiUsed(e.into()));
@@ -349,6 +350,7 @@ fn main() -> anyhow::Result<()> {
     }
     ui::install_calendar(&window, tx.clone());
     ui::install_apps(&window, tx.clone());
+    ui::settings::install_system(&window, tx.clone());
     ui::install_composer_apps(&window, tx.clone());
     {
         let tx = tx.clone();
@@ -394,6 +396,22 @@ fn main() -> anyhow::Result<()> {
     }
     {
         let tx = tx.clone();
+        window.global::<MediaStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::MediaCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Media(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<EngageStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::EngageCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Engage(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
         window.global::<DriveStore>().on_command(move |name, arg| {
             if let Some(c) = backend::DriveCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Drive(c));
@@ -405,6 +423,8 @@ fn main() -> anyhow::Result<()> {
         window.on_dismiss_banner(move || {
             if let Some(w) = weak.upgrade() {
                 w.set_banner(slint::SharedString::new());
+                w.set_banner_action(slint::SharedString::new());
+                w.set_banner_info(false);
             }
         });
     }

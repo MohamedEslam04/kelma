@@ -15,7 +15,7 @@ export component PinnedBanner inherits Rectangle {
     property <PinnedItem> current: root.items[root.shown];
 
     height: 36px;
-    background: #232323;
+    background: Theme.sidebar;
     accessible-role: groupbox;
     accessible-label: "Pinned messages";
 
@@ -30,8 +30,8 @@ export component PinnedBanner inherits Rectangle {
             accessible-label: "Go to pinned message";
             HorizontalLayout {
                 spacing: 6px;
-                if root.current.sender != "": Text { text: root.current.sender; color: Theme.fg; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 0; }
-                pin-text := Text { text: root.current.preview; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                if root.current.sender != "": Text { text: root.current.sender; color: Theme.fg; font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-stretch: 0; }
+                pin-text := Text { text: root.current.preview; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
             }
             TouchArea {
                 mouse-cursor: pointer;
@@ -51,7 +51,7 @@ export component PinnedBanner inherits Rectangle {
         pin-counter := Text {
             text: (root.shown + 1) + "/" + root.items.length;
             color: Theme.fg-subtle;
-            font-size: 12px;
+            font-size: 12px * Theme.font-scale;
             vertical-alignment: center;
             horizontal-stretch: 0;
         }
@@ -70,7 +70,7 @@ export component PinnedBanner inherits Rectangle {
             clicked => { pin-menu.show(); }
         }
     }
-    Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
 
     pin-menu := PopupWindow {
         x: parent.width - 160px;
@@ -78,7 +78,7 @@ export component PinnedBanner inherits Rectangle {
         width: 140px;
         height: 40px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
@@ -90,7 +90,7 @@ export component PinnedBanner inherits Rectangle {
                     background: unpin-touch.has-hover ? Theme.surface-hover : transparent;
                     accessible-role: button;
                     accessible-label: "Unpin";
-                    Text { x: 10px; text: "Unpin"; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+                    Text { x: 10px; text: "Unpin"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                     unpin-touch := TouchArea { mouse-cursor: pointer; clicked => { root.unpin(root.current.id); } }
                 }
             }

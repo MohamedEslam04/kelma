@@ -10,6 +10,10 @@ publish = false
 [dependencies]
 anyhow = "1.0.104"
 app_store = { package = "apps", version = "0.0.0", path = "../apps" }
+appearance = { version = "0.0.0", path = "../appearance" }
+devices = { version = "0.0.0", path = "../devices" }
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+serde = { version = "1.0.229", features = ["derive"] }
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 calendar = { version = "0.0.0", path = "../calendar" }
 diag = { version = "0.0.0", path = "../diag" }
@@ -33,6 +37,7 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tray = { version = "0.0.0", path = "../tray" }
+webhost = { version = "0.0.0", path = "../webhost" }
 
 [build-dependencies]
 slint-build = "1.19"

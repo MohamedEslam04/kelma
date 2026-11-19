@@ -10,7 +10,7 @@ use std::sync::Mutex;
 /// Targets that were not launched because opening was suppressed, oldest first.
 static SUPPRESSED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-fn suppressed() -> bool {
+pub(crate) fn suppressed() -> bool {
     cfg!(test) || std::env::var_os("KELMA_DEMO").is_some()
 }
 

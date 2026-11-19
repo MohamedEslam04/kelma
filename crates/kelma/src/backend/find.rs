@@ -10,9 +10,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use store::{ConvFilter, ConvKind, ConversationRow, MessageRow};
+use teams_proto::global_search::Paging;
 use teams_proto::search::{MessageHit, SearchFilters, mentions_query};
 use teams_proto::time::now_ms;
 use teams_proto::views::FollowedThread;
+
+mod global;
 
 /// Messages asked from the server per page.
 const PAGE: u32 = 25;
@@ -42,6 +45,8 @@ pub enum FindCmd {
     Quick(String),
     QuickClose,
     Unfollow(String),
+    /// Removes a row of the Saved quick view from the saved list.
+    Unsave(String),
     FindOpen,
     FindClose,
     FindQuery(String),
@@ -76,6 +81,7 @@ impl FindCmd {
             "quick" => FindCmd::Quick(a),
             "quick-close" => FindCmd::QuickClose,
             "unfollow" => FindCmd::Unfollow(a),
+            "unsave" => FindCmd::Unsave(a),
             "find-open" => FindCmd::FindOpen,
             "find-close" => FindCmd::FindClose,
             "find-query" => FindCmd::FindQuery(a),
@@ -243,6 +249,8 @@ pub(super) struct State {
     hits: Vec<Hit>,
     msg_from: u32,
     more: bool,
+    /// Next page of Files, People and Meetings (the global search), see `global`.
+    global_more: Paging,
     searched: bool,
     // Quick views.
     quick: Option<&'static str>,
@@ -348,6 +356,7 @@ impl Engine {
                 self.find.lock().unwrap().quick = None;
             }
             FindCmd::Unfollow(id) => self.unfollow_row(&id).await?,
+            FindCmd::Unsave(id) => self.unsave_row(&id).await?,
             FindCmd::FindOpen => {
                 let mut f = self.find.lock().unwrap();
                 f.find = ChatFind {
@@ -523,7 +532,8 @@ impl Engine {
                 rows_for(f.tab, Self::filters_active(&f), &f.hits),
                 terms_of(&f.query),
                 f.searched,
-                f.more && matches!(f.tab, Tab::Messages | Tab::All),
+                (f.more && matches!(f.tab, Tab::Messages | Tab::All))
+                    || global::tab_has_more(f.tab, &f.global_more),
             )
         };
         let rows: Vec<HitData> = rows
@@ -557,6 +567,7 @@ impl Engine {
             f.seq += 1;
             f.msg_from = 0;
             f.more = false;
+            f.global_more = Paging::default();
             (
                 f.query.clone(),
                 f.seq,
@@ -601,13 +612,13 @@ impl Engine {
             return;
         }
         let want_messages = matches!(tab, Tab::All | Tab::Messages);
-        let want_others = !filtered && matches!(tab, Tab::All | Tab::People | Tab::Files);
         let remote_filters = SearchFilters {
             in_thread: in_conv.as_ref().map(|(id, _)| id.clone()),
             from_mri: person.as_ref().map(|(m, _)| m.clone()),
             since_day: (date != Date::Any).then(|| day_of(since)),
         };
-        let (msgs, people, files) = tokio::join!(
+        // Files, people and meetings come from the global search, whichever tab is open.
+        let (msgs, others) = tokio::join!(
             async {
                 if want_messages {
                     self.client
@@ -619,17 +630,10 @@ impl Engine {
                 }
             },
             async {
-                if want_others && matches!(tab, Tab::All | Tab::People) {
-                    self.client.search_people(&self.me, &q).await.ok()
-                } else {
+                if filtered {
                     None
-                }
-            },
-            async {
-                if want_others && matches!(tab, Tab::All | Tab::Files) {
-                    onedrive::search(&self.client, &q).await.ok()
                 } else {
-                    None
+                    Some(self.others_first(&q).await)
                 }
             }
         );
@@ -649,39 +653,8 @@ impl Engine {
                     .collect();
                 merge_messages(&mut f.hits, hits);
             }
-            if let Some(p) = people {
-                f.hits.retain(|h| h.kind != "person");
-                f.hits.extend(p.into_iter().take(10).map(|p| {
-                    Hit {
-                        kind: "person",
-                        mri: p.mri,
-                        name: p.display_name,
-                        place: [p.job_title, p.email]
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<_>>()
-                            .join(" · "),
-                        ..Default::default()
-                    }
-                }));
-            }
-            if let Some(items) = files {
-                f.hits.retain(|h| h.kind != "file");
-                f.hits
-                    .extend(items.into_iter().filter(|i| !i.is_folder).map(|i| {
-                        Hit {
-                            kind: "file",
-                            name: i.name,
-                            place: [i.modified_by, i.parent_path]
-                                .into_iter()
-                                .filter(|s| !s.is_empty())
-                                .collect::<Vec<_>>()
-                                .join(" · "),
-                            time_ms: i.modified_ms,
-                            url: i.web_url,
-                            ..Default::default()
-                        }
-                    }));
+            if let Some(o) = others {
+                global::store_others(&mut f, o);
             }
         }
         self.push_search(false);
@@ -750,6 +723,10 @@ impl Engine {
         let quick = self.find.lock().unwrap().quick;
         if let Some(kind) = quick {
             return self.quick_more(kind).await;
+        }
+        let tab = self.find.lock().unwrap().tab;
+        if let Some(kind) = global::kind_of_tab(tab) {
+            return self.global_more(kind).await;
         }
         let (q, from, seq, in_conv, person, date) = {
             let f = self.find.lock().unwrap();
@@ -932,6 +909,8 @@ impl Engine {
             "person" => {
                 self.people_cmd(super::PeopleCmd::Profile(h.mri)).await?;
             }
+            // A calendar event (it has no chat): the calendar on its day.
+            "meeting" if h.conv.is_empty() => self.open_event(h.time_ms).await,
             _ => {
                 self.ui.show_view("chat");
                 if let Err(err) = self.open_conversation(&h.conv).await {
@@ -1165,10 +1144,10 @@ impl Engine {
     // ---- 7.4 Quick views -----------------------------------------------------------
 
     async fn quick_open(self: &Arc<Self>, kind: &str) {
-        let kind: &'static str = if kind == "followed" {
-            "followed"
-        } else {
-            "mentions"
+        let kind: &'static str = match kind {
+            "followed" => "followed",
+            "saved" => "saved",
+            _ => "mentions",
         };
         let seq = {
             let mut f = self.find.lock().unwrap();
@@ -1183,8 +1162,105 @@ impl Engine {
         self.push_quick(true);
         match kind {
             "mentions" => self.load_mentions(seq).await,
+            "saved" => self.load_saved(seq),
             _ => self.load_followed(seq).await,
         }
+    }
+
+    /// The Saved view (plan chat 9.8): the local saved list, newest saved first. The list is
+    /// kept in the store (see `toggle_save`), so it needs no network.
+    fn load_saved(self: &Arc<Self>, seq: u64) {
+        let saved = self
+            .store
+            .lock()
+            .unwrap()
+            .saved_messages()
+            .unwrap_or_default();
+        let hits: Vec<Hit> = saved
+            .iter()
+            .map(|m| {
+                // The cached message gives the real time and sender; the saved row is enough
+                // when it has been pruned.
+                let row = self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .message(&m.message_id)
+                    .ok()
+                    .flatten();
+                let mri = row
+                    .as_ref()
+                    .map(|r| r.sender_mri.clone())
+                    .unwrap_or_default();
+                let name = if m.sender_name.is_empty() {
+                    self.user_name(&mri).unwrap_or_default()
+                } else {
+                    m.sender_name.clone()
+                };
+                Hit {
+                    kind: "message",
+                    conv: m.conversation_id.clone(),
+                    message: m.message_id.clone(),
+                    root: if m.root_id == m.message_id {
+                        String::new()
+                    } else {
+                        m.root_id.clone()
+                    },
+                    time_ms: row.as_ref().map_or(m.saved_ms, |r| r.compose_ms),
+                    mri,
+                    name,
+                    place: self.location_of(&m.conversation_id, "", ""),
+                    text: m.preview.clone(),
+                    url: String::new(),
+                }
+            })
+            .collect();
+        {
+            let mut f = self.find.lock().unwrap();
+            if f.quick_seq != seq {
+                return;
+            }
+            f.quick_hits = hits;
+        }
+        self.push_quick(false);
+    }
+
+    /// "Unsave" on a row of the Saved view: the message leaves the list (and the server flag is
+    /// cleared, best effort like in `toggle_save`).
+    async fn unsave_row(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let hit = self
+            .find
+            .lock()
+            .unwrap()
+            .quick_hits
+            .iter()
+            .find(|h| h.id() == id)
+            .cloned();
+        let Some(h) = hit else { return Ok(()) };
+        self.store
+            .lock()
+            .unwrap()
+            .unsave_message(&h.conv, &h.message)?;
+        self.find
+            .lock()
+            .unwrap()
+            .quick_hits
+            .retain(|x| x.id() != id);
+        self.push_quick(false);
+        self.mark(|d| d.messages = true);
+        let root = if h.root.is_empty() {
+            &h.message
+        } else {
+            &h.root
+        };
+        if let Err(err) = self
+            .client
+            .set_saved(&h.conv, root, &h.message, false)
+            .await
+        {
+            tracing::warn!(%err, "unsaving the message on the server failed; removed locally");
+        }
+        Ok(())
     }
 
     fn push_quick(self: &Arc<Self>, loading: bool) {

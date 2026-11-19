@@ -19,7 +19,7 @@ export component ProfileCard inherits Rectangle {
     width: 320px;
     height: content.preferred-height;
     border-radius: 8px;
-    background: #2b2b2b;
+    background: Theme.surface;
     border-width: 1px;
     border-color: Theme.border;
     drop-shadow-blur: 16px;
@@ -42,9 +42,9 @@ export component ProfileCard inherits Rectangle {
             VerticalLayout {
                 alignment: center;
                 spacing: 2px;
-                card-name := Text { text: root.person.name; color: Theme.fg; font-size: 17px; font-weight: 700; wrap: word-wrap; accessible-role: text; accessible-label: root.person.name; }
-                if root.person.subtitle != "": card-title := Text { text: root.person.subtitle; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; accessible-role: text; accessible-label: root.person.subtitle; }
-                if root.loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 12px; }
+                card-name := Text { text: root.person.name; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; wrap: word-wrap; accessible-role: text; accessible-label: root.person.name; }
+                if root.person.subtitle != "": card-title := Text { text: root.person.subtitle; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; accessible-role: text; accessible-label: root.person.subtitle; }
+                if root.loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; }
             }
             IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; size: 28px; clicked => { root.close(); } }
         }
@@ -58,8 +58,8 @@ export component ProfileCard inherits Rectangle {
             HorizontalLayout {
                 padding-left: 6px;
                 spacing: 8px;
-                Text { text: "Email"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
-                Text { text: root.email; color: Theme.accent; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                Text { text: "Email"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                Text { text: root.email; color: Theme.accent; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
             }
             email-touch := TouchArea { mouse-cursor: pointer; clicked => { root.copy-email(); } }
         }
@@ -68,8 +68,8 @@ export component ProfileCard inherits Rectangle {
             HorizontalLayout {
                 padding-left: 6px;
                 spacing: 8px;
-                Text { text: "Company"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
-                card-work := Text { text: root.work; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                Text { text: "Company"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-work := Text { text: root.work; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
             }
         }
         if root.location != "": Rectangle {
@@ -77,8 +77,8 @@ export component ProfileCard inherits Rectangle {
             HorizontalLayout {
                 padding-left: 6px;
                 spacing: 8px;
-                Text { text: "Location"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
-                card-location := Text { text: root.location; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                Text { text: "Location"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-location := Text { text: root.location; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
             }
         }
         if root.local-time != "": Rectangle {
@@ -86,8 +86,8 @@ export component ProfileCard inherits Rectangle {
             HorizontalLayout {
                 padding-left: 6px;
                 spacing: 8px;
-                Text { text: "Local time"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
-                card-time := Text { text: root.local-time; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; }
+                Text { text: "Local time"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-time := Text { text: root.local-time; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
             }
         }
 
@@ -100,16 +100,16 @@ export component ProfileCard inherits Rectangle {
                 background: chat-touch.has-hover ? Theme.accent : Theme.accent-strong;
                 accessible-role: button;
                 accessible-label: "Chat";
-                Text { text: "Chat"; color: #ffffff; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Chat"; color: #ffffff; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 chat-touch := TouchArea { mouse-cursor: pointer; clicked => { root.chat(root.person.id); } }
             }
             if root.email != "": card-mail := Rectangle {
                 horizontal-stretch: 1;
                 border-radius: 4px;
-                background: mail-touch.has-hover ? Theme.surface-hover : #333333;
+                background: mail-touch.has-hover ? Theme.surface-hover : Theme.surface-hover;
                 accessible-role: button;
                 accessible-label: "Email";
-                Text { text: "Email"; color: Theme.fg; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Email"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 mail-touch := TouchArea { mouse-cursor: pointer; clicked => { root.send-email(root.email); } }
             }
         }
