@@ -17,10 +17,11 @@ Teams-like layout and uses a fraction of that memory: see [Memory](#memory).
 - **Chat:**
   - 1:1, group, meeting and self-notes chats, with custom sections, filters and list options
   - rich text both ways: a formatting toolbar (bold to tables, colors and code blocks) and Teams' shortcuts
-  - @mentions, reply quotes, forward, pin, save, mark unread, drafts and an offline outbox
+  - @mentions, reply quotes, forward, pin, save, mark unread, mark as important, drafts and an offline outbox
   - new chats and group management, profile cards, read receipts, pinned-message banner
   - image grid and viewer, link previews, translation, voice messages and videos
-  - bot and workflow cards (Adaptive Cards)
+  - bot and workflow cards (Adaptive Cards), and the composer's apps: message extension search,
+    action commands (their page opens in the web host) and sending the resulting cards
   - Arabic, English and mixed-direction text, each paragraph in its own direction
 - **Find:** a search page (messages, files, people, meetings), find in chat, Mentions, Followed
   threads and Saved quick views, the Shared tab and a chat details pane.
@@ -31,12 +32,19 @@ Teams-like layout and uses a fraction of that memory: see [Memory](#memory).
   recurrence, the scheduling assistant, rooms, proposals, filters, share and print.
 - **OneDrive:** browse, For you, Shared, People, Media and Meetings views, create and upload,
   share dialog, recycle bin and a native PDF and Office preview.
-- **Apps:** the app bar, the Store, Planner and To Do, Workflows, OneNote and Lists (read-only).
+- **Apps:** the app bar, the Store, Planner and To Do, Workflows, OneNote and Lists (read-only),
+  a Viva Engage community feed (read-only), and app tabs in a web host window that only gets
+  the camera, microphone, location, notifications and links you allowed the app.
+- **Calls and meetings:** a native call window with pre-join, meeting controls and the roster,
+  1:1 incoming and outgoing call screens (`calls` feature, on by default; `crates/calling`).
+- **Settings:** theme (light, dark, system), accent, density and text size; app language with
+  Arabic for the main screens; date and time format and time zone; notifications; devices;
+  privacy; files and links (open Office files in the browser, the desktop app or kelma);
+  app permissions; accounts; accessibility; an opt-in update check.
 - **Desktop:** tray icon with unread badge, close to tray, autostart, window state, desktop
   notifications, a local redacted problem report (`kelma-cli diag`).
 - **Live:** real-time updates over Teams' push channel, automatic reconnect and catch-up.
 
-Native calls and meetings are in progress (`crates/calling`); until then use the Teams web app for them.
 
 ## Install
 
@@ -59,7 +67,8 @@ git clone https://github.com/MohamedEslam04/kelma && cd kelma
 | RPM (Fedora) | `packaging/rpm/kelma.spec` | builds offline from vendored crates |
 
 Each folder says how to build the package. None of them is published to a repository yet, and
-updates come from your package manager (kelma has no built-in update check).
+updates come from your package manager. Settings › About has an opt-in check (off by default)
+that asks GitHub for the latest release once per start and never downloads anything.
 
 Start **kelma** from your launcher. On first start it shows a code: open the link, enter the code
 and sign in with your work account.
@@ -137,7 +146,11 @@ cargo run -p kelma-cli -- login | chats | teams | read <id> | send <id> <text> |
 The ADRs in [`docs/adr/`](docs/adr/) explain the toolkit, the web host and the composer choices.
 
 Parallel builds on a small machine: run cargo through `flock /tmp/kelma-build.lock cargo …` so only one
-build compiles the large `kelma` crate at a time.
+build compiles the large `kelma` crate at a time. GitHub CI runs fmt, clippy and the whole test
+suite on every push to `main` and `feat/**` and on pull requests.
+
+Translations: interface strings are wrapped in `@tr()` and compiled in from
+`crates/kelma/translations/<lang>/LC_MESSAGES/kelma.po`.
 
 ## Disclaimer
 
@@ -155,4 +168,4 @@ Use it at your own risk.
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
 
-Docs synced to commit 8b62517 ("Merge branch 'worktree-agent-a9f14921f98fb3510' into feat/parity-wave-2", 2026-11-19)
+Docs synced to commit 1413be6 ("docs(plans): S3.6 action commands open in the web host", 2026-11-19)
