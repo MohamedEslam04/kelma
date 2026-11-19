@@ -15,6 +15,7 @@ optdepends=(
   'noto-fonts-emoji: emoji rendering'
   'gnome-keyring: Secret Service for the stored sign-in (or kwallet)'
   'xdg-desktop-portal: file chooser and open-link portals'
+  'gst-plugin-pipewire: screen sharing in calls (with gstreamer and gst-plugins-base)'
 )
 # !lto: makepkg's default -flto turns aws-lc's C objects into bitcode that the Rust linker cannot
 # read. !debug: the release profile is stripped, so the -debug package would be empty.

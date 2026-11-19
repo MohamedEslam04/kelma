@@ -39,6 +39,8 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_timer(d.timer.into());
     s.set_muted(d.muted);
     s.set_hand(d.hand);
+    s.set_can_share(d.can_share);
+    s.set_sharing(d.sharing);
     s.set_prejoin_mic(d.prejoin_mic);
     s.set_recording(d.recording);
     s.set_transcribing(d.transcribing);

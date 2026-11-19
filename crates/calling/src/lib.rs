@@ -11,6 +11,7 @@
 //! - [`relay`]: TURN credentials from `trap/tokens`.
 //! - [`media`]: one WebRTC peer (webrtc-rs) speaking Opus over ICE/TURN + SRTP.
 //! - [`audio`]: microphone/speaker I/O and the Opus codec.
+//! - [`video`]: video we send (screen share; the camera later): frames, H.264, the portal.
 //! - [`history`]: call history from the `48:calllogs` system thread.
 //! - [`captions`]: live caption text from the media data channel.
 //! - [`voicemail`]: voicemails, which are Exchange mail read through Graph.
@@ -32,6 +33,7 @@ pub mod relay;
 pub mod signaling;
 pub mod types;
 pub mod voicemail;
+pub mod video;
 
 pub use error::{Error, Result};
 pub use types::*;

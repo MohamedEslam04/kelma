@@ -9,8 +9,8 @@
 //! utterance id.
 //!
 //! Facts: rusty-teams `crates/calling/src/data_channel.rs` and `captions.rs`
-//! `parse_caption_message` (MIT). UNVERIFIED by kelma: its media session does not open the data
-//! channel yet (webrtc-rs refuses the `x-data` section, `media/sdp.rs`).
+//! `parse_caption_message` (MIT). The media session opens the channel with
+//! `MediaOptions::data_channel` (`media/sdp.rs` maps the `x-data` line); UNVERIFIED live by kelma.
 
 use serde_json::Value;
 use std::collections::HashMap;

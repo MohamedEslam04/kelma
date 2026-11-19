@@ -726,7 +726,8 @@ impl Engine {
                     vec![]
                 }
             };
-        let (media, media_events) = MediaSession::new(ice).await?;
+        let (media, media_events) =
+            MediaSession::with_options(ice, call::share::media_options()).await?;
         let observe = |name: &str, text: &str| call::live::dump_answer(name, text);
         let links = match calling::incoming::answer_invitation(
             &ngc,
@@ -934,7 +935,8 @@ impl Engine {
                     vec![]
                 }
             };
-        let (media, media_events) = MediaSession::new(ice).await?;
+        let (media, media_events) =
+            MediaSession::with_options(ice, call::share::media_options()).await?;
         let offer = media.create_offer().await?;
         let s = CallSession::new(&surl, &self.me, &self.my_name);
         // Callbacks under our session come to this call from now on.

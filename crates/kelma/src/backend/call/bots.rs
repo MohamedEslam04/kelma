@@ -4,8 +4,8 @@
 //! transcription state come back for everyone in conversation updates. A refusal by the service
 //! is shown as the call's error banner, with the service's own words when it gives some.
 //!
-//! Caption text is not wired yet: it arrives on the media's data channel, which the media
-//! session does not open (docs/protocol-calls.md, "Caption text").
+//! Caption text arrives on the media's data channel, not here: `live.rs` reads it
+//! (docs/protocol-calls.md, "Caption text").
 
 use super::{Control, Event, EventSink};
 use calling::Links;
