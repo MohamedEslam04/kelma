@@ -29,6 +29,20 @@
   <provides>
     <binary>kelma</binary>
   </provides>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Chats, channels and activity in the dark theme (demo data)</caption>
+      <image type="source">https://raw.githubusercontent.com/MohamedEslam04/kelma/main/docs/screenshots/packaging-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The light theme</caption>
+      <image type="source">https://raw.githubusercontent.com/MohamedEslam04/kelma/main/docs/screenshots/packaging-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The interface at 150% text size</caption>
+      <image type="source">https://raw.githubusercontent.com/MohamedEslam04/kelma/main/docs/screenshots/packaging-150.png</image>
+    </screenshot>
+  </screenshots>
   <releases>
     <release version="0.1.0" date="2026-11-19"/>
   </releases>

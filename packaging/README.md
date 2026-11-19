@@ -30,7 +30,7 @@ sign-in, and benefits from `xdg-desktop-portal` and an emoji font.
 
 Needs `flatpak`, plus either `flatpak-builder` or the Flatpak `org.flatpak.Builder`
 (`flatpak install --user flathub org.flatpak.Builder`). The runtime, SDK and `rust-stable` extension
-(Freedesktop 25.08) are installed by the script when missing, roughly 2 to 3 GB.
+(Freedesktop 26.08) are installed by the script when missing, roughly 2 to 3 GB.
 
 ```sh
 packaging/flatpak/build.sh /data/kelma-flatpak          # build only
@@ -95,7 +95,7 @@ It takes about 30 minutes and several GB of memory (limit cargo with `CARGO_BUIL
 
 ## Verification status
 
-Last checked on 2026-11-19 at commit `d31bc90` (Fedora 44 host, Freedesktop 25.08, Arch container).
+Last checked on 2026-11-19 at commit `d31bc90` (Fedora 44 host, Freedesktop 26.08, Arch container).
 
 | Package | Result |
 |---|---|
