@@ -716,6 +716,7 @@ fn people(roster: &Roster, me: &str, talk: &Talk) -> Vec<Person> {
         .participants()
         .iter()
         .map(|p| Person {
+            mri: p.mri.clone(),
             speaking: talk.now.contains(&p.mri),
             spoke: talk.last.get(&p.mri).copied().unwrap_or(0),
             name: if p.display_name.is_empty() {

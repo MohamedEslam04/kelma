@@ -14,6 +14,9 @@ export struct CallPerson {
     role: string,
     // Heard right now.
     speaking: bool,
+    // Their profile photo, when known (else the tile shows the initials).
+    photo: image,
+    has-photo: bool,
 }
 
 export global CallStore {
@@ -39,6 +42,8 @@ export global CallStore {
     in property <bool> can-rejoin;
     // In the call first, then the lobby.
     in property <[CallPerson]> people;
+    // In the call (not the lobby) for the speaker view: the latest speaker first, then the rest.
+    in property <[CallPerson]> speaker-people;
     // Who the floating call shows, latest speakers first (us only when alone), at most four,
     // and how many more are in the call.
     in property <[CallPerson]> mini-people;
@@ -51,9 +56,12 @@ export global CallStore {
     in property <int> mic;
     in property <[string]> speakers;
     in property <int> speaker;
+    // The call window's layout: "gallery" (everyone in a grid) | "speaker" (the latest speaker
+    // large, the rest in a strip).
+    in-out property <string> view-mode: "gallery";
     // The side panel: "" | people | more.
     in-out property <string> panel;
-    // The open dropdown or card: "" | devices | a device picker's key.
+    // The open dropdown or card: "" | devices | view | a device picker's key.
     in-out property <string> menu;
     // The call shrinks to a floating bar while the meeting chat is open.
     in-out property <bool> minimized;

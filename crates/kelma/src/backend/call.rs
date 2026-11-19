@@ -14,9 +14,11 @@
 //! [`CallCmd::parse`] reads.
 
 use super::Engine;
+use crate::data::Pixels;
 use crate::ui::UiHandle;
 #[cfg(any(test, feature = "calls"))]
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
@@ -133,6 +135,8 @@ pub fn live_phase(link: Link, in_lobby: bool, was_in_call: bool) -> Phase {
 /// One person in the roster.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Person {
+    /// Who they are, for their profile photo (empty when unknown).
+    pub mri: String,
     pub name: String,
     pub muted: bool,
     pub hand: bool,
@@ -148,6 +152,24 @@ pub struct Person {
     /// speakers first.
     pub spoke: u64,
 }
+
+/// The profile photos `lookup` knows for these people, by MRI. A lookup may start a download, so
+/// each MRI is asked once.
+fn photos(people: &[Person], lookup: impl Fn(&str) -> Option<Pixels>) -> HashMap<String, Pixels> {
+    let mut found = HashMap::new();
+    let mut asked = HashSet::new();
+    for p in people.iter().filter(|p| !p.mri.is_empty()) {
+        if asked.insert(p.mri.as_str())
+            && let Some(px) = lookup(&p.mri)
+        {
+            found.insert(p.mri.clone(), px);
+        }
+    }
+    found
+}
+
+/// Finds a person's profile photo by MRI ([`CallManager::set_photos`]).
+type PhotoLookup = Arc<dyn Fn(&str) -> Option<Pixels> + Send + Sync>;
 
 /// What a driver reports.
 #[derive(Debug, Clone, PartialEq)]
@@ -689,12 +711,17 @@ struct Shared {
     generation: AtomicU64,
     ticking: AtomicBool,
     ui: UiHandle,
+    photos: Mutex<Option<PhotoLookup>>,
 }
 
 impl Shared {
     fn push(&self) {
         let d = self.model.lock().unwrap().data(Instant::now());
-        self.ui.call_state(d);
+        let lookup = self.photos.lock().unwrap().clone();
+        let found = lookup
+            .map(|f| photos(&d.people, |m| f(m)))
+            .unwrap_or_default();
+        self.ui.call_state(d, found);
     }
 
     fn apply(self: &Arc<Self>, generation: u64, ev: Event) {
@@ -827,6 +854,7 @@ impl CallManager {
                 generation: AtomicU64::new(0),
                 ticking: AtomicBool::new(false),
                 ui,
+                photos: Mutex::new(None),
             }),
             #[cfg(feature = "calls")]
             hub,
@@ -840,6 +868,12 @@ impl CallManager {
             self.hub.start();
             *MANAGER.lock().unwrap() = Some(Arc::new(self.clone()));
         }
+    }
+
+    /// Where the call window's profile photos come from. The call state is pushed every second
+    /// while connected, so a photo still downloading shows up on a later push.
+    pub fn set_photos(&self, lookup: impl Fn(&str) -> Option<Pixels> + Send + Sync + 'static) {
+        *self.shared.photos.lock().unwrap() = Some(Arc::new(lookup));
     }
 
     /// Replaces the driver (tests and the demo use [`FakeDriver`]).
@@ -1410,6 +1444,34 @@ mod tests {
                 mic: Some("mic-builtin".into()),
                 speaker: Some("spk-usb".into())
             })
+        );
+    }
+
+    #[test]
+    fn photos_are_looked_up_by_mri_for_the_people_who_have_one() {
+        let p = |mri: &str| Person {
+            mri: mri.into(),
+            ..Default::default()
+        };
+        let px = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(2, 2);
+        let looked: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let found = photos(
+            &[
+                p("8:example-ada"),
+                p(""),
+                p("8:example-bo"),
+                p("8:example-ada"),
+            ],
+            |mri| {
+                looked.lock().unwrap().push(mri.to_owned());
+                (mri == "8:example-ada").then(|| px.clone())
+            },
+        );
+        assert_eq!(found.keys().collect::<Vec<_>>(), ["8:example-ada"]);
+        assert_eq!(
+            *looked.lock().unwrap(),
+            ["8:example-ada", "8:example-bo"],
+            "no MRI is not looked up, nobody twice"
         );
     }
 

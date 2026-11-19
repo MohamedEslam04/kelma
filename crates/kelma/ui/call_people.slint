@@ -17,6 +17,8 @@ component PersonRow inherits Rectangle {
         spacing: 10px;
         Avatar {
             initials: root.p.initials;
+            img: root.p.photo;
+            has-img: root.p.has-photo;
             size: 30px;
             y: 7px;
         }

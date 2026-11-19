@@ -292,7 +292,7 @@ impl Engine {
         me: String,
         my_name: String,
     ) -> Arc<Engine> {
-        Arc::new(Engine {
+        let engine = Arc::new(Engine {
             calls: call::CallManager::new(ui.clone(), client.clone(), my_name.clone()),
             client,
             store: Mutex::new(store),
@@ -335,7 +335,19 @@ impl Engine {
             flush_lock: tokio::sync::Mutex::new(()),
             retry_pending: AtomicBool::new(false),
             last_cmid: AtomicI64::new(0),
-        })
+        });
+        // The call window's photos come from the chat avatar cache. A miss downloads in the
+        // background, which needs the runtime; without one only the cache is read.
+        let weak = Arc::downgrade(&engine);
+        engine.calls.set_photos(move |mri| {
+            let e = weak.upgrade()?;
+            if tokio::runtime::Handle::try_current().is_ok() {
+                e.avatar(mri)
+            } else {
+                e.avatars.lock().unwrap().get(mri).cloned().flatten()
+            }
+        });
+        engine
     }
 
     fn mark(&self, f: impl FnOnce(&mut Dirty)) {
