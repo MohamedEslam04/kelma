@@ -40,11 +40,13 @@ export component Avatar inherits Rectangle {
     in property <image> img;
     in property <bool> has-img: false;
     in property <length> size: 32px;
+    // Teams availability (`Available`, `Busy`, `DoNotDisturb`, `BeRightBack`, `Away`, `Offline`,
+    // their `…Idle` forms); "" draws no dot.
+    in property <string> presence: "";
     width: size;
     height: size;
     border-radius: size / 2;
     background: root.has-img ? transparent : root.tone;
-    clip: true;
     if !root.has-img: Text {
         text: root.initials;
         color: #ffffff;
@@ -53,11 +55,34 @@ export component Avatar inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
-    if root.has-img: Image {
-        source: root.img;
+    if root.has-img: Rectangle {
         width: root.size;
         height: root.size;
-        image-fit: cover;
+        border-radius: root.size / 2;
+        clip: true;
+        Image {
+            source: root.img;
+            width: root.size;
+            height: root.size;
+            image-fit: cover;
+        }
+    }
+    if root.presence != "": Rectangle {
+        property <string> p: root.presence;
+        width: max(8px, root.size * 0.3);
+        height: self.width;
+        x: root.size - self.width + 1px;
+        y: root.size - self.height + 1px;
+        border-radius: self.width / 2;
+        border-width: 2px;
+        border-color: Theme.surface;
+        background: (p == "Available" || p == "AvailableIdle") ? #6bb700
+            : (p == "Busy" || p == "BusyIdle" || p == "DoNotDisturb") ? #c4314b
+            : (p == "BeRightBack" || p == "Away") ? #ffaa44
+            : #8a8886;
+        accessible-role: image;
+        accessible-label: @tr("Presence");
+        accessible-value: root.presence;
     }
 }
 

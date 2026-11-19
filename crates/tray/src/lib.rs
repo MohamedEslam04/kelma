@@ -12,6 +12,7 @@ pub mod autostart;
 pub mod icon;
 pub mod launcher;
 pub mod menu;
+pub mod screen;
 
 use crossbeam_channel::{Receiver, Sender};
 use ksni::TrayMethods;

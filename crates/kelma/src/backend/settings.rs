@@ -1050,6 +1050,27 @@ pub fn banner_decision(
 
 /// The routing for one incoming message with the settings read from Teams and the tray mute: the
 /// call `live.rs` makes. `None`: no banner; `Some(preview)`: show it, with the text or without.
+/// The work location for a profile menu value.
+pub fn work_location_pin(v: &str) -> Option<::calendar::WorkLocation> {
+    match v {
+        "office" => Some(::calendar::WorkLocation::Office),
+        "remote" => Some(::calendar::WorkLocation::Remote),
+        "clear" => Some(::calendar::WorkLocation::Unset),
+        _ => None,
+    }
+}
+
+/// Midnight at the end of today in local time, as Teams pins a work location for the day.
+fn end_of_today_ms() -> i64 {
+    use chrono::{Duration, Local, TimeZone};
+    let tomorrow = Local::now().date_naive() + Duration::days(1);
+    tomorrow
+        .and_hms_opt(0, 0, 0)
+        .and_then(|t| Local.from_local_datetime(&t).earliest())
+        .map(|t| t.timestamp_millis())
+        .unwrap_or_else(|| teams_proto::time::now_ms() + 8 * 3_600_000)
+}
+
 pub fn banner_for(m: &teams_proto::model::Message, me: &str) -> Option<bool> {
     let kind = incoming_kind(&m.conversation_id, m.parent_id.is_some(), &m.mentions, me);
     match banner_decision(
@@ -1160,14 +1181,22 @@ pub struct ServerData {
     pub me_email: Option<String>,
     pub me_status: Option<String>,
     pub me_presence: Option<String>,
+    /// My work location pin as the presence service reports it (`office`, `remote`, a code).
+    pub me_work_location: Option<String>,
     pub apps: Vec<AppAsk>,
     /// What could not be read, one line each.
     pub errors: Vec<String>,
 }
 
-/// Commands the engine runs for Settings. Reads only.
+/// Commands the engine runs for Settings and the profile menu. Reads, plus the user's own status
+/// and work location (allowed on the work account since 2026-11-19).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsCmd {
+    /// Forces my status (`Available`, `Busy`, `DoNotDisturb`, `BeRightBack`, `Away`, `Offline`);
+    /// an empty value resets it to automatic. Then reads the profile menu again.
+    SetStatus(String),
+    /// Pins my work location for today: `office`, `remote`, or `clear`.
+    SetWorkLocation(String),
     /// Read the Teams side of Settings and push it to the window.
     Load,
     /// "Refresh license and restart": redeem the refresh token again (new access tokens and a new
@@ -1195,6 +1224,38 @@ impl Engine {
                 let r = self.refresh_license().await.map_err(|e| e.to_string());
                 self.ui.settings_license(r);
             }
+            SettingsCmd::SetStatus(_) | SettingsCmd::SetWorkLocation(_) => {
+                if let Err(e) = self.set_my_presence(&cmd).await {
+                    tracing::warn!(%e, "could not change my status");
+                    self.ui
+                        .settings_notice(format!("Could not change your status: {e}"));
+                }
+                let data = self.settings_read().await;
+                self.ui.settings_server(data);
+            }
+        }
+        Ok(())
+    }
+
+    /// The network part of the status and work location commands.
+    async fn set_my_presence(self: &Arc<Self>, cmd: &SettingsCmd) -> anyhow::Result<()> {
+        if self.offline.load(Ordering::Relaxed) {
+            anyhow::bail!("Not available offline.");
+        }
+        let c = &self.client;
+        match cmd {
+            SettingsCmd::SetStatus(s) if s.is_empty() => c.reset_presence().await?,
+            SettingsCmd::SetStatus(s) => {
+                let a = teams_proto::presence::Availability::from_wire(s)
+                    .ok_or_else(|| anyhow::anyhow!("unknown status {s}"))?;
+                c.set_presence(a, None).await?;
+            }
+            SettingsCmd::SetWorkLocation(w) => {
+                let pin = work_location_pin(w)
+                    .ok_or_else(|| anyhow::anyhow!("unknown work location {w}"))?;
+                ::calendar::set_work_location(c, pin, end_of_today_ms()).await?;
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -1302,6 +1363,7 @@ impl Engine {
                 if let Some(p) = p.into_iter().next() {
                     d.me_status = p.note.map(|n| n.text).filter(|t| !t.trim().is_empty());
                     d.me_presence = Some(p.availability);
+                    d.me_work_location = p.work_location;
                 }
             }
             Err(e) => err("your status", &e),

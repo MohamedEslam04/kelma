@@ -14,7 +14,13 @@ static CLIENT: OnceLock<Client> = OnceLock::new();
 /// The activity last published: `None` for no call (Available).
 static PUBLISHED: Mutex<Option<&'static str>> = Mutex::new(None);
 
-/// Remembers the client presence updates go through.
+/// Whether a call is connected now (as last published).
+pub fn in_call() -> bool {
+    PUBLISHED.lock().unwrap().is_some()
+}
+
+/// Remembers the client presence updates go through. Tests never install one (no network).
+#[cfg_attr(test, allow(dead_code))]
 pub fn install(client: Client) {
     let _ = CLIENT.set(client);
 }

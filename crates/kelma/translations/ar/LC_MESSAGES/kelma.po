@@ -1057,3 +1057,54 @@ msgstr "السلاسل المتابَعة"
 
 msgid "Open in browser"
 msgstr "فتح في المتصفح"
+
+msgid "Set status"
+msgstr "ضبط الحالة"
+
+msgid "Hide status options"
+msgstr "إخفاء خيارات الحالة"
+
+msgid "Available"
+msgstr "متاح"
+
+msgid "Busy"
+msgstr "مشغول"
+
+msgid "Do not disturb"
+msgstr "عدم الإزعاج"
+
+msgid "Be right back"
+msgstr "سأعود حالاً"
+
+msgid "Appear away"
+msgstr "الظهور بعيداً"
+
+msgid "Appear offline"
+msgstr "الظهور غير متصل"
+
+msgid "Reset status"
+msgstr "إعادة تعيين الحالة"
+
+msgid "Work location today"
+msgstr "مكان العمل اليوم"
+
+msgid "In the office"
+msgstr "في المكتب"
+
+msgid "Remote"
+msgstr "عن بُعد"
+
+msgid "Clear location"
+msgstr "مسح المكان"
+
+msgid "In the office today"
+msgstr "في المكتب اليوم"
+
+msgid "Working remotely today"
+msgstr "أعمل عن بُعد اليوم"
+
+msgid "Work location"
+msgstr "مكان العمل"
+
+msgid "Presence"
+msgstr "الحالة"

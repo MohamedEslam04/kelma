@@ -213,12 +213,20 @@ export component ProfileMenu inherits Rectangle {
             spacing: 8px;
             HorizontalLayout {
                 spacing: 12px;
-                Avatar { initials: SettingsStore.me-initials; size: 48px; }
+                Avatar { initials: SettingsStore.me-initials; size: 48px; presence: SettingsStore.me-presence; }
                 VerticalLayout {
                     alignment: center;
                     Text { text: SettingsStore.me-name; color: Theme.fg; font-size: SFont.heading; font-weight: 600; overflow: elide; accessible-role: text; accessible-label: @tr("Name"); accessible-value: self.text; }
                     Text { text: SettingsStore.me-email; color: Theme.fg-muted; font-size: SFont.small; overflow: elide; accessible-role: text; accessible-label: @tr("Email"); accessible-value: self.text; }
-                    if SettingsStore.me-presence != "": Text { text: SettingsStore.me-presence; color: Theme.fg-muted; font-size: SFont.small; }
+                    if SettingsStore.me-presence != "": Text { text: SettingsStore.me-presence; color: Theme.fg-muted; font-size: SFont.small; accessible-role: text; accessible-label: @tr("Status"); accessible-value: self.text; }
+                    if SettingsStore.me-work-location != "": Text {
+                        text: SettingsStore.me-work-location == "office" ? @tr("In the office today") : @tr("Working remotely today");
+                        color: Theme.fg-muted;
+                        font-size: SFont.small;
+                        accessible-role: text;
+                        accessible-label: @tr("Work location");
+                        accessible-value: self.text;
+                    }
                 }
             }
             Rectangle {
@@ -236,6 +244,27 @@ export component ProfileMenu inherits Rectangle {
                     font-size: SFont.body;
                     wrap: word-wrap;
                     vertical-alignment: center;
+                }
+            }
+            SButton {
+                label: SettingsStore.status-open ? @tr("Hide status options") : @tr("Set status");
+                clicked => { SettingsStore.status-open = !SettingsStore.status-open; }
+            }
+            if SettingsStore.status-open: VerticalLayout {
+                spacing: 4px;
+                SButton { label: @tr("Available"); clicked => { SettingsStore.command("status", "Available"); } }
+                SButton { label: @tr("Busy"); clicked => { SettingsStore.command("status", "Busy"); } }
+                SButton { label: @tr("Do not disturb"); clicked => { SettingsStore.command("status", "DoNotDisturb"); } }
+                SButton { label: @tr("Be right back"); clicked => { SettingsStore.command("status", "BeRightBack"); } }
+                SButton { label: @tr("Appear away"); clicked => { SettingsStore.command("status", "Away"); } }
+                SButton { label: @tr("Appear offline"); clicked => { SettingsStore.command("status", "Offline"); } }
+                SButton { label: @tr("Reset status"); clicked => { SettingsStore.command("status", ""); } }
+                Text { text: @tr("Work location today"); color: Theme.fg-muted; font-size: SFont.small; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    SButton { label: @tr("In the office"); clicked => { SettingsStore.command("work-location", "office"); } }
+                    SButton { label: @tr("Remote"); clicked => { SettingsStore.command("work-location", "remote"); } }
+                    SButton { label: @tr("Clear location"); clicked => { SettingsStore.command("work-location", "clear"); } }
                 }
             }
             SButton { label: @tr("Change profile photo (not available yet)"); enabled: false; }

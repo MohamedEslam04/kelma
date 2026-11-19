@@ -34,6 +34,7 @@ mod live;
 mod manage;
 mod media;
 mod mentions;
+mod my_presence;
 mod outbox;
 mod people;
 #[cfg(test)]
@@ -356,6 +357,7 @@ impl Engine {
         #[cfg(feature = "calls")]
         self.start_calls();
         self.start_notify_prefs();
+        self.start_my_presence();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -395,7 +397,11 @@ impl Engine {
     pub fn dispatch(self: &Arc<Self>, cmd: Cmd) {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
-            Cmd::Flush => self.flush_draft(),
+            Cmd::Flush => {
+                self.flush_draft();
+                // kelma is closing: this device stops counting for presence.
+                self.stop_my_presence();
+            }
             // In order with the Send that follows it.
             Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
             // Selection and view changes run in order with the command that follows them.

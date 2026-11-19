@@ -519,9 +519,10 @@ fn main() -> anyhow::Result<()> {
     // Tray, close-to-tray and the event loop (stays up with the window hidden).
     tray_wiring::run(&window, hidden)?;
     window_state::finish(&window);
-    // Give the engine a moment to write a draft typed just before closing.
+    // Give the engine a moment to write a draft typed just before closing and to take this
+    // device out of presence.
     let _ = tx.send(Cmd::Flush);
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(std::time::Duration::from_millis(300));
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
     Ok(())
 }

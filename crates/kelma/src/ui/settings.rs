@@ -3,7 +3,8 @@
 //! changes), saves local preferences, and turns Teams changes into dry runs.
 //!
 //! Nothing here talks to Teams. Reads go through the engine (`SettingsCmd::Load`); every Teams
-//! write is built as a `PlannedRequest`, logged and shown on the page, never sent.
+//! write is built as a `PlannedRequest`, logged and shown on the page, never sent, except my own
+//! status and work location from the profile menu, which the engine sets (`SettingsCmd::SetStatus`).
 //!
 //! Commands from `SettingsStore.command(name, argument)`:
 //! open, close, page, query, profile, theme, accent, density, font-step, font-scale, skin-tone,
@@ -11,7 +12,8 @@
 //! larger-text, a11y, notify, pause, test-notification, privacy, unblock, priority-remove,
 //! speaker, mic, camera, noise-suppression, echo-cancellation, all-devices, test-sound, mic-test,
 //! open-files, perm, switch-account, switch-org, add-account, remove-account, refresh-license,
-//! restart, sign-out, view-account, report-problem, check-updates, check-now, release-notes.
+//! restart, sign-out, view-account, report-problem, check-updates, check-now, release-notes,
+//! status, work-location.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
@@ -603,6 +605,16 @@ fn push_profile(w: &AppWindow, c: &Ctl) {
     g.set_me_email(s(email));
     g.set_me_status(s(d.and_then(|d| d.me_status.clone()).unwrap_or_default()));
     g.set_me_presence(s(d.and_then(|d| d.me_presence.clone()).unwrap_or_default()));
+    g.set_me_work_location(s(d
+        .and_then(|d| d.me_work_location.as_deref())
+        .map(
+            |w| match ::calendar::WorkLocation::from_value(&serde_json::json!(w)) {
+                ::calendar::WorkLocation::Office => "office",
+                ::calendar::WorkLocation::Remote => "remote",
+                ::calendar::WorkLocation::Unset => "",
+            },
+        )
+        .unwrap_or_default()));
     g.set_me_initials(w.get_me_initials());
 }
 
@@ -638,6 +650,11 @@ fn push_accounts(w: &AppWindow, c: &Ctl) {
 }
 
 impl UiHandle {
+    /// A message from the engine for the Settings window and the profile menu.
+    pub fn settings_notice(&self, text: String) {
+        self.run(move |w| notice(&w, text));
+    }
+
     /// "Refresh license and restart" finished in the engine: restart, or say why not.
     pub fn settings_license(&self, r: Result<(), String>) {
         self.run(move |w| license_done(&w, r));
@@ -1201,6 +1218,21 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 Err(e) => g.set_accounts_status(s(format!("Could not remove the account: {e}"))),
             }
             push_accounts(w, &c);
+        }
+        // --- Profile menu: my status and work location (sent to Teams) ---
+        "status" | "work-location" => {
+            let c = shared.borrow();
+            let Some(tx) = &c.tx else {
+                notice(w, "Not signed in, so your status can't change.");
+                return;
+            };
+            let cmd = if name == "status" {
+                SettingsCmd::SetStatus(arg.to_string())
+            } else {
+                SettingsCmd::SetWorkLocation(arg.to_string())
+            };
+            let _ = tx.send(Cmd::Settings(cmd));
+            g.set_status_open(false);
         }
         "refresh-license" => {
             let c = shared.borrow();

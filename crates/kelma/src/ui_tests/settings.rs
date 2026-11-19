@@ -223,6 +223,46 @@ fn profile_menu_shows_who_is_signed_in_and_opens_settings() {
 }
 
 #[test]
+fn the_profile_menu_sets_my_status_and_work_location_through_the_engine() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("status").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    press(app, "Profile menu");
+    while rx.try_recv().is_ok() {}
+    press(app, "Set status");
+    press(app, "Busy");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s))) if s == "Busy"
+    ));
+    // Picking closes the options; reset sends an empty status.
+    assert!(!store(app).get_status_open());
+    press(app, "Set status");
+    press(app, "Reset status");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s))) if s.is_empty()
+    ));
+    press(app, "Set status");
+    press(app, "In the office");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetWorkLocation(w))) if w == "office"
+    ));
+    // The engine's answer shows on the menu.
+    let handle = UiHandle::new(app.as_weak());
+    handle.settings_server(crate::backend::settings::ServerData {
+        me_presence: Some("Busy".into()),
+        me_work_location: Some("office".into()),
+        ..Default::default()
+    });
+    assert_eq!(value_of(app, "Status"), "Busy");
+    assert_eq!(value_of(app, "Work location"), "In the office today");
+    assert_eq!(value_of(app, "Presence"), "Busy");
+}
+
+#[test]
 fn activity_notification_settings_entry_opens_the_notifications_page() {
     let ui = window(Home::new("activity"));
     let app = &ui.app;
