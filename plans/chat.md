@@ -314,7 +314,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
 Moved to its own plan: `plans/activity.md`.
 
 ### 7.4 Quick views: Mentions and Followed threads
-- [ ] Impact 4, effort 3. Seen: chat list "Quick views", post menu "Follow thread", settings › Chats (auto-follow).
+- [ ] Impact 4, effort 3. Seen: chat list "Quick views", post menu "Follow thread", settings › Chats (auto-follow). DEFERRED: needs test tenant (Teams' Followed threads only lists a thread after another user replies in it; a second user is needed to see a kelma follow arrive there).
   - **What.**
     - Mentions lists every message that mentions you.
     - Followed threads lists the channel threads you follow, with new replies on top.
@@ -322,15 +322,16 @@ Moved to its own plan: `plans/activity.md`.
     - Auto-follow covers threads you started, threads you replied to and threads where you are @mentioned (settings).
   - **How.** Mentions is a filtered Activity. Followed threads needs discovery (a thread subscription property).
   - **Done when.** Following a test post in kelma shows it in Teams' Followed threads.
-  - **Status.** Not ticked: the Done-when needs the Teams web UI, which was not used.
+  - **Status.** Not ticked: the Done-when needs a reply from a second user.
+    - Teams web check (2026-11-19, sandbox `tests` post "kelma follow test", read with `kelma-cli find props` and `find feed 48:threads`): Teams' "Follow thread" stores the `follow` emotion as `"1"` and "Unfollow thread" as `"0"`. kelma had them reversed; `follow_body` now writes `"1"` to follow. A new post is followed automatically in Teams, yet Teams' Followed threads view did not list it, after either Teams' own explicit follow or kelma's, and `48:threads` got no row: the view only shows threads that have had replies. Teams also kept showing "Follow thread" after kelma wrote `"1"` until it was clicked there, so Teams caches the state locally.
     - Built: the chat list "…" menu has Quick views > Mentions and Followed threads (`QuickView` in `find.slint`, `backend/find.rs`). Channel posts have "Follow thread" and "Unfollow thread" in the "…" menu. Unfollow is also a button on each Followed threads row, and the list is ordered by the newest reply.
     - Mentions is not a filtered Activity (Activity's feed rows carry no text for `48:mentions`): it uses the Substrate query `mentions:<oid>` plus mentioning messages in the cache, which listed 50 of 50 hits as mentions in the live check.
-    - Followed threads reads `48:threads` (newest row per thread, `deleted` rows drop it). Following writes the `follow` emotion (`"0"` follow, `"1"` unfollow), checked on a sandbox post: the service stores it and reads it back. `48:threads` did not change within 30 s of an explicit follow or unfollow (it did get an `ImplicitFollow` row when the sandbox post was replied to), so it is unknown whether Teams' view reads that flag.
+    - Followed threads reads `48:threads` (newest row per thread, `deleted` rows drop it). Following writes the `follow` emotion (`"1"` follow, `"0"` unfollow, corrected after the Teams web check below), checked on a sandbox post: the service stores it and reads it back. `48:threads` did not change within 30 s of an explicit follow or unfollow (it did get an `ImplicitFollow` row when the sandbox post was replied to), so it is unknown whether Teams' view reads that flag.
     - Auto-follow is a Teams account setting and no Settings screen exists yet (`plans/settings-and-platform.md`), so it is not built.
   - **Evidence.** UI tests `mentions_lists_the_messages_that_mention_me_and_a_click_opens_one`, `followed_threads_list_new_replies_on_top_and_unfollow_removes_one` and `channel_posts_offer_follow_and_unfollow_in_their_menu`.
 
 ### 7.5 Shared and Files tabs
-- [ ] Impact 4, effort 3. Seen: chat tab "Shared", channel tab "Shared".
+- [x] Impact 4, effort 3. Seen: chat tab "Shared", channel tab "Shared".
   - **What.**
     - A table of Name, Date shared and Shared by, filtered by Recent, Files or Links.
     - "Filter by keyword".
@@ -340,7 +341,7 @@ Moved to its own plan: `plans/activity.md`.
     - Chats: collect from cached messages (`properties.files` and links in the content).
     - Channels: Graph `GET /teams/{groupId}/channels/{channelId}/filesFolder`, then its children. `groupId` comes from CSA `teamSiteInformation` (verify).
   - **Done when.** It lists the same files as Teams for 48:notes and the test channel.
-  - **Status.** Not ticked: the comparison with Teams' own Shared tab was not made (the Teams UI was not used).
+  - **Status.** Ticked 2026-11-19 after the Teams web comparison: Teams' Shared tab for 48:notes lists 27 rows (5 files, 22 links, all shared by me, newest 11/10, oldest 1/22) to the end of the list, the same 5 files and 22 links `find shared 48:notes` returns; the sandbox `tests` channel's Shared tab says "This folder is empty", as `find folder` found (0 items).
     - Built: the header tab "Shared" (chats) or "Files" (channels) shows `SharedView` with Recent, Files and Links, a keyword filter, and Upload (the file picker adds the file to the composer, then the chat shows again with the chip). Rows open the file or link in the browser.
     - Chats read the Substrate `AllShared` list, the same call the Teams tab uses, and add what cached messages carry. Channels also list their SharePoint folder (Graph `filesFolder` then its children, `teams_proto::views::channel_files_folder`, reusable by 8.6).
     - Live read check: `find shared 48:notes` returned 5 files and 22 links, all with a sender and a date. `find folder` on the sandbox channel found its folder (0 items), and `AllShared` for that channel returned none.
