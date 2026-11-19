@@ -5790,6 +5790,7 @@ dependencies = [
  "serde",
  "serde_json",
  "teams-proto",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 
