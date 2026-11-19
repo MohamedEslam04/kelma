@@ -120,3 +120,89 @@ hold real ids and addresses: keep them out of the repo.
 - **1:1 calls.** An outgoing 1:1 call to a Teams web guest worked both ways (2026-11-19, `call dial` and the GUI). Accepting a ring without an offer is built (above) but not verified; declining is not verified.
 - **AEC delay.** The stream delay starts at a fixed 40 ms (AEC3 estimates the rest). It is not yet taken from cpal's measured latency.
 - **Disconnected.** One short `Disconnected` → `Connected` blip was seen before leaving.
+
+## Screen sharing: what the references say (research 2026-11-19, nothing verified live yet)
+
+Sources, facts only: rusty-teams (MIT, `crates/calling/src/{video_layout,hold,signaling,sdp}.rs`,
+`call/mod.rs`, test fixtures), mautrix-teams (AGPL, `docs/openapi/teams-webclient.yaml` from
+captures of the web client, `pkg/msteams/{video,calls}.go`, `pkg/teamsmedia/{direct,sdp}.go`). No
+code was copied from either.
+
+1. **The sharing line.** A screen share is an ordinary `m=video` section with
+   `a=label:applicationsharing-video`; the camera and the gallery are `a=label:main-video`
+   (rusty-teams `sdp.rs` `LineRole`, mautrix-teams `teamsmedia/sdp.go`). There is no separate
+   VBSS transport or protocol on the wire the web client uses; "applicationsharing" names the
+   line. The session level of a media server's SDP announces it with
+   `a=x-mediabw:applicationsharing-video send=8100;recv=8100` (rusty-teams fixture
+   `teams_answer.sdp`; kelma's own live re-offer, fixture `teams_meeting_full_reoffer.sdp`).
+2. **Codec.** H.264, `packetization-mode=1`. The media server's answer to a client offer names
+   `H264/90000` with `profile-level-id=42C01E;packetization-mode=1;max-mbps=108000;max-fs=3600;
+   max-br=2000;max-fps=3000`, `rtx` (apt) and AV1 as an alternative, `b=AS:2400`,
+   `a=x-source-streamid:212` and its own `a=x-ssrc-range` (rusty-teams `teams_answer.sdp`). The
+   media server's own re-offer lists `X-H264UC`, `H264` (107, `profile-level-id=42C02A`), `H265v2`,
+   `x-ulpfecuc`, `VP8` and `rtx` on the sharing line (kelma live re-offer). The web client offers
+   the sharing line with H.264 `profile-level-id=64001f` and screen limits
+   `max-fs=8160;max-mbps=135000;max-fps=1500` and `a=x-signaling-fb:* x-message app send:src
+   recv:src,vc` (rusty-teams `teams_offer.sdp`; `video_layout.rs` `SCREEN_REQUEST`). A
+   constrained-baseline stream (42e01f) is the safe choice to send.
+3. **Meetings: no renegotiation.** The web client offers the sharing line up front (sendrecv)
+   when it joins, and switches sharing on or off by POSTing `UpdateMediaDescriptions` to the
+   call leg's `updateMediaDescriptions` link:
+   `{"UpdateMediaDescriptions": {"mediaDescriptions": {"descriptions": [{mid, direction, label?}…],
+   "negotiationTag": "<participantId>;ss_1", "requestId": n}}}` — the sharing line
+   `direction: sendonly, label: applicationsharing-video`, every other send-capable line
+   `recvonly`; `requestId` increments per change and reappears as the roster streams'
+   `mdRequestId`; answered 200 with `{code: 0, phrase: "Success."}`. Before a renegotiation the
+   sharing mid is 11, after the media server's re-offer it is 3 (mautrix-teams openapi
+   `/updateMediaDescriptions`, from captures; mautrix-teams `video.go` `SetVideo`). rusty-teams
+   sends the same body with `direction: sendrecv` (`video_layout.rs` `MediaDescription`).
+   The link arrives in the acceptance's or `call/mediaAcknowledgement/` callback's `links`; the
+   client also publishes its own `updateMediaDescriptions` and `controlVideoStreaming` callback
+   links in its acceptance (mautrix-teams `calls.go` `acceptanceLinks`; kelma already does).
+4. **Meetings: who shares.** The enterprise web client also POSTs `updateParticipantProperties`
+   on the conversation with `propertyBag.screenSharerAttributes {sequenceNumber, value {source:
+   1}}` (202; the consumer client did not; mautrix-teams openapi). Roster endpoints list
+   `call.mediaStreams[]` with `type: applicationsharing-video`, `sourceId` and a `send…`
+   direction while someone shares (mautrix-teams `calls.go`; rusty-teams `roster.rs`); the
+   meeting join's `callModalities` include `ScreenViewer` in mautrix-teams (`videoMedia`).
+5. **Sender control.** The media controller tells the sender what to send through the
+   `call/controlVideoStreaming/` callback: `controlInfo[{sourceId, fmtParams}]`, where
+   `fmtParams` carries `max-fs`, `max-fps`, `max-br` and `KeyFrame=1` for a keyframe request.
+   mautrix-teams routes the one naming its own sharing `sourceId` to the share encoder and waits
+   up to 2 s for it before encoding (`video.go` `handleControl`, `connector/rtcvideo.go`).
+6. **1:1 (direct) calls: renegotiation.** A person-to-person call has no media server to flip
+   lines, so the client sends a new offer: POST to the call's `mediaRenegotiation` link
+   `{"mediaNegotiation": {"callModalities": ["Audio", ("Video",) "ScreenSharer"], "sender",
+   "links": {mediaAnswer, rejection}, "mediaContent": {blob, contentType, "requiredFeatures":
+   "nonByPass", "negotiationTag": "<participantId>;ss_1", mediaLegId, …}}}`; the answer comes on
+   `call/mediaAnswer/` (mautrix-teams `calls.go` `Renegotiate`; rusty-teams `hold.rs`
+   `offer_modalities`, `signaling.rs` `renegotiation_body`). The web client's 1:1 offer has
+   audio (mid 0), camera `main-video` (mid 1) and `applicationsharing-video` (mid 2); the
+   sharing line is `sendonly` while sharing, `recvonly` while the other side shares, else
+   `inactive` (mautrix-teams `direct.go`). A rejected sharing line is offered again under a new
+   mid with the camera line's payload type.
+7. **Bundling a media server's re-offer.** The media servers' re-offer gives audio, video and
+   sharing different ICE credentials (and the sharing line its own port) yet lists every mid in
+   one `a=group:BUNDLE`. mautrix-teams answers it with the accepted video lines bundled onto the
+   audio transport (`teamsmedia/sdp.go` `answerSDP`). rusty-teams rewrites the directions of the
+   answers it gets so its own sending is not stopped (`hold.rs` `keep_media_running`).
+
+What kelma does with this (`calling::video`, `calling::media`, `signaling::bodies`):
+
+- A `MediaSession` built with `MediaOptions::video = [VideoRole::ApplicationSharing]` registers
+  H.264 (constrained baseline, `packetization-mode=1`) and offers one sendrecv video line
+  labelled `applicationsharing-video`. It answers a media server's re-offer with audio plus the
+  first sharing line, bundled on the audio transport (the line's own ICE credentials are replaced
+  by the audio line's before webrtc-rs reads them). A `sendonly` sharing line is read as
+  `sendrecv`, so our sender stays able to send, and answered `recvonly` on the wire.
+  `VideoRole::MainVideo` is the seam for the camera (same path, `main-video` label).
+- Meeting: start/stop is `UpdateMediaDescriptions` (`sendonly` + label, tag `;ss_1`).
+  1:1: start/stop is a `mediaNegotiation` re-offer with `ScreenSharer`.
+- Capture: the ScreenCast portal (`ashpd`), the PipeWire node read by a `gst-launch-1.0
+  pipewiresrc` child (the portal's fd is its stdin) as raw I420, encoded in-process by OpenH264.
+
+UNVERIFIED (each needs a live run with the official client watching): that the media server
+accepts kelma's join offer with a sharing line but no `main-video` line; that a sharing line
+answered `recvonly` can then be flipped to sending by `UpdateMediaDescriptions`; that the media
+server forwards a share without `updateParticipantProperties`; whether `controlVideoStreaming`
+must be waited for before the first keyframe; the 1:1 re-offer's answer path.
