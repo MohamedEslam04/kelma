@@ -3332,6 +3332,7 @@ name = "kelma"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "apps",
  "arboard",
  "calendar",
  "chrono",

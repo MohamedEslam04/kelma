@@ -56,6 +56,8 @@ export component Composer inherits Rectangle {
     // Formatting (plan chat 5.4): the toolbar and preview strip, and the taller composer (Ctrl+Shift+X).
     in-out property <bool> format-open: false;
     in-out property <bool> expanded: false;
+    // True while the text box has the keyboard focus (the window leaves Ctrl+Shift+7 and 8 to the composer then).
+    out property <bool> input-focused: composer-input.has-focus;
 
     callback send(string);
     callback set-enter-sends(bool);

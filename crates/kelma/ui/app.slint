@@ -27,6 +27,9 @@ import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
 import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
 import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
+import { AppsStore } from "apps_store.slint";
+import { RailApps, AppsOverlays } from "apps_rail.slint";
+import { AppsHost } from "apps_host.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -41,6 +44,7 @@ export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
 
 export component AppWindow inherits Window {
     title: root.window-title;
@@ -131,6 +135,7 @@ export component AppWindow inherits Window {
     in-out property <bool> shortcuts-open: false;
     in-out property <bool> composer-expanded: false;
     in-out property <int> msg-focus-tick: 0;
+    out property <bool> composer-focused;
     in-out property <int> skin-tone: 0;
     in property <[ComposerEmoji]> recent-emoji;
     in property <[PendingAttachment]> pending-attachments;
@@ -246,6 +251,12 @@ export component AppWindow inherits Window {
                 PeopleStore.command("new-chat-open", "");
                 return accept;
             }
+            // Ctrl+Shift+1 to 9: the nth entry of the app bar. In the composer Ctrl+Shift+7 and 8
+            // are the numbered and bullet list (Teams), so they stay with the composer there.
+            if (event.modifiers.control && event.modifiers.shift && AppsStore.shortcut-index(event.text) > 0 && !(root.composer-focused && (AppsStore.shortcut-index(event.text) == 7 || AppsStore.shortcut-index(event.text) == 8))) {
+                AppsStore.command("shortcut", "" + AppsStore.shortcut-index(event.text));
+                return accept;
+            }
             // The other Teams chords (plan chat 5.9); the mapping is in src/shortcuts.rs.
             if ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift) != "" {
                 win-keys.run-shortcut(ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift));
@@ -343,12 +354,11 @@ export component AppWindow inherits Window {
         HorizontalLayout {
             // Left rail
             Rectangle {
-                width: 68px;
+                width: AppsStore.rail-width;
                 background: Theme.rail;
                 VerticalLayout {
                     padding-top: 8px;
                     spacing: 4px;
-                    alignment: start;
                     for item in [{key: "activity", label: "Activity", icon: @image-url("icons/activity.svg")}, {key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}, {key: "calendar", label: "Calendar", icon: @image-url("icons/calendar.svg")}, {key: "onedrive", label: "OneDrive", icon: @image-url("icons/cloud.svg")}]: ri := Rectangle {
                         property <int> badge-count: item.key == "activity" ? root.activity-unread : (item.key == "chat" ? root.chats-unread : 0);
                         height: 56px;
@@ -386,6 +396,7 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                    RailApps { view <=> root.view; }
                 }
             }
 
@@ -855,6 +866,7 @@ export component AppWindow inherits Window {
                         focus-tick <=> root.focus-tick;
                         enter-sends <=> root.enter-sends;
                         expanded <=> root.composer-expanded;
+                        input-focused <=> root.composer-focused;
                         edit-last => {
                             if ShortcutApi.last-own(root.messages) != "" { root.edit(ShortcutApi.last-own(root.messages)); }
                         }
@@ -1152,6 +1164,22 @@ export component AppWindow inherits Window {
     }
     if root.login-state == "ready" && TeamsStore.dialog != "": TeamsDialogs {
         z: 50;
+        width: root.width;
+        height: root.height;
+    }
+
+    // The app screens (Store, Planner, Workflows, OneNote, Lists, app pages) cover the area right
+    // of the rail while the view is one of theirs; the overlays hold the app bar's flyout, its
+    // right click menu and the install request dialog.
+    if root.login-state == "ready" && AppsStore.owns(root.view): AppsHost {
+        x: AppsStore.rail-width;
+        y: 48px + (CalStore.join-text != "" ? 40px : 0px);
+        width: root.width - AppsStore.rail-width;
+        height: root.height - self.y;
+        view: root.view;
+    }
+
+    if root.login-state == "ready": AppsOverlays {
         width: root.width;
         height: root.height;
     }
