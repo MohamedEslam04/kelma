@@ -229,12 +229,14 @@ impl Engine {
                 ConvKind::Notes => Some(self.me.clone()),
                 _ => None,
             };
-            let title = match (&r.kind, &r.team_name) {
-                (ConvKind::Channel, Some(t)) => format!("{} › {}", t, r.title),
-                _ => r.title.clone(),
-            };
+            // A channel shows its own name; its team goes on the second line, as in Teams.
+            let title = r.title.clone();
             let draft = drafts.get(&r.id);
-            let preview_text = draft.unwrap_or(&r.last_preview);
+            let channel_line = match (&r.kind, &r.team_name, draft) {
+                (ConvKind::Channel, Some(t), None) => Some(channel_preview(t, &r.last_preview)),
+                _ => None,
+            };
+            let preview_text = channel_line.as_ref().or(draft).unwrap_or(&r.last_preview);
             let unread = r.unread
                 && (current.as_deref() != Some(r.id.as_str())
                     || keep_unread.as_deref() == Some(r.id.as_str()));
@@ -704,5 +706,14 @@ impl Engine {
             prev = Some(r);
         }
         out
+    }
+}
+
+/// The second line of a channel in the chat list: the team, then the last message.
+fn channel_preview(team: &str, last: &str) -> String {
+    if last.trim().is_empty() {
+        team.to_string()
+    } else {
+        format!("{team} · {last}")
     }
 }

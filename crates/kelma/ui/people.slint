@@ -34,6 +34,8 @@ export global PeopleStore {
     in property <string> card-presence;
     in property <string> card-presence-label;
     in property <string> card-work-location;
+    // The card was opened by hovering (it closes when the pointer leaves it).
+    in-out property <bool> card-by-hover: false;
 
     // Pinned messages banner: the pins of the open chat and the one shown.
     in property <[PinnedItem]> pinned;

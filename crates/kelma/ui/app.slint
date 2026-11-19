@@ -235,6 +235,8 @@ export component AppWindow inherits Window {
     // Older messages were added above: keep the row at `anchor-index` (the one that was first)
     // where it was on screen.
     in-out property <int> anchor-tick;
+    // Width of the chat and teams list (the divider next to it drags it; Rust remembers it).
+    in-out property <length> sidebar-width: 320px;
     in property <int> anchor-index: -1;
 
 
@@ -427,7 +429,7 @@ export component AppWindow inherits Window {
             // Sidebar
             if root.view != "calendar" && root.view != "onedrive": Sidebar {
                 visible: root.view != "activity" && root.view != "search";
-                width: root.view == "activity" || root.view == "search" ? 0px : 320px;
+                width: root.view == "activity" || root.view == "search" ? 0px : root.sidebar-width;
                 max-height: 100000px;
                 view: root.view;
                 filter <=> root.filter;
@@ -451,6 +453,27 @@ export component AppWindow inherits Window {
                 toggle-favorite(id) => { root.toggle-favorite(id); }
                 set-filter(f) => { root.set-filter(f); }
                 quick-view(kind) => { FindStore.command("quick", kind); }
+            }
+
+            // The divider: drag to resize the list, as in Teams.
+            if root.view != "calendar" && root.view != "onedrive" && root.view != "activity" && root.view != "search": Rectangle {
+                width: 5px;
+                background: list-split.pressed || list-split.has-hover ? Theme.accent : Theme.border;
+                accessible-role: slider;
+                accessible-label: @tr("Chat list width");
+                accessible-value: round(root.sidebar-width / 1px);
+                accessible-value-minimum: 220;
+                accessible-value-maximum: 600;
+                accessible-action-increment => { root.sidebar-width = min(600px, root.sidebar-width + 20px); }
+                accessible-action-decrement => { root.sidebar-width = max(220px, root.sidebar-width - 20px); }
+                list-split := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => {
+                        if self.pressed {
+                            root.sidebar-width = max(220px, min(600px, root.sidebar-width + self.mouse-x - self.pressed-x));
+                        }
+                    }
+                }
             }
 
             if root.view == "calendar": CalendarView { horizontal-stretch: 1; }
@@ -782,6 +805,13 @@ export component AppWindow inherits Window {
                                     open-thread => { root.open-thread(m.id); }
                                     profile(id) => {
                                         if id != "" {
+                                            PeopleStore.card-by-hover = false;
+                                            PeopleStore.command("profile", id);
+                                        }
+                                    }
+                                    profile-hover(id) => {
+                                        if id != "" && !PeopleStore.card-open {
+                                            PeopleStore.card-by-hover = true;
                                             PeopleStore.command("profile", id);
                                         }
                                     }
@@ -1141,6 +1171,11 @@ export component AppWindow inherits Window {
             presence: PeopleStore.card-presence;
             presence-label: PeopleStore.card-presence-label;
             work-location: PeopleStore.card-work-location;
+            hover-mode: PeopleStore.card-by-hover;
+            quick-message(t) => {
+                PeopleStore.card-open = false;
+                PeopleStore.command("profile-message", t);
+            }
             copy-email => { PeopleStore.command("profile-copy-email", ""); }
             chat(id) => {
                 PeopleStore.card-open = false;

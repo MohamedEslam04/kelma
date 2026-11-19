@@ -1129,3 +1129,6 @@ msgstr "إظهار زرّي الرد والإعجاب"
 
 msgid "Reply opens the chat with the cursor in the message box. Clicking a notification always opens its chat."
 msgstr "زر الرد يفتح المحادثة والمؤشر في مربع الرسالة. والضغط على أي إشعار يفتح محادثته دائماً."
+
+msgid "Chat list width"
+msgstr "عرض قائمة المحادثات"

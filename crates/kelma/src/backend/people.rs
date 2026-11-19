@@ -52,6 +52,8 @@ pub enum PeopleCmd {
     Profile(String),
     ProfileCopyEmail,
     ProfileChat(String),
+    /// "Send a quick message" on the profile card: to the person the card shows.
+    ProfileMessage(String),
     PinJump(String),
     PinUnpin(String),
     Receipts(bool),
@@ -79,6 +81,7 @@ impl PeopleCmd {
             "profile" => PeopleCmd::Profile(a),
             "profile-copy-email" => PeopleCmd::ProfileCopyEmail,
             "profile-chat" => PeopleCmd::ProfileChat(a),
+            "profile-message" => PeopleCmd::ProfileMessage(a),
             "pin-jump" => PeopleCmd::PinJump(a),
             "pin-unpin" => PeopleCmd::PinUnpin(a),
             "receipts" => PeopleCmd::Receipts(arg == "on"),
@@ -110,6 +113,8 @@ pub(super) struct State {
     add_history: bool,
     add_results: Vec<Person>,
     card_email: Option<String>,
+    /// The person the profile card shows.
+    card_mri: Option<String>,
     pins: HashMap<String, Vec<PinnedData>>,
     horizons: HashMap<String, Vec<Horizon>>,
     /// `readReceiptsEnabled` of the account, once known.
@@ -304,6 +309,7 @@ impl Engine {
                 tracing::debug!(%id, "opened chat from the profile card");
                 Ok(())
             }
+            PeopleCmd::ProfileMessage(text) => self.quick_message(text).await,
             PeopleCmd::PinJump(id) => self.jump_to(&id).await,
             PeopleCmd::PinUnpin(id) => self.unpin(&id).await,
             PeopleCmd::Receipts(on) => {
@@ -804,6 +810,38 @@ impl Engine {
         });
     }
 
+    /// Sends `text` to the 1:1 chat with the person on the profile card, without leaving the
+    /// chat that is open.
+    async fn quick_message(self: &Arc<Self>, text: String) -> anyhow::Result<()> {
+        let text = text.trim().to_string();
+        let Some(mri) = self.people.lock().unwrap().card_mri.clone() else {
+            return Ok(());
+        };
+        if text.is_empty() || mri == self.me {
+            return Ok(());
+        }
+        let id = match plan(&self.me, std::slice::from_ref(&mri), &self.groups()) {
+            Plan::Existing(id) => id,
+            Plan::Direct(id) => {
+                self.ensure_direct_row(&id, Some(&mri));
+                id
+            }
+            _ => return Ok(()),
+        };
+        let item = self.new_outbox_item(
+            id,
+            OutboxKind::Text,
+            render::text_to_teams_html(&text),
+            None,
+            None,
+            None,
+        );
+        self.enqueue(item)?;
+        self.flush_outbox(false).await;
+        self.mark(|d| d.chats = true);
+        Ok(())
+    }
+
     async fn new_chat_send(self: &Arc<Self>, text: String) -> anyhow::Result<()> {
         let (picked, name) = {
             let p = self.people.lock().unwrap();
@@ -1035,8 +1073,11 @@ impl Engine {
             email: known.and_then(|u| u.email).unwrap_or_default(),
             ..Default::default()
         };
-        self.people.lock().unwrap().card_email =
-            (!card.email.is_empty()).then(|| card.email.clone());
+        {
+            let mut p = self.people.lock().unwrap();
+            p.card_email = (!card.email.is_empty()).then(|| card.email.clone());
+            p.card_mri = Some(mri.clone());
+        }
         self.ui.card(true, card.clone());
         let fetched = self.client.profile_card(&mri).await;
         card.loading = false;

@@ -220,6 +220,23 @@ fn with_shared<R>(f: impl FnOnce(&mut Shared) -> R) -> Option<R> {
     SHARED.lock().ok()?.as_mut().map(f)
 }
 
+/// The chat list's default width (as `app.slint` has it).
+const SIDEBAR_DEFAULT: f32 = 320.;
+/// The range the divider can drag it to.
+const SIDEBAR_MIN: f32 = 220.;
+const SIDEBAR_MAX: f32 = 600.;
+
+/// The width to remember: `None` while it is the default.
+fn sidebar_width_to_save(w: f32) -> Option<u32> {
+    let w = w.clamp(SIDEBAR_MIN, SIDEBAR_MAX).round();
+    ((w - SIDEBAR_DEFAULT).abs() >= 1.).then_some(w as u32)
+}
+
+/// A remembered width, kept within the range.
+fn sidebar_width_to_restore(w: Option<u32>) -> Option<f32> {
+    w.map(|w| (w as f32).clamp(SIDEBAR_MIN, SIDEBAR_MAX))
+}
+
 /// The teams the sidebar starts collapsed (the engine seeds its view with them).
 pub fn collapsed_teams() -> HashSet<String> {
     with_shared(|s| collapsed_teams_of(&s.state)).unwrap_or_default()
@@ -284,10 +301,12 @@ fn observe(window: &slint::Window) -> Option<Observed> {
 fn capture(w: &AppWindow) {
     let obs = observe(w.window());
     let chat = w.get_current_id();
+    let list = sidebar_width_to_save(w.get_sidebar_width());
     with_shared(|s| {
         if let Some(o) = obs {
             apply_observed(&mut s.state, &o);
         }
+        s.state.sidebar_width = list;
         // An empty id means "nothing open yet" (start, sign-in): keep the remembered chat.
         if !chat.is_empty() {
             s.state.set_last_chat(Some(chat.as_str()));
@@ -386,6 +405,7 @@ pub fn install(
     };
     let plan = restore_plan(&state);
     let last_chat = state.last_chat.clone();
+    let sidebar = state.sidebar_width;
     if let Ok(mut g) = SHARED.lock() {
         *g = Some(Shared {
             saved: state.clone(),
@@ -398,6 +418,9 @@ pub fn install(
         return Vec::new();
     }
     apply_restore(window.window(), &plan);
+    if let Some(w) = sidebar_width_to_restore(sidebar) {
+        window.set_sidebar_width(w);
+    }
 
     let mut timers = Vec::new();
     let save = Timer::default();
@@ -466,6 +489,19 @@ pub fn finish(w: &AppWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_chat_list_width_is_remembered_within_its_range() {
+        assert_eq!(
+            sidebar_width_to_save(320.),
+            None,
+            "the default is not stored"
+        );
+        assert_eq!(sidebar_width_to_save(410.4), Some(410));
+        assert_eq!(sidebar_width_to_save(5000.), Some(600));
+        assert_eq!(sidebar_width_to_restore(Some(100)), Some(220.));
+        assert_eq!(sidebar_width_to_restore(None), None);
+    }
 
     fn saved() -> WindowState {
         let mut s = WindowState::default();

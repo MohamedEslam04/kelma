@@ -730,6 +730,40 @@ fn clicking_the_avatar_also_opens_the_card_and_a_card_without_an_email_has_no_em
     assert!(ids(&h.app, "ProfileCard::mail-touch").is_empty());
 }
 
+#[test]
+fn resting_on_a_photo_opens_a_hover_card_whose_quick_message_goes_to_their_chat() {
+    let h = harness_with_sara_email();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    let avatar = ids(&h.app, "MessageRow::avatar-touch")
+        .into_iter()
+        .find(|e| label(e) == "Open profile of Sara Hassan")
+        .expect("Sara's photo");
+    let (p, s) = (avatar.absolute_position(), avatar.size());
+    h.app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.),
+    });
+    for _ in 0..8 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        ps(&h.app).get_card_open(),
+        "resting on the photo opens the card"
+    );
+    assert!(ps(&h.app).get_card_by_hover());
+    assert_eq!(ps(&h.app).get_card().name, "Sara Hassan");
+
+    // A quick message goes to the 1:1 with her; the open chat stays.
+    let quick = touch(&h.app, "ProfileCard::quick");
+    quick.set_accessible_value("on my way");
+    click(&touch(&h.app, "ProfileCard::quick-send"));
+    assert!(!ps(&h.app).get_card_open(), "sending closes the card");
+    let direct = "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000003@unq.gbl.spaces";
+    let queued = h.engine.test_store(|s| s.outbox_for(direct).unwrap());
+    assert_eq!(queued.len(), 1, "one message queued for Sara");
+    assert_eq!(h.app.get_current_id(), BACKEND);
+}
+
 // ---- 6.6 pinned messages banner ----------------------------------------------
 
 fn pins() -> Vec<PinnedData> {

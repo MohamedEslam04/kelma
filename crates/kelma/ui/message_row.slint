@@ -25,6 +25,8 @@ export component MessageRow inherits TouchArea {
     callback discard-send();
     // Click on the avatar or the sender's name: open the profile card (sender MRI).
     callback profile(string);
+    // The pointer rested on the photo or name (opens the card as a hover card).
+    callback profile-hover(string);
     height: content.preferred-height;
 
     // Right click opens the same menu as the "…" button.
@@ -91,6 +93,12 @@ export component MessageRow inherits TouchArea {
                         accessible-action-default => { root.profile(root.m.sender-id); }
                         clicked => { root.profile(root.m.sender-id); }
                     }
+                    // Resting on the photo opens the card, as in Teams.
+                    Timer {
+                        interval: 600ms;
+                        running: avatar-touch.has-hover;
+                        triggered => { root.profile-hover(root.m.sender-id); }
+                    }
                 }
             }
 
@@ -121,6 +129,11 @@ export component MessageRow inherits TouchArea {
                                 accessible-label: @tr("Open profile of {}", root.m.sender);
                                 accessible-action-default => { root.profile(root.m.sender-id); }
                                 clicked => { root.profile(root.m.sender-id); }
+                            }
+                            Timer {
+                                interval: 600ms;
+                                running: sender-touch.has-hover;
+                                triggered => { root.profile-hover(root.m.sender-id); }
                             }
                         }
                         Text { text: root.m.time; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; }
