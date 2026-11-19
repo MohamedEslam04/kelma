@@ -111,5 +111,3 @@ a Meet now for the View menu, captions, recording and the remote share.
 - **Caption text** (UNVERIFIED): the `x-data` SDP section maps to an SCTP data channel
   `main-channel`, and caption frames (data id 3) become caption lines. This is on only in meetings.
   Live check: the log shows `data channel open`, then More › Show live captions and someone talks.
-
-To be filled in.
