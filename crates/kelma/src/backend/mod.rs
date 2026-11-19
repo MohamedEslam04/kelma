@@ -20,6 +20,7 @@ mod attach;
 mod cal;
 mod drafts;
 mod live;
+mod manage;
 mod mentions;
 mod outbox;
 mod people;
@@ -37,6 +38,10 @@ pub(crate) use activity::{State as ActivityState, row_data as activity_row_data}
 pub use cal::{CalCmd, CalData};
 #[cfg(test)]
 pub use cal::{Ctx, build, parse_view};
+pub use manage::{
+    CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
+    SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
+};
 pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
@@ -88,6 +93,7 @@ pub enum Cmd {
     Calendar(CalCmd),
     Activity(ActivityCmd),
     People(PeopleCmd),
+    Teams(TeamsCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -177,6 +183,7 @@ pub struct Engine {
     dirty: Mutex<Dirty>,
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
+    manage: Mutex<manage::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -228,6 +235,7 @@ impl Engine {
             }),
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
+            manage: Mutex::new(manage::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -258,6 +266,7 @@ impl Engine {
     pub fn start(self: &Arc<Self>) {
         self.push_prefs();
         self.start_people();
+        self.start_manage();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -492,6 +501,7 @@ impl Engine {
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
             Cmd::Activity(c) => self.activity_cmd(c).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
+            Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

@@ -18,6 +18,7 @@ use std::rc::Rc;
 
 pub(crate) mod activity;
 mod people;
+mod teams;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };

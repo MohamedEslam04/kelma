@@ -19,6 +19,7 @@ use teams_proto::Client;
 
 mod activity;
 mod people;
+mod teams;
 
 type Log = Rc<RefCell<Vec<String>>>;
 

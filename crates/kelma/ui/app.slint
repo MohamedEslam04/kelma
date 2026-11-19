@@ -19,12 +19,16 @@ import { NewChatPane } from "new_chat.slint";
 import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
 import { PinnedBanner } from "pinned_banner.slint";
 import { ProfileCard } from "profile_card.slint";
+import { TeamsStore } from "teams_store.slint";
+import { TeamsPage } from "teams_page.slint";
+import { TeamsDialogs } from "teams_dialogs.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
 export { EmojiApi } from "composer.slint";
 export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
+export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
 
 export component AppWindow inherits Window {
@@ -334,6 +338,13 @@ export component AppWindow inherits Window {
                 new-chat => {
                     PeopleStore.new-chat-open = true;
                     PeopleStore.command("new-chat-open", "");
+                }
+                manage-teams => { TeamsStore.open = true; TeamsStore.command("open", ""); }
+                open-community(id) => {
+                    TeamsStore.tab = "communities";
+                    TeamsStore.community = id;
+                    TeamsStore.open = true;
+                    TeamsStore.command("community-open", id);
                 }
                 select-chat(id) => { root.select-chat(id); }
                 select-channel(id, title) => { root.select-channel(id, title); }
@@ -849,5 +860,25 @@ export component AppWindow inherits Window {
             send-email(e) => { root.open-url("mailto:" + e); }
             close => { PeopleStore.card-open = false; }
         }
+    }
+
+    // Teams management: the "Your teams and channels" page covers the area right of the rail, and
+    // its dialogs cover the window (see teams_page.slint and teams_dialogs.slint).
+    if root.login-state == "ready" && TeamsStore.open: TeamsPage {
+        x: 68px;
+        y: 48px;
+        z: 40;
+        width: root.width - 68px;
+        height: root.height - 48px;
+        go(id, title) => {
+            TeamsStore.open = false;
+            root.view = "teams";
+            root.select-channel(id, title);
+        }
+    }
+    if root.login-state == "ready" && TeamsStore.dialog != "": TeamsDialogs {
+        z: 50;
+        width: root.width;
+        height: root.height;
     }
 }

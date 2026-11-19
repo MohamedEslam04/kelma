@@ -287,7 +287,7 @@ channel), `GID` = the AAD group id (`teamSiteInformation.groupId`).
 | `GET MT/beta/teams/find?keywords=<k>&accessType=<n>&enableKeywordSearch=false&top=100&skipToken=` | same shape. Returned 0 for a one-letter keyword | ✅ lists |
 | `POST MT/beta/teams/joinRequest/<GID>` | join a public team, or ask to join a private one | 🧪 (rule: no joins of real teams) |
 | `POST MT/beta/teams/cancelJoinRequest/<GID>` | | 🧪 |
-| `POST MT/beta/teams/joinByCode?restrictJoinToPublicTeam=<bool>` | body is the code as a JSON string (`"abc1234"`). `{"joinCode":…}` answers `400 Invalid joinCode`. With `restrictJoinToPublicTeam=false` the service answered `400 restrictJoinToPublicTeam query parameter must be set to true` for a private team's code; with `true` it answered `JoinTeamInfo{value{accessType, description, displayName, isTeamOwnerApprovalRequired, …}}`. Tried only with the test team's own code (already a member) | ✅ (own code) |
+| `POST MT/beta/teams/joinByCode?restrictJoinToPublicTeam=<bool>` | body is the code as a JSON string (`"abc1234"`). `{"joinCode":…}` answers `400 Invalid joinCode`. With `restrictJoinToPublicTeam=false` the service answered `400 restrictJoinToPublicTeam query parameter must be set to true` for a private team's code; with `true` it answered `JoinTeamInfo{value{accessType, description, displayName, isTeamOwnerApprovalRequired, …}}`. Tried only with the test team's own code (already a member). kelma's join dialog always sends `true`, the only value that worked live | ✅ (own code) |
 | `GET/PUT/DELETE MT/beta/teams/<TID>/joinCode` | GET: `204` without a code, else the plain-text code. PUT makes a new code and answers it as plain text. DELETE removes it | ✅ |
 
 ### T1.3 Show, hide, pin
@@ -327,7 +327,8 @@ channel), `GID` = the AAD group id (`teamSiteInformation.groupId`).
 | Add or change role `PUT MT/beta/teams/<TID>/bulkUpdateRoledMembers?allowAsyncAddition=true` | `{users:[{mri, role: 0 member, 1 guest, 2 owner}], groupId:<GID>}` | ✅ add (member). Role to owner and back answered `200`; the roster did not show the owner within 4 s and the owner count was not re-read before reverting, so 2 = owner comes from the open-source clients |
 | Remove or leave `PUT MT/beta/teams/<TID>/members` | `{groupId, userMri, updateType:"Left"}` | 🧪 |
 | Private channel members `POST fabric …/channels/OID:<substrate>@<tenant>/users?forceSync=false` | `{users:[{id:"OID:<user oid>@<tenant>", role: 1 member, 2 owner}]}`; `DELETE …/users/OID:<oid>@<tenant>?forceSync=false` | 🧪 (would notify a colleague) |
-| Pending requests, guests | `POST MT/beta/teams/findJoinRequests`, `joinRequestAdminAction`, `…/inviteAndAddGuest` exist in the web client; not wired | not done |
+| Pending requests | `POST MT/beta/teams/findJoinRequests` (owner view of join requests). Nine read-only tries against the test team failed: the body must be a `FindJoinRequestsContext` object (a JSON array answers `400 Cannot deserialize … FindJoinRequestsContext`), and an object with `groupList` as ids, as `{groupId}` objects, with `skipToken`, or wrapped in `findJoinRequestsContext` all answer `500 groupList cannot be null`. The property that holds the groups is not named `groupList` at the top level; not found | ❌ body unknown |
+| Guests | `joinRequestAdminAction`, `…/inviteAndAddGuest` exist in the web client; not wired | not done |
 
 ### T2.4 Tags (CSA `teams/<TID>/tags`)
 | Call | Notes | Live |
