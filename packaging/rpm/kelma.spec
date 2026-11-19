@@ -1,3 +1,6 @@
+# Rust binaries are stripped by the release profile (strip = true), so there is no debuginfo to split.
+%global debug_package %{nil}
+
 Name:           kelma
 Version:        0.1.0
 Release:        1%{?dist}
@@ -10,15 +13,32 @@ Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 #   cargo vendor && tar caf kelma-%%{version}-vendor.tar.xz vendor
 Source1:        %{name}-%{version}-vendor.tar.xz
 
-BuildRequires:  cargo
-BuildRequires:  rust
+# slint 1.19 needs Rust 1.95 or newer.
+BuildRequires:  cargo >= 1.95
+BuildRequires:  rust >= 1.95
 BuildRequires:  gcc
+BuildRequires:  gcc-c++
+# cmake builds the bundled C libraries (aws-lc, and libopus for the meeting host).
+BuildRequires:  cmake
 BuildRequires:  pkgconfig
+# alsa-lib is for the meeting host's audio (cpal); harmless until that crate lands.
+BuildRequires:  pkgconfig(alsa)
 BuildRequires:  pkgconfig(fontconfig)
 BuildRequires:  pkgconfig(xkbcommon)
 BuildRequires:  pkgconfig(dbus-1)
 BuildRequires:  desktop-file-utils
 Requires:       hicolor-icon-theme
+# Loaded with dlopen (winit, glutin, xkbcommon-dl), so rpm does not detect them:
+Requires:       libxkbcommon
+Requires:       libxkbcommon-x11
+Requires:       libwayland-client
+Requires:       libwayland-egl
+Requires:       libX11
+Requires:       libXcursor
+Requires:       libXi
+Requires:       libXrender
+Requires:       libglvnd-egl
+Requires:       libglvnd-glx
 Recommends:     google-noto-emoji-fonts
 Recommends:     xdg-desktop-portal
 
@@ -40,9 +60,11 @@ directory = "vendor"
 EOF
 
 %build
+export CARGO_HOME=%{_builddir}/cargo-home
 cargo build --release --frozen -p kelma
 
 %check
+export CARGO_HOME=%{_builddir}/cargo-home
 desktop-file-validate packaging/kelma.desktop
 cargo test --frozen -p diag
 
