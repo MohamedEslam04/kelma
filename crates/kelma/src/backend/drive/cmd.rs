@@ -58,6 +58,8 @@ pub enum DriveCmd {
     Versions,
     VersionRestore(String),
     Details,
+    /// `next` or `prev`: another page of the open PDF or Office preview.
+    PreviewPage(String),
     Sync,
     Share,
     ShareSearch(String),
@@ -143,6 +145,7 @@ impl DriveCmd {
             "versions" => DriveCmd::Versions,
             "version-restore" => DriveCmd::VersionRestore(s()),
             "details" => DriveCmd::Details,
+            "preview-page" => DriveCmd::PreviewPage(s()),
             "sync" => DriveCmd::Sync,
             "share" => DriveCmd::Share,
             "share-search" => DriveCmd::ShareSearch(s()),

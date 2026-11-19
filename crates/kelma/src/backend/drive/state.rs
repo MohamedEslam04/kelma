@@ -203,7 +203,9 @@ pub enum Preview {
     /// Shown by kelma as text (plain, code) or rendered markdown.
     Text,
     Markdown,
-    /// Office files, PDF and the rest: the browser, through the preview or web URL.
+    /// A PDF, or an Office file Graph converts to PDF: shown by kelma page by page.
+    Pages,
+    /// The rest: the browser, through the preview or web URL.
     Browser,
     /// Video and audio: the system player through `xdg-open`.
     Player,
@@ -217,6 +219,12 @@ impl Preview {
         match FileKind::of(item) {
             FileKind::Image if DECODABLE.contains(&extension(&item.name).as_str()) => {
                 Preview::Image
+            }
+            FileKind::Pdf => Preview::Pages,
+            FileKind::Word | FileKind::Excel | FileKind::PowerPoint
+                if preview::can_convert(&item.name) =>
+            {
+                Preview::Pages
             }
             FileKind::Markdown => Preview::Markdown,
             FileKind::Text | FileKind::Code => Preview::Text,
@@ -975,8 +983,10 @@ mod tests {
         assert_eq!(p("a.md"), Preview::Markdown);
         assert_eq!(p("a.txt"), Preview::Text);
         assert_eq!(p("a.json"), Preview::Text);
-        assert_eq!(p("a.docx"), Preview::Browser);
-        assert_eq!(p("a.pdf"), Preview::Browser);
+        assert_eq!(p("a.docx"), Preview::Pages, "converted to PDF by Graph");
+        assert_eq!(p("a.xlsx"), Preview::Pages);
+        assert_eq!(p("a.pdf"), Preview::Pages);
+        assert_eq!(p("a.zip"), Preview::Browser);
         assert_eq!(p("a.mp3"), Preview::Player);
     }
 

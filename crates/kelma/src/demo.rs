@@ -861,6 +861,54 @@ pub fn drive_listing(key: &str, folder: &str, now: i64) -> Vec<onedrive::DriveIt
     }
 }
 
+/// A minimal valid PDF with one page per `(width, height)` in points, each with a black square
+/// in its top-left quarter (what the demo shows for a PDF or an Office file).
+pub fn drive_pdf(pages: &[(u32, u32)]) -> Vec<u8> {
+    let n = pages.len();
+    let mut objects: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        format!(
+            "<< /Type /Pages /Count {n} /Kids [{}] >>",
+            (0..n)
+                .map(|i| format!("{} 0 R", 3 + 2 * i))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    ];
+    for (i, (w, h)) in pages.iter().enumerate() {
+        objects.push(format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents {} 0 R >>",
+            4 + 2 * i
+        ));
+        let content = format!("0 0 0 rg 0 {} {} {} re f", h / 2, w / 2, h / 2);
+        objects.push(format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ));
+    }
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for off in offsets {
+        out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
 /// The recordings kept in a team channel's library, which Meetings adds in the background.
 pub fn drive_channel_recordings(now: i64) -> Vec<onedrive::DriveItem> {
     let mut item = drive_file(

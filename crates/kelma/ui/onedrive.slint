@@ -71,7 +71,9 @@ export global DriveStore {
     in property <string> info-text;
     // preview
     in property <string> preview-title;
-    in property <string> preview-kind; // image | text | markdown
+    in property <string> preview-kind; // image | pages | text | markdown
+    in property <int> preview-page; // pages: the page shown, from 1
+    in property <int> preview-pages; // pages: how many
     in property <image> preview-image;
     in property <string> preview-text;
     in property <styled-text> preview-body;
@@ -1447,7 +1449,7 @@ export component OneDriveView inherits Rectangle {
                 border-radius: 4px;
                 background: #1b1b1b;
                 clip: true;
-                if DriveStore.preview-kind == "image": Image {
+                if DriveStore.preview-kind == "image" || DriveStore.preview-kind == "pages": Image {
                     source: DriveStore.preview-image;
                     width: parent.width;
                     height: parent.height;
@@ -1490,6 +1492,16 @@ export component OneDriveView inherits Rectangle {
                 height: 34px;
                 spacing: 8px;
                 alignment: end;
+                if DriveStore.preview-kind == "pages": Text {
+                    text: "Page " + DriveStore.preview-page + " of " + DriveStore.preview-pages;
+                    color: Theme.fg-muted;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                    accessible-label: "Page " + DriveStore.preview-page + " of " + DriveStore.preview-pages;
+                }
+                if DriveStore.preview-kind == "pages": DialogButton { label: "Previous page"; enabled: DriveStore.preview-page > 1; clicked => { DriveStore.command("preview-page", "prev"); } }
+                if DriveStore.preview-kind == "pages": DialogButton { label: "Next page"; enabled: DriveStore.preview-page < DriveStore.preview-pages; clicked => { DriveStore.command("preview-page", "next"); } }
                 DialogButton { label: "Open in browser"; clicked => { DriveStore.command("open-browser", ""); } }
                 DialogButton { label: "Download"; clicked => { DriveStore.command("download", ""); } }
                 DialogButton { label: "Close"; primary: true; clicked => { root.close-dialog(); } }

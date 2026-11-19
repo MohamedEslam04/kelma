@@ -99,6 +99,9 @@ pub struct PreviewData {
     pub kind: &'static str,
     pub image: Option<Pixels>,
     pub text: String,
+    /// Pages previews only: the page shown (from 1) and how many there are.
+    pub page: usize,
+    pub pages: usize,
 }
 
 struct Picker {
@@ -120,6 +123,17 @@ struct Share {
     status: String,
 }
 
+/// A document open page by page in the preview dialog.
+struct OpenPages {
+    doc: Arc<preview::Document>,
+    name: String,
+    /// The page shown, from 0.
+    page: usize,
+}
+
+/// How wide a page is rendered, in pixels.
+const PAGE_WIDTH: u32 = 1000;
+
 /// The OneDrive part of the engine's state.
 #[derive(Default)]
 pub struct Drive {
@@ -131,6 +145,8 @@ pub struct Drive {
     /// Who shared files with the user, from the last People listing (a person's files open
     /// from it).
     people: Vec<PersonFiles>,
+    /// The PDF (or converted Office file) open in the preview dialog.
+    pages: Option<OpenPages>,
     my_drive_id: Option<String>,
     picker: Option<Picker>,
     share: Option<Share>,
@@ -560,6 +576,7 @@ impl Engine {
                     self.ui.drive_info("Details".into(), details_text(&i, fav));
                 }
             }
+            PreviewPage(which) => self.drive_preview_page(&which).await?,
             Sync => self.ui.drive_info("Sync".into(), onedrive::sync_help()),
             Share => self.drive_share_begin().await?,
             ShareSearch(q) => self.drive_share_search(q.trim()).await?,
@@ -584,6 +601,7 @@ impl Engine {
                 d.picker = None;
                 d.share = None;
                 d.versions_of = None;
+                d.pages = None;
             }
         }
         Ok(())
@@ -1047,11 +1065,113 @@ impl Engine {
                     },
                     image: None,
                     text,
+                    page: 0,
+                    pages: 0,
                 });
+            }
+            Preview::Pages if item.size <= MAX_OPEN_BYTES => {
+                if !self.drive_open_pages(&item).await {
+                    self.drive_open_browser_preview(&item).await?;
+                }
             }
             Preview::Player => self.drive_open_external(item).await?,
             _ => self.drive_open_browser_preview(&item).await?,
         }
+        Ok(())
+    }
+
+    /// Shows a PDF, or an Office file converted to PDF by Graph (a read-only request), page by
+    /// page inside kelma. False when that is not possible (password, a type Graph cannot convert,
+    /// a damaged file): the caller falls back to the browser.
+    async fn drive_open_pages(self: &Arc<Self>, item: &DriveItem) -> bool {
+        self.drive_status(format!("Opening {}...", item.name));
+        let bytes: Vec<u8> = if self.drive_offline() {
+            crate::demo::drive_pdf(&[(612, 792), (612, 792), (612, 792)])
+        } else {
+            let fetched = if FileKind::of(item) == FileKind::Pdf {
+                ops::download(&self.client, item)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                preview::office_to_pdf(&self.client, &item.drive_id, &item.id, &item.name)
+                    .await
+                    .map_err(|e| e.to_string())
+            };
+            match fetched {
+                Ok(b) => b,
+                Err(err) => {
+                    tracing::info!(%err, "no page preview, using the browser");
+                    self.drive_status("");
+                    return false;
+                }
+            }
+        };
+        let doc = match tokio::task::spawn_blocking(move || preview::Document::open(bytes)).await {
+            Ok(Ok(doc)) if doc.page_count() > 0 => Arc::new(doc),
+            _ => {
+                self.drive_status("");
+                return false;
+            }
+        };
+        self.drive.lock().unwrap().pages = Some(OpenPages {
+            doc,
+            name: item.name.clone(),
+            page: 0,
+        });
+        self.drive_status("");
+        self.drive_show_page().await
+    }
+
+    /// Renders the current page of the open document and shows it.
+    async fn drive_show_page(self: &Arc<Self>) -> bool {
+        let Some((doc, name, page)) = self
+            .drive
+            .lock()
+            .unwrap()
+            .pages
+            .as_ref()
+            .map(|p| (p.doc.clone(), p.name.clone(), p.page))
+        else {
+            return false;
+        };
+        let pages = doc.page_count();
+        let image = tokio::task::spawn_blocking(move || {
+            let r = doc.render_page(page, PAGE_WIDTH).ok()?;
+            Some(Pixels::clone_from_slice(&r.pixels, r.width, r.height))
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some(image) = image else {
+            self.drive_status("Couldn't draw this page");
+            return false;
+        };
+        self.ui.drive_preview(PreviewData {
+            title: name,
+            kind: "pages",
+            image: Some(image),
+            text: String::new(),
+            page: page + 1,
+            pages,
+        });
+        true
+    }
+
+    /// Previous or next page of the open document.
+    async fn drive_preview_page(self: &Arc<Self>, which: &str) -> anyhow::Result<()> {
+        {
+            let mut d = self.drive.lock().unwrap();
+            let Some(p) = d.pages.as_mut() else {
+                return Ok(());
+            };
+            let last = p.doc.page_count().saturating_sub(1);
+            p.page = match which {
+                "next" => (p.page + 1).min(last),
+                "prev" => p.page.saturating_sub(1),
+                _ => p.page,
+            };
+        }
+        self.drive_show_page().await;
         Ok(())
     }
 
@@ -2151,6 +2271,8 @@ fn preview_of(item: &DriveItem, bytes: &[u8]) -> PreviewData {
             kind: "image",
             image: super::util::decode_image(bytes, 1600, 1100),
             text: String::new(),
+            page: 0,
+            pages: 0,
         },
         p => PreviewData {
             title: item.name.clone(),
@@ -2164,6 +2286,8 @@ fn preview_of(item: &DriveItem, bytes: &[u8]) -> PreviewData {
                 .chars()
                 .take(MAX_TEXT_CHARS)
                 .collect(),
+            page: 0,
+            pages: 0,
         },
     }
 }

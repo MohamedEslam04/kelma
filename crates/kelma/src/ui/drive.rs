@@ -193,6 +193,8 @@ pub(crate) fn set_preview(w: &AppWindow, p: PreviewData) {
     s.set_preview_image(image);
     s.set_preview_body(styled(&p.text));
     s.set_preview_text(p.text.into());
+    s.set_preview_page(p.page as i32);
+    s.set_preview_pages(p.pages as i32);
     s.set_dialog("preview".into());
 }
 

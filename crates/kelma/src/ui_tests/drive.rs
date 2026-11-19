@@ -689,6 +689,10 @@ fn home_shows_for_you_cards_that_open_their_file() {
         d.log()
     );
 
+    // The card opened the workbook in the page viewer; close it again.
+    assert_eq!(d.store().get_dialog(), "preview");
+    d.click_label("Close");
+
     // Typing a filter hides the cards, leaving the section does too.
     d.click_label("Filter by name or person");
     type_text(&d.h.app, "sara");
@@ -851,6 +855,44 @@ fn attach_cloud_files_in_the_composer_picks_a_onedrive_file_into_the_chat() {
     d.settle();
     assert_eq!(chips(&d.h.app), ["Budget 2026.xlsx"]);
     assert_eq!(d.store().get_dialog(), "");
+}
+
+#[test]
+fn a_pdf_opens_page_by_page_inside_kelma() {
+    let d = DriveHarness::open();
+    d.double_click_label("Vendor contract.pdf");
+    let s = d.store();
+    assert_eq!(s.get_dialog(), "preview");
+    assert_eq!(s.get_preview_kind(), "pages");
+    assert_eq!((s.get_preview_page(), s.get_preview_pages()), (1, 3));
+    let img = s.get_preview_image();
+    assert!(
+        img.size().width >= 900,
+        "the page is drawn: {:?}",
+        img.size()
+    );
+    assert!(d.has_label("Page 1 of 3"));
+
+    d.click_label("Next page");
+    assert_eq!(d.store().get_preview_page(), 2);
+    d.click_label("Next page");
+    d.click_label("Next page");
+    assert_eq!(d.store().get_preview_page(), 3, "stops at the last page");
+    d.click_label("Previous page");
+    assert_eq!(d.store().get_preview_page(), 2);
+    assert!(d.log().contains(&"preview-page next".to_owned()));
+    assert!(d.log().contains(&"preview-page prev".to_owned()));
+    d.click_label("Close");
+    assert_eq!(d.store().get_dialog(), "");
+}
+
+#[test]
+fn an_office_file_previews_through_its_pdf_conversion() {
+    let d = DriveHarness::open();
+    d.double_click_label("Customer pitch.pptx");
+    assert_eq!(d.store().get_dialog(), "preview");
+    assert_eq!(d.store().get_preview_kind(), "pages");
+    assert!(d.store().get_preview_pages() >= 1);
 }
 
 #[test]
