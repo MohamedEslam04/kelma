@@ -922,11 +922,9 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
             }
         }
         (Some("storyline"), Some(text)) => {
-            if !has(args, "--yes") {
-                bail!("a storyline post is public to the company: add --yes to send it");
-            }
-            client.post_storyline(text).await?;
-            println!("posted");
+            // Refused in teams-proto until the Engage GraphQL route is verified (plan T2.9).
+            let _ = (text, has(args, "--yes"));
+            bail!("storyline posting is disabled: see docs/research/storyline.md");
         }
         _ => bail!(
             "usage: team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|unarchive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw> …"

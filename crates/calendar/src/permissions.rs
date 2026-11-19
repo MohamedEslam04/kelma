@@ -4,7 +4,7 @@ use reqwest::Method;
 use serde_json::{Value, json};
 use teams_proto::{Client, Error, Result};
 
-use crate::graph::{email_address, enc, graph};
+use crate::graph::{GraphRequest, email_address, enc, graph};
 use crate::new_event::Person;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +63,8 @@ pub struct Permission {
     pub role: PermissionRole,
     /// False for the owner's own entry.
     pub is_removable: bool,
+    /// The roles this entry may be given; empty when Graph does not say.
+    pub allowed_roles: Vec<PermissionRole>,
 }
 
 pub fn parse_permissions(v: &Value) -> Vec<Permission> {
@@ -84,6 +86,16 @@ pub fn parse_permissions(v: &Value) -> Vec<Permission> {
                             .get("isRemovable")
                             .and_then(Value::as_bool)
                             .unwrap_or(true),
+                        allowed_roles: p
+                            .get("allowedRoles")
+                            .and_then(Value::as_array)
+                            .map(|r| {
+                                r.iter()
+                                    .filter_map(Value::as_str)
+                                    .map(PermissionRole::from_graph)
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
                     })
                 })
                 .collect()
@@ -109,6 +121,42 @@ fn path(calendar_id: &str, permission_id: Option<&str>) -> String {
     match permission_id {
         Some(p) => format!("{base}/{}", enc(p)),
         None => base,
+    }
+}
+
+/// Sharing the calendar with someone, built but not sent (see [`add_permission`]).
+pub fn add_permission_request(
+    calendar_id: &str,
+    person: &Person,
+    role: PermissionRole,
+    inside_org: bool,
+) -> GraphRequest {
+    GraphRequest {
+        method: Method::POST,
+        path: path(calendar_id, None),
+        body: Some(add_permission_body(person, role, inside_org)),
+    }
+}
+
+/// Changing someone's role, built but not sent (see [`update_permission`]).
+pub fn update_permission_request(
+    calendar_id: &str,
+    permission_id: &str,
+    role: PermissionRole,
+) -> GraphRequest {
+    GraphRequest {
+        method: Method::PATCH,
+        path: path(calendar_id, Some(permission_id)),
+        body: Some(update_permission_body(role)),
+    }
+}
+
+/// Stopping sharing with someone, built but not sent (see [`remove_permission`]).
+pub fn remove_permission_request(calendar_id: &str, permission_id: &str) -> GraphRequest {
+    GraphRequest {
+        method: Method::DELETE,
+        path: path(calendar_id, Some(permission_id)),
+        body: None,
     }
 }
 
@@ -208,13 +256,37 @@ mod tests {
             {"id": "p1", "emailAddress": {"name": "My Organization", "address": ""},
              "role": "freeBusyRead", "isRemovable": false},
             {"id": "p2", "emailAddress": {"name": "Sara", "address": "sara@contoso.example"},
-             "role": "write", "isRemovable": true},
+             "role": "write", "isRemovable": true,
+             "allowedRoles": ["freeBusyRead", "limitedRead", "read", "write", "delegateWithPrivateEventAccess"]},
             {"emailAddress": {}}]}));
         assert_eq!(p.len(), 2);
         assert_eq!(p[0].role, PermissionRole::FreeBusy);
         assert!(!p[0].is_removable);
         assert_eq!(p[1].email, "sara@contoso.example");
         assert_eq!(p[1].role, PermissionRole::Write);
+        assert!(p[0].allowed_roles.is_empty());
+        assert_eq!(p[1].allowed_roles.len(), 5);
+        assert_eq!(p[1].allowed_roles[4], PermissionRole::DelegateWithPrivate);
+    }
+
+    #[test]
+    fn dry_run_requests() {
+        let add = add_permission_request(
+            "c1",
+            &Person::new("", "sara@contoso.example"),
+            PermissionRole::FreeBusy,
+            true,
+        );
+        assert_eq!(add.method, Method::POST);
+        assert_eq!(add.path, "/me/calendars/c1/calendarPermissions");
+        assert_eq!(add.body.as_ref().unwrap()["role"], "freeBusyRead");
+        let up = update_permission_request("c1", "p=2", PermissionRole::Read);
+        assert_eq!(up.method, Method::PATCH);
+        assert_eq!(up.path, "/me/calendars/c1/calendarPermissions/p%3D2");
+        assert_eq!(up.body, Some(json!({"role": "read"})));
+        let rm = remove_permission_request("c1", "p2");
+        assert_eq!(rm.method, Method::DELETE);
+        assert_eq!(rm.body, None);
     }
 
     #[test]

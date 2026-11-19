@@ -49,7 +49,7 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
         favorite: false,
         read_horizon_ms: 0,
     };
-    let team = ("19:team1@thread.tacv2", "Velents Technologies Inc.");
+    let team = ("19:team1@thread.tacv2", "Contoso Ltd.");
     st.upsert_team(&TeamRow {
         id: team.0.into(),
         name: team.1.into(),
@@ -61,7 +61,7 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
             "Mohamed Eslam (You)",
             None,
             3 * min,
-            "You: velents-docs-demo.mp4",
+            "You: contoso-docs-demo.mp4",
             false,
         ),
         conv(
@@ -259,8 +259,8 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
         ME,
         "Mohamed Eslam",
         day + 60 * min,
-        "<p><a href=\"https://velentstechnologiesinc-my.sharepoint.com/\">https://velentstechnologiesinc-my.sharepoint.com/:v:/g/personal/demo</a></p><p>Safha-archive Saudi voice</p>",
-        json!({"f":[{"name":"Safha-archive Saudi voice.m4a","url":"https://velentstechnologiesinc-my.sharepoint.com/","type":"m4a"}]}),
+        "<p><a href=\"https://contoso-my.sharepoint.com/\">https://contoso-my.sharepoint.com/:v:/g/personal/demo</a></p><p>archive voice note</p>",
+        json!({"f":[{"name":"archive voice note.m4a","url":"https://contoso-my.sharepoint.com/","type":"m4a"}]}),
     )?;
     msg(
         notes,
@@ -268,8 +268,8 @@ pub fn seed(st: &Store, now: i64) -> anyhow::Result<()> {
         ME,
         "Mohamed Eslam",
         3 * min,
-        "<p>velents-docs-demo.mp4</p>",
-        json!({"f":[{"name":"velents-docs-demo.mp4","url":"https://velentstechnologiesinc-my.sharepoint.com/","type":"mp4"}]}),
+        "<p>contoso-docs-demo.mp4</p>",
+        json!({"f":[{"name":"contoso-docs-demo.mp4","url":"https://contoso-my.sharepoint.com/","type":"mp4"}]}),
     )?;
 
     let ch = "19:team1@thread.tacv2";
@@ -343,6 +343,26 @@ pub fn calendar_events(week_start_ms: i64, now_ms: i64) -> serde_json::Value {
         "organizer".into(),
         json!({"emailAddress": {"name": "Ahmed Ali", "address": "ahmed@example.com"}}),
     );
+    // An invitation I have not answered, so the peek shows the answer buttons.
+    let who = |name: &str, mail: &str, kind: &str, response: &str| {
+        json!({"emailAddress": {"name": name, "address": mail}, "type": kind,
+            "status": {"response": response}})
+    };
+    design.insert("responseStatus".into(), json!({"response": "notResponded"}));
+    design.insert(
+        "attendees".into(),
+        json!([
+            who("Demo User", "demo@contoso.com", "required", "notResponded"),
+            who("Sara Hassan", "sara@example.com", "required", "accepted"),
+            who("Omar Khaled", "omar@example.com", "optional", "declined"),
+            who(
+                "Mona Adel",
+                "mona@example.com",
+                "required",
+                "tentativelyAccepted"
+            ),
+        ]),
+    );
     items.push(ev(
         "Design review",
         at(1, 10, 0),
@@ -365,7 +385,10 @@ pub fn calendar_events(week_start_ms: i64, now_ms: i64) -> serde_json::Value {
         "Sprint review",
         at(2, 11, 0),
         at(2, 12, 0),
-        json!({"showAs": "tentative", "categories": ["Green category"]}),
+        json!({"showAs": "tentative", "categories": ["Green category"],
+            "responseStatus": {"response": "organizer"},
+            "attendees": [who("Sara Hassan", "sara@example.com", "required", "accepted"),
+                who("Ahmed Ali", "ahmed@example.com", "required", "notResponded")]}),
     ));
     items.push(ev(
         "Lunch with Mona",

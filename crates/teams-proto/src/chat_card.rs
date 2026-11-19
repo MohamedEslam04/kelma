@@ -13,8 +13,33 @@ use base64::Engine;
 use serde_json::Value;
 
 /// `contentType` of the banner an announcement post carries in `properties.cards`.
-pub const ANNOUNCEMENT_BANNER: &str =
-    "application/vnd.microsoft.teams.messaging-announcementBanner";
+pub const ANNOUNCEMENT_BANNER: &str = crate::delivery::ANNOUNCEMENT_CONTENT_TYPE;
+
+/// The banner colors kelma offers when it sends an announcement: name and `colorTheme` index.
+pub const BANNER_THEMES: [(&str, u8); 5] = [
+    ("blue", 0),
+    ("green", 1),
+    ("red", 2),
+    ("yellow", 3),
+    ("gray", 5),
+];
+
+/// How a banner `colorTheme` index (`"0"` to `"11"`) is drawn. The exact palette of Teams was not
+/// captured, so this is an approximation by hue.
+const THEME_BANDS: [Band; 12] = [
+    Band::Accent,
+    Band::Good,
+    Band::Attention,
+    Band::Warning,
+    Band::Accent,
+    Band::Emphasis,
+    Band::Good,
+    Band::Attention,
+    Band::Warning,
+    Band::Accent,
+    Band::Emphasis,
+    Band::Good,
+];
 
 /// Text color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -403,7 +428,11 @@ fn banner_row(content: &Value, headline: &str) -> Row {
         "red" | "attention" => Band::Attention,
         "yellow" | "orange" | "warning" => Band::Warning,
         "blue" | "accent" | "purple" => Band::Accent,
-        _ => Band::Emphasis,
+        n => n
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| THEME_BANDS.get(i).copied())
+            .unwrap_or(Band::Emphasis),
     };
     let mut r = Row::new(Kind::Banner, band);
     r.text = headline.to_string();
@@ -573,6 +602,31 @@ mod tests {
         assert_eq!(rows[0].text, "Big news");
         assert_eq!(rows[0].band, Band::Good);
         assert_eq!(rows[1].text, "body");
+    }
+
+    #[test]
+    fn banner_themes_are_indexes_and_each_offered_color_draws_in_its_own_band() {
+        let band_of = |theme: &str| {
+            let a = json!([{"contentType": ANNOUNCEMENT_BANNER, "content": {"colorTheme": theme}}]);
+            rows_for_attachments(&a, "H")[0].band
+        };
+        assert_eq!(band_of("1"), Band::Good);
+        assert_eq!(band_of("2"), Band::Attention);
+        assert_eq!(band_of("99"), Band::Emphasis, "outside the palette");
+        let offered: Vec<Band> = BANNER_THEMES
+            .iter()
+            .map(|(_, i)| band_of(&i.to_string()))
+            .collect();
+        assert_eq!(
+            offered,
+            [
+                Band::Accent,
+                Band::Good,
+                Band::Attention,
+                Band::Warning,
+                Band::Emphasis
+            ]
+        );
     }
 
     #[test]

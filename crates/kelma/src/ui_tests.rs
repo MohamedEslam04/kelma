@@ -22,6 +22,7 @@ mod channels;
 mod drive;
 mod lists;
 mod people;
+mod teams;
 
 type Log = Rc<RefCell<Vec<String>>>;
 

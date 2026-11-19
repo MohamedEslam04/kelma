@@ -8,28 +8,55 @@
 //! kelma-cli read <conv> [n]       print the last n messages
 //! kelma-cli send <conv> <text>    send a message (use 48:notes for your own notes)
 //! kelma-cli react <conv> <msg> <key>
+//! kelma-cli images <conv> [<msg id>|last] [--out <dir>] [--list]  fetch and save the images of one message
 //! kelma-cli calendar [days]       count upcoming events per day and per show-as (read-only)
 //! kelma-cli calendar <check>      live checks of the calendar data layer (calendars, rooms, mailbox, schedule, ...)
+//! kelma-cli calendar permissions --dry-run <role>  print the sharing writes without sending them
 //! kelma-cli audiences             mint a token for every audience (prints no tokens)
 //! kelma-cli people <query>        search people (prints the count first)
+//! kelma-cli search <query> [--kind messages|files|people|events] [--page N]  global search (read-only)
 //! kelma-cli presence [mri...]     presence of the given people, default yourself
 //! kelma-cli card [mri]            profile card of a person, default yourself
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
 //! kelma-cli drive <ls [path]|search q|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir name|rm id|selftest>
+//! kelma-cli drive <meetings|for-you|shared-by-me|people|media>   more views (read-only)
+//! kelma-cli drive new <kind> [name] [--dry-run]                    New menu; --dry-run prints the request
+//! kelma-cli drive shape <graph path> | shape-search <kql>            redacted answer shapes (read-only)
 //! kelma-cli tasks [todo <n>|plan <n>]  To Do lists and Planner plans (read-only)
 //! kelma-cli flows [runs <n> [top]]  your Workflows and their run history (read-only)
 //! kelma-cli onenote [<notebook> [<section> [<page>]]]  read OneNote notebooks, sections, pages
 //! kelma-cli lists [<site> [<list>]]  SharePoint lists of your teams' sites (read-only)
+//! kelma-cli store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>  app bar and Store (writes are dry runs)
+//! kelma-cli settings <notifications|quiet|priority|privacy|blocked|shape>  notification and privacy settings (read-only)
+//! kelma-cli settings set <what> ... --dry-run  print the settings write without sending it
 //! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
+//! kelma-cli web <url> [--shim] [--theme T] [--browser P] [--profile D]  open a page in the web host window
 //! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
+//! kelma-cli accounts [tenants|use <label>|add <label>|remove <label>|org <tenant-id|home>]
+//!                                 several accounts and organizations (list and tenants are read-only)
+//! kelma-cli preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F.png]
+//!                                 render a PDF or Office page to PNG (read-only; prints sizes, not names)
+//! kelma-cli devices [audio|cameras|test-sound|mic-level]  list sound devices and cameras; test-sound plays a tone, mic-level shows the mic level
+//! kelma-cli tray-demo [--step S|autostart <enable|disable|status>]  show the tray icon, unread badge and launcher badge for a few seconds; autostart writes the login entry
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
+mod accounts;
 mod apps;
+mod chatx;
+mod delivery;
+mod devices;
 mod drive;
+mod images;
+mod preview_file;
+mod search;
+mod settings;
+mod store;
 mod team;
+mod tray;
+mod web;
 
 use anyhow::{Context, Result, bail};
 use session::Paths;
@@ -98,10 +125,24 @@ async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
         Some("rooms") => {
             let lists = cal::room_lists(client).await?;
             println!("{} room lists", lists.len());
-            println!(
-                "{} rooms in the tenant",
-                cal::rooms(client, "").await?.len()
-            );
+            let all = cal::rooms(client, "").await?;
+            println!("{} rooms in the tenant", all.len());
+            if !all.is_empty() {
+                let start = now - now.rem_euclid(day) + day;
+                let s = cal::room_schedules(client, &all, start, start + day, 30).await?;
+                println!(
+                    "room availability tomorrow: {} schedules, {} readable, {} free 10:00-11:00 UTC",
+                    s.len(),
+                    s.iter().filter(|s| s.error.is_none()).count(),
+                    s.iter()
+                        .filter(|s| cal::free_between(
+                            s,
+                            start + 10 * 3_600_000,
+                            start + 11 * 3_600_000
+                        ) == Some(true))
+                        .count()
+                );
+            }
             if let Some(l) = lists.first() {
                 let rooms = cal::rooms(client, &l.email).await?;
                 println!(
@@ -113,6 +154,24 @@ async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
             }
         }
         Some("mailbox") => {
+            let (status, text) = client
+                .request_as(
+                    &teams_proto::broker::Audience::Graph,
+                    reqwest::Method::GET,
+                    &format!(
+                        "https://graph.microsoft.com/v1.0{}",
+                        cal::GRAPH_MAILBOX_SETTINGS_PATH
+                    ),
+                    None,
+                    &[],
+                )
+                .await?;
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            println!(
+                "Graph mailboxSettings: HTTP {status}, work hours zone custom: {}, date format set: {}",
+                v["workingHours"]["timeZone"]["bias"].is_number(),
+                v["dateFormat"].as_str().is_some_and(|f| !f.is_empty())
+            );
             let s = cal::mailbox_settings(client).await?;
             println!(
                 "time zone set: {}, work days: {}, work hours {:02}:{:02}-{:02}:{:02}, date format set: {}, time format set: {}",
@@ -192,35 +251,139 @@ async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
                 found.suggestions.len(),
                 found.empty_reason.is_some()
             );
+            if let Some(h) = schedules.first().and_then(|s| s.working_hours.as_ref()) {
+                let slots = cal::work_slots(h, start, 30, 48);
+                println!(
+                    "my work hours from getSchedule: custom zone {}, zone maps to IANA {}, {} of 48 half-hours today are work time",
+                    h.custom_zone.is_some(),
+                    cal::iana_name(&h.time_zone).is_some(),
+                    slots.iter().filter(|w| **w).count()
+                );
+            }
         }
-        Some("probe-outlook") => {
+        Some("timezones") => {
+            let windows = cal::supported_time_zones(client, false).await?;
+            let unmapped: Vec<&str> = windows
+                .iter()
+                .filter(|z| cal::iana_name(&z.alias).is_none())
+                .map(|z| z.alias.as_str())
+                .collect();
+            println!(
+                "{} Windows zones offered, {} map to IANA, unmapped: {unmapped:?}",
+                windows.len(),
+                windows.len() - unmapped.len()
+            );
+            let iana = cal::supported_time_zones(client, true).await?;
+            println!(
+                "{} IANA zones offered, {} known to chrono-tz",
+                iana.len(),
+                iana.iter()
+                    .filter(|z| cal::iana_name(&z.alias).is_some())
+                    .count()
+            );
+            let s = cal::mailbox_settings(client).await?;
+            println!(
+                "mailbox zone maps to IANA: {}, offset now known: {}",
+                cal::iana_name(&s.time_zone).is_some(),
+                cal::utc_offset_min(&s.time_zone, now).is_some()
+            );
+        }
+        Some("proposals") => {
+            // Read-only: the organizer's view of proposed times.
+            let msgs = cal::proposal_messages(client, 25).await?;
+            println!(
+                "{} proposals in the newest tentative/decline answers, {} linked to an event",
+                msgs.len(),
+                msgs.iter().filter(|p| p.event_id.is_some()).count()
+            );
+            let events = cal::Calendar::view(client, now - 7 * day, now + 30 * day).await?;
+            let mine: Vec<_> = events
+                .iter()
+                .filter(|e| e.response == cal::Response::Organizer && !e.attendees.is_empty())
+                .take(5)
+                .collect();
+            let mut found = 0;
+            for e in &mine {
+                found += cal::event_proposals(client, &e.id).await?.len();
+            }
+            println!(
+                "{} meetings I organize read, {found} proposals on their attendees",
+                mine.len()
+            );
+        }
+        Some("permissions") => {
+            // Reads the default calendar's sharing; `--dry-run <role> [address]` prints the
+            // add/update/remove requests without sending them.
+            let list = cal::calendars(client).await?;
+            let c = list
+                .iter()
+                .find(|c| c.is_default)
+                .context("no default calendar")?;
+            let perms = cal::calendar_permissions(client, &c.id).await?;
+            println!(
+                "default calendar: {} permission entries, {} removable, {} with allowed roles",
+                perms.len(),
+                perms.iter().filter(|p| p.is_removable).count(),
+                perms.iter().filter(|p| !p.allowed_roles.is_empty()).count()
+            );
+            if args.get(1).map(String::as_str) == Some("--dry-run") {
+                let role = cal::PermissionRole::from_graph(
+                    args.get(2).map_or("freeBusyRead", String::as_str),
+                );
+                let who = cal::Person::new(
+                    "",
+                    args.get(3)
+                        .map_or("someone@contoso.example", String::as_str),
+                );
+                let id = "{calendar-id}";
+                for r in [
+                    cal::add_permission_request(id, &who, role, true),
+                    cal::update_permission_request(id, "{permission-id}", role),
+                    cal::remove_permission_request(id, "{permission-id}"),
+                ] {
+                    println!(
+                        "DRY RUN (not sent): {} {} {}",
+                        r.method,
+                        r.path,
+                        r.body.map(|b| b.to_string()).unwrap_or_default()
+                    );
+                }
+            }
+        }
+        Some(probe @ ("probe-outlook" | "probe-graph")) => {
             // GET only, prints the status and the top-level key names, never values.
+            let (host, aud) = if probe == "probe-graph" {
+                (
+                    "https://graph.microsoft.com",
+                    teams_proto::broker::Audience::Graph,
+                )
+            } else {
+                (
+                    "https://outlook.office.com",
+                    teams_proto::broker::Audience::Outlook,
+                )
+            };
             let path = args
                 .get(1)
-                .context("probe-outlook <path under https://outlook.office.com/>")?;
-            let url = format!(
-                "https://outlook.office.com/{}",
-                path.trim_start_matches('/')
-            );
+                .with_context(|| format!("{probe} <path under {host}/>"))?;
+            let url = format!("{host}/{}", path.trim_start_matches('/'));
             let (status, text) = client
-                .request_as(
-                    &teams_proto::broker::Audience::Outlook,
-                    reqwest::Method::GET,
-                    &url,
-                    None,
-                    &[],
-                )
+                .request_as(&aud, reqwest::Method::GET, &url, None, &[])
                 .await?;
-            let keys: Vec<String> = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .and_then(|v| v.as_object().map(|o| o.keys().cloned().collect()))
-                .unwrap_or_default();
-            let code = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .and_then(|v| v["error"]["code"].as_str().map(String::from));
+            let v = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_default();
+            let names = |v: &serde_json::Value| -> Vec<String> {
+                v.as_object()
+                    .map(|o| o.keys().cloned().collect())
+                    .unwrap_or_default()
+            };
+            let rows = v["value"].as_array();
             println!(
-                "HTTP {status}, {} bytes, keys {keys:?}, error code {code:?}",
-                text.len()
+                "HTTP {status}, {} bytes, keys {:?}, error code {:?}, {} rows, first row keys {:?}",
+                text.len(),
+                names(&v),
+                v["error"]["code"].as_str(),
+                rows.map_or(0, Vec::len),
+                rows.and_then(|r| r.first()).map(names).unwrap_or_default()
             );
         }
         Some("worklocation") => {
@@ -312,7 +475,7 @@ async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
             println!("cleanup proof: {left} calendars named 'kelma-test' left");
         }
         other => bail!(
-            "unknown calendar check {other:?}; try calendars, rooms, mailbox, schedule, worklocation, detail, ics, write-check, calendar-check"
+            "unknown calendar check {other:?}; try calendars, rooms, mailbox, schedule, timezones, proposals, permissions, probe-graph, probe-outlook, worklocation, detail, ics, write-check, calendar-check"
         ),
     }
     Ok(())
@@ -353,6 +516,10 @@ async fn main() -> Result<()> {
                 out.display()
             );
         }
+        Some("accounts") => accounts::run(&paths, &args[1..]).await?,
+        Some("web") => web::run(&paths, &args[1..]).await?,
+        Some("devices") => devices::run(&args[1..])?,
+        Some("tray-demo") => tray::run(&args[1..])?,
         Some("logout") => {
             let cfg = paths.load_config()?;
             session::delete_refresh_token(&cfg.account)?;
@@ -754,6 +921,62 @@ async fn main() -> Result<()> {
             }
             r?;
         }
+        Some("translate") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = chatx::translate(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("deliver") => {
+            let (client, cfg) = connect(&paths).await?;
+            let name = cfg.display_name.clone().unwrap_or_default();
+            let r = delivery::run(&client, &name, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("images") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = images::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("preview") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = chatx::preview(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("settings") if settings::is_offline(&args[1..]) => settings::quiet(&args[2..])?,
+        Some("settings") => {
+            // A `set` is a dry run: the settings are read, never written.
+            let (client, cfg) = connect(&paths).await?;
+            let r = settings::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("preview-file") if preview_file::is_offline(&args[1..]) => {
+            preview_file::offline(&args[1..])?
+        }
+        Some("preview-file") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = preview_file::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("search") => {
+            let (client, cfg) = connect(&paths).await?;
+            let me = self_mri(&client, &cfg).await?;
+            let r = search::run(&client, &me, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("store") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = store::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("drive") if drive::is_offline(&args[1..]) => drive::offline(&args[1..])?,
         Some("drive") => {
             let (client, cfg) = connect(&paths).await?;
             let r = drive::run(&client, &args[1..]).await;
@@ -869,6 +1092,9 @@ async fn main() -> Result<()> {
                    teams\n\
                    calendar [days]\n\
                    calendar calendars|rooms|mailbox|schedule|worklocation|detail|ics\n\
+                   calendar timezones|proposals\n\
+                   calendar permissions [--dry-run <role> [address]]\n\
+                   calendar probe-graph|probe-outlook <path>\n\
                    activity [n]\n\
                    read <conv> [n]\n\
                    send <conv> <text>\n\
@@ -883,15 +1109,24 @@ async fn main() -> Result<()> {
                    pins <chat>\n\
                    audiences\n\
                    people <q>\n\
+                   search <q> [--kind messages|files|people|events] [--page N]\n\
                    presence [mri..]\n\
                    card [mri]\n\
                    horizons <conv>\n\
                    drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest|purge>\n\
+                   drive <meetings|for-you|shared-by-me|people|media|new|shape|shape-search>\n\
                    tasks [todo <n>|plan <n>]\n\
                    flows [runs <n> [top]]\n\
                    onenote [<notebook> [<section> [<page>]]]\n\
                    lists [<site> [<list>]]\n\
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
+                   translate <languages|settings|message|channel>\n\
+                   images <conv> [<msg id>|last] [--out <dir>] [--list]\n\
+                   preview <url> [--image]\n\
+                   settings <notifications|quiet|priority|privacy|blocked|shape>\n\
+                   settings set <notify|pause|sound|meeting-chat|meeting-rsvp|privacy|block|unblock|priority-add|priority-remove> ... --dry-run\n\
+                   preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F]\n\
+                   store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>\n\
                    tail"
             );
         }

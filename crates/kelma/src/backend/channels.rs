@@ -15,7 +15,8 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use store::{MessageRow, OutboxKind};
-use teams_proto::chat_card::{Band, Kind, Row, Tone, rows_for_attachments};
+use teams_proto::chat_card::{BANNER_THEMES, Band, Kind, Row, Tone, rows_for_attachments};
+use teams_proto::delivery::{Announcement as Banner, Delivery};
 
 /// Replies shown under a post before "See N more replies".
 const REPLIES_SHOWN: usize = 2;
@@ -454,14 +455,19 @@ impl Engine {
         }
         self.ui.clear_subject();
         let html = render::text_to_teams_html(a.text.trim());
+        let theme = BANNER_THEMES
+            .iter()
+            .find(|(n, _)| *n == a.theme)
+            .map_or(0, |(_, i)| *i);
+        let announcement = Banner::with_theme(a.headline.trim(), theme)?;
+        let subject = a.subject.trim();
         self.client
-            .send_announcement(
+            .send_message_delivery(
                 &conv,
                 &html,
                 &self.my_name,
-                a.subject.trim(),
-                a.headline.trim(),
-                &a.theme,
+                (!subject.is_empty()).then_some(subject),
+                &Delivery::Announcement(announcement),
             )
             .await?;
         self.fetch_latest(&conv).await;

@@ -9,7 +9,7 @@ use serde_json::json;
 use store::MessageRow;
 
 const TECH: &str = "19:tech@thread.tacv2";
-const TECH_TITLE: &str = "Velents Technologies Inc. › tech only";
+const TECH_TITLE: &str = "Contoso Ltd. › tech only";
 
 fn row(
     id: &str,

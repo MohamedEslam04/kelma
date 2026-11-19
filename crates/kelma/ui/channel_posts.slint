@@ -94,14 +94,14 @@ export component AnnouncementBar inherits Rectangle {
         }
         if ChannelStore.announcement: HorizontalLayout {
             spacing: 6px;
-            for t in ["blue", "green", "yellow", "red", "purple"]: Rectangle {
+            for t in ["blue", "green", "red", "yellow", "gray"]: Rectangle {
                 width: 22px;
                 height: 22px;
                 y: 11px;
                 border-radius: 11px;
                 border-width: ChannelStore.theme == t ? 2px : 0px;
                 border-color: #ffffff;
-                background: t == "blue" ? #4f6bed : (t == "green" ? #3d9b53 : (t == "yellow" ? #d9a21b : (t == "red" ? #c4314b : #8a54c7)));
+                background: t == "blue" ? #4f6bed : (t == "green" ? #3d9b53 : (t == "yellow" ? #d9a21b : (t == "red" ? #c4314b : #8a8a8a)));
                 accessible-role: checkbox;
                 accessible-label: "Banner color " + t;
                 accessible-checkable: true;

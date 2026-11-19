@@ -19,6 +19,9 @@ import { NewChatPane } from "new_chat.slint";
 import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
 import { PinnedBanner } from "pinned_banner.slint";
 import { ProfileCard } from "profile_card.slint";
+import { TeamsStore } from "teams_store.slint";
+import { TeamsPage } from "teams_page.slint";
+import { TeamsDialogs } from "teams_dialogs.slint";
 import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
@@ -30,8 +33,9 @@ export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
 export { ListStore, SectionRow, SectionChoice } from "lists.slint";
 export { ChannelStore, PostItem } from "channel_posts.slint";
+export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
+export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
-export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
 
 export component AppWindow inherits Window {
     title: root.window-title;
@@ -175,6 +179,8 @@ export component AppWindow inherits Window {
     callback jump-to-newest();
     callback retry-send(string);
     callback discard-send(string);
+    // The chat header's "Schedule a meeting": opens the calendar's new-event form with the chat's members.
+    callback schedule-meeting(string);
     callback activity-refresh();
     callback activity-select(string);
     callback activity-set-filter(string);
@@ -349,6 +355,13 @@ export component AppWindow inherits Window {
                     PeopleStore.new-chat-open = true;
                     PeopleStore.command("new-chat-open", "");
                 }
+                manage-teams => { TeamsStore.open = true; TeamsStore.command("open", ""); }
+                open-community(id) => {
+                    TeamsStore.tab = "communities";
+                    TeamsStore.community = id;
+                    TeamsStore.open = true;
+                    TeamsStore.command("community-open", id);
+                }
                 select-chat(id) => { root.select-chat(id); }
                 select-channel(id, title) => { root.select-channel(id, title); }
                 toggle-team(i) => { root.toggle-team(i); }
@@ -506,6 +519,12 @@ export component AppWindow inherits Window {
                                 alignment: center;
                                 Text { text: tab; color: tab == "Chat" || tab == "Posts" ? Theme.fg : Theme.fg-muted; font-size: 14px; font-weight: tab == "Chat" || tab == "Posts" ? 600 : 400; }
                                 Rectangle { height: 3px; border-radius: 1px; background: tab == "Chat" || tab == "Posts" ? Theme.accent : transparent; }
+                            }
+                            if root.thread-root == "" && !root.current-is-channel: IconButton {
+                                icon: @image-url("icons/calendar.svg");
+                                y: 14px;
+                                tooltip: "Schedule a meeting";
+                                clicked => { root.schedule-meeting(root.current-id); }
                             }
                             Rectangle { horizontal-stretch: 1; }
                             if PeopleStore.header-group && root.thread-root == "": people-btn := Rectangle {
@@ -963,5 +982,24 @@ export component AppWindow inherits Window {
             choose => { DriveStore.command("pick-choose", ""); }
             cancel => { DriveStore.dialog = ""; DriveStore.command("pick-cancel", ""); }
         }
+    }
+    // Teams management: the "Your teams and channels" page covers the area right of the rail, and
+    // its dialogs cover the window (see teams_page.slint and teams_dialogs.slint).
+    if root.login-state == "ready" && TeamsStore.open: TeamsPage {
+        x: 68px;
+        y: 48px;
+        z: 40;
+        width: root.width - 68px;
+        height: root.height - 48px;
+        go(id, title) => {
+            TeamsStore.open = false;
+            root.view = "teams";
+            root.select-channel(id, title);
+        }
+    }
+    if root.login-state == "ready" && TeamsStore.dialog != "": TeamsDialogs {
+        z: 50;
+        width: root.width;
+        height: root.height;
     }
 }

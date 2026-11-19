@@ -1,0 +1,22 @@
+[
+  {
+    "id": "0d820ecd-def2-4297-adad-78056cde7c78", "name": "OneNote", "version": "2.1.1", "manifestVersion": "devPreview",
+    "developerName": "Microsoft Corporation", "developerUrl": "https://www.onenote.com/",
+    "privacyUrl": "https://privacy.microsoft.com/privacystatement", "termsOfUseUrl": "https://www.microsoft.com/servicesagreement",
+    "shortDescription": "Digital notes", "longDescription": "Microsoft OneNote is a digital notebook.",
+    "accentColor": "#641790",
+    "smallImageUrl": "https://res.cdn.office.net/teamsappdata/onenote/outline.png",
+    "largeImageUrl": "https://res.cdn.office.net/teamsappdata/onenote/color.png",
+    "categories": ["Productivity", "Microsoft"],
+    "screenshotUrls": ["https://res.cdn.office.net/teamsappdata/onenote/1.png", "https://res.cdn.office.net/teamsappdata/onenote/2.png"],
+    "videoUrl": "https://www.youtube.com/watch?v=00000000000",
+    "validDomains": ["www.onenote.com", "m365.cloud.microsoft"],
+    "permissions": ["Identity", "MessageTeamMembers"],
+    "devicePermissions": ["media", "Notifications", "geolocation", "openExternal", "midi", "unknownThing"],
+    "authorization": { "permissions": { "resourceSpecific": [ { "name": "ChannelMessage.Read.Group", "type": "Application" }, { "name": "ChatMessage.Read.Chat", "type": "Delegated" } ] } },
+    "isMicrosoftOwned": true, "isCoreApp": false,
+    "staticTabs": [ { "entityId": "MyNotebook", "name": "My Notebook", "contentUrl": "https://m365.cloud.microsoft/launch/onenote/officeunihost/teams", "scopes": ["Personal"] } ],
+    "galleryTabs": [ { "context": ["ChannelTab", "MeetingChatTab"], "configurationUrl": "https://m365.cloud.microsoft/launch/onenote/config", "scopes": ["Team", "GroupChat"] } ],
+    "metaCapabilities": { "staticTabs": { "scopes": ["Personal"] }, "galleryTabs": { "scopes": ["Team", "GroupChat"] } }
+  }
+]

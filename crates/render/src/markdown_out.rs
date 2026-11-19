@@ -15,6 +15,12 @@ const MAX_INLINE_DEPTH: usize = 16;
 
 /// Convert Markdown-style composer source into the HTML Teams expects.
 pub fn markdown_to_teams_html(src: &str) -> String {
+    markdown_html(src, false)
+}
+
+/// [`markdown_to_teams_html`]; `code_language` also keeps the language after
+/// an opening fence as `<pre class="language-xyz">`.
+pub(crate) fn markdown_html(src: &str, code_language: bool) -> String {
     let lines: Vec<&str> = src
         .split('\n')
         .map(|l| l.strip_suffix('\r').unwrap_or(l))
@@ -35,7 +41,7 @@ pub fn markdown_to_teams_html(src: &str) -> String {
         }
         after_paragraph = false;
         if trimmed.starts_with("```") {
-            i = fenced_code(&lines, i, &mut out);
+            i = fenced_code(&lines, i, code_language, &mut out);
         } else if is_rule(trimmed) {
             out.push_str("<hr>");
             i += 1;
@@ -62,7 +68,7 @@ pub fn markdown_to_teams_html(src: &str) -> String {
 }
 
 /// Fence at `start` up to the closing fence (or the end); returns the next line.
-fn fenced_code(lines: &[&str], start: usize, out: &mut String) -> usize {
+fn fenced_code(lines: &[&str], start: usize, code_language: bool, out: &mut String) -> usize {
     let mut i = start + 1;
     let mut code = String::new();
     while i < lines.len() && lines[i].trim() != "```" {
@@ -74,7 +80,19 @@ fn fenced_code(lines: &[&str], start: usize, out: &mut String) -> usize {
     }
     // A newline right after `<pre>` is dropped by HTML parsers; keep ours.
     let lead = if code.starts_with('\n') { "\n" } else { "" };
-    out.push_str("<pre><code>");
+    let language = lines[start].trim().trim_start_matches('`').trim();
+    let language_ok = !language.is_empty()
+        && language
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '#' | '-' | '_'));
+    if code_language && language_ok {
+        out.push_str(&format!(
+            "<pre class=\"language-{}\"><code>",
+            language.to_ascii_lowercase()
+        ));
+    } else {
+        out.push_str("<pre><code>");
+    }
     out.push_str(lead);
     escape(&code, out);
     out.push_str("</code></pre>");

@@ -1,6 +1,9 @@
 //! UI-thread side: turns view data into Slint models.
 
 mod cal;
+#[cfg(test)]
+pub use cal::read_form as read_form_for_test;
+pub use cal::wire as install_calendar;
 
 use crate::data::{
     AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
@@ -21,6 +24,7 @@ mod channels;
 pub(crate) mod drive;
 mod lists;
 mod people;
+mod teams;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };

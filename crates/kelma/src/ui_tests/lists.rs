@@ -104,7 +104,7 @@ fn harness() -> Harness {
             kind: ConvKind::Channel,
             title: "Leads".into(),
             team_id: Some("19:team1@thread.tacv2".into()),
-            team_name: Some("Velents Technologies Inc.".into()),
+            team_name: Some("Contoso Ltd.".into()),
             last_activity_ms: 0,
             last_preview: String::new(),
             unread: false,
@@ -339,7 +339,7 @@ fn a_group_chat_can_also_be_left_and_a_channel_has_the_channel_entries() {
     open_item_menu(&h.app, "Morning Standup");
     assert!(menu_rows(&h.app).contains(&"Leave".to_string()));
     // Another right click elsewhere replaces the menu; a channel row has the channel items.
-    open_item_menu(&h.app, "Velents Technologies Inc. › tech only");
+    open_item_menu(&h.app, "Contoso Ltd. › tech only");
     let rows = menu_rows(&h.app);
     for want in [
         "Mark as unread",
@@ -519,7 +519,7 @@ fn list_options_hide_previews_and_time_stamps_and_combine_chats_and_channels() {
 
 fn teams_json() -> teams_proto::teams::TeamEntry {
     let v = json!({"teams": [{
-        "id": "19:team1@thread.tacv2", "displayName": "Velents Technologies Inc.",
+        "id": "19:team1@thread.tacv2", "displayName": "Contoso Ltd.",
         "teamSiteInformation": {"groupId": "g-1"}, "isFavorite": true,
         "channels": [
             {"id": GENERAL, "displayName": "General", "isGeneral": true, "isFavorite": true},
@@ -611,7 +611,7 @@ fn go_to_team_opens_the_teams_view_and_a_private_channel_can_be_left_after_confi
     h.engine.test_set_teams(&[teams_json()]);
     // From the chat list: Go to team switches the rail to Teams.
     assert_eq!(h.app.get_view(), "chat");
-    open_item_menu(&h.app, "Velents Technologies Inc. › tech only");
+    open_item_menu(&h.app, "Contoso Ltd. › tech only");
     click(&menu_row(&h.app, "Go to team"));
     assert_eq!(h.app.get_view(), "teams");
     // A private channel's menu has Leave channel, which asks first.
