@@ -28,7 +28,7 @@ component SectionTitle inherits Rectangle {
     height: 36px;
     HorizontalLayout {
         spacing: 12px;
-        Text { text: root.text; color: Theme.fg; font-size: 16px; font-weight: 700; vertical-alignment: center; }
+        Text { text: root.text; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
         Rectangle { horizontal-stretch: 1; }
         if root.link != "": KitButton { y: 2px; label: root.link; clicked => { root.link-clicked(); } }
     }
@@ -38,8 +38,8 @@ component Facts inherits HorizontalLayout {
     in property <string> label;
     in property <string> value;
     spacing: 12px;
-    Text { text: root.label; color: Theme.fg-subtle; font-size: 12px; width: 96px; vertical-alignment: top; }
-    Text { text: root.value; color: Theme.fg-muted; font-size: 12px; wrap: word-wrap; horizontal-stretch: 1; }
+    Text { text: root.label; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; width: 96px; vertical-alignment: top; }
+    Text { text: root.value; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; wrap: word-wrap; horizontal-stretch: 1; }
 }
 
 component AppPageView inherits ScrollView {
@@ -63,12 +63,12 @@ component AppPageView inherits ScrollView {
                 spacing: 4px;
                 alignment: center;
                 horizontal-stretch: 1;
-                Text { text: AppsStore.app-name; color: Theme.fg; font-size: 22px; font-weight: 700; overflow: elide; }
-                Text { text: AppsStore.app-developer + (AppsStore.app-version != "" ? " · version " + AppsStore.app-version : ""); color: Theme.fg-subtle; font-size: 12px; overflow: elide; }
+                Text { text: AppsStore.app-name; color: Theme.fg; font-size: 22px * Theme.font-scale; font-weight: 700; overflow: elide; }
+                Text { text: AppsStore.app-developer + (AppsStore.app-version != "" ? " · version " + AppsStore.app-version : ""); color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; overflow: elide; }
                 Text {
                     text: AppsStore.app-rating + (AppsStore.app-rating != "" && AppsStore.app-price != "" ? " · " : "") + AppsStore.app-price + ((AppsStore.app-rating != "" || AppsStore.app-price != "") && AppsStore.app-cert != "" ? " · " : "") + AppsStore.app-cert;
                     color: Theme.fg-muted;
-                    font-size: 12px;
+                    font-size: 12px * Theme.font-scale;
                     overflow: elide;
                 }
             }
@@ -90,7 +90,7 @@ component AppPageView inherits ScrollView {
             if AppsStore.app-installed && AppsStore.app-pinned: KitButton { label: "Unpin from app bar"; clicked => { AppsStore.command("unpin", AppsStore.app-id); } }
             KitButton { label: "Share"; clicked => { AppsStore.command("app-share", AppsStore.app-id); } }
         }
-        if AppsStore.app-blurb != "": Text { text: AppsStore.app-blurb; color: Theme.fg; font-size: 14px; wrap: word-wrap; }
+        if AppsStore.app-blurb != "": Text { text: AppsStore.app-blurb; color: Theme.fg; font-size: 14px * Theme.font-scale; wrap: word-wrap; }
         if AppsStore.app-shot-count > 0: HorizontalLayout {
             spacing: 8px;
             alignment: start;
@@ -99,7 +99,7 @@ component AppPageView inherits ScrollView {
             Rectangle {
                 width: 360px;
                 border-radius: 6px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-width: 1px;
                 border-color: Theme.border;
                 clip: true;
@@ -114,7 +114,7 @@ component AppPageView inherits ScrollView {
             }
             IconButton { y: 94px; icon: @image-url("icons/chevron-right.svg"); tooltip: "Next screenshot"; clicked => { AppsStore.app-shot = min(AppsStore.app-shot-count - 1, AppsStore.app-shot + 1); } }
         }
-        if AppsStore.app-description != "": Text { text: AppsStore.app-description; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
+        if AppsStore.app-description != "": Text { text: AppsStore.app-description; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
         Facts { label: "Works in"; value: AppsStore.app-works-in == "" ? "Not stated" : AppsStore.app-works-in; }
         if AppsStore.app-categories != "": Facts { label: "Categories"; value: AppsStore.app-categories; }
         Facts { label: "Installs"; value: "Teams does not show install counts to this client."; }
@@ -141,13 +141,13 @@ component ManageView inherits ScrollView {
         padding: 20px;
         spacing: 8px;
         alignment: start;
-        Text { text: "Manage your apps"; color: Theme.fg; font-size: 18px; font-weight: 700; }
-        Text { text: AppsStore.manage-note; color: Theme.fg-subtle; font-size: 12px; wrap: word-wrap; }
-        if AppsStore.manage.length == 0 && !AppsStore.store-loading: Text { text: AppsStore.store-status != "" ? AppsStore.store-status : "You have no apps installed."; color: Theme.fg-subtle; font-size: 13px; }
+        Text { text: "Manage your apps"; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; }
+        Text { text: AppsStore.manage-note; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; wrap: word-wrap; }
+        if AppsStore.manage.length == 0 && !AppsStore.store-loading: Text { text: AppsStore.store-status != "" ? AppsStore.store-status : "You have no apps installed."; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
         for a in AppsStore.manage: Rectangle {
             height: 56px;
             border-radius: 6px;
-            background: #1f1f1f;
+            background: Theme.sidebar;
             accessible-role: list-item;
             accessible-label: a.name;
             accessible-description: a.update ? "Update available" : "Up to date";
@@ -159,8 +159,8 @@ component ManageView inherits ScrollView {
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 1;
-                    Text { text: a.name; color: Theme.fg; font-size: 14px; font-weight: 600; overflow: elide; }
-                    Text { text: a.developer; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+                    Text { text: a.name; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 600; overflow: elide; }
+                    Text { text: a.developer; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
                 }
                 if a.update: KitBadge { y: 18px; text: "Update available"; tone: "warn"; }
                 if a.update: KitButton { y: 12px; label: "Update"; clicked => { AppsStore.command("app-update", a.id); } }
@@ -177,19 +177,19 @@ component SettingsView inherits ScrollView {
         padding: 20px;
         spacing: 6px;
         alignment: start;
-        Text { text: "Store settings"; color: Theme.fg; font-size: 18px; font-weight: 700; }
-        Text { text: AppsStore.policy-text; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
+        Text { text: "Store settings"; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; }
+        Text { text: AppsStore.policy-text; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
         Text {
             text: "App permissions. An app that is not allowed here cannot use the camera, location, notifications or external links. They are kept on this computer.";
             color: Theme.fg-subtle;
-            font-size: 12px;
+            font-size: 12px * Theme.font-scale;
             wrap: word-wrap;
         }
-        if AppsStore.perms.length == 0: Text { text: "None of your apps asks for device access."; color: Theme.fg-subtle; font-size: 13px; }
+        if AppsStore.perms.length == 0: Text { text: "None of your apps asks for device access."; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
         for p[i] in AppsStore.perms: Rectangle {
             height: 40px;
             border-radius: 4px;
-            background: touch.has-hover ? #262626 : transparent;
+            background: touch.has-hover ? Theme.surface-hover : transparent;
             accessible-role: checkbox;
             accessible-label: p.app-name + ": " + p.label;
             accessible-checked: p.allowed;
@@ -197,9 +197,9 @@ component SettingsView inherits ScrollView {
                 padding-left: 12px;
                 padding-right: 12px;
                 spacing: 12px;
-                Text { text: p.app-name; color: Theme.fg; font-size: 13px; vertical-alignment: center; width: 200px; overflow: elide; }
-                Text { text: p.label; color: Theme.fg-muted; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
-                Text { text: p.allowed ? "Allowed" : "Blocked"; color: p.allowed ? #6bd69b : Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                Text { text: p.app-name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; width: 200px; overflow: elide; }
+                Text { text: p.label; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 1; }
+                Text { text: p.allowed ? "Allowed" : "Blocked"; color: p.allowed ? #6bd69b : Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                 Rectangle {
                     width: 36px;
                     height: 20px;
@@ -241,7 +241,7 @@ export component StoreView inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 16px;
                 spacing: 10px;
-                Text { text: "Store"; color: Theme.fg; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+                Text { text: "Store"; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
                 KitSearch {
                     y: 14px;
                     width: 340px;
@@ -266,7 +266,7 @@ export component StoreView inherits Rectangle {
                 padding-right: 16px;
                 spacing: 6px;
                 alignment: start;
-                Text { text: "Works in"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                Text { text: "Works in"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                 for s in [{k: "all", l: "All"}, {k: "personal", l: "Personal"}, {k: "chat", l: "Chat"}, {k: "team", l: "Team"}, {k: "meeting", l: "Meeting"}]: KitPill {
                     y: 7px;
                     label: s.l;
@@ -274,7 +274,7 @@ export component StoreView inherits Rectangle {
                     clicked => { AppsStore.command("store-scope", s.k); }
                 }
                 Rectangle { width: 16px; }
-                Text { text: "Type"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                Text { text: "Type"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                 for s in [{k: "all", l: "Apps and agents"}, {k: "apps", l: "Apps"}, {k: "agents", l: "Agents"}]: KitPill {
                     y: 7px;
                     label: s.l;
@@ -292,8 +292,8 @@ export component StoreView inherits Rectangle {
                 spacing: 8px;
                 alignment: start;
                 SectionTitle { text: "Popular on Teams"; link: "See all"; link-clicked => { AppsStore.command("store-category", "popularApps"); } }
-                if AppsStore.popular.length == 0 && !AppsStore.store-loading && AppsStore.store-status != "": Text { text: AppsStore.store-status; color: Theme.fg-subtle; font-size: 13px; }
-                if AppsStore.store-loading && AppsStore.popular.length == 0: Text { text: "Loading the Store…"; color: Theme.fg-subtle; font-size: 13px; }
+                if AppsStore.popular.length == 0 && !AppsStore.store-loading && AppsStore.store-status != "": Text { text: AppsStore.store-status; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
+                if AppsStore.store-loading && AppsStore.popular.length == 0: Text { text: "Loading the Store…"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
                 CardGrid { apps: AppsStore.popular; }
                 if AppsStore.org-apps.length > 0: SectionTitle { text: "Built for your org"; link: "See all"; link-clicked => { AppsStore.command("store-category", "org"); } }
                 if AppsStore.org-apps.length > 0: CardGrid { apps: AppsStore.org-apps; }
@@ -308,8 +308,8 @@ export component StoreView inherits Rectangle {
                 spacing: 8px;
                 alignment: start;
                 SectionTitle { text: AppsStore.store-title; }
-                if AppsStore.store-loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 13px; }
-                if AppsStore.store-status != "": Text { text: AppsStore.store-status; color: Theme.fg-subtle; font-size: 13px; }
+                if AppsStore.store-loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
+                if AppsStore.store-status != "": Text { text: AppsStore.store-status; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
                 CardGrid { apps: AppsStore.cards; }
             }
         }

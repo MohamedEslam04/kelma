@@ -47,7 +47,7 @@ component RailEntry inherits Rectangle {
             spacing: 2px;
             if root.glyph.width > 0: Icon { source: root.glyph; tint: root.active || ta.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
             if root.glyph.width == 0: AppTile { icon: root.icon; has-icon: root.has-icon; letter: root.letter; tone: root.tone; size: 24px; x: (parent.width - 24px) / 2; }
-            if !AppsStore.rail-collapsed: Text { accessible-role: none; text: root.label; color: root.active ? Theme.accent : Theme.fg-muted; font-size: 10px; horizontal-alignment: center; overflow: elide; }
+            if !AppsStore.rail-collapsed: Text { accessible-role: none; text: root.label; color: root.active ? Theme.accent : Theme.fg-muted; font-size: 10px * Theme.font-scale; horizontal-alignment: center; overflow: elide; }
         }
     }
     ta := TouchArea {
@@ -170,8 +170,8 @@ component FlyoutRow inherits Rectangle {
             alignment: center;
             horizontal-stretch: 1;
             min-width: 0px;
-            Text { text: root.name; color: Theme.fg; font-size: 13px; overflow: elide; }
-            Text { text: root.detail; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+            Text { text: root.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+            Text { text: root.detail; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
         }
         pin-btn := Rectangle {
             width: 28px;
@@ -244,7 +244,7 @@ export component AppsOverlays inherits Rectangle {
             height: min(parent.height - 64px, 560px);
             y: parent.height - self.height - 12px;
             border-radius: 8px;
-            background: #2b2b2b;
+            background: Theme.surface;
             border-width: 1px;
             border-color: Theme.border;
             drop-shadow-blur: 16px;
@@ -255,7 +255,7 @@ export component AppsOverlays inherits Rectangle {
                 spacing: 8px;
                 HorizontalLayout {
                     spacing: 8px;
-                    Text { text: "Apps"; color: Theme.fg; font-size: 16px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                    Text { text: "Apps"; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
                     KitButton {
                         label: AppsStore.rail-collapsed ? "Expand the bar" : "Collapse the bar";
                         clicked => { AppsStore.command("rail-collapse", ""); }
@@ -268,11 +268,11 @@ export component AppsOverlays inherits Rectangle {
                     edited(q) => { AppsStore.command("flyout-query", q); }
                     init => { self.focus-input(); }
                 }
-                if AppsStore.flyout-loading: Text { text: "Loading your apps…"; color: Theme.fg-subtle; font-size: 13px; }
+                if AppsStore.flyout-loading: Text { text: "Loading your apps…"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
                 if !AppsStore.flyout-loading && AppsStore.flyout-apps.length == 0: Text {
                     text: AppsStore.flyout-query == "" ? "No more apps. Everything you have is on the bar." : "No apps match.";
                     color: Theme.fg-subtle;
-                    font-size: 13px;
+                    font-size: 13px * Theme.font-scale;
                     wrap: word-wrap;
                 }
                 Flickable {
@@ -308,16 +308,16 @@ export component AppsOverlays inherits Rectangle {
             width: min(560px, parent.width - 32px);
             height: dlg.preferred-height + 8px;
             border-radius: 8px;
-            background: #2b2b2b;
+            background: Theme.surface;
             border-width: 1px;
             border-color: Theme.border;
             dlg := VerticalLayout {
                 padding: 20px;
                 spacing: 12px;
-                Text { text: AppsStore.install-title; color: Theme.fg; font-size: 16px; font-weight: 700; wrap: word-wrap; }
+                Text { text: AppsStore.install-title; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; wrap: word-wrap; }
                 Rectangle {
                     border-radius: 4px;
-                    background: #1f1f1f;
+                    background: Theme.sidebar;
                     height: req.preferred-height + 20px;
                     req := Text {
                         x: 10px;
@@ -325,7 +325,7 @@ export component AppsOverlays inherits Rectangle {
                         width: parent.width - 20px;
                         text: AppsStore.install-request;
                         color: Theme.fg-muted;
-                        font-size: 12px;
+                        font-size: 12px * Theme.font-scale;
                         wrap: word-wrap;
                     }
                 }
