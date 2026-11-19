@@ -909,6 +909,18 @@ async fn main() -> Result<()> {
                     println!("reset");
                     mris.clear();
                 }
+                Some("note") => {
+                    // `presence note [text…]`: my status message for one hour; no text clears it.
+                    let text = mris[1..].join(" ");
+                    let until = calendar::format_iso_ms(teams_proto::time::now_ms() + 3_600_000);
+                    let expiry = (!text.is_empty()).then_some(until.as_str());
+                    client.set_status_note(&text, expiry, false).await?;
+                    println!(
+                        "status message {}",
+                        if text.is_empty() { "cleared" } else { "set" }
+                    );
+                    mris.clear();
+                }
                 Some("idle") => {
                     client.report_activity(false).await?;
                     println!("reported idle");

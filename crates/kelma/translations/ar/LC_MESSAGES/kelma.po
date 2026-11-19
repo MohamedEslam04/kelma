@@ -1108,3 +1108,12 @@ msgstr "مكان العمل"
 
 msgid "Presence"
 msgstr "الحالة"
+
+msgid "New status message"
+msgstr "رسالة حالة جديدة"
+
+msgid "Save message"
+msgstr "حفظ الرسالة"
+
+msgid "Clear message"
+msgstr "مسح الرسالة"

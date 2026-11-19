@@ -245,6 +245,12 @@ fn the_profile_menu_sets_my_status_and_work_location_through_the_engine() {
         Ok(Cmd::Settings(SettingsCmd::SetStatus(s))) if s.is_empty()
     ));
     press(app, "Set status");
+    press(app, "Clear message");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t))) if t.is_empty()
+    ));
+    press(app, "Set status");
     press(app, "In the office");
     assert!(matches!(
         rx.try_recv(),

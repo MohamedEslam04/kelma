@@ -1197,6 +1197,8 @@ pub enum SettingsCmd {
     SetStatus(String),
     /// Pins my work location for today: `office`, `remote`, or `clear`.
     SetWorkLocation(String),
+    /// Sets my status message (until cleared); an empty text clears it.
+    SetStatusNote(String),
     /// Read the Teams side of Settings and push it to the window.
     Load,
     /// "Refresh license and restart": redeem the refresh token again (new access tokens and a new
@@ -1224,7 +1226,9 @@ impl Engine {
                 let r = self.refresh_license().await.map_err(|e| e.to_string());
                 self.ui.settings_license(r);
             }
-            SettingsCmd::SetStatus(_) | SettingsCmd::SetWorkLocation(_) => {
+            SettingsCmd::SetStatus(_)
+            | SettingsCmd::SetWorkLocation(_)
+            | SettingsCmd::SetStatusNote(_) => {
                 if let Err(e) = self.set_my_presence(&cmd).await {
                     tracing::warn!(%e, "could not change my status");
                     self.ui
@@ -1250,6 +1254,7 @@ impl Engine {
                     .ok_or_else(|| anyhow::anyhow!("unknown status {s}"))?;
                 c.set_presence(a, None).await?;
             }
+            SettingsCmd::SetStatusNote(text) => c.set_status_note(text.trim(), None, false).await?,
             SettingsCmd::SetWorkLocation(w) => {
                 let pin = work_location_pin(w)
                     .ok_or_else(|| anyhow::anyhow!("unknown work location {w}"))?;

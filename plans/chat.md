@@ -257,7 +257,10 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     `the_profile_menu_sets_my_status_and_work_location_through_the_engine`. The chat list draws a dot on each
     1:1 chat's avatar (`people_presence.rs`: the people drawn are looked up once a minute in batches, and
     trouter presence events update them). A profile card shows the dot, the availability in words and today's
-    work location. Not built: dots in the participants list and people picker, the status message editor, "Pause notifications" and "Notify me when available".
+    work location. The status options also edit the status message (Save and Clear message). Evidence
+    (2026-11-19, live): `kelma-cli presence note kelma test` read back `note="kelma test"`, and `presence note`
+    cleared it. Not built: dots in the participants list and people picker, "Pause notifications" and
+    "Notify me when available".
   - **Evidence (2026-11-19, live, work account):** the global `presence.teams.microsoft.com` host answered 401 to
     the presence token. A capture of Teams web showed it uses the regional unified presence service from the sign-in
     answer (`regionGtms.presenceUPS`) with the same token audience. With that address `kelma-cli presence` answered

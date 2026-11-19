@@ -6,7 +6,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { SettingsStore, SFind } from "settings_store.slint";
-import { SButton, SFont, SNavItem } from "settings_widgets.slint";
+import { SButton, SField, SFont, SNavItem } from "settings_widgets.slint";
 import { AboutPage, AccessibilityPage, AccountsPage, AppearancePage, DevicesPage, FilesPage, GeneralPage, NotificationsPage, PermissionsPage, PrivacyPage } from "settings_pages.slint";
 
 export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings_store.slint";
@@ -259,6 +259,12 @@ export component ProfileMenu inherits Rectangle {
                 SButton { label: @tr("Appear away"); clicked => { SettingsStore.command("status", "Away"); } }
                 SButton { label: @tr("Appear offline"); clicked => { SettingsStore.command("status", "Offline"); } }
                 SButton { label: @tr("Reset status"); clicked => { SettingsStore.command("status", ""); } }
+                note := SField { label: @tr("New status message"); initial: SettingsStore.me-status; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    SButton { label: @tr("Save message"); clicked => { SettingsStore.command("status-note", note.text); } }
+                    SButton { label: @tr("Clear message"); clicked => { SettingsStore.command("status-note", ""); } }
+                }
                 Text { text: @tr("Work location today"); color: Theme.fg-muted; font-size: SFont.small; }
                 HorizontalLayout {
                     spacing: 6px;

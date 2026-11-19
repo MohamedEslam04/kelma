@@ -13,7 +13,7 @@
 //! speaker, mic, camera, noise-suppression, echo-cancellation, all-devices, test-sound, mic-test,
 //! open-files, perm, switch-account, switch-org, add-account, remove-account, refresh-license,
 //! restart, sign-out, view-account, report-problem, check-updates, check-now, release-notes,
-//! status, work-location.
+//! status, work-location, status-note.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
@@ -1220,16 +1220,16 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             push_accounts(w, &c);
         }
         // --- Profile menu: my status and work location (sent to Teams) ---
-        "status" | "work-location" => {
+        "status" | "work-location" | "status-note" => {
             let c = shared.borrow();
             let Some(tx) = &c.tx else {
                 notice(w, "Not signed in, so your status can't change.");
                 return;
             };
-            let cmd = if name == "status" {
-                SettingsCmd::SetStatus(arg.to_string())
-            } else {
-                SettingsCmd::SetWorkLocation(arg.to_string())
+            let cmd = match name {
+                "status" => SettingsCmd::SetStatus(arg.to_string()),
+                "status-note" => SettingsCmd::SetStatusNote(arg.to_string()),
+                _ => SettingsCmd::SetWorkLocation(arg.to_string()),
             };
             let _ = tx.send(Cmd::Settings(cmd));
             g.set_status_open(false);
