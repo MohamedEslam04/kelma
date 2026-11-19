@@ -348,6 +348,7 @@ fn main() -> anyhow::Result<()> {
         });
     }
     ui::install_calendar(&window, tx.clone());
+    ui::install_apps(&window, tx.clone());
     {
         let tx = tx.clone();
         window.global::<FindStore>().on_command(move |name, arg| {

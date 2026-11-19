@@ -23,7 +23,7 @@ channels (posts, replies, files, cards) is in `plans/chat.md` phase 8. This file
 
 ## Phase T1: see and join
 
-- [ ] **T1.1 "Your teams and channels" page.** Impact 4, effort 2.
+- [ ] BLOCKED: pending join requests need the owner-side `findJoinRequests` body, unknown after nine read-only tries (400/500); the rest of the page is built and tested. **T1.1 "Your teams and channels" page.** Impact 4, effort 2.
   - **What.** The Teams, Pending invites and Analytics tabs, the filters, sort and search, and per-team rows with their channels.
   - **How.** Graph `/me/joinedTeams`, `/teams/{id}/channels` and `/teams/{id}/members` (counts), plus CSA (already used).
   - **Status.** Done: the Teams, Discover, Analytics and Communities tabs, filters, sort, search, rows with their channels (`ui_tests::teams::page_lists_teams_with_counts_and_filters_sorts_and_searches`, `expanding_a_team_shows_all_its_channels_with_the_hidden_one_flagged`, `tabs_load_their_data_and_analytics_counts_the_list`; live: the list loads and filters in the sandbox run).
@@ -59,7 +59,7 @@ channels (posts, replies, files, cards) is in `plans/chat.md` phase 8. This file
     - Moderation: who can start posts, reply permissions, bot posts, moderators.
   - **How.** T0 (the Graph scopes are missing).
   - **Evidence.** `ui_tests::teams::edit_channel_sends_the_new_name_and_description`, `delete_and_archive_ask_first_and_deleted_channels_can_be_restored`, `moderation_dialog_changes_who_can_post_reply_and_pin`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: rename (standard and private), moderation stored and read back, archive and unarchive, delete, listed under deleted, restore.
-- [ ] **T2.3 Members.** Impact 4, effort 2.
+- [ ] BLOCKED: pending requests need the same unknown `findJoinRequests` body; add, remove and role change are built but not run live (no member changes on the work tenant). **T2.3 Members.** Impact 4, effort 2.
   - **What.** Team and channel members with Owner / Member / Guest roles: add, remove, change role, pending requests.
   - **How.** `/teams/{id}/members` and `/channels/{id}/members` (granted). Inviting a new guest goes to the web host.
   - **Status.** Done in the UI: team and channel rosters with names, add (people search), change role, remove (`ui_tests::teams::members_dialog_changes_roles_removes_and_adds_people`, `a_plain_member_cannot_change_roles_or_remove_team_members`). Live in the sandbox: rosters of the team and of a private channel, and the people search (read only). Adding, removing and changing members were not run live (rule: no changes to the sandbox members).
@@ -72,11 +72,11 @@ channels (posts, replies, files, cards) is in `plans/chat.md` phase 8. This file
   - **What.** Get the address, copy it, remove it, and restrict senders.
   - **How.** Read it from Graph `channel.email`; write through T0.
   - **Evidence.** `ui_tests::teams::email_dialog_gets_copies_restricts_and_removes_the_address`; live check in the sandbox team: `cargo test -p kelma live_teams -- --ignored` with `KELMA_SANDBOX_FILE`: address created, senders changed to members, address removed. Copy goes to the clipboard through `arboard`, not run headless.
-- [ ] **T2.6 New team.** Impact 3, effort 3.
+- [ ] DEFERRED: needs test tenant (creating a team outside the sandbox is not allowed on the work account; the dialog and name check are built, create was run once in T0.1). **T2.6 New team.** Impact 3, effort 3.
   - **What.** From scratch (private, public or org-wide), from a group or team, or from a template; name, description, privacy.
   - **How.** T0, with the web host as a fallback.
   - **Status.** Done: the New team dialog (name, description, private, public or org-wide), which checks the name first (`ui_tests::teams::new_team_dialog_sends_name_description_and_privacy`; the create call itself was run live by T0.1). Not run again live: a new team is created outside the sandbox team. Not wired: from a group, a team or a template.
-- [ ] **T2.7 Manage team.** Impact 3, effort 4.
+- [ ] BLOCKED: archive team answers `500 ArchiveUnarchiveEnqueuePsOperationFailed` on every try; delete is UI-tested only because the sandbox must stay. Details, permissions, code, members, tags and deleted channels work. **T2.7 Manage team.** Impact 3, effort 4.
   - **What.**
     - Members, pending requests, channels.
     - Settings: team picture, member permissions, guest permissions, @mentions, team code, fun stuff.

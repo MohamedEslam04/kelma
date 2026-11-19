@@ -18,6 +18,7 @@ use store::Store;
 use teams_proto::Client;
 
 mod activity;
+mod appstore;
 mod channels;
 mod drive;
 mod find;
