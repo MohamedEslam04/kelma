@@ -113,7 +113,7 @@ carries `Files.ReadWrite.All`.
 Verified in self notes: a 55-byte file with an Arabic name, and a 5.5 MB file uploaded in two
 chunks. The sizes in OneDrive matched, and both came back as file cards. The invite step (step 3)
 is unit-tested only, because a live test would share a file with a colleague. Channel files live
-in the team's SharePoint site and are not supported: kelma says so instead of sending.
+in the team's SharePoint site, see "Chat list, channel posts and cards" below.
 
 ## Auth broker ✅ 2026-11-18
 
@@ -427,5 +427,60 @@ outside the repo (`KELMA_SANDBOX_FILE`). One colleague was added to it, as a mem
 else created for the tests (channels, tags, addresses) was removed again except one standard
 channel named "tests". The CLI refuses to write anywhere else: every write targets the sandbox
 unless `--team <thread id> --group <group id>` is given, and a channel id must belong to that team.
+
+## Chat list, channel posts and cards (plan 8.1 to 8.8) 2026-11-19
+
+Code: `crates/teams-proto/src/{sections,channel_files,posts,chat_card}.rs`, the engine side in
+`crates/kelma/src/backend/{lists,channels}.rs`. Legend as above; the sandbox is the private test
+team of "Test team" (channel `tests`), plus the notes chat.
+
+### Chat list sections (8.1)
+| Call | Notes | Live |
+|---|---|---|
+| `GET CSA/api/v1/teams/users/me/conversationFolders?supportsAdditionalSystemGeneratedFolders=true&supportsSliceItems=true` | `{conversationFolders[], conversationFolderOrder[], folderHierarchyVersion, migratedPinnedToFavorites, supportedSlicesMetadata}`. A folder is `{id (guid), name, folderType, sortType, isExpanded, isDeleted, version, createdTime, conversationFolderItems[]}`; an item is `{conversationId, threadType (chat, meeting, space, topic, streamofnotes), createdTime, lastUpdatedTime}`. `folderType` is `Favorites`, `UserCreated`, or a system folder (`RecentChats`, `TeamsAndChannels`, `MeetingChats`, `MutedChats`, `QuickViews`, `EngageCommunities`) which holds no items of its own. `conversationFolderOrder` lists every folder id in display order. `v2` answers the same under `conversationFolderResponse` | ✅ 5 own sections, Favorites with 9 items |
+| `POST` / `PUT /<id>` / `DELETE` / `DELETE /<id>` / `PATCH batchUpdateExpandedState` on the same URL | create, update (rename, items), delete items, delete a section, open or close sections. The web client's `services-chat` and its CSA transport define them, but the request bodies are built by its GraphQL layer (`createConversationFolder`, `moveItemToConversationFolder`, `reorderConversationFolders` mutations), which is not in the public chunks | not run: a probe would have changed the real account's sections |
+
+kelma reads the sections and keeps its own changes locally (sections it creates, moves, hidden chats,
+list options) in the store's key/value table under `lists`. A local move wins over what Teams has.
+Writing the sections back needs a capture of the web client's mutation requests (DevTools), see
+the plan item.
+
+### Chat item menu and list state (8.2, 8.3)
+- Mute: `PUT chat/v1/users/ME/conversations/<id>/properties?name=alerts` (`teams_proto::actions::set_muted`, from 5.x). The state is read from the aggregator: `chats[].members[].isMuted` of our own member entry (`ChatMeta::muted_by`), channels from `isMuted`.
+- Hide: `unpinnedTime` property (`set_hidden`); kelma also keeps a local "hidden until a newer message".
+- Meeting chats: `chats[].chatType` is `meeting` and the chat service kind is the meeting thread (`ConvKind::Meeting`).
+- Chat link: `https://teams.microsoft.com/l/chat/<id>/0`. Channel link: `https://teams.microsoft.com/l/channel/<id>/<name>?groupId=<group>&tenantId=<tenant>`.
+
+### Channel menu (8.5)
+Reuses the T1.3 and T2.8 calls (`set_channel_shown`, `set_channel_notifications`,
+`channel_notifications`, `remove_private_channel_member`). Hidden channels come from
+`teams[].channels[].isFavorite == false`.
+
+### Files in channels and attached cloud files (8.6, 8.7)
+| Call | Notes | Live |
+|---|---|---|
+| `GET graph/v1.0/teams/<groupId>/channels/<channelId>/filesFolder` | drive item of the channel's folder: `id`, `name`, `parentReference.driveId`. `groupId` is `teamSiteInformation.groupId` of the CSA v3 list | ✅ sandbox |
+| `PUT graph/v1.0/drives/<driveId>/items/<folderId>:/<name>:/content?@microsoft.graph.conflictBehavior=rename` | up to 4 MB; larger files use `createUploadSession` on the same path. Then `GET drives/<d>/items/<id>?$select=id,name,webUrl,sharepointIds` and a message with `properties.files` as for a chat | ✅ a 25-byte file posted to the sandbox channel, read back as a file card, then the post and the drive item were deleted |
+| Attach a cloud file | `GET drives/<d>/items/<id>?$select=…`, then in a chat `POST drives/<d>/items/<id>/invite` for the other members (any drive, not only `me`), then the same message | ✅ an existing OneDrive file posted to the notes chat, then deleted. The invite is unit-tested only (it would share with a colleague) |
+| Picker | `GET me/drive/recent`, `GET me/drive/sharedWithMe` (as in `onedrive::browse`), My files and the team libraries | ✅ |
+
+Not verified: that a second account opens a channel file. The folder is the one all channel members
+already see.
+
+### Channel posts (8.4)
+| Call | Notes | Live |
+|---|---|---|
+| Announcement | `POST …/conversations/<channel>/messages` with `properties.title` = the headline, `properties.cards` = a JSON **string** of `[{contentType:"application/vnd.microsoft.teams.messaging-announcementBanner", content:{imageData:{colorTheme}}}]` and `properties.subject`. The shape is read off the web client (`announcement {title, croppedImageUrl, colorTheme, …}` and the `messaging-announcementBanner` card) | ✅ stored and read back with all three properties. How Teams draws the banner was not seen |
+| Follow a thread | `PUT chat/v1/users/ME/conversations/<channel>/rcmetadata/<root id>` `{"f": 1}` (0 unfollows). `{"f": true}` answers `400 Unexpected character`. Read back with `POST …/getrcmetadata` `{"rootMessageIds":[<root>]}` → `rcMetadataList[].rcMetadata.f` | ✅ 1 then 0 |
+| Also send to channel | not found in the web client's public JavaScript (no property or call by that name), so kelma does not offer it | not built |
+| Pin a post | the web client reads pinned posts; the write call was not captured | not built |
+
+### Adaptive cards (8.8)
+`teams_proto::chat_card` turns the card JSON into a flat list of rows (text with size, weight,
+color and subtle; fact rows; column sets with auto/stretch/weighted cells; images; action buttons;
+container `style` as a band color on its rows; the announcement banner). `Action.OpenUrl` opens the
+browser, every other action is drawn disabled. The raw attachments are stored with the message (key
+`c` of the stored extras), so cards are drawn from the structure and the flattened text stays the
+preview.
 
 Docs synced to commit 39efb18 ("feat(kelma-cli): team commands for teams, channels, tags and communities", 2026-11-19)
