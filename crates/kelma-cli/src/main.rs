@@ -34,6 +34,8 @@
 //! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
 //! kelma-cli accounts [tenants|use <label>|add <label>|remove <label>|org <tenant-id|home>]
 //!                                 several accounts and organizations (list and tenants are read-only)
+//! kelma-cli preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F.png]
+//!                                 render a PDF or Office page to PNG (read-only; prints sizes, not names)
 //! kelma-cli devices [audio|cameras|test-sound|mic-level]  list sound devices and cameras; test-sound plays a tone, mic-level shows the mic level
 //! kelma-cli tray-demo [--step S|autostart <enable|disable|status>]  show the tray icon, unread badge and launcher badge for a few seconds; autostart writes the login entry
 //! kelma-cli logout                remove the stored refresh token
@@ -45,6 +47,7 @@ mod chatx;
 mod devices;
 mod drive;
 mod settings;
+mod preview_file;
 mod store;
 mod team;
 mod tray;
@@ -933,6 +936,15 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
+        Some("preview-file") if preview_file::is_offline(&args[1..]) => {
+            preview_file::offline(&args[1..])?
+        }
+        Some("preview-file") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = preview_file::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("store") => {
             let (client, cfg) = connect(&paths).await?;
             let r = store::run(&client, &args[1..]).await;
@@ -1086,6 +1098,7 @@ async fn main() -> Result<()> {
                    preview <url> [--image]\n\
                    settings <notifications|quiet|priority|privacy|blocked|shape>\n\
                    settings set <notify|pause|sound|meeting-chat|meeting-rsvp|privacy|block|unblock|priority-add|priority-remove> ... --dry-run\n\
+                   preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F]\n\
                    store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>\n\
                    tail"
             );
