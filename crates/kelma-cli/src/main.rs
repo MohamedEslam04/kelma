@@ -891,7 +891,26 @@ async fn main() -> Result<()> {
         }
         Some("presence") => {
             let (client, cfg) = connect(&paths).await?;
+            // `presence set <status>` forces my status for ten minutes; `presence reset` clears it.
             let mut mris: Vec<String> = args[1..].to_vec();
+            match mris.first().map(String::as_str) {
+                Some("set") => {
+                    let want = mris.get(1).map(String::as_str).unwrap_or_default();
+                    let a = teams_proto::presence::Availability::from_wire(want).context(
+                        "usage: presence set Available|Busy|DoNotDisturb|BeRightBack|Away|Offline",
+                    )?;
+                    let until = calendar::format_iso_ms(teams_proto::time::now_ms() + 600_000);
+                    client.set_presence(a, Some(&until)).await?;
+                    println!("set {} until {until}", a.as_str());
+                    mris.clear();
+                }
+                Some("reset") => {
+                    client.reset_presence().await?;
+                    println!("reset");
+                    mris.clear();
+                }
+                _ => {}
+            }
             if mris.is_empty() {
                 mris.push(self_mri(&client, &cfg).await?);
             }

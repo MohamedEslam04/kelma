@@ -252,8 +252,11 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Evidence (2026-11-19, live, work account):** the global `presence.teams.microsoft.com` host answered 401 to
     the presence token. A capture of Teams web showed it uses the regional unified presence service from the sign-in
     answer (`regionGtms.presenceUPS`) with the same token audience. With that address `kelma-cli presence` answered
-    200 and read the user's own availability (Away / Away). Setting a status was not run yet (no caller in the CLI
-    or the GUI).
+    200 and read the user's own availability (Away / Away). `kelma-cli presence set Busy|DoNotDisturb` (ten-minute
+    expiry) and `presence reset` then read back Busy, DoNotDisturb and Available. A forced status only shows while
+    some Teams client of the user is active: with none, the service kept answering Away; with Teams web open it
+    showed the forced value at once. So the GUI has to register its endpoint (`PUT me/endpoints/`) and report
+    activity for a status set in kelma to show. The status was reset at the end.
 
 ### 6.5 Profile card
 - [ ] DEFERRED: needs test tenant (comparing the card needs a second account; built and tested offline). Impact 4, effort 3. Seen: avatars and names.
