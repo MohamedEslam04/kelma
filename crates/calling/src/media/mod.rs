@@ -13,6 +13,10 @@
 //! web client offers it (teams-lite `NATIVE-CALLING.md` §2.5); an offer naming Opus under
 //! another payload type (a desktop client's 102) is answered with that one. Encoding and decoding
 //! belong to [`crate::audio`]; this module moves [`OpusPacket`]s.
+//!
+//! With [`MediaOptions::data_channel`] the session also opens the meeting's SCTP data channel
+//! (Teams' `x-data` line, [`crate::captions::DATA_CHANNEL_LABEL`]) and hands every message on it
+//! to [`MediaEvents::data`], still in Teams' framing ([`crate::captions::Depacketizer`]).
 
 pub mod sdp;
 
@@ -32,6 +36,7 @@ use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpEncodingParameters, RtpCodecKind,
 };
 use tokio::sync::{OnceCell, mpsc, watch};
+use webrtc::data_channel::{DataChannel, DataChannelEvent, RTCDataChannelInit};
 use webrtc::media_stream::track_local::TrackLocal;
 use webrtc::media_stream::track_local::static_sample::TrackLocalStaticSample;
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
@@ -54,6 +59,8 @@ const FRAME: Duration = Duration::from_millis(20);
 const GATHER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Incoming packets buffered for the audio module: 5 s of 20 ms frames.
 const AUDIO_QUEUE: usize = 250;
+/// Incoming data-channel messages buffered for the call.
+const DATA_QUEUE: usize = 256;
 
 /// Where the peer binds its UDP sockets, and which candidates it may use.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +74,10 @@ pub struct MediaOptions {
     /// The video lines the session offers and answers, one per role, each sendrecv H.264. Empty
     /// (the default) is the audio-only session that was verified live.
     pub video: Vec<VideoRole>,
+    /// Open the data channel `main-channel` (ordered, announced in-band, as rusty-teams opens
+    /// it) and answer the `x-data` line with it, for a meeting's live captions. Off (the default)
+    /// the `x-data` line is declined.
+    pub data_channel: bool,
 }
 
 impl Default for MediaOptions {
@@ -75,6 +86,7 @@ impl Default for MediaOptions {
             udp_addrs: vec!["0.0.0.0:0".to_owned()],
             relay_only: false,
             video: Vec::new(),
+            data_channel: false,
         }
     }
 }
@@ -99,6 +111,10 @@ pub struct MediaEvents {
     /// Who is heard right now: the CSRCs of the latest audio packet (the meeting mixer names each
     /// speaker's `sourceId`), or its SSRC when it names none (one sender). Updated on change only.
     pub speakers: watch::Receiver<Vec<u32>>,
+    /// Each message on the data channel (any channel the media server opens, and our own
+    /// `main-channel`), as sent: Teams' framing, not yet joined. Dropped when the reader falls
+    /// behind. Never yields without [`MediaOptions::data_channel`].
+    pub data: mpsc::Receiver<Vec<u8>>,
 }
 
 /// One call's media peer.
@@ -108,6 +124,8 @@ pub struct MediaSession {
     video: Vec<VideoSender>,
     gathered: watch::Receiver<bool>,
     state: Arc<StateTx>,
+    /// Whether the session has the data channel (and answers the `x-data` line with it).
+    data: bool,
 }
 
 /// Sends our Opus packets, one 20 ms frame each. Cheap to clone into the audio task.
@@ -211,11 +229,13 @@ impl MediaSession {
         let (audio_tx, audio_rx) = mpsc::channel(AUDIO_QUEUE);
         let (gathered_tx, gathered) = watch::channel(false);
         let (speakers_tx, speakers_rx) = watch::channel(Vec::new());
+        let (data_tx, data_rx) = mpsc::channel(DATA_QUEUE);
         let handler = Handler {
             state: Arc::clone(&state),
             audio: audio_tx,
             gathered: gathered_tx,
             speakers: Arc::new(speakers_tx),
+            data: options.data_channel.then(|| data_tx.clone()),
         };
         let pc = PeerConnectionBuilder::new()
             .with_configuration(configuration)
@@ -264,6 +284,16 @@ impl MediaSession {
         for role in options.video.iter().copied() {
             video.push(VideoSender::add_to(&pc, role).await?);
         }
+        if options.data_channel {
+            let channel = pc
+                .create_data_channel(
+                    crate::captions::DATA_CHANNEL_LABEL,
+                    Some(RTCDataChannelInit::default()),
+                )
+                .await
+                .map_err(media_err("data channel"))?;
+            tokio::spawn(read_data_channel(channel, data_tx));
+        }
         Ok((
             Self {
                 pc,
@@ -271,11 +301,13 @@ impl MediaSession {
                 video,
                 gathered,
                 state,
+                data: options.data_channel,
             },
             MediaEvents {
                 state: state_rx,
                 audio: audio_rx,
                 speakers: speakers_rx,
+                data: data_rx,
             },
         ))
     }
@@ -299,7 +331,9 @@ impl MediaSession {
     /// Takes the other side's answer to [`Self::create_offer`].
     pub async fn set_answer(&self, answer: &str) -> Result<()> {
         let roles = self.video_roles();
-        let desc = RTCSessionDescription::answer(sdp::from_teams_with(answer, &roles, false)?)
+        let desc = RTCSessionDescription::answer(sdp::from_teams_with_data(
+            answer, &roles, false, self.data,
+        )?)
             .map_err(media_err("parse answer"))?;
         self.pc
             .set_remote_description(desc)
@@ -336,7 +370,9 @@ impl MediaSession {
             ));
         }
         let roles = self.video_roles();
-        let desc = RTCSessionDescription::offer(sdp::from_teams_with(offer, &roles, true)?)
+        let desc = RTCSessionDescription::offer(sdp::from_teams_with_data(
+            offer, &roles, true, self.data,
+        )?)
             .map_err(media_err("parse offer"))?;
         self.pc
             .set_remote_description(desc)
@@ -348,7 +384,9 @@ impl MediaSession {
             .await
             .map_err(media_err("create answer"))?;
         let local = self.set_local(answer).await?;
-        Ok(sdp::to_teams_answer_with(&local, offer, &roles))
+        Ok(sdp::to_teams_answer_with_data(
+            &local, offer, &roles, self.data,
+        ))
     }
 
     /// A handle for sending our Opus packets from another task.
@@ -544,11 +582,31 @@ pub fn heard_sources(csrc: &[u32], ssrc: u32) -> Vec<u32> {
     }
 }
 
+/// Hands each message of `channel` to `to` until either closes. A full queue drops the message.
+async fn read_data_channel(channel: Arc<dyn DataChannel>, to: mpsc::Sender<Vec<u8>>) {
+    let label = channel.label().await.unwrap_or_default();
+    while let Some(event) = channel.poll().await {
+        match event {
+            DataChannelEvent::OnOpen => tracing::info!(%label, "data channel open"),
+            DataChannelEvent::OnMessage(m) => {
+                if let Err(mpsc::error::TrySendError::Closed(_)) = to.try_send(m.data.to_vec()) {
+                    break;
+                }
+            }
+            DataChannelEvent::OnClose => break,
+            _ => {}
+        }
+    }
+    tracing::debug!(%label, "data channel closed");
+}
+
 struct Handler {
     state: Arc<StateTx>,
     audio: mpsc::Sender<OpusPacket>,
     gathered: watch::Sender<bool>,
     speakers: Arc<watch::Sender<Vec<u32>>>,
+    /// Where data-channel messages go, when the session has the data channel.
+    data: Option<mpsc::Sender<Vec<u8>>>,
 }
 
 #[async_trait::async_trait]
@@ -570,6 +628,12 @@ impl PeerConnectionEventHandler for Handler {
             _ => return,
         };
         self.state.send(state);
+    }
+
+    async fn on_data_channel(&self, channel: Arc<dyn DataChannel>) {
+        if let Some(to) = self.data.clone() {
+            tokio::spawn(read_data_channel(channel, to));
+        }
     }
 
     async fn on_track(&self, track: Arc<dyn TrackRemote>) {

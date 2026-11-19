@@ -68,7 +68,8 @@ const MAX_INFLATED: usize = 1 << 20;
 const DIRECTIONS: [&str; 4] = ["sendrecv", "sendonly", "recvonly", "inactive"];
 // The sections handed to webrtc-rs: every audio section, and for each video role the session has
 // (`MediaOptions::video`) the first video section labelled for it. The rest would only be
-// declined, `x-data` fails the whole description (`SdpInvalidValue`), and the gallery's nine
+// declined, `x-data` fails the whole description (`SdpInvalidValue`; with the data channel it is
+// rewritten as an SCTP section instead, see `DATA_KIND`), and the gallery's nine
 // receive-only `main-video` lines need receivers kelma does not have. The rest are answered as
 // stubs. The media servers give each kind its own ICE credentials although one BUNDLE names
 // every mid, which webrtc-rs refuses ("multiple conflicting ice-ufrag values"): kept video
@@ -76,6 +77,24 @@ const DIRECTIONS: [&str; 4] = ["sendrecv", "sendonly", "recvonly", "inactive"];
 // transport, as mautrix-teams answers (`teamsmedia/sdp.go` `answerSDP`).
 /// Profiles Teams writes for SRTP lines; with a fingerprint each is DTLS-SRTP.
 const MS_PROFILES: [&str; 4] = [MS_PROFILE, "RTP/SAVPF", "RTP/AVP", "RTP/AVPF"];
+// The data line. Teams writes SCTP over DTLS as `m=x-data <port> RTP/SAVP 127 126` with
+// `a=x-data-protocol:sctp`, `x-data`/`rtx` rtpmaps and an SSRC range; WebRTC writes it as
+// `m=application <port> UDP/DTLS/SCTP webrtc-datachannel` with `a=sctp-port`. rusty-teams
+// `sdp.rs` (`signal_data_line`, `browser_data_from_teams`; MIT, facts only) maps one onto the
+// other, and its ROADMAP says live captions arrive that way.
+const DATA_KIND: &str = "x-data";
+const SCTP_KIND: &str = "application";
+const SCTP_PROFILE: &str = "UDP/DTLS/SCTP";
+const SCTP_FORMAT: &str = "webrtc-datachannel";
+const SCTP_PORT: &str = "5000";
+const SCTP_MAX_MESSAGE_SIZE: &str = "262144";
+const DATA_PAYLOADS: &str = "127 126";
+const DATA_LINES: [&str; 4] = [
+    "a=x-data-protocol:sctp",
+    "a=rtpmap:127 x-data/90000",
+    "a=rtpmap:126 rtx/90000",
+    "a=fmtp:126 apt=127",
+];
 
 impl SdpBlob {
     /// A blob of plain SDP labelled `application/sdp`.
@@ -236,6 +255,17 @@ pub fn from_teams(sdp: &str) -> Result<String> {
 /// switch sending with `UpdateMediaDescriptions`, not with SDP directions (mautrix-teams openapi).
 /// [`to_teams_answer`] puts the RFC direction back on the wire.
 pub fn from_teams_with(sdp: &str, roles: &[VideoRole], offer: bool) -> Result<String> {
+    from_teams_with_data(sdp, roles, offer, false)
+}
+
+/// [`from_teams_with`] for a session that also has the data channel (`data`): the first
+/// `m=x-data` section becomes a WebRTC `m=application` SCTP section instead of being removed.
+pub fn from_teams_with_data(
+    sdp: &str,
+    roles: &[VideoRole],
+    offer: bool,
+    data: bool,
+) -> Result<String> {
     let parsed = Parsed::new(sdp);
     if parsed.sections.is_empty() {
         return Err(media("remote SDP has no media section"));
@@ -252,7 +282,7 @@ pub fn from_teams_with(sdp: &str, roles: &[VideoRole], offer: bool) -> Result<St
     }
     // Sections webrtc-rs is not given go, mids and all; `to_teams_answer` writes them back as
     // stubs from the offer.
-    let keep = kept_sections(&parsed, roles);
+    let keep = kept_sections(&parsed, roles, data);
     let removed: Vec<&str> = parsed
         .sections
         .iter()
@@ -276,13 +306,17 @@ pub fn from_teams_with(sdp: &str, roles: &[VideoRole], offer: bool) -> Result<St
     }
     for (index, section) in parsed.sections.iter().enumerate().filter(|(i, _)| keep[*i]) {
         let m = MediaLine::parse(&section[0]).ok_or_else(|| media("malformed m= line"))?;
+        let rebundled = bundle.as_ref().filter(|b| b.rewrites(index, section));
+        if m.kind == DATA_KIND {
+            out.extend(sctp_from_teams(&m, section, rebundled));
+            continue;
+        }
         let profile = section[0].split(' ').nth(2).unwrap_or_default();
         if MS_PROFILES.contains(&profile) {
             out.push(m.with(m.port, DTLS_PROFILE));
         } else {
             out.push(section[0].clone());
         }
-        let rebundled = bundle.as_ref().filter(|b| b.rewrites(index, section));
         for line in &section[1..] {
             if rebundled.is_some() && is_transport_line(line) {
                 continue;
@@ -308,6 +342,41 @@ pub fn from_teams_with(sdp: &str, roles: &[VideoRole], offer: bool) -> Result<St
     Ok(join(out))
 }
 
+/// A Teams `x-data` section as the WebRTC SCTP section webrtc-rs reads: its transport lines
+/// (or the bundle's credentials), and the SCTP port WebRTC assumes. The RTP-only lines go.
+fn sctp_from_teams(
+    m: &MediaLine<'_>,
+    section: &[String],
+    rebundled: Option<&BundleTransport>,
+) -> Vec<String> {
+    let mut out = vec![format!(
+        "m={SCTP_KIND} {} {SCTP_PROFILE} {SCTP_FORMAT}",
+        m.port
+    )];
+    let rtp_only = |l: &str| {
+        ["a=rtpmap:", "a=fmtp:", "a=rtcp", "a=x-", "a=label:", "a=ssrc"]
+            .iter()
+            .any(|p| l.starts_with(p))
+            || DIRECTIONS.iter().any(|d| l.strip_prefix("a=") == Some(*d))
+    };
+    for line in &section[1..] {
+        if rtp_only(line.as_str()) || (rebundled.is_some() && is_transport_line(line)) {
+            continue;
+        }
+        out.extend(inbound(line));
+    }
+    if let Some(b) = rebundled {
+        out.extend(b.credentials.iter().cloned());
+    }
+    if !section.iter().any(|l| attr(l, "sctp-port").is_some()) {
+        out.push(format!("a=sctp-port:{SCTP_PORT}"));
+    }
+    if !section.iter().any(|l| attr(l, "max-message-size").is_some()) {
+        out.push(format!("a=max-message-size:{SCTP_MAX_MESSAGE_SIZE}"));
+    }
+    out
+}
+
 /// The video role a section serves, by its `a=label` (a video section without one is
 /// `main-video`, as Teams' default).
 fn role_of(section: &[String]) -> Option<VideoRole> {
@@ -323,8 +392,9 @@ fn role_of(section: &[String]) -> Option<VideoRole> {
 }
 
 /// Which sections webrtc-rs is given (see the note on the kept sections above).
-fn kept_sections(parsed: &Parsed, roles: &[VideoRole]) -> Vec<bool> {
+fn kept_sections(parsed: &Parsed, roles: &[VideoRole], data: bool) -> Vec<bool> {
     let mut taken: Vec<VideoRole> = Vec::new();
+    let mut data_taken = !data;
     parsed
         .sections
         .iter()
@@ -334,6 +404,11 @@ fn kept_sections(parsed: &Parsed, roles: &[VideoRole]) -> Vec<bool> {
             };
             if m.kind == "audio" {
                 return true;
+            }
+            // The data line is kept even when declined (port 0): an answer to our offer must
+            // answer every section we offered.
+            if m.kind == DATA_KIND {
+                return !std::mem::replace(&mut data_taken, true);
             }
             match role_of(s) {
                 Some(r) if roles.contains(&r) && !taken.contains(&r) && m.port != "0" => {
@@ -430,21 +505,32 @@ fn candidate_from_teams(value: &str) -> Option<String> {
 
 /// Our (webrtc-rs) offer rewritten into the dialect the Teams calling service reads.
 pub fn to_teams_offer(sdp: &str) -> String {
-    to_teams(sdp, None, &[])
+    to_teams(sdp, None, &[], false)
 }
 
 /// Our (webrtc-rs) answer to `remote_offer` rewritten into the Teams dialect: one section per
 /// offered section, in the offer's order (those [`from_teams`] removed come back as stubs), each
 /// keeping the `a=label` the offer gave it.
 pub fn to_teams_answer(sdp: &str, remote_offer: &str) -> String {
-    to_teams(sdp, Some(remote_offer), &[])
+    to_teams(sdp, Some(remote_offer), &[], false)
 }
 
 /// [`to_teams_answer`] for a session with video lines for `roles` (as [`from_teams_with`] read
 /// the offer). Each answered section's direction is made one the offer allows: a line offered
 /// `sendonly` is answered `recvonly` even though webrtc-rs, given `sendrecv`, answered that.
 pub fn to_teams_answer_with(sdp: &str, remote_offer: &str, roles: &[VideoRole]) -> String {
-    to_teams(sdp, Some(remote_offer), roles)
+    to_teams(sdp, Some(remote_offer), roles, false)
+}
+
+/// [`to_teams_answer_with`] for a session that also has the data channel: the offer's `x-data`
+/// section is answered with our SCTP section (in Teams' `x-data` form) instead of a stub.
+pub fn to_teams_answer_with_data(
+    sdp: &str,
+    remote_offer: &str,
+    roles: &[VideoRole],
+    data: bool,
+) -> String {
+    to_teams(sdp, Some(remote_offer), roles, data)
 }
 
 /// The direction an answer may give a line offered `offered`, given what we would do (`ours`).
@@ -510,10 +596,11 @@ fn in_offer_order(
     ours: Vec<Vec<String>>,
     remote_offer: &Parsed,
     roles: &[VideoRole],
+    data: bool,
 ) -> Vec<Vec<String>> {
     let mid_of = |s: &[String]| s.iter().find_map(|l| attr(l, "mid")).map(str::to_owned);
     let mut ours: Vec<Option<Vec<String>>> = ours.into_iter().map(Some).collect();
-    let keep = kept_sections(remote_offer, roles);
+    let keep = kept_sections(remote_offer, roles, data);
     let mut out = Vec::new();
     for (theirs, kept) in remote_offer.sections.iter().zip(keep) {
         let mid = mid_of(theirs);
@@ -559,6 +646,7 @@ fn default_label(kind: &str) -> Option<&'static str> {
     match kind {
         "audio" => Some("main-audio"),
         "video" => Some("main-video"),
+        DATA_KIND => Some("data"),
         _ => None,
     }
 }
@@ -580,12 +668,15 @@ fn bundle_transport(sections: &[Vec<String>]) -> Option<(String, String)> {
     Some((best[5].to_owned(), format!("IN {family} {}", best[4])))
 }
 
-fn to_teams(sdp: &str, remote_offer: Option<&str>, roles: &[VideoRole]) -> String {
+fn to_teams(sdp: &str, remote_offer: Option<&str>, roles: &[VideoRole], data: bool) -> String {
     let offer = remote_offer.is_none();
     let mut parsed = Parsed::new(sdp);
+    for section in &mut parsed.sections {
+        sctp_to_teams(section);
+    }
     let labels = match remote_offer.map(Parsed::new) {
         Some(theirs) => {
-            parsed.sections = in_offer_order(parsed.sections, &theirs, roles);
+            parsed.sections = in_offer_order(parsed.sections, &theirs, roles, data);
             labels_by_mid(&theirs)
         }
         None => HashMap::new(),
@@ -651,7 +742,7 @@ fn to_teams(sdp: &str, remote_offer: Option<&str>, roles: &[VideoRole]) -> Strin
             Some((port, connection)) => {
                 out.push(m.with(port, MS_PROFILE));
                 out.push(format!("c={connection}"));
-                if offer {
+                if offer && m.kind != DATA_KIND {
                     out.push(format!("a=rtcp:{port}"));
                 }
             }
@@ -694,6 +785,43 @@ fn to_teams(sdp: &str, remote_offer: Option<&str>, roles: &[VideoRole]) -> Strin
         }
     }
     join(out)
+}
+
+/// Our WebRTC SCTP section (`m=application`) rewritten in place as Teams' `x-data` line; the
+/// rest of [`to_teams`] then places it on the bundle like any other line. Other sections are
+/// left alone.
+fn sctp_to_teams(section: &mut Vec<String>) {
+    let Some(m) = MediaLine::parse(&section[0]) else {
+        return;
+    };
+    if m.kind != SCTP_KIND {
+        return;
+    }
+    let port = m.port.to_owned();
+    section[0] = format!("m={DATA_KIND} {port} {MS_PROFILE} {DATA_PAYLOADS}");
+    if port == "0" {
+        return;
+    }
+    let ssrc = rand::random::<u32>() >> 1;
+    let mut head: Vec<String> = DATA_LINES.iter().map(|l| (*l).to_owned()).collect();
+    head.insert(1, format!("a=x-ssrc-range:{ssrc}-{ssrc}"));
+    if !section.iter().any(|l| l == "a=rtcp-mux") {
+        head.push("a=rtcp-mux".to_owned());
+    }
+    if !section[1..]
+        .iter()
+        .any(|l| DIRECTIONS.iter().any(|d| l.strip_prefix("a=") == Some(*d)))
+    {
+        head.push("a=sendrecv".to_owned());
+    }
+    // After `c=` (which `to_teams` replaces with the bundle's) so the m-line keeps it next.
+    let at = section
+        .iter()
+        .position(|l| l.starts_with("c="))
+        .map_or(1, |i| i + 1);
+    let tail = section.split_off(at);
+    section.extend(head);
+    section.extend(tail);
 }
 
 fn candidate_to_teams(value: &str) -> String {
