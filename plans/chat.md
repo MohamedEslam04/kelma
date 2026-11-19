@@ -431,6 +431,7 @@ Moved to its own plan: `plans/activity.md`.
   - **What.** Theme (light, dark, follow the OS), message density (Comfy or Compact), skin tone, font size.
   - **How.** Make the `Theme` global switchable at runtime and read the OS theme through the XDG desktop portal.
   - **Done when.** Screenshots of both themes are in `docs/screenshots`.
+  - **Evidence (data side only, UI missing, box stays open).** `crates/appearance`. `AppearancePrefs` (theme Light, Dark or System; optional accent, `None` follows the portal; density Comfy or Compact; `font_scale` clamped 0.75 to 2.0) lives in `appearance.json` in the app config dir (same `directories` strings as `session`, `KELMA_HOME` honored), written atomically; a missing or corrupt file gives defaults and a bad single field falls back alone. `portal::read` and `portal::watch` use zbus over the XDG portal (`org.freedesktop.portal.Settings` `ReadOne`, falling back to `Read`; `SettingChanged` as a `PortalChange` stream) for `org.freedesktop.appearance` `color-scheme` and `accent-color`; with no session bus they return `Ok(None)`. `resolve_theme`, `resolve_accent` and `resolve` are pure. Live, read-only, on this KDE desktop: color-scheme Dark, accent #5294e2. Skin tone is not covered here (it is a Teams server setting). Still to do: the runtime-switchable `Theme` global and the Settings page in the GUI, then the screenshots. Try it with `kelma-cli appearance [show|watch]`. Tests: `cargo test -p appearance` (live: `-- --ignored`).
 
 ### 9.4 Delivery options
 - [x] Impact 2, effort 1. Seen: composer "+" › "Set delivery options", Ctrl+Shift+I.
@@ -474,6 +475,7 @@ Moved to its own plan: `plans/activity.md`.
 ### 9.10 Window state
 - [ ] Impact 2, effort 1.
   - **What.** Restore the size, position, last open chat and collapsed sections on start.
+  - **Evidence (data side done, UI missing, box stays open).** Data side done (session::window_state): `crates/session/src/window_state.rs`, stored as `window-state.json` in the config dir (next to `config.json`, `KELMA_HOME` applies). Fields `width`, `height`, `x`, `y` (both `None` when the window manager places it), `maximized`, `last_chat`, `collapsed_sections` (set of section ids), all `#[serde(default)]`, so old and partial files load. API: `WindowState::load()` / `load_from(path)` (never fails: a missing or corrupt file gives the defaults, values are clamped), `save()` / `save_to(path)` (atomic: temp file plus rename), setters `set_size`, `set_position`, `set_maximized`, `set_last_chat`, `toggle_section`, `set_section_collapsed`, `is_collapsed`. `Config` is untouched. `Debug` hides the chat id and the module never logs. Still to do: the GUI reads it at start, writes it on resize, move, chat change and section toggle (debounced), and applies it. Tests: `cargo test -p session window_state`.
 
 ---
 

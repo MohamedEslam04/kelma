@@ -21,6 +21,7 @@ rest of Teams' settings plus app-wide platform work.
     - Translation preferences.
     - Auto-start, open in background, keep running on close.
   - **How.** Mostly local. Mailbox time zone and language come from Outlook REST on the `outlook.office.com` token (Graph MailboxSettings is not granted).
+  - **Evidence (data side only, UI missing, box stays open).** `crates/appearance/src/general.rs`. `GeneralPrefs` in `general.json` in the app config dir: `language` (BCP-47, `None` follows the system), `date_format` (Auto, Dmy, Mdy, Ymd), `time_format` (Auto, H12, H24), `time_zone` (IANA name, `None` follows the system), `auto_start`, `open_in_background`, `keep_running_on_close`. `available_languages()` is a static list (English, and Arabic with `rtl`) because there is no translation catalogue in the repo yet; `system_language()` reads `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG` in that order and skips `C`/`POSIX`; `effective_language(prefs)` and the pure `resolve_language` return an offered language (exact match, then primary subtag, then English). Not stored here: translation preferences (a Teams server setting, `languageAccountSettings`) and the mailbox language and time zone (Outlook REST); `auto_start` is only the user's intent, the login entry belongs to the tray crate. Still to do: the Settings page, the translation catalogue, and wiring the switches to the tray. Try it with `kelma-cli appearance show`. Tests: `cargo test -p appearance`.
 - [ ] **X1.3 Accessibility.** Impact 2, effort 2.
   - **What.**
     - Captions and transcripts: always show captions, identify me, filter profanity.
@@ -29,6 +30,7 @@ rest of Teams' settings plus app-wide platform work.
     - TTY mode.
     - Sign-language mode.
   - **How.** Local, applied to the meeting host where relevant. Slint accessibility goes through AccessKit.
+  - **Evidence (data side only, UI missing, box stays open).** `crates/appearance/src/accessibility.rs`. `AccessibilityPrefs` in `accessibility.json`: `high_contrast` and `reduced_motion` (Auto, On, Off), `larger_text` (a bool; the text scale is the font scale times 1.25, kept within 0.75 to 2.5 by `effective_font_scale`), plus stored-only flags for always show captions, identify me, filter profanity, muted notification, single-pointer controls, TTY mode and sign-language mode (the meeting host reads them later). Auto follows the XDG portal through the same reader and watcher as the theme (`PortalChange::HighContrast` and `AnimationsEnabled`): `org.freedesktop.appearance` `contrast` (1 is high) and `org.gnome.desktop.interface` `enable-animations`; reduced motion is on only when that key says false, and off when the desktop does not expose it. `resolve_high_contrast` and `resolve_reduced_motion` are pure. Live, read-only, on this KDE desktop: contrast normal (high contrast false), `enable-animations` true (exposed). Still to do: the Settings page, and applying the results in the theme and animations. Tests: `cargo test -p appearance` (live: `-- --ignored`).
 - [ ] **X1.4 Devices.** Impact 3, effort 3.
   - **What.**
     - Speaker and microphone with "Make a test call".
