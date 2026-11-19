@@ -352,6 +352,27 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
 }
 
 #[test]
+fn a_share_takes_the_stage_and_names_who_presents() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("View"));
+    let focus = || {
+        ElementHandle::find_by_accessible_label(&c.h.app, "Focus on content")
+            .next()
+            .expect("the View menu lists Focus on content")
+    };
+    assert_eq!(focus().accessible_enabled(), Some(false));
+    assert_eq!(focus().accessible_description().unwrap(), "Nobody is sharing");
+
+    c.fake.emit(Event::Presenter("Ada Lovelace".into()));
+    assert_eq!(cs(&c.h.app).get_view_mode(), "content", "a share takes the stage");
+    assert!(c.shows("Ada Lovelace is presenting"));
+
+    c.fake.emit(Event::Presenter(String::new()));
+    assert_eq!(cs(&c.h.app).get_view_mode(), "gallery", "and gives it back");
+}
+
+#[test]
 fn more_and_the_mic_dropdown_switch_devices_in_the_call() {
     let c = CallHarness::new();
     c.connected();

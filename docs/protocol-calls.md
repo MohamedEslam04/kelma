@@ -497,3 +497,59 @@ what a meeting's main-video line receives without a subscription (likely nothing
 needs the `controlVideoStreaming` subscription and MSI mapping, not built); that a 1:1 peer's
 camera arrives on our main-video line and decodes; that a browser peer takes our `42c01f` stream;
 the bitrate and size the web client sends.
+
+## Remote video: viewing a share and the meeting gallery (2026-11-19, everything UNVERIFIED)
+
+Facts only, from rusty-teams (`video_layout.rs` `SourceRequest::body`, `SlotTable`,
+`plan_receive`; `video_receive.rs` `reselect`; `roster.rs` `video_candidates`, `screen_share`;
+`sdp.rs` `stream_lines`) and mautrix-teams (`pkg/msteams/video.go`). No code was copied and
+nothing here ran against a live call yet.
+
+1. **Who shares, who sends a camera.** A participant's endpoint in the call lists
+   `call.mediaStreams[]`; a stream of `type` (or `label`) `applicationsharing-video` whose
+   `direction` is `sendonly` or `sendrecv` is a share, a `video`/`main-video` stream that sends is a
+   camera. Its `sourceId` is the MSI a subscription names.
+2. **Receive lines.** The web client's meeting offer has the camera line, receive-only
+   `main-video` gallery lines (rusty-teams offers nine) and the sharing line. The media server's
+   answer gives each line an `a=x-source-streamid`: the line's `streamMsid`.
+3. **Subscription.** `POST <applyChannelParameters>` (a call-leg link) with
+   `{"applyChannelParameters": {"multiChannelParameter": {"mids": [<our mid>], "mediaParameter":
+   "<JSON string>"}}}`, the string being `{"controlVideoStreaming": {"sequenceNumber": n,
+   "controlInfo": {"sourceId": <MSI or -1>, "streamMsid": <x-source-streamid>, "fmtParams":
+   [{"max-fs", "max-mbps", "max-fps", "profile-level-id": "64001f"}]}}}`. `sourceId: -1` frees
+   the line. A share is subscribed the same way on the sharing line (rusty-teams asks
+   `max-fs=8160`, `max-fps=1500`); a gallery tile with `max-fs=920` (640x360).
+4. **1:1 calls** need no subscription: the other side's camera comes on the main-video line and
+   its share on the sharing line after its re-offer with `ScreenSharer`.
+
+What kelma does (`calling::signaling::{roster, video}`, `calling::media`,
+`kelma/src/backend/call/remote_video.rs`):
+
+- Every remote video packet carries the mid of its line (webrtc-rs's receiver for the track,
+  looked up in the peer connection's transceivers). One OpenH264 decoder per line: the sharing
+  line draws on the stage (`VideoSlot::Content`), a gallery line in the tile of whom it is
+  subscribed to (`VideoSlot::Gallery`), anything else in the other person's tile as before. A
+  line quiet for 10 s is cleared.
+- A meeting join offers nine receive-only `main-video` lines after the video lines when
+  `KELMA_CAMERA=1` (`MediaOptions::receive_slots`); `from_teams_with` keeps that many main-video
+  sections of the answer. A media server's re-offer (lobby admission) is answered without them.
+- On every roster change (and a new answer) the gallery is re-planned: the others whose camera
+  sends, latest speakers first; a slot keeps its person while they still send. Changed slots are
+  subscribed in order through one queue (`sequenceNumber` rising per call), on the
+  `applyChannelParameters` link, else `{callLeg}/applyChannelParameters`.
+- Someone else's share (roster) is subscribed on our sharing line (needs
+  `KELMA_SCREEN_SHARE=1`), and named: the call window's View menu enables "Focus on content",
+  switches to it when a share starts (and back to the gallery when it ends) and shows
+  "<name> is presenting". In a 1:1 call the share's first picture does the same, named after the
+  call.
+
+UNVERIFIED (each needs a live run): that the media server accepts the nine receive-only lines in
+kelma's join offer; that the answer carries `x-source-streamid` on them; that
+`applyChannelParameters` is among the call leg's links (or the `callLeg` fallback works); that
+the server sends on a slot after the subscription and that webrtc-rs reports it on that line's
+receiver (Teams names no SSRCs); whether a subscription must precede the first keyframe or
+answer a `controlVideoStreaming`; that the sharing line, which is also our sending line, receives
+someone else's share once subscribed; that a 1:1 peer's share arrives on our sharing line. Not
+done: answering an RTCP PLI on our own lines with a keyframe (webrtc-rs delivers inbound RTCP to
+the application only through an interceptor that marks it; kelma still sends a keyframe every
+2 s and on `KeyFrame=1`).

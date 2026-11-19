@@ -3,8 +3,8 @@
 //! and the directions and labels Teams sees.
 
 use calling::media::sdp::{
-    answer_direction, from_teams, from_teams_with, mid_of_role, to_teams_answer_with,
-    to_teams_offer, with_role_direction,
+    answer_direction, from_teams, from_teams_with, mid_of_role, source_stream_ids,
+    to_teams_answer_with, to_teams_offer, with_role_direction,
 };
 use calling::video::VideoRole;
 
@@ -89,6 +89,29 @@ fn the_camera_role_takes_the_first_main_video_line() {
     assert_eq!(kept.len(), 2);
     assert_eq!(value(&kept[1], "mid"), Some("2"));
     assert_eq!(value(&kept[1], "label"), Some("main-video"));
+}
+
+#[test]
+fn a_role_named_n_times_keeps_its_first_n_lines() {
+    let roles = [VideoRole::MainVideo, VideoRole::MainVideo, VideoRole::MainVideo];
+    let browser = from_teams_with(FULL_REOFFER, &roles, false).unwrap();
+    let kept = sections(&browser);
+    let mids: Vec<_> = kept[1..].iter().map(|s| value(s, "mid").unwrap()).collect();
+    assert_eq!(mids, ["2", "5", "6"]);
+}
+
+#[test]
+fn each_line_s_source_stream_id_is_read_by_mid() {
+    let answer = "v=0\r\ns=-\r\nt=0 0\r\n\
+m=audio 3478 RTP/SAVP 111\r\na=mid:0\r\na=x-source-streamid:100\r\n\
+m=video 3478 RTP/SAVP 107\r\na=mid:1\r\na=label:main-video\r\na=x-source-streamid: 2001\r\n\
+m=video 3478 RTP/SAVP 107\r\na=mid:3\r\na=label:main-video\r\n\
+m=video 3478 RTP/SAVP 107\r\na=mid:4\r\na=label:main-video\r\na=x-source-streamid:2004\r\n";
+    let ids = source_stream_ids(answer);
+    assert_eq!(ids.get("1"), Some(&2001));
+    assert_eq!(ids.get("4"), Some(&2004));
+    assert_eq!(ids.get("3"), None, "no x-source-streamid");
+    assert_eq!(ids.get("0"), Some(&100));
 }
 
 #[test]

@@ -31,6 +31,8 @@ pub(crate) mod camera;
 pub(crate) mod live;
 #[cfg(feature = "calls")]
 pub(crate) mod share;
+#[cfg(feature = "calls")]
+pub(crate) mod remote_video;
 
 /// What kind of call the window shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +161,8 @@ pub struct Person {
     /// When they last spoke, as a rising count (0: not yet); the floating call shows the latest
     /// speakers first.
     pub spoke: u64,
+    /// The meeting gallery slot ([`VideoSlot::Gallery`]) that shows their camera, if any.
+    pub video_slot: Option<usize>,
 }
 
 /// The profile photos `lookup` knows for these people, by MRI. A lookup may start a download, so
@@ -231,6 +235,9 @@ pub enum Event {
         available: bool,
         on: bool,
     },
+    /// Who else shares a screen now (their name), or nobody (empty).
+    #[cfg(any(test, feature = "calls"))]
+    Presenter(String),
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.
@@ -282,12 +289,15 @@ pub struct Found {
     pub subtitle: String,
 }
 
-/// Which picture a driver draws: our camera in our tile, or the other side's video in theirs.
+/// Which picture a driver draws: our camera in our tile, the other side's video in theirs, a
+/// shared screen on the stage, or one meeting gallery slot (in the tile of whom it shows).
 #[cfg(feature = "calls")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoSlot {
     SelfView,
     Remote,
+    Content,
+    Gallery(usize),
 }
 
 /// What to join.
@@ -389,6 +399,8 @@ pub struct CallData {
     pub sharing: bool,
     pub can_camera: bool,
     pub camera: bool,
+    /// Who else shares a screen (their name), or empty.
+    pub presenter: String,
     pub prejoin_mic: bool,
     pub prejoin_camera: bool,
     pub recording: bool,
@@ -447,6 +459,8 @@ pub struct CallModel {
     pub camera: bool,
     /// The pre-join camera choice.
     pub prejoin_camera: bool,
+    /// Who else shares a screen now, or empty.
+    pub presenter: String,
     pub recording: bool,
     pub transcribing: bool,
     /// Live captions are on (asked for, and not refused).
@@ -613,6 +627,8 @@ impl CallModel {
                 let a = replace(&mut self.can_camera, available);
                 return replace(&mut self.camera, on) || a;
             }
+            #[cfg(any(test, feature = "calls"))]
+            Event::Presenter(name) => return replace(&mut self.presenter, name),
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
                 self.end(reason, now);
@@ -631,6 +647,7 @@ impl CallModel {
         self.sharing = false;
         self.can_camera = false;
         self.camera = false;
+        self.presenter.clear();
         self.recording = false;
         self.transcribing = false;
         self.notice.clear();
@@ -848,6 +865,11 @@ impl CallModel {
             sharing: self.sharing,
             can_camera: self.can_camera && self.phase.active(),
             camera: self.camera,
+            presenter: if self.phase.active() {
+                self.presenter.clone()
+            } else {
+                String::new()
+            },
             prejoin_mic: self.mic_on,
             prejoin_camera: self.prejoin_camera,
             recording: self.recording,
@@ -2188,6 +2210,21 @@ mod tests {
         m.leave(now);
         assert!(!m.camera && !m.can_camera);
         assert_eq!(m.toggle_camera(), None);
+    }
+
+    #[test]
+    fn the_presenter_follows_the_driver_and_clears_when_the_call_ends() {
+        let mut m = ready();
+        m.joining().unwrap();
+        let now = Instant::now();
+        assert!(m.apply(Event::Presenter("Ada".into()), now));
+        assert!(!m.apply(Event::Presenter("Ada".into()), now), "no change");
+        assert_eq!(m.data(now).presenter, "Ada");
+        assert!(m.apply(Event::Presenter(String::new()), now));
+        assert_eq!(m.data(now).presenter, "");
+        m.apply(Event::Presenter("Bo".into()), now);
+        m.leave(now);
+        assert_eq!(m.data(now).presenter, "");
     }
 
     #[test]

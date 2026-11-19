@@ -11,6 +11,11 @@
 use serde_json::Value;
 
 const ACTIVE: &str = "active";
+/// A camera stream's `type` (its `label` is `main-video`).
+const VIDEO: &str = "video";
+/// A screen share's stream `type` and `label`.
+const SCREEN: &str = "applicationsharing-video";
+const SENDING: [&str; 2] = ["sendonly", "sendrecv"];
 const RAISE_HANDS: &str = "raiseHands";
 const ROLE_KEYS: [&str; 2] = ["meetingRole", "role"];
 
@@ -75,6 +80,10 @@ pub struct RosterEndpoint {
     pub server_muted: bool,
     /// `sourceId`s of its call's audio streams.
     pub audio_sources: Vec<u32>,
+    /// The `sourceId` (MSI) of its camera stream while that stream sends.
+    pub video_source: Option<u32>,
+    /// The `sourceId` of its screen share (`applicationsharing-video`) while that stream sends.
+    pub screen_source: Option<u32>,
 }
 
 /// One participant as the roster last reported them.
@@ -97,6 +106,20 @@ impl RosterParticipant {
     /// Not heard in the call, whoever muted them.
     pub fn muted(&self) -> bool {
         self.self_muted || self.server_muted
+    }
+
+    fn in_call(&self) -> impl Iterator<Item = &RosterEndpoint> {
+        self.endpoints.iter().filter(|e| e.in_call)
+    }
+
+    /// The MSI of the camera they send, from their first endpoint in the call that sends one.
+    pub fn video_source(&self) -> Option<u32> {
+        self.in_call().find_map(|e| e.video_source)
+    }
+
+    /// The MSI of the screen they share, if they share one.
+    pub fn screen_source(&self) -> Option<u32> {
+        self.in_call().find_map(|e| e.screen_source)
     }
 }
 
@@ -132,6 +155,27 @@ impl Roster {
 
     pub fn hand_of(&self, mri: &str) -> Option<&RaisedHand> {
         self.get(mri)?.hand.as_ref()
+    }
+
+    /// Everyone else in the call (not `own_mri`, not the lobby).
+    fn others<'a>(&'a self, own_mri: &'a str) -> impl Iterator<Item = &'a RosterParticipant> {
+        self.participants
+            .iter()
+            .filter(move |p| p.mri != own_mri && p.presence == Presence::Connected)
+    }
+
+    /// The others whose camera sends, with its MSI, in the roster's order: who a meeting's
+    /// gallery can subscribe to (rusty-teams `roster.rs` `video_candidates`).
+    pub fn video_candidates(&self, own_mri: &str) -> Vec<(String, u32)> {
+        self.others(own_mri)
+            .filter_map(|p| Some((p.mri.clone(), p.video_source()?)))
+            .collect()
+    }
+
+    /// Who else shares a screen now, with the share's MSI (the first one, if several do).
+    pub fn screen_sharer(&self, own_mri: &str) -> Option<(String, u32)> {
+        self.others(own_mri)
+            .find_map(|p| Some((p.mri.clone(), p.screen_source()?)))
     }
 
     /// Applies a delta. An older `version` than the one known is ignored; a participant whose
@@ -286,6 +330,22 @@ fn present(v: &Value, key: &str) -> bool {
     v.get(key).is_some_and(|x| !x.is_null())
 }
 
+/// The `sourceId` of the first stream of `endpoint`'s call that is of `kind` (by `type` or
+/// `label`) and sends.
+fn sending_source(endpoint: &Value, kind: &[&str]) -> Option<u32> {
+    endpoint
+        .pointer("/call/mediaStreams")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|s| {
+            kind.contains(&s["type"].as_str().unwrap_or_default())
+                || kind.contains(&s["label"].as_str().unwrap_or_default())
+        })
+        .filter(|s| SENDING.contains(&s["direction"].as_str().unwrap_or_default()))
+        .find_map(|s| source_id(&s["sourceId"]))
+}
+
 fn endpoint_from(id: &str, e: &Value) -> RosterEndpoint {
     let audio: Vec<&Value> = e
         .pointer("/call/mediaStreams")
@@ -310,6 +370,8 @@ fn endpoint_from(id: &str, e: &Value) -> RosterEndpoint {
             .iter()
             .filter_map(|s| source_id(&s["sourceId"]))
             .collect(),
+        video_source: sending_source(e, &[VIDEO, "main-video"]),
+        screen_source: sending_source(e, &[SCREEN]),
     }
 }
 
