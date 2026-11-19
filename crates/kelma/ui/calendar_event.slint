@@ -167,6 +167,20 @@ export component EventFull inherits CalCard {
                         }
                     }
                 }
+                if CalStore.detail.proposals.length > 0: VerticalLayout {
+                    spacing: 4px;
+                    Text { text: "Proposed new times"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                    for p[i] in CalStore.detail.proposals: HorizontalLayout {
+                        height: 30px;
+                        spacing: 10px;
+                        accessible-role: text;
+                        accessible-label: p.name + " proposed " + p.when;
+                        Text { text: p.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: p.when; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
+                        Text { text: p.response == "declined" ? "Declined" : "Tentative"; color: CalFmt.response-color(p.response); font-size: 12px; vertical-alignment: center; }
+                        CalButton { label: "Accept"; accessible-label: "Accept " + p.name + "'s proposed time"; clicked => { CalStore.command("accept-proposal", "" + i); } }
+                    }
+                }
                 if CalStore.detail.attachments.length > 0: VerticalLayout {
                     spacing: 2px;
                     Text { text: "Attachments"; color: Theme.fg; font-size: 13px; font-weight: 600; }
