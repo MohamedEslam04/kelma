@@ -1,4 +1,4 @@
-//! `kelma-cli card`: send one app card to the notes chat, and read cards back (plan S3.6).
+//! `kelma-cli appcard`: send one app card to the notes chat, and read cards back (plan S3.6).
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -6,7 +6,8 @@ use teams_proto::Client;
 use teams_proto::card_send::{OutCard, card_message_body};
 use teams_proto::delivery::Delivery;
 
-const USAGE: &str = "usage: card send <48:notes> <hero|adaptive> [text] | card show <48:notes> [n]";
+const USAGE: &str =
+    "usage: appcard send <48:notes> <hero|adaptive> [text] | appcard show <48:notes> [n]";
 
 /// The only chat this command writes to: the user's notes to self.
 const NOTES: &str = "48:notes";
@@ -55,7 +56,9 @@ pub async fn run(client: &Client, display_name: &str, args: &[String]) -> Result
             let (conv, kind) = (a(1)?, a(2)?);
             notes_only(conv)?;
             let card = demo_card(kind)?;
-            let text = args.get(3).map_or("kelma composer card test", String::as_str);
+            let text = args
+                .get(3)
+                .map_or("kelma composer card test", String::as_str);
             let html = render::text_to_teams_html(text);
             let cmid = teams_proto::time::now_ms().to_string();
             let body = card_message_body(
@@ -121,7 +124,12 @@ mod tests {
     #[test]
     fn only_the_notes_chat_is_written_to() {
         assert!(notes_only("48:notes").is_ok());
-        for other in ["19:abc@thread.v2", "48:notes;messageid=1", "", "19:x@unq.gbl.spaces"] {
+        for other in [
+            "19:abc@thread.v2",
+            "48:notes;messageid=1",
+            "",
+            "19:x@unq.gbl.spaces",
+        ] {
             assert!(notes_only(other).is_err(), "{other}");
         }
     }

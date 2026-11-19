@@ -46,10 +46,10 @@
 //! ```
 
 mod accounts;
+mod appcard;
 mod appearance;
 mod apps;
 mod call;
-mod card;
 mod chatx;
 mod delivery;
 mod devices;
@@ -940,10 +940,10 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
-        Some("card") => {
+        Some("appcard") => {
             let (client, cfg) = connect(&paths).await?;
             let name = cfg.display_name.clone().unwrap_or_default();
-            let r = card::run(&client, &name, &args[1..]).await;
+            let r = appcard::run(&client, &name, &args[1..]).await;
             session::persist(&cfg, &client).await?;
             r?;
         }
