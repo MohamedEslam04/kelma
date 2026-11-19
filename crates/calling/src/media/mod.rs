@@ -16,8 +16,8 @@
 
 pub mod sdp;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -28,6 +28,7 @@ use rtc::media_stream::MediaStreamTrack;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_OPUS};
+use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use rtc::rtp_transceiver::rtp_sender::{
     RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters,
     RTCRtpEncodingParameters, RtpCodecKind,
@@ -41,7 +42,7 @@ use webrtc::peer_connection::{
     RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCIceTransportPolicy,
     RTCPeerConnectionState, RTCSessionDescription, SettingEngineBuilder,
 };
-use webrtc::rtp_transceiver::RtpSender;
+use webrtc::rtp_transceiver::{RtpSender, RtpTransceiver};
 
 use crate::video::receive::{VideoPacket, carries_keyframe};
 use crate::video::{VideoRole, h264};
@@ -73,6 +74,10 @@ pub struct MediaOptions {
     /// The video lines the session offers and answers, one per role, each sendrecv H.264. Empty
     /// (the default) is the audio-only session that was verified live.
     pub video: Vec<VideoRole>,
+    /// Receive-only `main-video` lines after the video lines: a meeting's gallery, one
+    /// participant's camera each once subscribed (`applyChannelParameters`). 0 (the default):
+    /// none. Only for our own offer (a meeting join); UNVERIFIED live.
+    pub receive_slots: usize,
 }
 
 impl Default for MediaOptions {
@@ -81,6 +86,7 @@ impl Default for MediaOptions {
             udp_addrs: vec!["0.0.0.0:0".to_owned()],
             relay_only: false,
             video: Vec::new(),
+            receive_slots: 0,
         }
     }
 }
@@ -115,6 +121,8 @@ pub struct MediaSession {
     pc: Arc<dyn PeerConnection>,
     sender: AudioSender,
     video: Vec<VideoSender>,
+    /// The receive-only gallery lines ([`MediaOptions::receive_slots`]).
+    slots: Vec<Arc<dyn RtpTransceiver>>,
     gathered: watch::Receiver<bool>,
     state: Arc<StateTx>,
 }
@@ -183,7 +191,7 @@ impl MediaSession {
                 RtpCodecKind::Audio,
             )
             .map_err(media_err("register Opus"))?;
-        if !options.video.is_empty() {
+        if !options.video.is_empty() || options.receive_slots > 0 {
             for (payload_type, profile) in h264::PAYLOADS {
                 media_engine
                     .register_codec(
@@ -221,7 +229,9 @@ impl MediaSession {
         let (gathered_tx, gathered) = watch::channel(false);
         let (speakers_tx, speakers_rx) = watch::channel(Vec::new());
         let (video_tx, video_rx) = mpsc::channel(VIDEO_QUEUE);
+        let pc_cell: Arc<OnceLock<Weak<dyn PeerConnection>>> = Arc::new(OnceLock::new());
         let handler = Handler {
+            pc: Arc::clone(&pc_cell),
             state: Arc::clone(&state),
             audio: audio_tx,
             video: video_tx,
@@ -239,6 +249,7 @@ impl MediaSession {
             .await
             .map_err(media_err("build peer connection"))?;
         let pc: Arc<dyn PeerConnection> = Arc::new(pc);
+        let _ = pc_cell.set(Arc::downgrade(&pc));
 
         let ssrc = rand::random::<u32>();
         let track = Arc::new(
@@ -275,11 +286,24 @@ impl MediaSession {
         for role in options.video.iter().copied() {
             video.push(VideoSender::add_to(&pc, role).await?);
         }
+        let mut slots = Vec::new();
+        for _ in 0..options.receive_slots {
+            let init = RTCRtpTransceiverInit {
+                direction: RTCRtpTransceiverDirection::Recvonly,
+                ..Default::default()
+            };
+            slots.push(
+                pc.add_transceiver_from_kind(RtpCodecKind::Video, Some(init))
+                    .await
+                    .map_err(media_err("add receive slot"))?,
+            );
+        }
         Ok((
             Self {
                 pc,
                 sender,
                 video,
+                slots,
                 gathered,
                 state,
             },
@@ -308,9 +332,29 @@ impl MediaSession {
         self.video.iter().map(|v| v.role).collect()
     }
 
+    /// The roles of every video line webrtc-rs is given: [`Self::video_roles`], then one
+    /// `main-video` per receive slot.
+    fn kept_roles(&self) -> Vec<VideoRole> {
+        let mut roles = self.video_roles();
+        roles.extend(std::iter::repeat_n(VideoRole::MainVideo, self.slots.len()));
+        roles
+    }
+
+    /// The negotiated mids of the receive-only gallery lines, in order (a slot not placed by an
+    /// offer or answer yet is left out).
+    pub async fn slot_mids(&self) -> Vec<String> {
+        let mut mids = Vec::new();
+        for t in &self.slots {
+            if let Ok(Some(mid)) = t.mid().await {
+                mids.push(mid);
+            }
+        }
+        mids
+    }
+
     /// Takes the other side's answer to [`Self::create_offer`].
     pub async fn set_answer(&self, answer: &str) -> Result<()> {
-        let roles = self.video_roles();
+        let roles = self.kept_roles();
         let desc = RTCSessionDescription::answer(sdp::from_teams_with(answer, &roles, false)?)
             .map_err(media_err("parse answer"))?;
         self.pc
@@ -347,7 +391,7 @@ impl MediaSession {
                 "offer restarts the media session (audio mid or ICE ufrag changed); answer it on a new MediaSession".into(),
             ));
         }
-        let roles = self.video_roles();
+        let roles = self.kept_roles();
         let desc = RTCSessionDescription::offer(sdp::from_teams_with(offer, &roles, true)?)
             .map_err(media_err("parse offer"))?;
         self.pc
@@ -557,6 +601,8 @@ pub fn heard_sources(csrc: &[u32], ssrc: u32) -> Vec<u32> {
 }
 
 struct Handler {
+    /// The peer connection, once built: a remote track's line (its mid) is looked up there.
+    pc: Arc<OnceLock<Weak<dyn PeerConnection>>>,
     state: Arc<StateTx>,
     audio: mpsc::Sender<OpusPacket>,
     video: mpsc::Sender<VideoPacket>,
@@ -594,7 +640,16 @@ impl PeerConnectionEventHandler for Handler {
         tracing::info!(?kind, track = %id, "remote track");
         if kind == RtpCodecKind::Video {
             // Always drained, or the driver logs a full queue for every packet.
-            tokio::spawn(forward_video(track, id.into(), self.video.clone()));
+            let pc = self.pc.get().cloned();
+            let video = self.video.clone();
+            tokio::spawn(async move {
+                let mid = match pc {
+                    Some(pc) => mid_of(&pc, &track, &id).await,
+                    None => None,
+                };
+                tracing::info!(track = %id, mid = ?mid, "remote video line");
+                forward_video(track, id.into(), mid.map(Arc::from), video).await;
+            });
             return;
         }
         let audio = self.audio.clone();
@@ -626,12 +681,44 @@ impl PeerConnectionEventHandler for Handler {
     }
 }
 
+/// The mid of the line (transceiver) whose receiver carries `track`: the same track, else the
+/// same track id. `None` when the connection is gone or no line matches.
+async fn mid_of(
+    pc: &Weak<dyn PeerConnection>,
+    track: &Arc<dyn TrackRemote>,
+    id: &str,
+) -> Option<String> {
+    let pc = pc.upgrade()?;
+    let transceivers = pc.get_transceivers().await;
+    let same = |other: &Arc<dyn TrackRemote>| {
+        std::ptr::eq(
+            Arc::as_ptr(other) as *const u8,
+            Arc::as_ptr(track) as *const u8,
+        )
+    };
+    let mut by_id = None;
+    for t in &transceivers {
+        let Ok(Some(receiver)) = t.receiver().await else {
+            continue;
+        };
+        if same(receiver.track()) {
+            return t.mid().await.ok().flatten();
+        }
+        if by_id.is_none() && !id.is_empty() && receiver.track().track_id().await.to_string() == id
+        {
+            by_id = t.mid().await.ok().flatten();
+        }
+    }
+    by_id
+}
+
 /// Reads one remote video track into `video` until it ends. Asks the sender for a keyframe (an
 /// RTCP PLI) at the first packet and every [`KEYFRAME_ASK`] until one comes, so a picture shows
 /// soon after the track starts.
 async fn forward_video(
     track: Arc<dyn TrackRemote>,
     id: Arc<str>,
+    mid: Option<Arc<str>>,
     video: mpsc::Sender<VideoPacket>,
 ) {
     let mut keyframe_seen = false;
@@ -652,6 +739,7 @@ async fn forward_video(
                 }
                 let p = VideoPacket {
                     track: Arc::clone(&id),
+                    mid: mid.clone(),
                     ssrc: packet.header.ssrc,
                     sequence: packet.header.sequence_number,
                     timestamp: packet.header.timestamp,

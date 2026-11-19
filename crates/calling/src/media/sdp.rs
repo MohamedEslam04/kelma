@@ -322,9 +322,11 @@ fn role_of(section: &[String]) -> Option<VideoRole> {
     VideoRole::from_label(label)
 }
 
-/// Which sections webrtc-rs is given (see the note on the kept sections above).
+/// Which sections webrtc-rs is given (see the note on the kept sections above). A role named
+/// n times in `roles` keeps its first n sections (the camera line, then the receive slots).
 fn kept_sections(parsed: &Parsed, roles: &[VideoRole]) -> Vec<bool> {
     let mut taken: Vec<VideoRole> = Vec::new();
+    let count = |list: &[VideoRole], r: VideoRole| list.iter().filter(|x| **x == r).count();
     parsed
         .sections
         .iter()
@@ -336,7 +338,7 @@ fn kept_sections(parsed: &Parsed, roles: &[VideoRole]) -> Vec<bool> {
                 return true;
             }
             match role_of(s) {
-                Some(r) if roles.contains(&r) && !taken.contains(&r) && m.port != "0" => {
+                Some(r) if count(&taken, r) < count(roles, r) && m.port != "0" => {
                     taken.push(r);
                     true
                 }
@@ -480,6 +482,25 @@ pub fn with_role_direction(sdp: &str, role: VideoRole, direction: &str) -> Strin
     let mut lines = parsed.session;
     lines.extend(parsed.sections.into_iter().flatten());
     join(lines)
+}
+
+/// Each section's `a=x-source-streamid` by mid: what a meeting's subscription names as the
+/// line's `streamMsid` (rusty-teams `sdp.rs` `stream_lines`). Sections without one are left out.
+pub fn source_stream_ids(sdp: &str) -> HashMap<String, u32> {
+    Parsed::new(sdp)
+        .sections
+        .iter()
+        .filter_map(|s| {
+            let mid = s.iter().find_map(|l| attr(l, "mid"))?;
+            let id = s
+                .iter()
+                .find_map(|l| attr(l, "x-source-streamid"))?
+                .trim()
+                .parse()
+                .ok()?;
+            Some((mid.to_owned(), id))
+        })
+        .collect()
 }
 
 /// The mid of the first section labelled for `role`.

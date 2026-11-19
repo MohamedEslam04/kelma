@@ -196,3 +196,62 @@ fn the_summary_counts_and_flags_everyone() {
          Self Example (you, attendee, server-muted)"
     );
 }
+
+fn streaming(mri: &str, version: u64, streams: Value) -> Value {
+    json!({"type": "Delta", "participants": {mri: {
+        "version": version,
+        "state": "active",
+        "details": {"displayName": "Someone"},
+        "endpoints": {"ep-1": {"call": {"mediaStreams": streams}}},
+    }}})
+}
+
+#[test]
+fn only_sending_cameras_and_shares_are_sources() {
+    let mut roster = Roster::default();
+    roster.apply(&streaming(
+        ORGANIZER,
+        1,
+        json!([
+            {"type": "audio", "label": "main-audio", "sourceId": 201, "direction": "sendrecv"},
+            {"type": "video", "label": "main-video", "sourceId": 202, "direction": "sendonly"},
+            {"type": "applicationsharing-video", "label": "applicationsharing-video",
+             "sourceId": "212", "direction": "recvonly"},
+        ]),
+    ));
+    roster.apply(&streaming(
+        PRESENTER,
+        1,
+        json!([
+            {"type": "video", "label": "main-video", "sourceId": 302, "direction": "inactive"},
+            {"type": "applicationsharing-video", "label": "applicationsharing-video",
+             "sourceId": 312, "direction": "sendrecv"},
+        ]),
+    ));
+    roster.apply(&streaming(
+        ME,
+        1,
+        json!([{"type": "video", "label": "main-video", "sourceId": 402, "direction": "sendrecv"}]),
+    ));
+
+    let org = roster.get(ORGANIZER).unwrap();
+    assert_eq!(org.video_source(), Some(202));
+    assert_eq!(org.screen_source(), None, "recvonly is not a share");
+    assert_eq!(roster.get(PRESENTER).unwrap().video_source(), None);
+
+    assert_eq!(roster.video_candidates(ME), vec![(ORGANIZER.to_owned(), 202)]);
+    assert_eq!(roster.screen_sharer(ME), Some((PRESENTER.to_owned(), 312)));
+    assert_eq!(roster.screen_sharer(PRESENTER), None, "our own share is not shown to us");
+}
+
+#[test]
+fn the_lobby_has_no_video_candidates() {
+    let mut roster = Roster::default();
+    roster.apply(&json!({"type": "Delta", "participants": {GUEST: {
+        "version": 1,
+        "state": "active",
+        "endpoints": {"ep-2": {"lobby": {}, "call": null}},
+    }}}));
+    assert!(roster.video_candidates(ME).is_empty());
+    assert_eq!(roster.screen_sharer(ME), None);
+}

@@ -57,6 +57,7 @@ fn a_step_keeps_every_nth_pixel() {
 fn packet(sequence: u16, timestamp: u32, marker: bool, payload: &[u8]) -> VideoPacket {
     VideoPacket {
         track: Arc::from("t"),
+        mid: None,
         ssrc: 7,
         sequence,
         timestamp,

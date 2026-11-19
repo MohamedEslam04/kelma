@@ -1,11 +1,12 @@
 //! The other side's video: H.264 RTP (RFC 6184, `packetization-mode=1`) back into Annex-B
 //! access units, and with the `camera` feature OpenH264's decoder turning those into pictures.
 //!
-//! [`crate::media::MediaEvents::video`] carries every packet of every remote video track.
-//! [`spawn_decoder`] follows one track (the first that sends a keyframe) and hands back
-//! drawable [`RgbFrame`](super::RgbFrame)s. Which participant a track shows is not mapped yet: in
-//! a 1:1 call it is the other person; in a meeting the media server's main-video line is
-//! UNVERIFIED (see `docs/protocol-calls.md`, Camera video).
+//! [`crate::media::MediaEvents::video`] carries every packet of every remote video track, each
+//! with the mid of its line. [`spawn_decoder`] follows one track (the first that sends a
+//! keyframe) and hands back drawable [`RgbFrame`](super::RgbFrame)s; one decoder per line shows a
+//! screen share and each gallery slot apart. Which participant a line shows is the caller's: the
+//! other person in a 1:1 call, the subscribed one on a meeting's slot (UNVERIFIED, see
+//! `docs/protocol-calls.md`, Remote video).
 
 use std::sync::Arc;
 
@@ -14,6 +15,9 @@ use std::sync::Arc;
 pub struct VideoPacket {
     /// The remote track it came on (webrtc-rs's track id).
     pub track: Arc<str>,
+    /// The mid of the line it came on, when known: which of our video lines (camera, sharing,
+    /// a gallery slot) it belongs to.
+    pub mid: Option<Arc<str>>,
     pub ssrc: u32,
     pub sequence: u16,
     pub timestamp: u32,
