@@ -58,9 +58,14 @@ pub async fn run(client: &Client, cfg: &session::Config, args: &[String]) -> Res
             );
             let (mut found, mut found_near, mut missing, mut replies) = (0, 0, 0, 0);
             for h in &page.hits {
-                let msgs = client
-                    .messages(&h.conversation_id, Some(h.time_ms + 60_000), 30)
-                    .await;
+                // A channel reply lives in its thread.
+                let target = if h.root_id.is_empty() {
+                    h.conversation_id.clone()
+                } else {
+                    format!("{};messageid={}", h.conversation_id, h.root_id)
+                };
+                let before = h.root_id.is_empty().then_some(h.time_ms + 60_000);
+                let msgs = client.messages(&target, before, 30).await;
                 let ids: Vec<String> = msgs
                     .map(|p| p.messages.into_iter().map(|m| m.id).collect())
                     .unwrap_or_default();
@@ -75,7 +80,7 @@ pub async fn run(client: &Client, cfg: &session::Config, args: &[String]) -> Res
                     let near = h.message_id.parse::<i64>().ok().is_some_and(|t| {
                         ids.iter()
                             .filter_map(|i| i.parse::<i64>().ok())
-                            .any(|i| (i - t).abs() < 20)
+                            .any(|i| (i - t).abs() < 1500)
                     });
                     if near {
                         found_near += 1;

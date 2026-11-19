@@ -340,7 +340,7 @@ Moved to its own plan: `plans/activity.md`.
   - **Status.** Not ticked: the comparison with Teams' own Shared tab was not made (the Teams UI was not used).
     - Built: the header tab "Shared" (chats) or "Files" (channels) shows `SharedView` with Recent, Files and Links, a keyword filter, and Upload (the file picker adds the file to the composer, then the chat shows again with the chip). Rows open the file or link in the browser.
     - Chats read the Substrate `AllShared` list, the same call the Teams tab uses, and add what cached messages carry. Channels also list their SharePoint folder (Graph `filesFolder` then its children, `teams_proto::views::channel_files_folder`, reusable by 8.6).
-    - Live read check: `find shared 48:notes` returned 3 files and 19 links, all with a sender and a date. `find folder` on the sandbox channel found its folder (0 items), and `AllShared` for that channel returned none.
+    - Live read check: `find shared 48:notes` returned 5 files and 22 links, all with a sender and a date. `find folder` on the sandbox channel found its folder (0 items), and `AllShared` for that channel returned none.
   - **Evidence.** UI tests `the_shared_tab_lists_files_and_links_filters_them_and_opens_one` and `a_channel_shows_its_files_tab_and_a_chat_list_of_links`.
 
 ### 7.6 Chat details pane
