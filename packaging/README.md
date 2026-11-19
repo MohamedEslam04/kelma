@@ -115,10 +115,12 @@ the repository, so pushing a branch whose commits are all on GitHub already star
 
 ## Verification status
 
-Last checked on 2026-11-19 at commit `d31bc90` (Fedora 44 host, Freedesktop 26.08, Arch container).
+Last checked on 2026-11-19 (Fedora 44 host, Freedesktop 26.08, Arch container, GitHub Actions). Local
+builds from commit `d31bc90`, CI from the `ci/packaging-test` run
+[44516901149](https://github.com/MohamedEslam04/kelma/actions/runs/44516901149) (all three jobs green).
 
 | Package | Result |
 |---|---|
-| Flatpak | Built with `build.sh` (`flatpak-builder` from the `org.flatpak.Builder` Flatpak, offline crate build, 1485 vendored sources). `flatpak-builder-lint` on the manifest reports only that Freedesktop 26.08 exists. On the build it reports one error: the metainfo has no screenshots, which Flathub requires. Not launched on a desktop. |
-| RPM | Built with `rpmbuild -bb --nodeps` into a 15 MB `kelma-0.1.0-1.fc44.x86_64.rpm`. `%check` ran `desktop-file-validate` and the 27 `diag` tests. `--nodeps` was needed only because this host has rustup instead of the `cargo` and `rust` RPMs. `rpmlint` was not available. |
-| AUR | `kelma-git` built in an `archlinux:base-devel` container with `makepkg` (17 MiB package, 27 `diag` tests passed). `namcap` found a missing `hicolor-icon-theme` dependency and an empty `-debug` package, both fixed since (the package was not rebuilt after these two edits, but `.SRCINFO` matches `makepkg --printsrcinfo` and `namcap PKGBUILD` is clean). The `depends` entries for the dlopen-loaded libraries show as "may not be needed" in `namcap`, and are intentional. |
+| Flatpak | Built with `build.sh` at `d31bc90` (Freedesktop 25.08, offline crate build, 1485 vendored sources). The manifest is now on 26.08 (`flatpak-builder-lint manifest` is clean) and builds in CI on the `freedesktop-26.08` image, with one job (`CARGO_BUILD_JOBS`). The metainfo has three screenshots (`docs/screenshots/appearance-*.png`, demo data); `appstreamcli validate --pedantic` passes offline and warns only that the images are not at the public URL yet (they resolve once the branch is on `main`). Not built locally on 26.08 and not launched on a desktop: the 26.08 runtime download was still running when local builds were paused. |
+| RPM | `rpmbuild -bb` without `--nodeps` passes in CI (Fedora container with the `cargo` and `rust` RPMs, so the `BuildRequires` are real). Locally the `BuildRequires` are installed (`dnf builddep`, Fedora cargo/rust 1.99), but the local build was paused. At `d31bc90` the build with `--nodeps` gave a 15 MB `kelma-0.1.0-1.fc44.x86_64.rpm` and the 27 `diag` tests passed. The first CI run was killed by the OOM killer (`rustc` SIGKILL): Fedora's `RUSTFLAGS` has `-Cdebuginfo=2`, so the spec now sets it to 0 (no `-debuginfo` package is built anyway). `rpmlint` on the spec: no errors, one warning (`invalid-url Source1`, the vendor tarball is a local file by design). `rpmlint` on the built RPM not run yet. |
+| AUR | `kelma-git` built in an `archlinux:base-devel` podman container with `makepkg` (17 MiB package, 27 `diag` tests passed) and in CI (`makepkg` plus the `.SRCINFO` check). `namcap PKGBUILD` is clean. The `depends` entries for the dlopen-loaded libraries show as "may not be needed" in `namcap`, and are intentional. |
