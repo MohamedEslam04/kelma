@@ -13,6 +13,7 @@ appearance = { version = "0.0.0", path = "../appearance" }
 app_store = { package = "apps", version = "0.0.0", path = "../apps" }
 devices = { version = "0.0.0", path = "../devices" }
 diag = { version = "0.0.0", path = "../diag" }
+calling = { version = "0.0.0", path = "../calling" }
 calendar = { version = "0.0.0", path = "../calendar" }
 render = { version = "0.0.0", path = "../render" }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }

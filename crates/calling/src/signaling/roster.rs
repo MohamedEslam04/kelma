@@ -1,0 +1,339 @@
+//! The meeting roster: who is in the call or the lobby, their role, mute state and raised hand.
+//!
+//! The join answer carries a snapshot (`roster`); `conversation/rosterUpdate/` pushes are deltas
+//! (`type: Delta`) that carry each changed participant in full, keyed by MRI, with a rising
+//! `version`. A participant whose `state` is no longer `active` has left.
+//!
+//! Shapes: rusty-teams `crates/calling/src/roster.rs` (MIT), mautrix-teams `calls.go` and
+//! `docs/openapi/teams-webclient.yaml` `RosterUpdate` (AGPL, facts only), teams-lite
+//! `NATIVE-CALLING.md` (measured frame, facts only).
+
+use serde_json::Value;
+
+const ACTIVE: &str = "active";
+const RAISE_HANDS: &str = "raiseHands";
+const ROLE_KEYS: [&str; 2] = ["meetingRole", "role"];
+
+/// A participant's role in the meeting (`meetingRole`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeetingRole {
+    Organizer,
+    Presenter,
+    Attendee,
+}
+
+impl MeetingRole {
+    /// A role as the roster names it (any case). A co-organizer counts as an organizer; `role`
+    /// values such as `admin` or `guest` are no meeting role.
+    pub fn parse(text: &str) -> Option<MeetingRole> {
+        match text.to_ascii_lowercase().as_str() {
+            "organizer" | "coorganizer" => Some(MeetingRole::Organizer),
+            "presenter" => Some(MeetingRole::Presenter),
+            "attendee" => Some(MeetingRole::Attendee),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MeetingRole::Organizer => "organizer",
+            MeetingRole::Presenter => "presenter",
+            MeetingRole::Attendee => "attendee",
+        }
+    }
+}
+
+/// Where a participant is: waiting in the lobby, or in the call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    /// Every endpoint waits under `lobby`, none is under `call`.
+    Lobby,
+    Connected,
+}
+
+/// A raised hand (`publishedStates[]` entry of type `raiseHands`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaisedHand {
+    /// What `removeState` names to lower it.
+    pub state_id: String,
+    /// The place in the hand queue (`typeRank`, 1 = first).
+    pub rank: Option<u64>,
+}
+
+/// One device of a participant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterEndpoint {
+    pub id: String,
+    pub participant_id: Option<String>,
+    /// Has a `call` (media joined).
+    pub in_call: bool,
+    /// Has a `lobby` (waiting to be admitted).
+    pub in_lobby: bool,
+    /// `endpointState.state.isMuted`: muted by its own user.
+    pub self_muted: bool,
+    /// An audio stream of its call is `serverMuted` (muted by the meeting).
+    pub server_muted: bool,
+    /// `sourceId`s of its call's audio streams.
+    pub audio_sources: Vec<u32>,
+}
+
+/// One participant as the roster last reported them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterParticipant {
+    pub mri: String,
+    pub display_name: String,
+    pub role: Option<MeetingRole>,
+    pub presence: Presence,
+    /// Every endpoint in the call is self-muted.
+    pub self_muted: bool,
+    /// Every endpoint in the call is server-muted.
+    pub server_muted: bool,
+    pub hand: Option<RaisedHand>,
+    pub endpoints: Vec<RosterEndpoint>,
+    pub version: u64,
+}
+
+impl RosterParticipant {
+    /// Not heard in the call, whoever muted them.
+    pub fn muted(&self) -> bool {
+        self.self_muted || self.server_muted
+    }
+}
+
+/// The roster of one conversation, in the order people first appeared.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Roster {
+    participants: Vec<RosterParticipant>,
+    /// `participantCounts.lobbyParticipants`, when the service reported it.
+    pub lobby_count: Option<u32>,
+}
+
+/// The roster snapshot inside a conversation answer (the join answer, a `conversationUpdate`):
+/// its `roster`, top level or under `conversationResponse`.
+pub fn roster_snapshot(body: &Value) -> Option<&Value> {
+    [
+        body.get("roster"),
+        body.pointer("/conversationResponse/roster"),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|r| r.is_object())
+}
+
+// Adapted from rusty-teams (MIT), crates/calling/src/roster.rs `Roster::apply`/`apply_snapshot`.
+impl Roster {
+    pub fn participants(&self) -> &[RosterParticipant] {
+        &self.participants
+    }
+
+    pub fn get(&self, mri: &str) -> Option<&RosterParticipant> {
+        self.participants.iter().find(|p| p.mri == mri)
+    }
+
+    pub fn hand_of(&self, mri: &str) -> Option<&RaisedHand> {
+        self.get(mri)?.hand.as_ref()
+    }
+
+    /// Applies a delta. An older `version` than the one known is ignored; a participant whose
+    /// `state` is not `active` is removed. Returns whether anything changed.
+    pub fn apply(&mut self, delta: &Value) -> bool {
+        let before = self.clone();
+        if let Some(n) = delta
+            .pointer("/participantCounts/lobbyParticipants")
+            .and_then(Value::as_u64)
+        {
+            self.lobby_count = Some(u32::try_from(n).unwrap_or(u32::MAX));
+        }
+        for (mri, p) in delta["participants"].as_object().into_iter().flatten() {
+            let version = p["version"].as_u64().unwrap_or_default();
+            let known = self.participants.iter().position(|m| &m.mri == mri);
+            if known.is_some_and(|i| self.participants[i].version > version) {
+                continue;
+            }
+            if p["state"].as_str() != Some(ACTIVE) {
+                if let Some(i) = known {
+                    self.participants.remove(i);
+                }
+                continue;
+            }
+            let next = participant_from(mri, p, version, known.map(|i| &self.participants[i]));
+            match known {
+                Some(i) => self.participants[i] = next,
+                None => self.participants.push(next),
+            }
+        }
+        *self != before
+    }
+
+    /// Applies a snapshot, which lists everyone present: people it no longer lists are dropped,
+    /// unless a delta newer than the snapshot (`sequenceNumber`) reported them.
+    pub fn apply_snapshot(&mut self, snapshot: &Value) -> bool {
+        let before = self.clone();
+        self.apply(snapshot);
+        if let (Some(seq), Some(listed)) = (
+            snapshot["sequenceNumber"].as_u64(),
+            snapshot["participants"].as_object(),
+        ) {
+            self.participants
+                .retain(|p| listed.contains_key(&p.mri) || p.version > seq);
+        }
+        *self != before
+    }
+
+    /// One line for a terminal: counts, then each person with their role and flags.
+    /// `own_mri` is marked `you`. Holds display names: never write it to a file.
+    pub fn summary(&self, own_mri: &str) -> String {
+        let (lobby, call): (Vec<_>, Vec<_>) = self
+            .participants
+            .iter()
+            .partition(|p| p.presence == Presence::Lobby);
+        let name = |p: &RosterParticipant| {
+            if p.display_name.is_empty() {
+                "?".to_owned()
+            } else {
+                p.display_name.clone()
+            }
+        };
+        let mut out = format!("{} in the call", call.len());
+        if !lobby.is_empty() {
+            out.push_str(&format!(", {} in the lobby", lobby.len()));
+        }
+        let people: Vec<String> = call
+            .iter()
+            .map(|p| {
+                let mut flags = Vec::new();
+                if p.mri == own_mri {
+                    flags.push("you".to_owned());
+                }
+                if let Some(r) = p.role {
+                    flags.push(r.name().to_owned());
+                }
+                if p.self_muted {
+                    flags.push("muted".to_owned());
+                }
+                if p.server_muted {
+                    flags.push("server-muted".to_owned());
+                }
+                if let Some(h) = &p.hand {
+                    flags.push(match h.rank {
+                        Some(r) => format!("hand #{r}"),
+                        None => "hand".to_owned(),
+                    });
+                }
+                if flags.is_empty() {
+                    name(p)
+                } else {
+                    format!("{} ({})", name(p), flags.join(", "))
+                }
+            })
+            .collect();
+        if !people.is_empty() {
+            out.push_str(": ");
+            out.push_str(&people.join(", "));
+        }
+        if !lobby.is_empty() {
+            let waiting: Vec<String> = lobby.iter().map(|p| name(p)).collect();
+            out.push_str("; lobby: ");
+            out.push_str(&waiting.join(", "));
+        }
+        out
+    }
+}
+
+fn participant_from(
+    mri: &str,
+    p: &Value,
+    version: u64,
+    previous: Option<&RosterParticipant>,
+) -> RosterParticipant {
+    let display_name = p
+        .pointer("/details/displayName")
+        .and_then(Value::as_str)
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
+        .or_else(|| previous.map(|m| m.display_name.clone()))
+        .unwrap_or_default();
+    let raw_endpoints: Vec<(&String, &Value)> =
+        p["endpoints"].as_object().into_iter().flatten().collect();
+    let endpoints: Vec<RosterEndpoint> = raw_endpoints
+        .iter()
+        .map(|(id, e)| endpoint_from(id, e))
+        .collect();
+    let in_call: Vec<&RosterEndpoint> = endpoints.iter().filter(|e| e.in_call).collect();
+    let presence = if in_call.is_empty() && endpoints.iter().any(|e| e.in_lobby) {
+        Presence::Lobby
+    } else {
+        Presence::Connected
+    };
+    let all = |f: fn(&RosterEndpoint) -> bool| !in_call.is_empty() && in_call.iter().all(|e| f(e));
+    RosterParticipant {
+        mri: mri.to_owned(),
+        display_name,
+        role: ROLE_KEYS
+            .iter()
+            .filter_map(|k| p[*k].as_str())
+            .find_map(MeetingRole::parse),
+        presence,
+        self_muted: all(|e| e.self_muted),
+        server_muted: all(|e| e.server_muted),
+        hand: raised_hand(p, raw_endpoints.iter().map(|(_, e)| *e)),
+        endpoints,
+        version,
+    }
+}
+
+fn present(v: &Value, key: &str) -> bool {
+    v.get(key).is_some_and(|x| !x.is_null())
+}
+
+fn endpoint_from(id: &str, e: &Value) -> RosterEndpoint {
+    let audio: Vec<&Value> = e
+        .pointer("/call/mediaStreams")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|s| s["type"].as_str() == Some("audio"))
+        .collect();
+    RosterEndpoint {
+        id: id.to_owned(),
+        participant_id: e["participantId"].as_str().map(str::to_owned),
+        in_call: present(e, "call"),
+        in_lobby: present(e, "lobby"),
+        self_muted: e
+            .pointer("/endpointState/state/isMuted")
+            .and_then(Value::as_bool)
+            == Some(true),
+        server_muted: audio
+            .iter()
+            .any(|s| s["serverMuted"].as_bool() == Some(true)),
+        audio_sources: audio
+            .iter()
+            .filter_map(|s| source_id(&s["sourceId"]))
+            .collect(),
+    }
+}
+
+fn source_id(v: &Value) -> Option<u32> {
+    v.as_u64()
+        .or_else(|| v.as_str()?.parse().ok())
+        .and_then(|id| u32::try_from(id).ok())
+}
+
+/// The first `raiseHands` state, on the participant or one of its endpoints.
+fn raised_hand<'a>(p: &'a Value, endpoints: impl Iterator<Item = &'a Value>) -> Option<RaisedHand> {
+    std::iter::once(p)
+        .chain(endpoints)
+        .flat_map(|holder| holder["publishedStates"].as_array().into_iter().flatten())
+        .filter(|s| s["stateType"].as_str() == Some(RAISE_HANDS))
+        .find_map(|s| {
+            let state_id = match &s["stateId"] {
+                Value::String(t) => t.clone(),
+                Value::Null => return None,
+                other => other.to_string(),
+            };
+            Some(RaisedHand {
+                state_id,
+                rank: s["typeRank"].as_u64(),
+            })
+        })
+}

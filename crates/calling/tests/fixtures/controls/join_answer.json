@@ -1,0 +1,77 @@
+{
+  "conversationController": "https://api.flightproxy.skype.com/api/v2/cp/conv-example.conv.skype.com/conv/AAAAAAAAAAAAAAAAAAAAAA?i=1",
+  "links": {
+    "leave": "https://api.flightproxy.skype.com/api/v2/cp/conv-example.conv.skype.com/conv/AAAAAAAAAAAAAAAAAAAAAA/leave?i=1",
+    "updateEndpointState": "https://api.flightproxy.skype.com/api/v2/cp/conv-example.conv.skype.com/conv/AAAAAAAAAAAAAAAAAAAAAA/updateEndpointState?i=1",
+    "publishState": "https://api.flightproxy.skype.com/api/v2/cp/conv-example.conv.skype.com/conv/AAAAAAAAAAAAAAAAAAAAAA/publishState?i=1",
+    "removeState": "https://api.flightproxy.skype.com/api/v2/cp/conv-example.conv.skype.com/conv/AAAAAAAAAAAAAAAAAAAAAA/removeState?i=1"
+  },
+  "roster": {
+    "type": "Delta",
+    "sequenceNumber": 9,
+    "participantCounts": {"lobbyParticipants": 1, "totalParticipants": 4},
+    "participants": {
+      "8:orgid:00000000-0000-0000-0000-0000000000a1": {
+        "version": 3,
+        "state": "active",
+        "role": "admin",
+        "meetingRole": "organizer",
+        "details": {"id": "8:orgid:00000000-0000-0000-0000-0000000000a1", "displayName": "Organizer Example"},
+        "endpoints": {
+          "00000000-0000-4000-8000-0000000000e1": {
+            "participantId": "00000000-0000-4000-8000-0000000000f1",
+            "modalityJoined": "Call",
+            "endpointState": {"endpointStateSequenceNumber": 2, "state": {"isMuted": false}},
+            "call": {
+              "serverMuteVersion": 1,
+              "mediaStreams": [
+                {"type": "audio", "label": "main-audio", "sourceId": 201, "direction": "sendrecv", "serverMuted": false},
+                {"type": "video", "label": "main-video", "sourceId": 202, "direction": "recvonly", "serverMuted": false}
+              ]
+            }
+          }
+        }
+      },
+      "8:orgid:00000000-0000-0000-0000-0000000000a2": {
+        "version": 5,
+        "state": "active",
+        "meetingRole": "presenter",
+        "details": {"displayName": "Presenter Example"},
+        "publishedStates": [
+          {"stateType": "raiseHands", "stateId": "hand-a2", "typeRank": 1, "content": {"skinTone": 0}}
+        ],
+        "endpoints": {
+          "00000000-0000-4000-8000-0000000000e2": {
+            "modalityJoined": "Call",
+            "endpointState": {"endpointStateSequenceNumber": 4, "state": {"isMuted": true}},
+            "call": {"mediaStreams": [{"type": "audio", "label": "main-audio", "sourceId": 301, "direction": "sendrecv", "serverMuted": false}]}
+          }
+        }
+      },
+      "8:orgid:00000000-0000-0000-0000-0000000000b2": {
+        "version": 2,
+        "state": "active",
+        "meetingRole": "attendee",
+        "details": {"displayName": "Self Example"},
+        "endpoints": {
+          "00000000-0000-4000-8000-0000000000e3": {
+            "modalityJoined": "Lobby,Call",
+            "endpointState": {"endpointStateSequenceNumber": 0, "state": {"isMuted": false}},
+            "call": {"serverMuteVersion": 2, "mediaStreams": [{"type": "audio", "label": "main-audio", "sourceId": 401, "direction": "sendrecv", "serverMuted": true}]}
+          }
+        }
+      },
+      "8:teamsvisitor:00000000000000000000000000000c01": {
+        "version": 1,
+        "state": "active",
+        "details": {"displayName": "Guest Example", "participantType": "anonymous"},
+        "endpoints": {
+          "00000000-0000-4000-8000-0000000000e4": {
+            "modalityJoined": "Lobby",
+            "lobby": {"mediaStreams": [{"type": "audio", "label": "main-audio", "sourceId": 501, "direction": "sendrecv", "serverMuted": true}]}
+          }
+        }
+      }
+    }
+  }
+}

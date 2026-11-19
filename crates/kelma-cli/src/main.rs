@@ -31,6 +31,7 @@
 //! kelma-cli settings set <what> ... --dry-run  print the settings write without sending it
 //! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
+//! kelma-cli call <probe|meetings>   native calling checks (see call.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli web <url> [--shim] [--theme T] [--browser P] [--profile D]  open a page in the web host window
 //! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
@@ -47,6 +48,7 @@
 mod accounts;
 mod appearance;
 mod apps;
+mod call;
 mod chatx;
 mod delivery;
 mod devices;
@@ -987,6 +989,12 @@ async fn main() -> Result<()> {
             r?;
         }
         Some("drive") if drive::is_offline(&args[1..]) => drive::offline(&args[1..])?,
+        Some("call") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = call::run(&client, &args).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("drive") => {
             let (client, cfg) = connect(&paths).await?;
             let r = drive::run(&client, &args[1..]).await;

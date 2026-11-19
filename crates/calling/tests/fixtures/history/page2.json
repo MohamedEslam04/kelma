@@ -1,0 +1,91 @@
+{
+  "messages": [
+    {
+      "id": "1794919831003",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831003",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-16T15:30:00.000Z\", \"connectTime\": null, \"endTime\": \"2026-11-16T15:30:25.000Z\", \"callDirection\": \"incoming\", \"callType\": \"twoParty\", \"callState\": \"missed\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000103\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Bob Builder\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000203\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": null, \"participantList\": null, \"threadId\": null, \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831008",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831008",
+      "properties": {
+        "call-log": {
+          "startTime": "2026-11-14T08:00:00.000Z",
+          "connectTime": "2026-11-14T08:00:05.000Z",
+          "endTime": "2026-11-14T08:10:05.000Z",
+          "callDirection": "outgoing",
+          "callType": "twoParty",
+          "callState": "accepted",
+          "userParticipantId": "00000000-0000-0000-0000-000000000108",
+          "originator": "8:orgid:00000000-0000-0000-0000-00000000000a",
+          "target": "8:orgid:00000000-0000-0000-0000-00000000000d",
+          "originatorParticipant": {
+            "id": "8:orgid:00000000-0000-0000-0000-00000000000a",
+            "tenantId": "00000000-0000-0000-0000-0000000000ff",
+            "type": "default",
+            "displayName": "Me Myself",
+            "applicationType": null,
+            "alternateId": null
+          },
+          "targetParticipant": {
+            "id": "8:orgid:00000000-0000-0000-0000-00000000000d",
+            "tenantId": "00000000-0000-0000-0000-0000000000ff",
+            "type": "default",
+            "displayName": null,
+            "applicationType": null,
+            "alternateId": null
+          },
+          "callId": "00000000-0000-0000-0000-000000000208",
+          "callAttributes": null,
+          "forwardingInfo": null,
+          "transferInfo": null,
+          "participants": null,
+          "participantList": null,
+          "threadId": null,
+          "sessionType": "default",
+          "messageId": null
+        },
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831009",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831009",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-13T08:00:00.000Z\", \"connectTime\": \"2026-11-13T08:00:05.000Z\", \"endTime\": \"2026-11-13T08:01:05.000Z\", \"callDirection\": \"incoming\", \"callType\": \"twoParty\", \"callState\": \"accepted\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000109\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Ada Lovelace\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000209\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": null, \"participantList\": null, \"threadId\": null, \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    }
+  ],
+  "_metadata": {}
+}
