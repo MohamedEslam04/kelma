@@ -466,7 +466,7 @@ impl Engine {
                     || url.starts_with("http://")
                     || url.starts_with("mailto:")
                 {
-                    let _ = open::that_detached(&url);
+                    let _ = crate::external::open(&url);
                 }
             }
             Cmd::OpenThread(root) => {

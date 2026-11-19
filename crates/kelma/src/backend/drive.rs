@@ -1201,7 +1201,7 @@ impl Engine {
         }
         match ops::preview_url(&self.client, &ItemRef::from(item)).await {
             Ok(url) if url.starts_with("https://") => {
-                let _ = open::that_detached(&url);
+                let _ = crate::external::open(&url);
                 Ok(())
             }
             _ => {
@@ -1213,7 +1213,7 @@ impl Engine {
 
     fn drive_open_web(&self, item: &DriveItem) {
         if item.web_url.starts_with("https://") {
-            let _ = open::that_detached(&item.web_url);
+            let _ = crate::external::open(&item.web_url);
         } else {
             self.drive_status("This item has no web address");
         }
@@ -1241,7 +1241,7 @@ impl Engine {
         })
         .await??;
         self.drive_status("");
-        let _ = open::that_detached(path);
+        let _ = crate::external::open(path);
         Ok(())
     }
 
@@ -1254,7 +1254,7 @@ impl Engine {
         let mine = self.drive_my_drive_id().await;
         if item.parent_path.is_empty() || mine.as_deref() != Some(item.drive_id.as_str()) {
             if let Some((parent, _)) = item.web_url.rsplit_once('/') {
-                let _ = open::that_detached(parent);
+                let _ = crate::external::open(parent);
             }
             return Ok(());
         }

@@ -859,7 +859,7 @@ impl Engine {
             "open-post" => {
                 let url = c.arg(0);
                 if url.starts_with("https://") {
-                    let _ = open::that_detached(url);
+                    let _ = crate::external::open(url);
                 }
             }
             "community-more" => {

@@ -953,7 +953,7 @@ impl Engine {
         match cmd {
             CalCmd::Join(url) => {
                 if url.starts_with("https://") {
-                    let _ = open::that_detached(&url);
+                    let _ = crate::external::open(&url);
                 }
                 return Ok(());
             }
