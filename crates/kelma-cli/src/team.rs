@@ -921,13 +921,24 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
                 );
             }
         }
+        (Some("storyline-settings"), _) => {
+            // Read only: one Engage GraphQL query, nothing is posted.
+            let st = client.storyline_settings().await?;
+            println!(
+                "storyline: access {}, can post {}, announcements {}, stories {}",
+                st.can_access_storyline,
+                st.can_post,
+                st.can_post_announcement,
+                st.can_access_stories
+            );
+        }
         (Some("storyline"), Some(text)) => {
             // Refused in teams-proto until the Engage GraphQL route is verified (plan T2.9).
             let _ = (text, has(args, "--yes"));
             bail!("storyline posting is disabled: see docs/research/storyline.md");
         }
         _ => bail!(
-            "usage: team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|unarchive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw> …"
+            "usage: team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|unarchive|show|hide|channel|tag|members|community|storyline|storyline-settings|sandbox|probe|raw> …"
         ),
     }
     Ok(())

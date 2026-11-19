@@ -200,6 +200,10 @@ impl Engine {
         if self.lists_silenced(&m.conversation_id) || crate::tray_wiring::notifications_muted() {
             return;
         }
+        // The notification settings from Teams: type switches, pause and previews.
+        let Some(preview) = super::settings::banner_for(m, &self.me) else {
+            return;
+        };
         let title = st
             .conversation(&m.conversation_id)
             .ok()
@@ -215,6 +219,7 @@ impl Engine {
             .chars()
             .take(200)
             .collect();
+        let body = super::settings::banner_body(preview, body);
         tracing::info!(conversation = %m.conversation_id, "desktop notification");
         tokio::task::spawn_blocking(move || {
             let _ = notify_rust::Notification::new()

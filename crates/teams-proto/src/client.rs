@@ -164,6 +164,7 @@ fn api_host(aud: &Audience) -> Option<&'static str> {
     match aud {
         Audience::Flow => Some("api.flow.microsoft.com"),
         Audience::OneNote => Some("www.onenote.com"),
+        Audience::Engage => Some("engage.cloud.microsoft"),
         _ => None,
     }
 }
@@ -696,6 +697,23 @@ mod tests {
         assert!(!audience_owns(
             &Audience::Teams,
             &u("https://templates.teams.microsoft.com/fabric/x")
+        ));
+        // The Engage token goes to the Engage GraphQL host, never to the REST API host.
+        assert!(audience_owns(
+            &Audience::Engage,
+            &u("https://engage.cloud.microsoft/graphql")
+        ));
+        assert!(!audience_owns(
+            &Audience::Engage,
+            &u("https://engage.cloud.microsoft.evil.com/graphql")
+        ));
+        assert!(!audience_owns(
+            &Audience::Engage,
+            &u("https://api.yammer.com/api/v1/messages.json")
+        ));
+        assert!(!audience_owns(
+            &Audience::Yammer,
+            &u("https://engage.cloud.microsoft/graphql")
         ));
         let sp = Audience::sharepoint("contoso-my.sharepoint.com").unwrap();
         assert!(audience_owns(

@@ -100,6 +100,8 @@ export global SettingsStore {
     in-out property <[SOrg]> orgs;
     in-out property <string> accounts-status;
     in-out property <bool> restart-needed: false;
+    // The account label waiting for "Yes, remove the account", "" when none.
+    in-out property <string> confirm-remove: "";
 
     // --- About ---
     in-out property <string> version;

@@ -1,7 +1,6 @@
 //! The event model and the parsers for Graph calendarView and delta JSON.
 
 use serde_json::Value;
-use teams_proto::time::parse_iso_ms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShowAs {
@@ -114,10 +113,11 @@ fn response(s: &str) -> Response {
     }
 }
 
-/// Graph returns `{ "dateTime": "2026-11-18T09:00:00.0000000", "timeZone": "UTC" }`. Requests
-/// carry `Prefer: outlook.timezone="UTC"`, so the value is UTC.
+/// Graph returns `{ "dateTime": "2026-11-18T09:00:00.0000000", "timeZone": "UTC" }`. Reads carry
+/// `Prefer: outlook.timezone="UTC"`, but a `POST /me/events` answer comes back in the zone the
+/// event was sent in (`Africa/Cairo`), so the value is read in its own `timeZone`.
 fn date_time_ms(v: &Value, key: &str) -> Option<i64> {
-    parse_iso_ms(v.get(key)?.get("dateTime")?.as_str()?)
+    crate::tz::date_time_zone_ms(v.get(key)?)
 }
 
 fn parse_attendee(a: &Value) -> Attendee {
@@ -260,6 +260,7 @@ pub fn parse_delta_page(page: &Value) -> DeltaPage {
 mod tests {
     use super::*;
     use serde_json::json;
+    use teams_proto::time::parse_iso_ms;
 
     fn minutes(extra: Value) -> Option<u32> {
         let mut v = json!({"id": "a"});
@@ -267,6 +268,24 @@ mod tests {
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
         parse_events(&json!({ "value": [v] }))[0].reminder_minutes
+    }
+
+    #[test]
+    fn times_are_read_in_their_own_zone() {
+        // A POST /me/events answer carries the zone the event was sent in, not UTC.
+        let e = parse_event(&json!({"id": "a",
+            "start": {"dateTime": "2026-12-29T12:00:00.0000000", "timeZone": "Africa/Cairo"},
+            "end": {"dateTime": "2026-12-29T12:30:00.0000000", "timeZone": "Egypt Standard Time"}}))
+        .unwrap();
+        assert_eq!(e.start_ms, parse_iso_ms("2026-12-29T10:00:00Z").unwrap());
+        assert_eq!(e.end_ms, parse_iso_ms("2026-12-29T10:30:00Z").unwrap());
+        // UTC, or no zone at all, stays as it is.
+        let e = parse_event(&json!({"id": "a",
+            "start": {"dateTime": "2026-12-29T12:00:00.0000000", "timeZone": "UTC"},
+            "end": {"dateTime": "2026-12-29T12:30:00.0000000"}}))
+        .unwrap();
+        assert_eq!(e.start_ms, parse_iso_ms("2026-12-29T12:00:00Z").unwrap());
+        assert_eq!(e.end_ms, parse_iso_ms("2026-12-29T12:30:00Z").unwrap());
     }
 
     #[test]
