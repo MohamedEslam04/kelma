@@ -253,6 +253,28 @@ fn the_attach_answer_carries_the_callers_offer_and_leg() {
 }
 
 #[test]
+fn the_attach_answer_names_the_conversation_controller() {
+    use calling::signaling::bodies::CONVERSATION_CONTROLLER;
+    let a = parse_attach(&json!({
+        "callInvitation": {"links": {"acceptance": "https://a"}},
+        "additionalActionResponses": [
+            {"output": {"conversationController": "https://cc.example/conv/1"}}
+        ],
+    }))
+    .unwrap();
+    assert_eq!(
+        a.links.get(CONVERSATION_CONTROLLER),
+        Some("https://cc.example/conv/1")
+    );
+    let plain = parse_attach(&json!({
+        "callInvitation": {"links": {}},
+        "additionalActionResponses": [{"output": {"conversationController": "http://x.invalid"}}],
+    }))
+    .unwrap();
+    assert_eq!(plain.links.get(CONVERSATION_CONTROLLER), None);
+}
+
+#[test]
 fn an_answer_may_come_inline_with_the_acknowledgement() {
     let body = json!({"callAcceptanceAcknowledgement": {
         "links": {"callLeg": "https://cc.example/leg"},
