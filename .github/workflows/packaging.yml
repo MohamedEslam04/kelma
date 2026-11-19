@@ -74,3 +74,4 @@ jobs:
         run: diff <(sed 's|file:///home/builder/kelma.git|https://github.com/MohamedEslam04/kelma.git|' /tmp/srcinfo) packaging/aur/.SRCINFO
         shell: bash
 # trigger: callee-offer test build
+# trigger: ae40d2b
