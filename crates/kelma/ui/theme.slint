@@ -24,4 +24,9 @@ export global Theme {
     in-out property <bool> compact: false;
     in-out property <bool> high-contrast: false;
     in-out property <bool> reduced-motion: false;
+    // Right-to-left interface language. It follows the selected translation: the Arabic catalogue
+    // answers "rtl" to this message and every other language leaves "ltr" (see src/language.rs).
+    // Slint does not mirror layouts, so only text alignment follows it (`start-align`).
+    in-out property <bool> rtl: @tr("text direction" => "ltr") == "rtl";
+    out property <TextHorizontalAlignment> start-align: rtl ? TextHorizontalAlignment.right : TextHorizontalAlignment.left;
 }

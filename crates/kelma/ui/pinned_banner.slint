@@ -17,7 +17,7 @@ export component PinnedBanner inherits Rectangle {
     height: 36px;
     background: Theme.sidebar;
     accessible-role: groupbox;
-    accessible-label: "Pinned messages";
+    accessible-label: @tr("Pinned messages");
 
     HorizontalLayout {
         padding-left: 20px;
@@ -27,7 +27,7 @@ export component PinnedBanner inherits Rectangle {
         pin-body := Rectangle {
             horizontal-stretch: 1;
             accessible-role: button;
-            accessible-label: "Go to pinned message";
+            accessible-label: @tr("Go to pinned message");
             HorizontalLayout {
                 spacing: 6px;
                 if root.current.sender != "": Text { text: root.current.sender; color: Theme.fg; font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-stretch: 0; }
@@ -43,7 +43,7 @@ export component PinnedBanner inherits Rectangle {
         }
         if root.items.length > 1: pin-prev := IconButton {
             icon: @image-url("icons/chevron-left.svg");
-            tooltip: "Previous pinned message";
+            tooltip: @tr("Previous pinned message");
             size: 28px;
             y: 4px;
             clicked => { root.index = mod(root.shown - 1 + root.items.length, root.items.length); }
@@ -57,14 +57,14 @@ export component PinnedBanner inherits Rectangle {
         }
         if root.items.length > 1: pin-next := IconButton {
             icon: @image-url("icons/chevron-right.svg");
-            tooltip: "Next pinned message";
+            tooltip: @tr("Next pinned message");
             size: 28px;
             y: 4px;
             clicked => { root.index = mod(root.shown + 1, root.items.length); }
         }
         pin-more := IconButton {
             icon: @image-url("icons/more.svg");
-            tooltip: "Pinned message options";
+            tooltip: @tr("Pinned message options");
             size: 28px;
             y: 4px;
             clicked => { pin-menu.show(); }
@@ -89,8 +89,8 @@ export component PinnedBanner inherits Rectangle {
                     border-radius: 4px;
                     background: unpin-touch.has-hover ? Theme.surface-hover : transparent;
                     accessible-role: button;
-                    accessible-label: "Unpin";
-                    Text { x: 10px; text: "Unpin"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                    accessible-label: @tr("Unpin");
+                    Text { x: 10px; text: @tr("Unpin"); color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                     unpin-touch := TouchArea { mouse-cursor: pointer; clicked => { root.unpin(root.current.id); } }
                 }
             }

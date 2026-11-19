@@ -161,9 +161,10 @@ pub async fn open(url: &str, opts: WebOptions) -> Result<WebWindow> {
     // From here on, dropping `win` (also on an error below) stops the browser.
     let win = WebWindow { inner };
     let shim_on = opts.shim.is_some();
+    let granted = shim_cfg_granted(&win.inner);
     tokio::time::timeout(
         opts.startup_timeout,
-        prepare(&win.inner, url, shim_on, opts.title.as_deref()),
+        prepare(&win.inner, url, shim_on, opts.title.as_deref(), granted),
     )
     .await
     .unwrap_or_else(|_| Err(Error::Startup("timed out preparing the page".into())))?;
@@ -171,9 +172,18 @@ pub async fn open(url: &str, opts: WebOptions) -> Result<WebWindow> {
 }
 
 /// Registers the bindings and the injected script, then loads `url`.
-async fn prepare(inner: &Inner, url: &str, shim_on: bool, title: Option<&str>) -> Result<()> {
+async fn prepare(
+    inner: &Inner,
+    url: &str,
+    shim_on: bool,
+    title: Option<&str>,
+    granted: Option<Vec<String>>,
+) -> Result<()> {
     let s = Some(inner.session.as_str());
     inner.cdp.call("Page.enable", json!({}), s).await?;
+    if let Some(granted) = &granted {
+        grant_browser_permissions(inner, granted).await;
+    }
     if shim_on {
         inner
             .cdp
@@ -196,7 +206,7 @@ async fn prepare(inner: &Inner, url: &str, shim_on: bool, title: Option<&str>) -
         .cdp
         .call(
             "Page.addScriptToEvaluateOnNewDocument",
-            json!({ "source": shim::injected_script(shim_on, title) }),
+            json!({ "source": shim::injected_script(shim_on, title, granted.as_deref()) }),
             s,
         )
         .await?;
@@ -208,6 +218,43 @@ async fn prepare(inner: &Inner, url: &str, shim_on: bool, title: Option<&str>) -
     match nav["errorText"].as_str() {
         Some(e) => Err(Error::Startup(format!("could not load the page: {e}"))),
         None => Ok(()),
+    }
+}
+
+/// The app's granted permissions when the window has a shim, else `None` (a plain page).
+fn shim_cfg_granted(inner: &Inner) -> Option<Vec<String>> {
+    let shim = inner.shim.lock().unwrap();
+    shim.as_ref().map(|c| c.granted.clone())
+}
+
+/// Sets the browser's own permissions for the app's origins to exactly the granted set:
+/// `Browser.grantPermissions` grants the listed ones and rejects every other, so the browser
+/// never prompts for what the user did not allow (the injected script refuses the same calls
+/// first). Failing to set them is not fatal: the script still refuses.
+async fn grant_browser_permissions(inner: &Inner, granted: &[String]) {
+    let permissions = shim::browser_permissions(granted);
+    let origins = {
+        let shim = inner.shim.lock().unwrap();
+        shim.as_ref()
+            .map(|c| c.allowed_origins.clone())
+            .unwrap_or_default()
+    };
+    let _ = inner
+        .cdp
+        .call("Browser.resetPermissions", json!({}), None)
+        .await;
+    for origin in origins {
+        let r = inner
+            .cdp
+            .call(
+                "Browser.grantPermissions",
+                json!({ "origin": origin, "permissions": permissions }),
+                None,
+            )
+            .await;
+        if let Err(e) = r {
+            tracing::warn!(%origin, error = %e, "could not set the browser permissions");
+        }
     }
 }
 

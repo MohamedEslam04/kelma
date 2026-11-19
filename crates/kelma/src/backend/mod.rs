@@ -514,6 +514,8 @@ impl Engine {
             Cmd::OpenUrl(url) => {
                 if let Some(media) = url.strip_prefix("kelma-media:") {
                     self.play_media(media).await?;
+                } else if let Some(chip) = url.strip_prefix("kelma-file:") {
+                    self.open_file_chip(chip).await;
                 } else if url.starts_with("https://")
                     || url.starts_with("http://")
                     || url.starts_with("mailto:")

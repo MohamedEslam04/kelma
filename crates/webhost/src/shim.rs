@@ -28,6 +28,87 @@ pub const HOST_SDK_VERSION: &str = "2.59.0";
 
 /// teams-js `ErrorCode.NOT_SUPPORTED_ON_PLATFORM`.
 const NOT_SUPPORTED: i64 = 100;
+/// teams-js `ErrorCode.PERMISSION_REQUIRED`: the user has not granted the app the permission.
+const PERMISSION_REQUIRED: i64 = 1000;
+
+/// A device permission an app can be granted (the manifest's `devicePermissions`, switched per
+/// app in the Store settings). Anything not granted is refused, see [`allows`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Capability {
+    /// Camera and microphone: `getUserMedia`, teams-js `media` and `video`.
+    Media,
+    /// `navigator.geolocation`, teams-js `location`.
+    Geolocation,
+    /// The Notification API, teams-js `notifications`.
+    Notifications,
+    /// Web MIDI.
+    Midi,
+    /// Opening links outside the app: teams-js `app.openLink` / `executeDeepLink`.
+    OpenExternal,
+}
+
+impl Capability {
+    pub const ALL: [Capability; 5] = [
+        Capability::Media,
+        Capability::Geolocation,
+        Capability::Notifications,
+        Capability::Midi,
+        Capability::OpenExternal,
+    ];
+
+    /// The manifest spelling, which is also what [`ShimConfig::granted`] holds.
+    pub fn name(self) -> &'static str {
+        match self {
+            Capability::Media => "media",
+            Capability::Geolocation => "geolocation",
+            Capability::Notifications => "notifications",
+            Capability::Midi => "midi",
+            Capability::OpenExternal => "openExternal",
+        }
+    }
+
+    /// The browser permissions (CDP `PermissionType`) that go with it.
+    fn browser_permissions(self) -> &'static [&'static str] {
+        match self {
+            Capability::Media => &["audioCapture", "videoCapture"],
+            Capability::Geolocation => &["geolocation"],
+            Capability::Notifications => &["notifications"],
+            Capability::Midi => &["midi"],
+            Capability::OpenExternal => &[],
+        }
+    }
+}
+
+/// Whether `granted` (manifest spellings, any case) contains `cap`. Nothing granted means
+/// nothing allowed.
+pub fn allows(granted: &[String], cap: Capability) -> bool {
+    granted.iter().any(|g| g.eq_ignore_ascii_case(cap.name()))
+}
+
+/// The permission a teams-js call needs, or `None` for calls that need none.
+pub fn capability_for_call(func: &str) -> Option<Capability> {
+    let starts = |p: &str| func.starts_with(p);
+    if starts("media.") || starts("video.") || matches!(func, "selectMedia" | "getMedia") {
+        Some(Capability::Media)
+    } else if starts("location.") || matches!(func, "getLocation" | "showLocation") {
+        Some(Capability::Geolocation)
+    } else if starts("notifications.") {
+        Some(Capability::Notifications)
+    } else if matches!(func, "executeDeepLink" | "app.openLink") {
+        Some(Capability::OpenExternal)
+    } else {
+        None
+    }
+}
+
+/// The CDP `Browser.grantPermissions` list for a granted set: only what was granted.
+pub fn browser_permissions(granted: &[String]) -> Vec<&'static str> {
+    Capability::ALL
+        .into_iter()
+        .filter(|c| allows(granted, *c))
+        .flat_map(|c| c.browser_permissions().iter().copied())
+        .collect()
+}
 
 /// What `getContext` reports. Field names follow the teams-js legacy `Context`.
 #[derive(Clone, Debug)]
@@ -81,6 +162,10 @@ pub struct ShimConfig {
     /// The manifest's `validDomains` (`contoso.com`, `*.contoso.com`, `localhost:3000`): other
     /// domains an app resource may name besides the page's own host.
     pub valid_domains: Vec<String>,
+    /// The device permissions the user granted this app, as [`Capability::name`] spellings.
+    /// Empty means none: the shim refuses the matching teams-js calls ([`handle`]) and the
+    /// page's own browser APIs (`shim.js`).
+    pub granted: Vec<String>,
 }
 
 impl ShimConfig {
@@ -94,6 +179,7 @@ impl ShimConfig {
         tab_url: &str,
         sso_resource: Option<String>,
         valid_domains: Vec<String>,
+        granted: Vec<String>,
     ) -> ShimConfig {
         let mut allowed_origins: Vec<String> = origin_of(tab_url).into_iter().collect();
         for d in &valid_domains {
@@ -111,6 +197,7 @@ impl ShimConfig {
             allowed_origins,
             sso_resource,
             valid_domains,
+            granted,
         }
     }
 }
@@ -152,6 +239,8 @@ pub enum AppEvent {
     ExpectedFailure { reason: String, message: String },
     /// `app.openLink` / `executeDeepLink`.
     OpenLink(String),
+    /// A call refused because the user has not granted the app `permission`.
+    PermissionDenied { call: String, permission: String },
     /// A call the shim does not implement (answered with "not supported").
     Unsupported(String),
 }
@@ -197,6 +286,32 @@ pub fn handle(cfg: &ShimConfig, raw: &str, origin: &str) -> Handled {
         event: Some(event),
         ..Handled::default()
     };
+    if let Some(cap) = capability_for_call(func)
+        && !allows(&cfg.granted, cap)
+    {
+        tracing::info!(
+            func,
+            permission = cap.name(),
+            "teams-js call refused: not granted"
+        );
+        let message = format!(
+            "the user has not granted this app the {} permission",
+            cap.name()
+        );
+        // `executeDeepLink` is answered as [success, reason]; the rest as an SDK error.
+        let args = if cap == Capability::OpenExternal {
+            json!([false, message])
+        } else {
+            json!([{ "errorCode": PERMISSION_REQUIRED, "message": message }])
+        };
+        return Handled {
+            event: Some(AppEvent::PermissionDenied {
+                call: func.to_string(),
+                permission: cap.name().to_string(),
+            }),
+            ..reply(args)
+        };
+    }
     match func {
         "initialize" => reply(json!([
             "content",
@@ -509,10 +624,22 @@ pub fn bridge_reply_js(id: u64, result: &Result<Value, String>) -> String {
 }
 
 /// The script injected into every new document.
-pub fn injected_script(shim: bool, title: Option<&str>) -> String {
+///
+/// `granted` is the app's granted permissions: with `Some`, `shim.js` refuses the page's
+/// browser APIs for everything not in it (an empty list refuses them all); with `None` the
+/// page is left alone.
+pub fn injected_script(shim: bool, title: Option<&str>, granted: Option<&[String]>) -> String {
     let mut s = String::new();
     if shim {
         s.push_str("window.__kelmaShim=true;");
+    }
+    if let Some(granted) = granted {
+        let names: Vec<&str> = Capability::ALL
+            .into_iter()
+            .filter(|c| allows(granted, *c))
+            .map(Capability::name)
+            .collect();
+        s.push_str(&format!("window.__kelmaGranted={};", json!(names)));
     }
     if let Some(t) = title {
         s.push_str(&format!("window.__kelmaTitle={};", json!(t)));
@@ -541,6 +668,13 @@ mod tests {
             },
             allowed_origins: vec!["https://app.example.com".into()],
             ..ShimConfig::default()
+        }
+    }
+
+    fn granting(perms: &[&str]) -> ShimConfig {
+        ShimConfig {
+            granted: perms.iter().map(|p| p.to_string()).collect(),
+            ..cfg()
         }
     }
 
@@ -913,20 +1047,32 @@ mod tests {
     #[test]
     fn open_link_is_reported_and_acknowledged() {
         let url = "https://teams.microsoft.com/l/chat/0/0?users=a@b.c";
-        let h = handle(&cfg(), &request(5, "executeDeepLink", json!([url])), ORIGIN);
+        let h = handle(
+            &granting(&["openExternal"]),
+            &request(5, "executeDeepLink", json!([url])),
+            ORIGIN,
+        );
         assert_eq!(h.event, Some(AppEvent::OpenLink(url.into())));
         assert_eq!(h.reply.unwrap()["args"], json!([true]));
     }
 
     #[test]
     fn unknown_calls_get_a_not_supported_sdk_error() {
-        let h = handle(&cfg(), &request(6, "media.captureImage", json!([])), ORIGIN);
+        let h = handle(&cfg(), &request(6, "dialog.url.open", json!([])), ORIGIN);
         let reply = h.reply.unwrap();
         assert_eq!(reply["args"][0]["errorCode"], 100);
         assert_eq!(
             h.event,
-            Some(AppEvent::Unsupported("media.captureImage".into()))
+            Some(AppEvent::Unsupported("dialog.url.open".into()))
         );
+        // A granted permission only lets the call through to the shim: media is still not
+        // implemented, so it is "not supported", not "permission denied".
+        let h = handle(
+            &granting(&["media"]),
+            &request(7, "media.captureImage", json!([])),
+            ORIGIN,
+        );
+        assert_eq!(h.reply.unwrap()["args"][0]["errorCode"], 100);
     }
 
     #[test]
@@ -987,6 +1133,7 @@ mod tests {
                 "evil.com/path".into(),
                 "".into(),
             ],
+            vec![],
         );
         assert_eq!(
             cfg.allowed_origins,
@@ -1040,12 +1187,279 @@ mod tests {
     }
 
     #[test]
+    fn allows_only_what_is_granted_and_ignores_case() {
+        let g = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(!allows(&[], Capability::Media));
+        assert!(allows(&g(&["media"]), Capability::Media));
+        assert!(allows(
+            &g(&["Media", "OPENEXTERNAL"]),
+            Capability::OpenExternal
+        ));
+        assert!(!allows(&g(&["media"]), Capability::Geolocation));
+        assert!(!allows(&g(&["bogus"]), Capability::Notifications));
+    }
+
+    #[test]
+    fn capabilities_use_the_manifest_spelling() {
+        let names: Vec<_> = Capability::ALL.iter().map(|c| c.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "media",
+                "geolocation",
+                "notifications",
+                "midi",
+                "openExternal"
+            ]
+        );
+    }
+
+    #[test]
+    fn teams_js_calls_map_to_the_permission_they_need() {
+        for f in [
+            "media.captureImage",
+            "media.selectMedia",
+            "media.scanBarCode",
+            "video.registerForVideoFrame",
+            "selectMedia",
+        ] {
+            assert_eq!(capability_for_call(f), Some(Capability::Media), "{f}");
+        }
+        for f in ["location.getLocation", "location.showLocation"] {
+            assert_eq!(capability_for_call(f), Some(Capability::Geolocation), "{f}");
+        }
+        assert_eq!(
+            capability_for_call("notifications.showNotification"),
+            Some(Capability::Notifications)
+        );
+        for f in ["executeDeepLink", "app.openLink"] {
+            assert_eq!(
+                capability_for_call(f),
+                Some(Capability::OpenExternal),
+                "{f}"
+            );
+        }
+        for f in [
+            "initialize",
+            "getContext",
+            "authentication.getAuthToken",
+            "mediaX",
+        ] {
+            assert_eq!(capability_for_call(f), None, "{f}");
+        }
+    }
+
+    #[test]
+    fn a_call_without_its_permission_gets_permission_required() {
+        for (func, need) in [
+            ("media.captureImage", "media"),
+            ("location.getLocation", "geolocation"),
+            ("notifications.showNotification", "notifications"),
+        ] {
+            let h = handle(&cfg(), &request(9, func, json!([])), ORIGIN);
+            let reply = h.reply.expect(func);
+            assert_eq!(reply["id"], 9);
+            assert_eq!(reply["uuidAsString"], "uuid-9");
+            assert_eq!(reply["args"][0]["errorCode"], 1000, "{func}");
+            assert!(
+                reply["args"][0]["message"].as_str().unwrap().contains(need),
+                "{func}"
+            );
+            assert_eq!(
+                h.event,
+                Some(AppEvent::PermissionDenied {
+                    call: func.into(),
+                    permission: need.into()
+                })
+            );
+        }
+        // Another permission does not help.
+        let h = handle(
+            &granting(&["geolocation"]),
+            &request(9, "media.captureImage", json!([])),
+            ORIGIN,
+        );
+        assert_eq!(h.reply.unwrap()["args"][0]["errorCode"], 1000);
+    }
+
+    #[test]
+    fn open_link_without_open_external_is_refused_and_never_reported() {
+        let url = "https://evil.example.net/phish";
+        let h = handle(&cfg(), &request(5, "executeDeepLink", json!([url])), ORIGIN);
+        // `executeDeepLink` is answered as [success, reason]: teams-js rejects with the reason.
+        let args = h.reply.unwrap()["args"].clone();
+        assert_eq!(args[0], false);
+        assert!(args[1].as_str().unwrap().contains("openExternal"));
+        assert_eq!(
+            h.event,
+            Some(AppEvent::PermissionDenied {
+                call: "executeDeepLink".into(),
+                permission: "openExternal".into()
+            }),
+            "a refused link must not reach the UI as OpenLink"
+        );
+    }
+
+    #[test]
+    fn browser_permissions_for_cdp_cover_the_granted_set_only() {
+        let g = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(browser_permissions(&[]).is_empty());
+        assert_eq!(
+            browser_permissions(&g(&["media"])),
+            ["audioCapture", "videoCapture"]
+        );
+        assert_eq!(
+            browser_permissions(&g(&["geolocation", "notifications", "midi"])),
+            ["geolocation", "notifications", "midi"]
+        );
+        // Opening links is not a browser permission.
+        assert!(browser_permissions(&g(&["openExternal"])).is_empty());
+        assert!(browser_permissions(&g(&["bogus"])).is_empty());
+    }
+
+    #[test]
+    fn for_app_carries_the_granted_permissions() {
+        let c = ShimConfig::for_app(
+            HostContext::default(),
+            "https://app.example.com/t",
+            None,
+            vec![],
+            vec!["media".into()],
+        );
+        assert_eq!(c.granted, ["media"]);
+    }
+
+    #[test]
+    fn injected_script_hands_the_page_the_granted_list() {
+        let g = ["media".to_string(), "Geolocation".into(), "bogus".into()];
+        let s = injected_script(true, None, Some(&g));
+        // Canonical names only, set before the shim runs.
+        assert!(s.starts_with(
+            r#"window.__kelmaShim=true;window.__kelmaGranted=["media","geolocation"];"#
+        ));
+        let none = injected_script(true, None, Some(&[]));
+        assert!(none.contains("window.__kelmaGranted=[];"));
+        // No list, no enforcement (a plain page).
+        assert!(!injected_script(false, None, None).contains("__kelmaGranted="));
+    }
+
+    /// Runs the shim in node against a stub browser and returns what the script printed.
+    /// `None` when node is not installed (the test is then skipped).
+    fn run_shim_in_node(granted: &[&str], body: &str) -> Option<String> {
+        let list: Vec<String> = granted.iter().map(|s| s.to_string()).collect();
+        let script = format!(
+            r#"
+            globalThis.window = globalThis;
+            window.top = window;
+            window.__kelmaTeams = function () {{}};
+            window.__kelmaBridge = function () {{}};
+            const calls = [];
+            const media = {{
+              getUserMedia: () => {{ calls.push("getUserMedia"); return Promise.resolve("stream"); }},
+              getDisplayMedia: () => {{ calls.push("getDisplayMedia"); return Promise.resolve("screen"); }},
+            }};
+            const geo = {{
+              getCurrentPosition: (ok) => {{ calls.push("geo"); ok({{coords: 1}}); }},
+              watchPosition: (ok) => {{ calls.push("watch"); ok({{coords: 1}}); return 7; }},
+            }};
+            Object.defineProperty(globalThis, "navigator", {{ configurable: true, value: {{
+              mediaDevices: media, geolocation: geo,
+              requestMIDIAccess: () => {{ calls.push("midi"); return Promise.resolve("midi"); }},
+              getUserMedia: () => calls.push("legacy"),
+            }} }});
+            window.Notification = function () {{ calls.push("Notification"); }};
+            Notification.permission = "default";
+            Notification.requestPermission = () => Promise.resolve("granted");
+            window.document = {{ addEventListener() {{}} }};
+            {}
+            (async () => {{ {} }})().then(() => console.log("done"));
+            "#,
+            injected_script(true, None, Some(&list)),
+            body
+        );
+        let dir = tempfile::tempdir().ok()?;
+        let path = dir.path().join("shim-test.js");
+        std::fs::write(&path, script).ok()?;
+        let out = std::process::Command::new("node")
+            .arg(&path)
+            .output()
+            .ok()?;
+        assert!(
+            out.status.success(),
+            "node failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    #[test]
+    fn page_apis_refuse_what_was_not_granted() {
+        let body = r#"
+            const out = [];
+            const name = async (p) => { try { await p; return "ok"; } catch (e) { return e.name; } };
+            out.push(await name(navigator.mediaDevices.getUserMedia({audio: true})));
+            out.push(await name(navigator.mediaDevices.getDisplayMedia()));
+            out.push(await new Promise((r) => navigator.geolocation.getCurrentPosition(
+              () => r("ok"), (e) => r("code" + e.code))));
+            out.push(await new Promise((r) => { navigator.geolocation.watchPosition(
+              () => r("ok"), (e) => r("code" + e.code)); }));
+            out.push(Notification.permission);
+            out.push(await Notification.requestPermission());
+            out.push(await name(navigator.requestMIDIAccess()));
+            out.push(calls.length === 0 ? "nothing-reached-the-browser" : calls.join(","));
+            console.log(out.join(" "));
+        "#;
+        let Some(out) = run_shim_in_node(&[], body) else {
+            eprintln!("node not found: skipping");
+            return;
+        };
+        assert_eq!(
+            out,
+            "NotAllowedError NotAllowedError code1 code1 denied denied SecurityError nothing-reached-the-browser\ndone"
+        );
+    }
+
+    #[test]
+    fn page_apis_work_for_what_was_granted() {
+        let body = r#"
+            const out = [];
+            out.push(await navigator.mediaDevices.getUserMedia({audio: true}));
+            out.push(await navigator.mediaDevices.getDisplayMedia());
+            out.push(await new Promise((r) => navigator.geolocation.getCurrentPosition(() => r("ok"), () => r("denied"))));
+            out.push(Notification.permission);
+            out.push(await Notification.requestPermission());
+            out.push(await navigator.requestMIDIAccess());
+            console.log(out.join(" "));
+        "#;
+        let Some(out) = run_shim_in_node(&["media", "geolocation", "notifications", "midi"], body)
+        else {
+            eprintln!("node not found: skipping");
+            return;
+        };
+        assert_eq!(out, "stream screen ok default granted midi\ndone");
+    }
+
+    #[test]
+    fn page_apis_are_granted_one_permission_at_a_time() {
+        let body = r#"
+            const name = async (p) => { try { await p; return "ok"; } catch (e) { return e.name; } };
+            console.log(await name(navigator.mediaDevices.getUserMedia({video: true})),
+              await new Promise((r) => navigator.geolocation.getCurrentPosition(() => r("ok"), () => r("denied"))));
+        "#;
+        let Some(out) = run_shim_in_node(&["geolocation"], body) else {
+            eprintln!("node not found: skipping");
+            return;
+        };
+        assert_eq!(out, "NotAllowedError ok\ndone");
+    }
+
+    #[test]
     fn injected_script_enables_the_shim_and_title_only_when_asked() {
-        let with = injected_script(true, Some("Polly \"app\""));
+        let with = injected_script(true, Some("Polly \"app\""), None);
         assert!(with.starts_with("window.__kelmaShim=true;"));
         assert!(with.contains(r#"window.__kelmaTitle="Polly \"app\"";"#));
         assert!(with.contains(SHIM_JS));
-        let without = injected_script(false, None);
+        let without = injected_script(false, None, None);
         assert!(!without.contains("__kelmaShim=true"));
         assert!(!without.contains("__kelmaTitle="));
         assert!(without.contains(SHIM_JS));

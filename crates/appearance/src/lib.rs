@@ -10,6 +10,7 @@
 pub mod accessibility;
 pub mod formats;
 pub mod general;
+pub mod language;
 pub mod portal;
 pub mod prefs;
 pub mod resolve;

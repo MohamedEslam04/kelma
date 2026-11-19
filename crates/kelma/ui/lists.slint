@@ -67,6 +67,7 @@ component MenuRow inherits Rectangle {
             color: root.danger ? Theme.danger : (root.dim ? Theme.fg-subtle : Theme.fg);
             font-size: 13px * Theme.font-scale;
             vertical-alignment: center;
+            horizontal-alignment: Theme.start-align;
             horizontal-stretch: 1;
             accessible-role: none;
         }
@@ -80,9 +81,9 @@ component MenuRow inherits Rectangle {
 component NotifyChoices inherits VerticalLayout {
     in property <string> channel;
     callback done();
-    MenuRow { label: "All activity"; checked: ListStore.channel-level == "all"; clicked => { ListStore.command("channel-notify", root.channel + "\u{9}all"); root.done(); } }
-    MenuRow { label: "Only show in the feed"; checked: ListStore.channel-level == "feed"; clicked => { ListStore.command("channel-notify", root.channel + "\u{9}feed"); root.done(); } }
-    MenuRow { label: "Off"; checked: ListStore.channel-level == "off"; clicked => { ListStore.command("channel-notify", root.channel + "\u{9}off"); root.done(); } }
+    MenuRow { label: @tr("All activity"); checked: ListStore.channel-level == "all"; clicked => { ListStore.command("channel-notify", root.channel + "\u{9}all"); root.done(); } }
+    MenuRow { label: @tr("Only show in the feed"); checked: ListStore.channel-level == "feed"; clicked => { ListStore.command("channel-notify", root.channel + "\u{9}feed"); root.done(); } }
+    MenuRow { label: @tr("Off"); checked: ListStore.channel-level == "off"; clicked => { ListStore.command("channel-notify", root.channel + "\u{9}off"); root.done(); } }
 }
 
 // Contents of the right-click menu of a chat or channel in the list (plan 8.2 and 8.5).
@@ -106,31 +107,31 @@ export component ItemMenu inherits Rectangle {
     VerticalLayout {
         padding: 4px;
         if root.view == "main": VerticalLayout {
-            MenuRow { label: "Mark as unread"; clicked => { root.mark-unread(); root.done(); } }
-            MenuRow { label: "Move to section"; chevron: true; clicked => { root.view = "sections"; } }
-            if root.in-section: MenuRow { label: "Remove from section"; clicked => { ListStore.command("remove-section", root.data.id); root.done(); } }
+            MenuRow { label: @tr("Mark as unread"); clicked => { root.mark-unread(); root.done(); } }
+            MenuRow { label: @tr("Move to section"); chevron: true; clicked => { root.view = "sections"; } }
+            if root.in-section: MenuRow { label: @tr("Remove from section"); clicked => { ListStore.command("remove-section", root.data.id); root.done(); } }
             if !root.data.channel: MenuRow {
-                label: root.data.muted ? "Unmute" : "Mute";
+                label: root.data.muted ? @tr("Unmute") : @tr("Mute");
                 clicked => { ListStore.command(root.data.muted ? "unmute" : "mute", root.data.id); root.done(); }
             }
-            if root.data.channel: MenuRow { label: "Manage notifications"; chevron: true; clicked => { root.view = "notify"; } }
-            MenuRow { label: "Copy link"; clicked => { ListStore.command(root.data.channel ? "channel-link" : "copy-link", root.data.id); root.done(); } }
-            if root.data.group: MenuRow { label: "Leave"; clicked => { root.leave(); root.done(); } }
-            if root.data.channel: MenuRow { label: "Go to team"; clicked => { ListStore.command("channel-team", root.data.id); root.done(); } }
-            if root.data.channel && ListStore.channel-private: MenuRow { label: "Leave channel"; danger: true; clicked => { ListStore.dialog-target = root.data.id; ListStore.dialog = "leave-channel"; root.done(); } }
+            if root.data.channel: MenuRow { label: @tr("Manage notifications"); chevron: true; clicked => { root.view = "notify"; } }
+            MenuRow { label: @tr("Copy link"); clicked => { ListStore.command(root.data.channel ? "channel-link" : "copy-link", root.data.id); root.done(); } }
+            if root.data.group: MenuRow { label: @tr("Leave"); clicked => { root.leave(); root.done(); } }
+            if root.data.channel: MenuRow { label: @tr("Go to team"); clicked => { ListStore.command("channel-team", root.data.id); root.done(); } }
+            if root.data.channel && ListStore.channel-private: MenuRow { label: @tr("Leave channel"); danger: true; clicked => { ListStore.dialog-target = root.data.id; ListStore.dialog = "leave-channel"; root.done(); } }
             MenuRow {
-                label: root.data.channel ? "Hide channel" : "Hide";
+                label: root.data.channel ? @tr("Hide channel") : @tr("Hide");
                 clicked => { ListStore.command(root.data.channel ? "channel-hide" : "hide", root.data.id); root.done(); }
             }
         }
         if root.view == "sections": VerticalLayout {
-            MenuRow { label: "‹ Move to section"; dim: true; clicked => { root.view = "main"; } }
+            MenuRow { label: @tr("‹ Move to section"); dim: true; clicked => { root.view = "main"; } }
             for c in ListStore.choices: MenuRow {
                 label: c.name;
                 clicked => { ListStore.command("move", root.data.id + "\u{9}" + c.id); root.done(); }
             }
             MenuRow {
-                label: "New section";
+                label: @tr("New section");
                 clicked => {
                     ListStore.dialog-target = root.data.id;
                     ListStore.dialog-text = "";
@@ -140,7 +141,7 @@ export component ItemMenu inherits Rectangle {
             }
         }
         if root.view == "notify": VerticalLayout {
-            MenuRow { label: "‹ Manage notifications"; dim: true; clicked => { root.view = "main"; } }
+            MenuRow { label: @tr("‹ Manage notifications"); dim: true; clicked => { root.view = "main"; } }
             NotifyChoices { channel: root.data.id; done => { root.done(); } }
         }
     }
@@ -159,17 +160,17 @@ export component ChannelMenu inherits Rectangle {
     VerticalLayout {
         padding: 4px;
         if root.view == "main": VerticalLayout {
-            MenuRow { label: "Manage notifications"; chevron: true; clicked => { root.view = "notify"; } }
+            MenuRow { label: @tr("Manage notifications"); chevron: true; clicked => { root.view = "notify"; } }
             MenuRow {
-                label: ListStore.channel-hidden ? "Show channel" : "Hide channel";
+                label: ListStore.channel-hidden ? @tr("Show channel") : @tr("Hide channel");
                 clicked => { ListStore.command(ListStore.channel-hidden ? "channel-show" : "channel-hide", root.channel); root.done(); }
             }
-            MenuRow { label: "Copy link"; clicked => { ListStore.command("channel-link", root.channel); root.done(); } }
-            MenuRow { label: "Go to team"; clicked => { ListStore.command("channel-team", root.channel); root.done(); } }
-            if ListStore.channel-private: MenuRow { label: "Leave channel"; danger: true; clicked => { ListStore.dialog-target = root.channel; ListStore.dialog = "leave-channel"; root.done(); } }
+            MenuRow { label: @tr("Copy link"); clicked => { ListStore.command("channel-link", root.channel); root.done(); } }
+            MenuRow { label: @tr("Go to team"); clicked => { ListStore.command("channel-team", root.channel); root.done(); } }
+            if ListStore.channel-private: MenuRow { label: @tr("Leave channel"); danger: true; clicked => { ListStore.dialog-target = root.channel; ListStore.dialog = "leave-channel"; root.done(); } }
         }
         if root.view == "notify": VerticalLayout {
-            MenuRow { label: "‹ Manage notifications"; dim: true; clicked => { root.view = "main"; } }
+            MenuRow { label: @tr("‹ Manage notifications"); dim: true; clicked => { root.view = "main"; } }
             NotifyChoices { channel: root.channel; done => { root.done(); } }
         }
     }
@@ -183,7 +184,7 @@ export component SectionHead inherits Rectangle {
     height: 30px;
     background: head-touch.has-hover ? Theme.surface-hover : transparent;
     accessible-role: button;
-    accessible-label: root.section.name + (root.section.expanded ? ", expanded" : ", collapsed");
+    accessible-label: root.section.name + (root.section.expanded ? @tr(", expanded") : @tr(", collapsed"));
     accessible-expandable: true;
     accessible-expanded: root.section.expanded;
     accessible-action-default => { root.toggle(); }
@@ -200,7 +201,7 @@ export component SectionHead inherits Rectangle {
             border-radius: 4px;
             background: Theme.accent;
             accessible-role: text;
-            accessible-label: root.section.unread + " unread";
+            accessible-label: @tr("{} unread", root.section.unread);
         }
     }
     head-touch := TouchArea {
@@ -225,14 +226,14 @@ export component SectionHead inherits Rectangle {
             VerticalLayout {
                 padding: 4px;
                 MenuRow {
-                    label: "Rename section";
+                    label: @tr("Rename section");
                     clicked => {
                         ListStore.dialog-target = root.section.id;
                         ListStore.dialog-text = root.section.name;
                         ListStore.dialog = "rename-section";
                     }
                 }
-                MenuRow { label: "Delete section"; danger: true; clicked => { ListStore.command("delete-section", root.section.id); } }
+                MenuRow { label: @tr("Delete section"); danger: true; clicked => { ListStore.command("delete-section", root.section.id); } }
             }
         }
     }
@@ -251,11 +252,11 @@ export component SectionDialog inherits Rectangle {
     drop-shadow-blur: 16px;
     drop-shadow-color: #000000a0;
     accessible-role: groupbox;
-    accessible-label: ListStore.dialog == "rename-section" ? "Rename section" : "New section";
+    accessible-label: ListStore.dialog == "rename-section" ? @tr("Rename section") : @tr("New section");
     VerticalLayout {
         padding: 16px;
         spacing: 12px;
-        Text { text: ListStore.dialog == "rename-section" ? "Rename section" : "New section"; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; }
+        Text { text: ListStore.dialog == "rename-section" ? @tr("Rename section") : @tr("New section"); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; }
         Rectangle {
             height: 34px;
             border-radius: 4px;
@@ -277,11 +278,11 @@ export component SectionDialog inherits Rectangle {
                     single-line: true;
                     vertical-alignment: center;
                     accessible-role: text-input;
-                    accessible-label: "Section name";
+                    accessible-label: @tr("Section name");
                     init => { self.focus(); self.select-all(); }
                 }
             }
-            if ListStore.dialog-text == "": Text { x: 10px; text: "Section name"; color: Theme.fg-subtle; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
+            if ListStore.dialog-text == "": Text { x: 10px; text: @tr("Section name"); color: Theme.fg-subtle; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
         }
         HorizontalLayout {
             spacing: 8px;
@@ -294,8 +295,8 @@ export component SectionDialog inherits Rectangle {
                 border-width: 1px;
                 border-color: Theme.border;
                 accessible-role: button;
-                accessible-label: "Cancel";
-                Text { text: "Cancel"; color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                accessible-label: @tr("Cancel");
+                Text { text: @tr("Cancel"); color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                 cancel-touch := TouchArea { mouse-cursor: pointer; clicked => { root.cancel(); } }
             }
             Rectangle {
@@ -304,9 +305,9 @@ export component SectionDialog inherits Rectangle {
                 border-radius: 4px;
                 background: ListStore.dialog-text == "" ? #3b3d6b : (ok-touch.has-hover ? Theme.accent : Theme.accent-strong);
                 accessible-role: button;
-                accessible-label: ListStore.dialog == "rename-section" ? "Rename" : "Create";
+                accessible-label: ListStore.dialog == "rename-section" ? @tr("Rename") : @tr("Create");
                 accessible-enabled: ListStore.dialog-text != "";
-                Text { text: ListStore.dialog == "rename-section" ? "Rename" : "Create"; color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: ListStore.dialog == "rename-section" ? @tr("Rename") : @tr("Create"); color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                 ok-touch := TouchArea { enabled: ListStore.dialog-text != ""; mouse-cursor: pointer; clicked => { root.confirm(ListStore.dialog-text); } }
             }
         }
@@ -326,12 +327,12 @@ export component LeaveChannelDialog inherits Rectangle {
     drop-shadow-blur: 16px;
     drop-shadow-color: #000000a0;
     accessible-role: groupbox;
-    accessible-label: "Leave this channel?";
+    accessible-label: @tr("Leave this channel?");
     VerticalLayout {
         padding: 16px;
         spacing: 10px;
-        Text { text: "Leave this channel?"; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; }
-        Text { text: "You will lose access to its posts and files until someone adds you again."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
+        Text { text: @tr("Leave this channel?"); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; }
+        Text { text: @tr("You will lose access to its posts and files until someone adds you again."); color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 8px;
             alignment: end;
@@ -343,8 +344,8 @@ export component LeaveChannelDialog inherits Rectangle {
                 border-color: Theme.border;
                 background: no-touch.has-hover ? Theme.surface-hover : transparent;
                 accessible-role: button;
-                accessible-label: "Cancel";
-                Text { text: "Cancel"; color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                accessible-label: @tr("Cancel");
+                Text { text: @tr("Cancel"); color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                 no-touch := TouchArea { mouse-cursor: pointer; clicked => { root.cancel(); } }
             }
             Rectangle {
@@ -353,8 +354,8 @@ export component LeaveChannelDialog inherits Rectangle {
                 border-radius: 4px;
                 background: yes-touch.has-hover ? #e0545a : Theme.danger;
                 accessible-role: button;
-                accessible-label: "Leave";
-                Text { text: "Leave"; color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                accessible-label: @tr("Leave");
+                Text { text: @tr("Leave"); color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                 yes-touch := TouchArea { mouse-cursor: pointer; clicked => { root.confirm(); } }
             }
         }

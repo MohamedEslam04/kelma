@@ -165,6 +165,12 @@ fn store(app: &AppWindow) -> SettingsStore<'_> {
 
 /// The one element with this label that is not plain text (a control and its caption share it).
 fn control(app: &AppWindow, label: &str) -> ElementHandle {
+    // Let pending property changes reach the item tree first: an element behind an `if` (the
+    // "Restart needed" section) is only created when the tree is next updated, which on a slower
+    // machine (CI) has not happened yet right after the click that turned the condition on.
+    for _ in 0..3 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
     let v: Vec<ElementHandle> = ElementHandle::find_by_accessible_label(app, label)
         .filter(|e| e.accessible_role() != Some(AccessibleRole::Text))
         .collect();

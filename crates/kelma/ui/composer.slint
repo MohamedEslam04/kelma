@@ -207,7 +207,7 @@ export component Composer inherits Rectangle {
                         spacing: 8px;
                         Rectangle { width: 3px; background: Theme.accent; }
                         VerticalLayout {
-                            Text { text: root.editing-id != "" ? "Editing message" : "Replying to " + root.reply-author; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                            Text { text: root.editing-id != "" ? @tr("Editing message") : @tr("Replying to {}", root.reply-author); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                             Text { text: root.reply-preview; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
                         }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; clicked => { root.cancel-reply(); } }
@@ -268,10 +268,10 @@ export component Composer inherits Rectangle {
                         border-width: 1px;
                         border-color: Theme.danger;
                         accessible-role: groupbox;
-                        accessible-label: "Important message";
+                        accessible-label: @tr("Important message");
                         important-text := Text {
                             x: 10px;
-                            text: "IMPORTANT!";
+                            text: @tr("IMPORTANT!");
                             color: #ff7e83;
                             font-size: 11px;
                             font-weight: 800;
@@ -285,7 +285,7 @@ export component Composer inherits Rectangle {
                             border-radius: 9px;
                             background: important-x.has-hover ? #6b2f33 : transparent;
                             accessible-role: button;
-                            accessible-label: "Remove important";
+                            accessible-label: @tr("Remove important");
                             Text { text: "✕"; color: #ff7e83; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
                             important-x := TouchArea { mouse-cursor: pointer; clicked => { root.important = false; } }
                         }
@@ -386,6 +386,7 @@ export component Composer inherits Rectangle {
                             color: Theme.fg;
                             font-size: 14px * Theme.font-scale;
                             single-line: false;
+                            horizontal-alignment: Theme.start-align;
                             wrap: word-wrap;
                             edited => {
                                 root.typing-tick();
@@ -396,7 +397,9 @@ export component Composer inherits Rectangle {
                     if composer-input.text == "": Text {
                         x: 14px;
                         y: 10px;
-                        text: root.current-is-channel && root.thread-root == "" ? "Start a post" : "Type a message";
+                        width: parent.width - 28px;
+                        horizontal-alignment: Theme.start-align;
+                        text: root.current-is-channel && root.thread-root == "" ? @tr("Start a post") : @tr("Type a message");
                         color: Theme.fg-subtle;
                     }
                 }
@@ -501,7 +504,7 @@ export component Composer inherits Rectangle {
                     }
                     if root.emoji-query == "": Text {
                         x: 10px;
-                        text: "Find something fun";
+                        text: @tr("Find something fun");
                         color: Theme.fg-subtle;
                         font-size: 13px * Theme.font-scale;
                         vertical-alignment: center;
@@ -529,7 +532,7 @@ export component Composer inherits Rectangle {
                 if root.emoji-query == "" && root.recent-emoji.length > 0: VerticalLayout {
                     vertical-stretch: 0;
                     alignment: start;
-                    Text { text: "Recent"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                    Text { text: @tr("Recent"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                     EmojiGrid {
                         items: root.recent-emoji;
                         picked(ch) => { root.pick-emoji(ch); emoji-popup.close(); }
@@ -548,7 +551,7 @@ export component Composer inherits Rectangle {
                 HorizontalLayout {
                     height: 32px;
                     spacing: 2px;
-                    Text { text: "Skin tone"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; vertical-alignment: center; width: 70px; }
+                    Text { text: @tr("Skin tone"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; vertical-alignment: center; width: 70px; }
                     for tone-glyph[i] in ["👍", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿"]: Rectangle {
                         width: 36px;
                         border-radius: 4px;
@@ -580,8 +583,8 @@ export component Composer inherits Rectangle {
             VerticalLayout {
                 padding: 8px;
                 spacing: 2px;
-                Text { text: "When writing a message, press Enter to"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; wrap: word-wrap; }
-                for opt[i] in ["Send the message", "Start a new line"]: Rectangle {
+                Text { text: @tr("When writing a message, press Enter to"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; wrap: word-wrap; }
+                for opt[i] in [@tr("Send the message"), @tr("Start a new line")]: Rectangle {
                     height: 32px;
                     border-radius: 4px;
                     background: enter-opt.has-hover ? Theme.surface-hover : transparent;
@@ -605,14 +608,14 @@ export component Composer inherits Rectangle {
                     border-radius: 4px;
                     background: receipts-touch.has-hover ? Theme.surface-hover : transparent;
                     accessible-role: checkbox;
-                    accessible-label: "Read receipts";
+                    accessible-label: @tr("Read receipts");
                     accessible-checkable: true;
                     accessible-checked: PeopleStore.receipts-on;
                     HorizontalLayout {
                         padding-left: 8px;
                         spacing: 8px;
                         Text { text: PeopleStore.receipts-on ? "☑" : "☐"; color: Theme.accent; vertical-alignment: center; }
-                        Text { text: "Read receipts"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                        Text { text: @tr("Read receipts"); color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                     }
                     receipts-touch := TouchArea {
                         mouse-cursor: pointer;
@@ -625,12 +628,12 @@ export component Composer inherits Rectangle {
                     border-radius: 4px;
                     background: cloud-touch.has-hover ? Theme.surface-hover : transparent;
                     accessible-role: button;
-                    accessible-label: "Attach cloud files";
+                    accessible-label: @tr("Attach cloud files");
                     HorizontalLayout {
                         padding-left: 8px;
                         spacing: 8px;
                         Icon { source: @image-url("icons/cloud.svg"); width: 16px; height: 16px; y: 8px; tint: Theme.accent; }
-                        Text { text: "Attach cloud files"; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; accessible-role: none; }
+                        Text { text: @tr("Attach cloud files"); color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; accessible-role: none; }
                     }
                     cloud-touch := TouchArea {
                         mouse-cursor: pointer;

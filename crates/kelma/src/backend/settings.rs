@@ -173,6 +173,25 @@ impl Local {
             &self.grants.to_json(),
         )?)
     }
+
+    /// Changes one grant and saves. Reads `app-grants.json` again first, so a switch the Store
+    /// saved since Settings loaded the file is kept (both write the whole file).
+    pub fn set_grant(
+        &mut self,
+        app_id: &str,
+        p: DevicePermission,
+        allowed: bool,
+    ) -> anyhow::Result<()> {
+        let path = self.dir.join(PERMISSIONS_FILE);
+        if path.exists() {
+            let v: serde_json::Value = read_json(&path);
+            if !v.is_null() {
+                self.grants = Grants::from_json(&v);
+            }
+        }
+        self.grants.set(app_id, p, allowed);
+        self.save_grants()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1763,6 +1782,23 @@ mod tests {
         assert!(!g.allowed("app-2", DevicePermission::Media));
         // And back into Settings.
         assert_eq!(Local::load(&dir).grants, l.grants);
+    }
+
+    #[test]
+    fn a_grant_change_keeps_what_the_store_saved_since_settings_loaded() {
+        let dir = tempfile_dir("grant-rmw");
+        let mut l = Local::load(&dir);
+        // The Store grants another app after Settings read the (empty) file.
+        let mut store = Grants::default();
+        store.set("store-app", DevicePermission::Media, true);
+        write_json(&dir.join(PERMISSIONS_FILE), &store.to_json()).unwrap();
+        l.set_grant("settings-app", DevicePermission::Geolocation, true)
+            .unwrap();
+        let text = std::fs::read_to_string(dir.join(PERMISSIONS_FILE)).unwrap();
+        let saved = Grants::from_json(&serde_json::from_str(&text).unwrap());
+        assert_eq!(saved.to_json(), l.grants.to_json());
+        assert!(saved.allowed("store-app", DevicePermission::Media));
+        assert!(saved.allowed("settings-app", DevicePermission::Geolocation));
     }
 
     #[test]
