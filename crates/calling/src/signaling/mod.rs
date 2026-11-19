@@ -674,7 +674,8 @@ impl NgcClient {
         mri: &str,
         display_name: &str,
     ) -> Result<()> {
-        let (url, body) = call_ops::add_participant_request(s, links, controller, mri, display_name);
+        let (url, body) =
+            call_ops::add_participant_request(s, links, controller, mri, display_name);
         self.post("add_participant", s, &url, &body).await.map(drop)
     }
 

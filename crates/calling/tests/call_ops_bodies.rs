@@ -2,13 +2,13 @@
 //! `mediaRenegotiation`), and blind transfer (`transfer`), as pure request builders (offline,
 //! synthetic values only).
 
+use calling::Links;
 use calling::signaling::bodies::{negotiation_body, parse_attach, renegotiation_body};
 use calling::signaling::call_ops::{
-    add_participant_body, add_participant_request, hold_offer, keep_media_running,
-    parse_transfer_completion, transfer_body, transfer_request, TransferOutcome,
+    TransferOutcome, add_participant_body, add_participant_request, hold_offer, keep_media_running,
+    parse_transfer_completion, transfer_body, transfer_request,
 };
 use calling::signaling::{CallSession, CallbackLinks, LocalEndpoint};
-use calling::Links;
 use calling::{Modality, SdpBlob};
 use serde_json::json;
 
@@ -169,8 +169,7 @@ fn a_same_peer_offer_is_not_a_new_offer() {
     assert_eq!(n["mediaContent"]["requiredFeatures"], "nonByPass");
     // The offer for a ring without one stays a new offer.
     assert_eq!(
-        negotiation_body(&s, &[Modality::Audio], &offer)["mediaNegotiation"]["mediaContent"]
-            ["newOffer"],
+        negotiation_body(&s, &[Modality::Audio], &offer)["mediaNegotiation"]["mediaContent"]["newOffer"],
         true
     );
 }
