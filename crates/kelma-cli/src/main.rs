@@ -37,6 +37,7 @@
 
 mod accounts;
 mod apps;
+mod chatx;
 mod drive;
 mod store;
 mod team;
@@ -903,6 +904,18 @@ async fn main() -> Result<()> {
             }
             r?;
         }
+        Some("translate") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = chatx::translate(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("preview") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = chatx::preview(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("store") => {
             let (client, cfg) = connect(&paths).await?;
             let r = store::run(&client, &args[1..]).await;
@@ -1052,6 +1065,8 @@ async fn main() -> Result<()> {
                    onenote [<notebook> [<section> [<page>]]]\n\
                    lists [<site> [<list>]]\n\
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
+                   translate <languages|settings|message|channel>\n\
+                   preview <url> [--image]\n\
                    store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>\n\
                    tail"
             );
