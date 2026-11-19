@@ -543,7 +543,7 @@ already see.
 ### Channel posts (8.4)
 | Call | Notes | Live |
 |---|---|---|
-| Announcement | `POST …/conversations/<channel>/messages` with `properties.title` = the headline, `properties.cards` = a JSON **string** of `[{contentType:"application/vnd.microsoft.teams.messaging-announcementBanner", content:{imageData:{colorTheme}}}]` and `properties.subject`. The shape is read off the web client (`announcement {title, croppedImageUrl, colorTheme, …}` and the `messaging-announcementBanner` card) | ✅ stored and read back with all three properties. How Teams draws the banner was not seen |
+| Announcement | `POST …/conversations/<channel>/messages` through `delivery::Delivery::Announcement` (`send_message_delivery`): `properties.title` = the headline, `properties.cards` = a JSON **string** of one card `{appId:"announcement-card", cardClientId, contentType:"application/vnd.microsoft.teams.messaging-announcementBanner", content:{colorTheme:"<0..11>"}}`, and `properties.subject`. kelma offers five colors (theme 0, 1, 2, 3 and 5). The theme palette of Teams was not captured, so the banner is drawn in an approximate color | ✅ stored and read back with title, theme and subject, parsed by `delivery::parse_announcement`. How Teams draws the banner was not seen |
 | Follow a thread | `PUT chat/v1/users/ME/conversations/<channel>/rcmetadata/<root id>` `{"f": 1}` (0 unfollows). `{"f": true}` answers `400 Unexpected character`. Read back with `POST …/getrcmetadata` `{"rootMessageIds":[<root>]}` → `rcMetadataList[].rcMetadata.f` | ✅ 1 then 0 |
 | Also send to channel | not found in the web client's public JavaScript (no property or call by that name), so kelma does not offer it | not built |
 | Pin a post | the web client reads pinned posts; the write call was not captured | not built |
@@ -556,4 +556,4 @@ browser, every other action is drawn disabled. The raw attachments are stored wi
 `c` of the stored extras), so cards are drawn from the structure and the flattened text stays the
 preview.
 
-Docs synced to commit 39efb18 ("feat(kelma-cli): team commands for teams, channels, tags and communities", 2026-11-19)
+Docs synced to commit 09fe5c2 ("feat(kelma): chat list sections and menus, channel post cards, cloud attach and adaptive cards (chat 8.1 to 8.8)", 2026-11-19)
