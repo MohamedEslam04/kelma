@@ -5,7 +5,7 @@ use scraper::{ElementRef, Html, Node};
 use crate::{Block, RichText, Span, Style, base_direction, plain_text, spans_text};
 
 /// Guards against pathologically nested markup.
-const MAX_DEPTH: usize = 256;
+pub(crate) const MAX_DEPTH: usize = 256;
 
 /// Parse the HTML of a Teams message (`RichText/Html`) into [`RichText`].
 ///
@@ -23,7 +23,7 @@ pub fn parse_teams_html(html: &str) -> RichText {
 }
 
 /// True if `s` contains something that looks like a tag, comment or doctype.
-fn has_markup(s: &str) -> bool {
+pub(crate) fn has_markup(s: &str) -> bool {
     s.as_bytes()
         .windows(2)
         .any(|w| w[0] == b'<' && (w[1].is_ascii_alphabetic() || matches!(w[1], b'/' | b'!' | b'?')))
@@ -45,7 +45,7 @@ fn parse_plain(text: &str) -> RichText {
     RichText { blocks }
 }
 
-fn plain_span(text: String) -> Span {
+pub(crate) fn plain_span(text: String) -> Span {
     Span {
         text,
         style: Style::default(),
@@ -78,32 +78,32 @@ struct Walker {
     skip_quote_meta: bool,
 }
 
-fn attr<'a>(el: &ElementRef<'a>, name: &str) -> Option<&'a str> {
+pub(crate) fn attr<'a>(el: &ElementRef<'a>, name: &str) -> Option<&'a str> {
     el.value().attr(name)
 }
 
-fn attr_lower(el: &ElementRef, name: &str) -> String {
+pub(crate) fn attr_lower(el: &ElementRef, name: &str) -> String {
     attr(el, name).unwrap_or("").to_ascii_lowercase()
 }
 
-fn non_empty(s: Option<&str>) -> Option<String> {
+pub(crate) fn non_empty(s: Option<&str>) -> Option<String> {
     s.map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
 }
 
-fn parse_dim(s: Option<&str>) -> Option<u32> {
+pub(crate) fn parse_dim(s: Option<&str>) -> Option<u32> {
     let s = s?.trim();
     s.strip_suffix("px").unwrap_or(s).trim().parse().ok()
 }
 
-fn is_emoji_img(el: &ElementRef) -> bool {
+pub(crate) fn is_emoji_img(el: &ElementRef) -> bool {
     attr_lower(el, "itemtype").ends_with("/emoji")
 }
 
 /// Collapse HTML whitespace runs to single spaces (keeps a leading/trailing
 /// space if present).
-fn collapse_ws(s: &str) -> String {
+pub(crate) fn collapse_ws(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut pending = false;
     for c in s.chars() {
@@ -123,7 +123,7 @@ fn collapse_ws(s: &str) -> String {
     out
 }
 
-fn trim_spans(spans: &mut Vec<Span>) {
+pub(crate) fn trim_spans(spans: &mut Vec<Span>) {
     let is_pad = |c: char| c == ' ' || c == '\n';
     while let Some(first) = spans.first_mut() {
         let trimmed = first.text.trim_start_matches(is_pad);
@@ -438,7 +438,7 @@ fn inline_text(el: ElementRef, skip_quote_meta: bool) -> String {
 }
 
 /// Verbatim descendant text (for `<pre>`), `<br>` as newline.
-fn raw_text(el: ElementRef, out: &mut String, depth: usize) {
+pub(crate) fn raw_text(el: ElementRef, out: &mut String, depth: usize) {
     if depth > MAX_DEPTH {
         return;
     }
