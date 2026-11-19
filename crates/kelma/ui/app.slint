@@ -1110,6 +1110,9 @@ export component AppWindow inherits Window {
             work: PeopleStore.card-work;
             location: PeopleStore.card-location;
             local-time: PeopleStore.card-time;
+            presence: PeopleStore.card-presence;
+            presence-label: PeopleStore.card-presence-label;
+            work-location: PeopleStore.card-work-location;
             copy-email => { PeopleStore.command("profile-copy-email", ""); }
             chat(id) => {
                 PeopleStore.card-open = false;

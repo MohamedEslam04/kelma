@@ -83,6 +83,9 @@ impl UiHandle {
             s.set_card_work(c.work.into());
             s.set_card_location(c.location.into());
             s.set_card_time(c.time.into());
+            s.set_card_presence(c.presence.into());
+            s.set_card_presence_label(c.presence_label.into());
+            s.set_card_work_location(c.work_location.into());
         });
     }
 

@@ -1057,6 +1057,19 @@ impl Engine {
             }
             Err(err) => tracing::debug!(%err, "profile card"),
         }
+        match self.client.get_presence(std::slice::from_ref(&mri)).await {
+            Ok(found) => {
+                if let Some(p) = found.into_iter().next() {
+                    super::people_presence::set(&mri, &p.availability);
+                    card.presence_label = super::people_presence::label(&p.availability).into();
+                    card.presence = p.availability;
+                    card.work_location =
+                        super::people_presence::work_location_label(p.work_location.as_deref())
+                            .into();
+                }
+            }
+            Err(err) => tracing::debug!(%err, "profile card presence"),
+        }
         self.people.lock().unwrap().card_email =
             (!card.email.is_empty()).then(|| card.email.clone());
         self.ui.card(true, card);

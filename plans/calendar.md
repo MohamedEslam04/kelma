@@ -298,13 +298,14 @@ are the same as in `plans/chat.md`.
     with only `second_tz_min` still loads, `the_zone_picker_finds_zones_by_name_or_display_name`,
     `share_roles_are_limited_to_what_the_permission_allows` and the UI test
     `the_share_dialog_offers_only_the_roles_the_permission_allows`.
-- [ ] **C3.4 Work location.** DEFERRED: not built (colleagues' pins in profile cards are not built; my own pin from the day header and the profile menu is done and passes live). Impact 3, effort 2.
+- [ ] **C3.4 Work location.** DEFERRED: needs test tenant (a colleague's pin on their profile card needs a colleague who set one, to compare with Teams; my own pin from the day header and the profile menu passes live, and the card shows a pin when the presence service reports one). Impact 3, effort 2.
   - **What.** A per-day work location pin (Office, Remote, a specific building) in the day header and in the profile menu. Colleagues' locations show in profile cards.
   - **How.** `PUT me/workLocation/` with `{location, expirationTime}` (1 office, 2 remote, 0 clears) on the regional
     presence service (`regionGtms.presenceUPS`); the pin is read back from `getpresence` (`workLocation`).
   - **Status.** A day header opens Office, Remote and Clear, the pin shows in the header, and ⋯ has the same for
     today; a refusal leaves a note. The profile menu's "Set status" has In the office, Remote and Clear location
-    for today (until local midnight) and shows the pin. Colleagues' pins are not built.
+    for today (until local midnight) and shows the pin. A profile card reads the person's presence and shows
+    their pin for today ("In the office today", "Working remotely today") under "Today".
   - **Evidence (2026-11-19, live, the user's own work account):** `kelma-cli calendar worklocation remote` answered
     and read back Remote (`presence` showed `work location=Remote`), then `worklocation clear` read back Unset, so
     the pin was set for under a minute and is cleared. Teams documents the work location as shown on the profile

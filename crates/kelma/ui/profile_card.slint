@@ -13,6 +13,9 @@ export component ProfileCard inherits Rectangle {
     in property <string> work;
     in property <string> location;
     in property <string> local-time;
+    in property <string> presence;
+    in property <string> presence-label;
+    in property <string> work-location;
     callback copy-email();
     callback chat(string);
     callback send-email(string);
@@ -39,6 +42,7 @@ export component ProfileCard inherits Rectangle {
                 tone: root.person.color;
                 img: root.person.avatar;
                 has-img: root.person.has-avatar;
+                presence: root.presence;
                 size: 72px;
             }
             VerticalLayout {
@@ -46,6 +50,7 @@ export component ProfileCard inherits Rectangle {
                 spacing: 2px;
                 card-name := Text { text: root.person.name; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; wrap: word-wrap; accessible-role: text; accessible-label: root.person.name; }
                 if root.person.subtitle != "": card-title := Text { text: root.person.subtitle; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; accessible-role: text; accessible-label: root.person.subtitle; }
+                if root.presence-label != "": card-presence := Text { text: root.presence-label; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; accessible-role: text; accessible-label: "Availability"; accessible-value: self.text; }
                 if root.loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; }
             }
             IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; size: 28px; clicked => { root.close(); } }
@@ -81,6 +86,15 @@ export component ProfileCard inherits Rectangle {
                 spacing: 8px;
                 Text { text: "Location"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
                 card-location := Text { text: root.location; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        if root.work-location != "": Rectangle {
+            height: 24px;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Today"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-work-location := Text { text: root.work-location; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; accessible-role: text; accessible-label: "Work location"; accessible-value: self.text; }
             }
         }
         if root.local-time != "": Rectangle {

@@ -165,6 +165,12 @@ pub struct CardData {
     pub work: String,
     pub location: String,
     pub time: String,
+    /// The person's availability (`Busy`, …) for the dot, `""` when unknown.
+    pub presence: String,
+    /// The same in words ("Do not disturb").
+    pub presence_label: String,
+    /// Today's work location pin in words ("In the office today"), `""` when none.
+    pub work_location: String,
 }
 
 /// A forward target: an existing chat or channel.

@@ -234,7 +234,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built, not ticked. Pencil renames in place; the people button opens the participants popover (members, Add people with an "Include chat history" switch, Leave with a confirmation); Leave is also in the chat item menu of groups. Live in the one test group: rename and leave worked. Add people was not run live (it would add a person to a chat). The group photo is not built: no endpoint is known, it needs a capture from Teams web first.
 
 ### 6.4 Presence
-- [ ] DEFERRED: needs test tenant (the Done-when compares dots with Teams web for 5 people; dots now show in the chat list, see Status, and the participants list, profile card and people picker do not show them yet). Impact 5, effort 3. Seen: profile menu, participants list, avatars everywhere.
+- [ ] DEFERRED: needs test tenant (the Done-when compares dots with Teams web for 5 people; dots now show in the chat list and on profile cards, see Status; the participants list and people picker do not show them yet). Impact 5, effort 3. Seen: profile menu, participants list, avatars everywhere.
   - **What.**
     - Status dots on every avatar: green Available, red Busy or Do not disturb, yellow Away or Be right back, grey Offline, with an out-of-office marker.
     - The profile menu changes your status: Available, Busy, Do not disturb, Be right back, Appear away, Appear offline, Reset status.
@@ -256,8 +256,8 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     quit; a call publishes "In a call" (`call_presence.rs`). UI test
     `the_profile_menu_sets_my_status_and_work_location_through_the_engine`. The chat list draws a dot on each
     1:1 chat's avatar (`people_presence.rs`: the people drawn are looked up once a minute in batches, and
-    trouter presence events update them). Not built: dots in the participants list, profile card and people
-    picker, the status message editor, "Pause notifications" and "Notify me when available".
+    trouter presence events update them). A profile card shows the dot, the availability in words and today's
+    work location. Not built: dots in the participants list and people picker, the status message editor, "Pause notifications" and "Notify me when available".
   - **Evidence (2026-11-19, live, work account):** the global `presence.teams.microsoft.com` host answered 401 to
     the presence token. A capture of Teams web showed it uses the regional unified presence service from the sign-in
     answer (`regionGtms.presenceUPS`) with the same token audience. With that address `kelma-cli presence` answered

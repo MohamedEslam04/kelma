@@ -38,6 +38,29 @@ pub fn set(mri: &str, availability: &str) -> bool {
     })
 }
 
+/// An availability in words, as Teams shows it (`""` for unknown values).
+pub fn label(availability: &str) -> &'static str {
+    match availability.strip_suffix("Idle").unwrap_or(availability) {
+        "Available" => "Available",
+        "Busy" => "Busy",
+        "DoNotDisturb" => "Do not disturb",
+        "BeRightBack" => "Be right back",
+        "Away" => "Away",
+        "Offline" => "Offline",
+        _ => "",
+    }
+}
+
+/// A work location pin in words.
+pub fn work_location_label(pin: Option<&str>) -> &'static str {
+    let Some(pin) = pin else { return "" };
+    match ::calendar::WorkLocation::from_value(&serde_json::json!(pin)) {
+        ::calendar::WorkLocation::Office => "In the office today",
+        ::calendar::WorkLocation::Remote => "Working remotely today",
+        ::calendar::WorkLocation::Unset => "",
+    }
+}
+
 fn wanted() -> Vec<String> {
     with(|c| c.wanted.iter().cloned().collect())
 }
@@ -81,6 +104,16 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn availability_and_location_in_words() {
+        assert_eq!(label("DoNotDisturb"), "Do not disturb");
+        assert_eq!(label("BusyIdle"), "Busy");
+        assert_eq!(label("PresenceUnknown"), "");
+        assert_eq!(work_location_label(Some("office")), "In the office today");
+        assert_eq!(work_location_label(Some("2")), "Working remotely today");
+        assert_eq!(work_location_label(None), "");
+    }
 
     #[test]
     fn wanted_people_are_remembered_and_changes_reported() {
