@@ -93,9 +93,11 @@ pub fn parse_followed(v: &Value) -> Vec<FollowedThread> {
     out
 }
 
-/// Body of the `emotions` property write that follows (`"0"`) or unfollows (`"1"`) a post.
+/// Body of the `emotions` property write that follows (`"1"`) or unfollows (`"0"`) a post.
+/// Checked against Teams web on a sandbox post: its "Follow thread" stores `"1"` and
+/// "Unfollow thread" stores `"0"`.
 pub fn follow_body(follow: bool) -> Value {
-    json!({"emotions": {"key": "follow", "value": if follow { "0" } else { "1" }}})
+    json!({"emotions": {"key": "follow", "value": if follow { "1" } else { "0" }}})
 }
 
 /// What a shared item is.
@@ -197,7 +199,7 @@ impl Client {
     }
 
     /// Follows or unfollows the thread of a channel post. Verified live: the service stores the
-    /// `follow` emotion on the post (`"0"` follow, `"1"` unfollow, a `DELETE` clears it).
+    /// `follow` emotion on the post (`"1"` follow, `"0"` unfollow, as Teams web writes it).
     pub async fn set_thread_follow(
         &self,
         channel_id: &str,
@@ -297,9 +299,9 @@ mod tests {
     fn follow_writes_the_follow_emotion() {
         assert_eq!(
             follow_body(true),
-            json!({"emotions": {"key": "follow", "value": "0"}})
+            json!({"emotions": {"key": "follow", "value": "1"}})
         );
-        assert_eq!(follow_body(false)["emotions"]["value"], "1");
+        assert_eq!(follow_body(false)["emotions"]["value"], "0");
     }
 
     #[test]

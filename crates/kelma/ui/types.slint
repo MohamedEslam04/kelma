@@ -94,6 +94,7 @@ export struct Msg {
     flash: bool,           // the row a jump (pinned banner) landed on
     card: [CardRow],       // an Adaptive Card drawn like Teams does (empty: show the text body)
     headline: string,      // headline of an announcement post
+    importance: string,    // "" | "high" | "urgent": a red IMPORTANT! or URGENT! label
     grid-w: length,        // size of the image grid
     grid-h: length,
     translate: string,     // "" | "can" (menu only) | "offer" (link too) | "busy" | "shown" | "failed"

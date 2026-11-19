@@ -679,6 +679,11 @@ impl Engine {
                 flash: false,
                 card,
                 headline,
+                importance: props
+                    .get("i")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
                 grid_w,
                 grid_h,
                 translate: tr.state,

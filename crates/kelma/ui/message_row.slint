@@ -127,6 +127,14 @@ export component MessageRow inherits TouchArea {
                         if root.m.edited: Text { text: "Edited"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; }
                     }
 
+                    if root.m.importance != "": Text {
+                        text: root.m.importance == "urgent" ? "URGENT!" : "IMPORTANT!";
+                        color: Theme.danger;
+                        font-size: 12px;
+                        font-weight: 800;
+                        accessible-role: text;
+                    }
+
                     if root.m.subject != "": Text {
                         text: root.m.subject;
                         color: Theme.fg;
