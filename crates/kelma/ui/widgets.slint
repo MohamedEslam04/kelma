@@ -22,6 +22,7 @@ export component IconButton inherits Rectangle {
     background: touch.has-hover || active ? Theme.surface-hover : transparent;
     accessible-role: button;
     accessible-label: root.tooltip;
+    accessible-action-default => { root.clicked(); }
     Icon {
         source: root.icon;
         tint: touch.has-hover || root.active ? Theme.accent : root.tint;
