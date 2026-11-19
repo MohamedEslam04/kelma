@@ -318,9 +318,6 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_activity_reply, |t| Cmd::Activity(ActivityCmd::Reply(
         t.into()
     )));
-    cmd!(on_activity_settings, || Cmd::Activity(
-        ActivityCmd::Settings
-    ));
     cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
     cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
     cmd!(on_emoji_used, |e| Cmd::EmojiUsed(e.into()));
