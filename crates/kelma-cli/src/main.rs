@@ -33,10 +33,12 @@
 //! kelma-cli accounts [tenants|use <label>|add <label>|remove <label>|org <tenant-id|home>]
 //!                                 several accounts and organizations (list and tenants are read-only)
 //! kelma-cli devices [audio|cameras|test-sound|mic-level]  list sound devices and cameras; test-sound plays a tone, mic-level shows the mic level
+//! kelma-cli appearance [show|watch]  saved appearance prefs, the desktop portal theme/accent and the resolved result (read-only)
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
 mod accounts;
+mod appearance;
 mod apps;
 mod chatx;
 mod devices;
@@ -506,6 +508,7 @@ async fn main() -> Result<()> {
         Some("accounts") => accounts::run(&paths, &args[1..]).await?,
         Some("web") => web::run(&paths, &args[1..]).await?,
         Some("devices") => devices::run(&args[1..])?,
+        Some("appearance") => appearance::run(&args[1..]).await?,
         Some("logout") => {
             let cfg = paths.load_config()?;
             session::delete_refresh_token(&cfg.account)?;
