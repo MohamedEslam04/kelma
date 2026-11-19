@@ -10,8 +10,8 @@
 //! language, date-format, time-format, time-zone, startup, high-contrast, reduced-motion,
 //! larger-text, a11y, notify, pause, test-notification, privacy, unblock, priority-remove,
 //! speaker, mic, camera, all-devices, test-sound, mic-test, open-files, perm, switch-account,
-//! switch-org, restart, sign-out, view-account, report-problem, check-updates, check-now,
-//! release-notes.
+//! switch-org, add-account, remove-account, refresh-license, restart, sign-out, view-account,
+//! report-problem, check-updates, check-now, release-notes.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
@@ -103,6 +103,9 @@ pub struct SettingsEnv {
     pub portal: bool,
     /// Run slow work (device lists, sign-out, reports) on threads. Off in tests: inline.
     pub background: bool,
+    /// Apply the date and time format and "keep running on close" to the process-wide settings
+    /// that the time helpers and the tray read. Off in tests, which share one process.
+    pub apply_globals: bool,
     pub hooks: Hooks,
 }
 
@@ -116,6 +119,7 @@ impl SettingsEnv {
             tokens: Arc::new(session::SystemKeyring),
             portal: true,
             background: true,
+            apply_globals: true,
             hooks: Hooks {
                 autostart: Autostart::desktop(None),
                 test_notification: Box::new(|| {
@@ -230,6 +234,9 @@ pub fn install(
     local.general.auto_start = (env.hooks.autostart.get)();
     let portal = if env.portal { read_portal() } else { None };
     let watch = env.portal && env.background;
+    if env.apply_globals {
+        apply_general(&local.general);
+    }
     let shared: Shared = Rc::new(RefCell::new(Ctl {
         env,
         local,
@@ -374,6 +381,13 @@ fn apply_look(w: &AppWindow, c: &Ctl) {
         if lk.reduced_motion { "on" } else { "off" },
         (lk.font_scale * 100.0).round()
     )));
+}
+
+/// Hands the general preferences to what reads them outside Settings: the date and time helpers
+/// and the tray's close-to-tray decision.
+fn apply_general(g: &appearance::GeneralPrefs) {
+    appearance::formats::set_from(g);
+    crate::tray_wiring::set_keep_running(g.keep_running_on_close);
 }
 
 fn toggles(rows: Vec<st::ToggleRow>) -> ModelRc<SToggle> {
@@ -621,6 +635,11 @@ fn push_accounts(w: &AppWindow, c: &Ctl) {
 }
 
 impl UiHandle {
+    /// "Refresh license and restart" finished in the engine: restart, or say why not.
+    pub fn settings_license(&self, r: Result<(), String>) {
+        self.run(move |w| license_done(&w, r));
+    }
+
     /// The Teams side of Settings, read by the engine.
     pub fn settings_server(&self, data: ServerData) {
         self.run(move |w| {
@@ -903,7 +922,15 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                     }
                 }
             }
+            let formats_changed = matches!(name, "date-format" | "time-format");
             let mut r = c.local.save_general();
+            if c.env.apply_globals {
+                apply_general(&c.local.general);
+            }
+            if formats_changed && let Some(tx) = &c.tx {
+                // Rows already drawn show the old format until the engine draws them again.
+                let _ = tx.send(Cmd::Settings(SettingsCmd::Redraw));
+            }
             if let Some(on) = autostart
                 && r.is_ok()
             {
@@ -1062,24 +1089,23 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
         // --- Accounts ---
         "switch-account" | "switch-org" => {
             let c = shared.borrow();
-            let Some(mut cfg) = config(&c) else { return };
+            let Some(cfg) = config(&c) else { return };
             let r = if name == "switch-account" {
                 if cfg.account == arg {
                     return;
                 }
-                cfg.switch_account(arg)
+                // Read, change and save under the config lock: the running engine saves its
+                // own preferences into the same file and must not overwrite the switch.
+                c.env.paths.update_config(|cfg| cfg.switch_account(arg))
             } else {
                 let current =
                     st::org_rows(&cfg, c.server.as_ref().and_then(|d| d.tenants.as_deref()));
                 if current.iter().any(|o| o.active && o.tenant == arg) {
                     return;
                 }
-                cfg.switch_tenant(arg)
+                c.env.paths.update_config(|cfg| cfg.switch_tenant(arg))
             };
-            match r
-                .map_err(anyhow::Error::from)
-                .and_then(|()| Ok(c.env.paths.save_config(&cfg)?))
-            {
+            match r {
                 Ok(()) => {
                     g.set_restart_needed(true);
                     g.set_accounts_status(s("Saved. Restart kelma to switch."));
@@ -1108,6 +1134,69 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             if let Some(url) = &c.update_url {
                 (c.env.hooks.open_url)(url);
             }
+        }
+        "add-account" => {
+            let c = shared.borrow();
+            let label = arg.trim();
+            // The new account becomes the active one; kelma has no tokens for it, so the next
+            // start runs the device-code sign-in (the code is shown in the login screen).
+            let r = c.env.paths.update_config(|cfg| {
+                cfg.add_account(label)?;
+                cfg.switch_account(label)
+            });
+            match r {
+                Ok(()) => {
+                    session::allow_account_tokens(label);
+                    g.set_restart_needed(true);
+                    g.set_accounts_status(s(format!(
+                        "Added \"{label}\". Restart kelma to sign in to it."
+                    )));
+                }
+                Err(e) => g.set_accounts_status(s(format!("Could not add the account: {e}"))),
+            }
+            push_accounts(w, &c);
+        }
+        "remove-account" => {
+            let c = shared.borrow();
+            let Some(acct) = config(&c).and_then(|cfg| cfg.account_by_label(arg).cloned()) else {
+                g.set_accounts_status(s("That account is not in the list."));
+                push_accounts(w, &c);
+                return;
+            };
+            // Tokens first: the running engine saves its token every few minutes, and the
+            // forget marks the account so a save that is already running skips it.
+            let was_active = config(&c).is_some_and(|cfg| cfg.account == arg);
+            let r = session::forget_account_tokens(&*c.env.tokens, &acct)
+                .and_then(|()| c.env.paths.update_config(|cfg| cfg.remove_account(arg)));
+            match r {
+                Ok(()) => {
+                    remove_account_cache(&c.env.paths, &acct);
+                    // The engine runs on the account that was active at start: when that one is
+                    // gone, kelma has to start again on another.
+                    if was_active {
+                        let now = config(&c).map(|cfg| cfg.account).unwrap_or_default();
+                        g.set_restart_needed(true);
+                        g.set_accounts_status(s(format!(
+                            "Removed \"{arg}\" and its saved sign-in. Restart kelma: it uses \"{now}\" next."
+                        )));
+                    } else {
+                        g.set_accounts_status(s(format!(
+                            "Removed \"{arg}\" and its saved sign-in."
+                        )));
+                    }
+                }
+                Err(e) => g.set_accounts_status(s(format!("Could not remove the account: {e}"))),
+            }
+            push_accounts(w, &c);
+        }
+        "refresh-license" => {
+            let c = shared.borrow();
+            let Some(tx) = &c.tx else {
+                notice(w, "Not signed in, so there is no license to refresh.");
+                return;
+            };
+            let _ = tx.send(Cmd::Settings(SettingsCmd::RefreshLicense));
+            notice(w, "Refreshing your license…");
         }
         "restart" => (shared.borrow().env.hooks.restart)(),
         "sign-out" => {
@@ -1149,6 +1238,41 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             }
         }
         other => tracing::debug!(command = other, "settings: unknown command"),
+    }
+}
+
+/// Deletes the message cache of a removed account, unless the account that is active afterwards
+/// uses the same file (removing the only account leaves a fresh `default`).
+fn remove_account_cache(paths: &session::Paths, removed: &session::Account) {
+    let gone = session::Config {
+        account: removed.label.clone(),
+        tenant: removed.tenant.clone(),
+        accounts: vec![removed.clone()],
+        ..Default::default()
+    };
+    let file = paths.db_path_for(&gone);
+    if paths
+        .load_config()
+        .is_ok_and(|now| paths.db_path_for(&now) == file)
+    {
+        return;
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = file.clone().into_os_string();
+        name.push(suffix);
+        let _ = std::fs::remove_file(name);
+    }
+}
+
+fn license_done(w: &AppWindow, r: Result<(), String>) {
+    match r {
+        Ok(()) => {
+            notice(w, "License refreshed. Restarting kelma…");
+            if let Some(shared) = ctl() {
+                (shared.borrow().env.hooks.restart)();
+            }
+        }
+        Err(e) => notice(w, format!("Could not refresh the license: {e}")),
     }
 }
 

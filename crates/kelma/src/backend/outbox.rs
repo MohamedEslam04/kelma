@@ -111,8 +111,11 @@ pub(super) fn row_from_outbox(item: &OutboxItem, me: &str, my_name: &str) -> Mes
         message_type: "RichText/Html".into(),
         content_html,
         client_message_id: Some(item.client_message_id.clone()),
-        reactions_json: json!({"s": item.subject.as_deref().map_or(Value::Null, Value::from)})
-            .to_string(),
+        reactions_json: json!({
+            "s": item.subject.as_deref().map_or(Value::Null, Value::from),
+            "i": item.importance,
+        })
+        .to_string(),
     }
 }
 
@@ -163,6 +166,7 @@ impl Engine {
             subject,
             reply_to,
             mentions: None,
+            importance: String::new(),
             kind,
             payload_path,
             created_ms: now,
@@ -261,6 +265,24 @@ impl Engine {
         let (chat, _) = split_target(target);
         let subject = item.subject.as_deref();
         match item.kind {
+            // "Mark as important": sent with the delivery property, the same client message id
+            // on every retry; mentions and a quote reply travel along.
+            OutboxKind::Text if !item.importance.is_empty() => {
+                let mentions =
+                    super::mentions::from_property(item.mentions.as_deref().unwrap_or(""));
+                self.client
+                    .send_outgoing_delivery_as(
+                        target,
+                        &item.html,
+                        &self.my_name,
+                        subject,
+                        &mentions,
+                        item.reply_to.as_deref(),
+                        &teams_proto::delivery::Delivery::Important,
+                        cmid,
+                    )
+                    .await
+            }
             OutboxKind::Text if item.mentions.is_some() => {
                 // The mentions property makes the people named in the text get notified; a
                 // quote reply carries its `qtdMsgs` next to it.
@@ -418,6 +440,7 @@ mod tests {
             subject: None,
             reply_to: None,
             mentions: None,
+            importance: String::new(),
             kind,
             payload_path: None,
             created_ms: 100,

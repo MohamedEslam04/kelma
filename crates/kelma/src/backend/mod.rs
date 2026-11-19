@@ -24,6 +24,7 @@ pub(crate) mod call;
 #[cfg(feature = "calls")]
 pub(crate) mod call_direct;
 mod channels;
+pub(crate) mod composer_apps;
 mod drafts;
 pub(crate) mod drive;
 pub(crate) mod engage;
@@ -62,6 +63,7 @@ pub use cal::{
 #[cfg(feature = "calls")]
 pub use call_direct::CallCmd;
 pub use channels::ChannelCmd;
+pub use composer_apps::ComposerAppsCmd;
 pub use drive::DriveCmd;
 pub use engage::EngageCmd;
 pub use find::FindCmd;
@@ -100,6 +102,8 @@ pub enum Cmd {
     AttachFile,
     CopyLink(String),
     ToggleSave(String),
+    /// The composer's "Mark as important" state, sent right before the message it applies to.
+    SetImportant(bool),
     Pin(String),
     /// Message menu "Mark as unread": the chat turns unread from this message on.
     MarkUnread(String),
@@ -137,6 +141,8 @@ pub enum Cmd {
     /// The image viewer, Translate and link previews (plan 9.5 to 9.7).
     Media(MediaCmd),
     Apps(AppsCmd),
+    /// The composer's "+" apps picker (plan S3.6).
+    ComposerApps(ComposerAppsCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -190,6 +196,8 @@ struct View {
     at_bottom: bool,
     /// New messages that arrived while scrolled up; shown on the jump button.
     new_count: usize,
+    /// "Mark as important" is on for the next message (set by the composer just before a send).
+    important: bool,
     /// Latest composer text of the current chat as the engine knows it.
     draft_text: String,
     /// `draft_text` (or the reply target) changed since it was last written to the store.
@@ -239,6 +247,7 @@ pub struct Engine {
     apps: Mutex<appstore::Apps>,
     #[cfg(feature = "calls")]
     calls: call_direct::Calls,
+    composer_apps: Mutex<composer_apps::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -301,6 +310,7 @@ impl Engine {
             apps: Mutex::new(appstore::Apps::default()),
             #[cfg(feature = "calls")]
             calls: call_direct::Calls::default(),
+            composer_apps: Mutex::new(composer_apps::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -338,6 +348,7 @@ impl Engine {
         self.start_manage();
         #[cfg(feature = "calls")]
         self.start_calls();
+        self.start_notify_prefs();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -378,6 +389,8 @@ impl Engine {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
             Cmd::Flush => self.flush_draft(),
+            // In order with the Send that follows it.
+            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
             // Selection and view changes run in order with the command that follows them.
             Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             cmd => {
@@ -550,6 +563,7 @@ impl Engine {
             Cmd::AttachFile => self.attach_file().await?,
             Cmd::CopyLink(id) => self.copy_link(&id)?,
             Cmd::ToggleSave(id) => self.toggle_save(&id).await?,
+            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
             Cmd::Pin(id) => self.pin(&id).await?,
             Cmd::MarkUnread(id) => self.mark_unread_from(&id).await?,
             Cmd::ForwardBegin(id) => self.forward_begin(id)?,
@@ -588,6 +602,7 @@ impl Engine {
             Cmd::Apps(c) => self.apps_cmd(c).await?,
             #[cfg(feature = "calls")]
             Cmd::Call(c) => self.call_cmd(c).await?,
+            Cmd::ComposerApps(c) => self.composer_apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),
@@ -634,7 +649,7 @@ impl Engine {
             return;
         }
         let cfg = self.cfg.lock().unwrap().clone();
-        let saved = session::Paths::new().and_then(|p| p.save_config(&cfg));
+        let saved = session::Paths::new().and_then(|p| p.save_app_prefs(&cfg));
         if let Err(err) = saved {
             tracing::warn!(%err, "saving config failed");
         }

@@ -632,7 +632,7 @@ impl Engine {
                 time: Local
                     .timestamp_millis_opt(r.compose_ms)
                     .single()
-                    .map(|t| t.format("%H:%M").to_string())
+                    .map(|t| t.format(appearance::formats::time_pattern()).to_string())
                     .unwrap_or_default(),
                 day: if new_day {
                     day_label(r.compose_ms)
@@ -679,6 +679,11 @@ impl Engine {
                 flash: false,
                 card,
                 headline,
+                importance: props
+                    .get("i")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
                 grid_w,
                 grid_h,
                 translate: tr.state,

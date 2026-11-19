@@ -257,6 +257,29 @@ pub fn delivery_body(
     b
 }
 
+/// [`delivery_body`] for a queued message that may also carry mentions and the `qtdMsgs` of a
+/// quote reply (see [`crate::mentions::outgoing_body`]).
+pub fn outgoing_delivery_body(
+    html: &str,
+    display_name: &str,
+    client_message_id: &str,
+    subject: Option<&str>,
+    mentions: &[crate::mentions::Mention],
+    qtd_msgs: Option<&str>,
+    delivery: &Delivery,
+) -> Value {
+    let mut b = crate::mentions::outgoing_body(
+        html,
+        display_name,
+        client_message_id,
+        subject,
+        mentions,
+        qtd_msgs,
+    );
+    apply_delivery(&mut b, delivery, client_message_id);
+    b
+}
+
 /// A list value that may arrive as JSON or as a JSON-encoded string.
 fn json_or_string(v: Option<&Value>) -> Option<Value> {
     match v? {
@@ -342,6 +365,39 @@ pub fn parse_announcement(props: Option<&Value>) -> Option<Announcement> {
 }
 
 impl Client {
+    /// Sends a queued message with a delivery option, a caller-chosen client message id (the
+    /// outbox retries with the same id), and the mentions and `qtdMsgs` it may carry.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_outgoing_delivery_as(
+        &self,
+        conversation_id: &str,
+        html: &str,
+        display_name: &str,
+        subject: Option<&str>,
+        mentions: &[crate::mentions::Mention],
+        qtd_msgs: Option<&str>,
+        delivery: &Delivery,
+        client_message_id: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/v1/users/ME/conversations/{}/messages",
+            self.chat_service().await,
+            encode_conversation(conversation_id)
+        );
+        let body = outgoing_delivery_body(
+            html,
+            display_name,
+            client_message_id,
+            subject,
+            mentions,
+            qtd_msgs,
+            delivery,
+        );
+        self.json("send", Method::POST, &url, Some(&body))
+            .await
+            .map(|_| ())
+    }
+
     /// Sends an HTML message with a delivery option. Returns the client message id used.
     /// Announcements only make sense as a new post in a channel.
     pub async fn send_message_delivery(
@@ -367,6 +423,38 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_important_queued_message_keeps_its_id_mentions_and_quote() {
+        use crate::mentions::{Mention, MentionKind};
+        let m = Mention {
+            item_id: 0,
+            mri: "8:orgid:a".into(),
+            display_name: "A".into(),
+            kind: MentionKind::Person,
+        };
+        let b = outgoing_delivery_body(
+            "<p>x</p>",
+            "Me",
+            "1795",
+            None,
+            &[m],
+            Some("[{\"messageId\":1}]"),
+            &Delivery::Important,
+        );
+        assert_eq!(b["clientmessageid"], "1795");
+        assert_eq!(b["properties"]["importance"], "high");
+        assert!(b["properties"]["mentions"].is_string());
+        assert!(b["properties"]["qtdMsgs"].is_string());
+        // Standard adds nothing.
+        let plain =
+            outgoing_delivery_body("<p>x</p>", "Me", "1", None, &[], None, &Delivery::Standard);
+        assert!(
+            plain
+                .get("properties")
+                .is_none_or(|p| p.get("importance").is_none())
+        );
+    }
 
     #[test]
     fn importance_wire_values() {

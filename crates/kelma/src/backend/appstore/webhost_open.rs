@@ -375,4 +375,18 @@ mod tests {
         assert_eq!(t.shim.context.tenant_id, "");
         assert_eq!(t.shim.context.user_object_id, "");
     }
+
+    #[test]
+    fn grants_written_by_settings_are_what_the_host_reads() {
+        let dir = std::env::temp_dir().join(format!("kelma-grants-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut local = crate::backend::settings::Local::load(&dir);
+        local.grants.set("app-1", DevicePermission::Media, true);
+        local.save_grants().unwrap();
+        let text = std::fs::read_to_string(dir.join("app-grants.json")).unwrap();
+        let g = grants_from_text(Some(&text));
+        assert!(g.allowed("app-1", DevicePermission::Media));
+        assert!(!g.allowed("app-1", DevicePermission::Midi));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

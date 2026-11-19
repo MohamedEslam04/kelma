@@ -87,7 +87,7 @@ fn user_from_row(r: &Row<'_>) -> rusqlite::Result<UserRow> {
 }
 
 const OUTBOX_COLS: &str = "client_message_id, conversation_id, html, subject, reply_to, kind, \
-                           payload_path, created_ms, attempts, state, last_error, mentions";
+                           payload_path, created_ms, attempts, state, last_error, mentions, importance";
 
 fn draft_from_row(r: &Row<'_>) -> rusqlite::Result<Draft> {
     Ok(Draft {
@@ -114,6 +114,7 @@ fn outbox_from_row(r: &Row<'_>) -> Result<OutboxItem> {
         state: OutboxState::from_db(&state).ok_or(Error::UnknownOutbox(state))?,
         last_error: r.get(10)?,
         mentions: r.get(11)?,
+        importance: r.get(12)?,
     })
 }
 
@@ -722,8 +723,8 @@ impl Store {
             .prepare_cached(
                 "INSERT INTO outbox (client_message_id, conversation_id, html, subject, \
                      reply_to, kind, payload_path, created_ms, attempts, state, last_error, \
-                     mentions) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, NULL, ?10)",
+                     mentions, importance) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, NULL, ?10, ?11)",
             )?
             .execute(params![
                 item.client_message_id,
@@ -735,7 +736,8 @@ impl Store {
                 item.payload_path,
                 item.created_ms,
                 OutboxState::Queued.as_db(),
-                item.mentions
+                item.mentions,
+                item.importance
             ])?;
         Ok(())
     }
