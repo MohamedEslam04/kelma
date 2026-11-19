@@ -414,3 +414,86 @@ accepts kelma's join offer with a sharing line but no `main-video` line; that a 
 answered `recvonly` can then be flipped to sending by `UpdateMediaDescriptions`; that the media
 server forwards a share without `updateParticipantProperties`; whether `controlVideoStreaming`
 must be waited for before the first keyframe; the 1:1 re-offer's answer path.
+
+## Camera video: what the references say (research 2026-11-19, nothing verified live yet)
+
+Sources, facts only, as for screen sharing: rusty-teams (`video_layout.rs`, `roster.rs`,
+`push.rs`, `hold.rs`, `send_control.rs`, `call/mod.rs`, fixtures `teams_offer.sdp`,
+`teams_answer.sdp`, `teams_p2p_offer.sdp`, `meeting_join_answer.json`), mautrix-teams
+(`docs/openapi/teams-webclient.yaml` from web-client captures, `pkg/msteams/{video,calls}.go`,
+`pkg/teamsmedia/{direct,sdp,video}.go`, `pkg/connector/rtcvideo.go`). No code was copied.
+
+1. **The camera line.** The camera is sent on the first `a=label:main-video` line: mid 1 in a
+   meeting offer and in a 1:1 offer (audio 0, main-video 1, applicationsharing-video 2); after a
+   media server's re-offer it is mid 2 (rusty-teams `video_layout.rs` `CAMERA_MID`;
+   mautrix-teams `direct.go`; openapi `/updateMediaDescriptions`). The web client's meeting offer
+   has main-video mids 1-6 `sendrecv` and more `recvonly` gallery lines; only the camera line
+   carries a 100-SSRC `a=x-ssrc-range` (rusty-teams `teams_offer.sdp`). The 1:1 offer writes
+   `a=x-source:main-video` on it (`teams_p2p_offer.sdp`; mautrix-teams `sdp.go`).
+2. **Codec.** Plain H.264 `packetization-mode=1` (payload type 107 in the media servers'
+   answers: `profile-level-id=42C01E;max-mbps=108000;max-fs=3600;max-br=2000;max-fps=3000`, with
+   `rtx`, `b=AS:2400`, `a=x-source-streamid` per line). No VP8, VP9 or X-H264UC in a captured
+   meeting SDP; a 1:1 peer offers X-H264UC and X-MSAV1 next to plain H.264 107. `max-fps` is in
+   hundredths, `max-br` in units of 1200 bit/s (rusty-teams `send_control.rs`).
+3. **Meetings: on and off.** `UpdateMediaDescriptions` on the call leg's
+   `updateMediaDescriptions` link, as for a share: camera on is the camera mid `sendrecv` with
+   `label: main-video` and tag `;v_2`; off is that mid `recvonly`, no label, tag `;v_1`
+   (openapi; mautrix-teams `video.go`). The web client first POSTs `applyChannelParameters` with
+   `maxVideoSendCapabilities` (`max-width`, `max-height`, `max-fps: 30`, `max-streams`,
+   `max-layers`); rusty-teams sends it without the `caps` wrapper mautrix-teams uses.
+4. **1:1 calls: on and off.** A re-offer on `mediaRenegotiation` with `callModalities` `["Audio",
+   "Video"]` (plus `ScreenSharer` while sharing), the main-video line `sendrecv` when on and
+   `recvonly` when off (mautrix-teams `calls.go` `Renegotiate`, `direct.go`). There is no
+   camera counterpart to `ScreenSharer`; the modalities are `Audio`, `Video`, `ScreenSharer`,
+   `ScreenViewer`.
+5. **Receiving in a meeting** needs a subscription: `applyChannelParameters` on our `recvonly`
+   gallery mid with `mediaParameter` a JSON string of `{"controlVideoStreaming": {sequenceNumber,
+   controlInfo: {sourceId: <participant's MSI>, streamMsid: <that line's x-source-streamid>,
+   fmtParams: [{max-fs, max-mbps, max-fps, profile-level-id}]}}}`; `sourceId: -1` unsubscribes
+   (rusty-teams `video_layout.rs`; mautrix-teams `video.go`). A participant's MSI is the
+   `sourceId` of a `main-video` stream in the roster's `endpoints[*].call.mediaStreams[]` whose
+   direction sends; an incoming SSRC maps to its line by `a=x-ssrc-range`.
+6. **Receiving in a 1:1 call**: the other side's camera arrives on the main-video line with no
+   subscription ("the one camera line carries both ends' cameras", mautrix-teams `video.go`
+   comment; no capture).
+7. **Keyframes.** Teams asks us with `controlVideoStreaming` `KeyFrame=1` (mautrix-teams rate
+   limits to one a second); we ask with RTCP PLI (and FIR) on a new stream's SSRC.
+8. **Incoming video calls.** A call is a video call when the trouter event is 109, when
+   `callNotification.callModalities` has `Video`, or when the offer's main-video line sends
+   (rusty-teams `push.rs`). Accepting with video names `acceptedCallModalities: ["Audio",
+   "Video"]` and answers the main-video line `sendrecv` (rusty-teams `call/mod.rs`);
+   mautrix-teams accepts with `["Audio"]` and turns video on afterwards with a re-offer.
+
+What kelma does with this (`calling::video::{camera, receive}`, `kelma/src/backend/call/camera.rs`):
+
+- **Opt-in**: the main-video line is offered only with `KELMA_CAMERA=1` (like
+  `KELMA_SCREEN_SHARE=1`), first among the video lines, so it is mid 1. Without it the Camera
+  buttons stay disabled.
+- Capture: the Camera portal (`ashpd` `desktop::camera`: `IsCameraPresent`, `AccessCamera`,
+  `OpenPipeWireRemote`); a `gst-launch-1.0 pipewiresrc fd=0` child with no node named reads the
+  first camera on that remote. When the portal is missing or sees no camera, `v4l2src` reads
+  `KELMA_CAMERA_DEVICE`, else the camera chosen in Settings > Devices, else `/dev/video0`. A
+  refused portal request is an error, not a V4L2 fallback. `decodebin` handles MJPEG cameras;
+  frames are I420 640x360 (letterboxed) at 15 fps, encoded by OpenH264 in camera mode at
+  600 kbit/s, a keyframe every 2 s or on `KeyFrame=1`.
+- Meeting: on/off is `UpdateMediaDescriptions` (`sendrecv` + label with `;v_2`, `recvonly` with
+  `;v_1`). No `applyChannelParameters` yet. 1:1: on/off is a re-offer with `Video`, the line
+  `sendrecv`/`recvonly`, the sharing line kept as it is.
+- Self-view: every second camera frame, mirrored and reduced to at most 320 px wide, drawn in our
+  own tile.
+- Receiving: every remote video track's RTP goes to `MediaEvents::video`; a PLI goes out at its
+  first packet and every 2 s until a keyframe comes. The first track that sends a keyframe is
+  depacketized (single NAL, STAP-A, FU-A; a lost packet drops its access unit), decoded by
+  OpenH264 on a thread of its own and drawn in one person's tile: the other person in a 1:1 call,
+  in a meeting the person heard now, else the first other person.
+- "Accept with video" answers with audio (as mautrix-teams) and turns the camera on once the call
+  runs. The pre-join Camera switch does the same for a meeting join.
+
+UNVERIFIED (each needs a live run): that a meeting's media server accepts kelma's join offer with
+one sendrecv main-video line and no gallery lines; whether `applyChannelParameters`
+`maxVideoSendCapabilities` must precede `;v_2`; that the media server forwards our camera without
+it; that `pipewiresrc` with no node picks a portal camera (and which one when there are several);
+what a meeting's main-video line receives without a subscription (likely nothing: meeting video
+needs the `controlVideoStreaming` subscription and MSI mapping, not built); that a 1:1 peer's
+camera arrives on our main-video line and decodes; that a browser peer takes our `42c01f` stream;
+the bitrate and size the web client sends.

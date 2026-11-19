@@ -221,7 +221,8 @@ pub fn is_direct_chat(id: &str) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallCmd {
-    /// Accept the ringing call; `video` when "Accept with video" was pressed (audio only for now).
+    /// Accept the ringing call; `video` when "Accept with video" was pressed (the camera starts
+    /// once the call runs, with `KELMA_CAMERA=1`).
     Accept {
         video: bool,
     },
@@ -640,6 +641,7 @@ impl Engine {
         video: bool,
         current: Option<CurrentCall>,
     ) -> anyhow::Result<()> {
+        call::camera::accept_with_video(video);
         let current = self
             .calls
             .in_call()

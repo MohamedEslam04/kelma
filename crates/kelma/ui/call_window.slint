@@ -2,8 +2,9 @@
 // More panels, lobby, reconnecting banner) and the call-ended screen. It covers the area right of
 // the rail (see app.slint); `CallMini` is the floating call while another page is open.
 //
-// Video, screen sharing and reactions are drawn but disabled: the calling engine carries
-// audio only and has no reaction API (crates/calling/src/signaling/controls.rs).
+// Camera and screen sharing work when the build negotiates them (KELMA_CAMERA=1,
+// KELMA_SCREEN_SHARE=1); reactions are drawn but disabled (no reaction API,
+// crates/calling/src/signaling/controls.rs).
 import { Theme } from "theme.slint";
 import { Avatar, Icon } from "widgets.slint";
 import { CallStore, CallPerson, CallCaption, CallFound } from "call_store.slint";
@@ -130,10 +131,14 @@ component TopBar inherits Rectangle {
             background: Theme.border;
         }
         CallButton {
-            icon: @image-url("icons/video-off.svg");
+            icon: CallStore.camera ? @image-url("icons/video.svg") : @image-url("icons/video-off.svg");
             label: "Camera";
-            enabled: false;
-            tip: "Video isn't available yet";
+            checkable: true;
+            active: CallStore.camera;
+            enabled: CallStore.can-camera || CallStore.camera;
+            tip: CallStore.can-camera || CallStore.camera ? (CallStore.camera ? "Turn camera off" : "Turn camera on")
+                : "Video isn't available in this call";
+            clicked => { CallStore.command("camera", ""); }
         }
         HorizontalLayout {
             CallButton {
@@ -206,12 +211,24 @@ component Tile inherits Rectangle {
     in property <CallPerson> p;
     // The avatar's size, at most (the speaker view's large tile has a bigger one).
     in property <length> avatar-size: 72px;
+    // Our camera in our tile, the other side's video in theirs.
+    property <bool> self-view: root.p.me && CallStore.camera && CallStore.has-self-view;
+    property <bool> remote: !root.p.me && root.p.video && CallStore.has-remote-video;
     border-radius: 8px;
+    clip: true;
     background: Theme.surface;
+    if root.self-view || root.remote: Image {
+        source: root.self-view ? CallStore.self-view : CallStore.remote-video;
+        width: root.width;
+        height: root.height;
+        image-fit: root.self-view ? ImageFit.cover : ImageFit.contain;
+        accessible-role: image;
+        accessible-label: root.self-view ? "Your video" : root.p.name + "'s video";
+    }
     // Speaking: the accent outline, as Teams draws it; a raised hand also shows it.
     border-width: root.p.speaking || root.p.hand ? 2px : 0px;
     border-color: Theme.accent;
-    Avatar {
+    if !root.self-view && !root.remote: Avatar {
         initials: root.p.initials;
         img: root.p.photo;
         has-img: root.p.has-photo;
@@ -732,9 +749,11 @@ export component CallMini inherits Rectangle {
                 horizontal-stretch: 1;
             }
             MiniButton {
-                icon: @image-url("icons/video-off.svg");
+                icon: CallStore.camera ? @image-url("icons/video.svg") : @image-url("icons/video-off.svg");
                 label: "Camera";
-                enabled: false;
+                active: CallStore.camera;
+                enabled: CallStore.can-camera || CallStore.camera;
+                clicked => { CallStore.command("camera", ""); }
             }
             MiniButton {
                 icon: CallStore.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");

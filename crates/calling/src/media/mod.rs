@@ -29,6 +29,7 @@ use rtc::ice::mdns::MulticastDnsMode;
 use rtc::interceptor::Registry;
 use rtc::media::Sample;
 use rtc::media_stream::MediaStreamTrack;
+use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_OPUS};
 use rtc::rtp_transceiver::rtp_sender::{
@@ -47,6 +48,7 @@ use webrtc::peer_connection::{
 };
 use webrtc::rtp_transceiver::RtpSender;
 
+use crate::video::receive::{VideoPacket, carries_keyframe};
 use crate::video::{VideoRole, h264};
 use crate::{Error, IceServer, OpusPacket, Result};
 
@@ -61,6 +63,10 @@ const GATHER_TIMEOUT: Duration = Duration::from_secs(10);
 const AUDIO_QUEUE: usize = 250;
 /// Incoming data-channel messages buffered for the call.
 const DATA_QUEUE: usize = 256;
+/// Incoming video packets waiting for the decoder: about a second of 640x360.
+const VIDEO_QUEUE: usize = 512;
+/// How often a remote video track is asked for a keyframe (PLI) until it sends one.
+const KEYFRAME_ASK: Duration = Duration::from_secs(2);
 
 /// Where the peer binds its UDP sockets, and which candidates it may use.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +121,9 @@ pub struct MediaEvents {
     /// `main-channel`), as sent: Teams' framing, not yet joined. Dropped when the reader falls
     /// behind. Never yields without [`MediaOptions::data_channel`].
     pub data: mpsc::Receiver<Vec<u8>>,
+    /// Every RTP packet of the other side's video tracks (see [`crate::video::receive`]).
+    /// Dropped, not queued without bound, when nobody reads them.
+    pub video: mpsc::Receiver<VideoPacket>,
 }
 
 /// One call's media peer.
@@ -230,9 +239,11 @@ impl MediaSession {
         let (gathered_tx, gathered) = watch::channel(false);
         let (speakers_tx, speakers_rx) = watch::channel(Vec::new());
         let (data_tx, data_rx) = mpsc::channel(DATA_QUEUE);
+        let (video_tx, video_rx) = mpsc::channel(VIDEO_QUEUE);
         let handler = Handler {
             state: Arc::clone(&state),
             audio: audio_tx,
+            video: video_tx,
             gathered: gathered_tx,
             speakers: Arc::new(speakers_tx),
             data: options.data_channel.then(|| data_tx.clone()),
@@ -308,6 +319,7 @@ impl MediaSession {
                 audio: audio_rx,
                 speakers: speakers_rx,
                 data: data_rx,
+                video: video_rx,
             },
         ))
     }
@@ -603,6 +615,7 @@ async fn read_data_channel(channel: Arc<dyn DataChannel>, to: mpsc::Sender<Vec<u
 struct Handler {
     state: Arc<StateTx>,
     audio: mpsc::Sender<OpusPacket>,
+    video: mpsc::Sender<VideoPacket>,
     gathered: watch::Sender<bool>,
     speakers: Arc<watch::Sender<Vec<u32>>>,
     /// Where data-channel messages go, when the session has the data channel.
@@ -644,8 +657,8 @@ impl PeerConnectionEventHandler for Handler {
         let id = track.track_id().await.to_string();
         tracing::info!(?kind, track = %id, "remote track");
         if kind == RtpCodecKind::Video {
-            // Still drain it, or the driver logs a full queue for every packet.
-            tokio::spawn(async move { while track.poll().await.is_some() {} });
+            // Always drained, or the driver logs a full queue for every packet.
+            tokio::spawn(forward_video(track, id.into(), self.video.clone()));
             return;
         }
         let audio = self.audio.clone();
@@ -674,6 +687,48 @@ impl PeerConnectionEventHandler for Handler {
                 }
             }
         });
+    }
+}
+
+/// Reads one remote video track into `video` until it ends. Asks the sender for a keyframe (an
+/// RTCP PLI) at the first packet and every [`KEYFRAME_ASK`] until one comes, so a picture shows
+/// soon after the track starts.
+async fn forward_video(
+    track: Arc<dyn TrackRemote>,
+    id: Arc<str>,
+    video: mpsc::Sender<VideoPacket>,
+) {
+    let mut keyframe_seen = false;
+    let mut asked: Option<Instant> = None;
+    while let Some(event) = track.poll().await {
+        match event {
+            TrackRemoteEvent::OnRtpPacket(packet) if !packet.payload.is_empty() => {
+                keyframe_seen |= carries_keyframe(&packet.payload);
+                if !keyframe_seen && asked.is_none_or(|t| t.elapsed() >= KEYFRAME_ASK) {
+                    asked = Some(Instant::now());
+                    let pli = PictureLossIndication {
+                        sender_ssrc: 0,
+                        media_ssrc: packet.header.ssrc,
+                    };
+                    if let Err(e) = track.write_rtcp(vec![Box::new(pli)]).await {
+                        tracing::debug!(%e, "keyframe request not sent");
+                    }
+                }
+                let p = VideoPacket {
+                    track: Arc::clone(&id),
+                    ssrc: packet.header.ssrc,
+                    sequence: packet.header.sequence_number,
+                    timestamp: packet.header.timestamp,
+                    marker: packet.header.marker,
+                    payload: packet.payload.to_vec(),
+                };
+                // Full: the decoder is behind and this packet is lost (it recovers at the next
+                // keyframe). Closed: nobody shows video; keep draining.
+                let _ = video.try_send(p);
+            }
+            TrackRemoteEvent::OnEnded => break,
+            _ => {}
+        }
     }
 }
 

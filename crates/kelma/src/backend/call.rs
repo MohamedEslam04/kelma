@@ -29,6 +29,8 @@ mod bots;
 pub(crate) mod live;
 #[cfg(feature = "calls")]
 pub(crate) mod share;
+#[cfg(feature = "calls")]
+pub(crate) mod camera;
 
 /// What kind of call the window shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,6 +225,9 @@ pub enum Event {
         available: bool,
         sharing: bool,
     },
+    /// Whether the call can send our camera now, and whether it is on.
+    #[cfg(any(test, feature = "calls"))]
+    Camera { available: bool, on: bool },
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.
@@ -260,6 +265,8 @@ pub enum Control {
         mri: String,
         name: String,
     },
+    /// Turn the camera on (the Camera portal may ask) or off.
+    Camera(bool),
     Leave,
 }
 
@@ -270,6 +277,14 @@ pub struct Found {
     pub name: String,
     /// Job title or email.
     pub subtitle: String,
+}
+
+/// Which picture a driver draws: our camera in our tile, or the other side's video in theirs.
+#[cfg(feature = "calls")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoSlot {
+    SelfView,
+    Remote,
 }
 
 /// What to join.
@@ -304,6 +319,9 @@ pub struct JoinOptions {
     pub mic: Option<String>,
     #[cfg(any(test, feature = "calls"))]
     pub speaker: Option<String>,
+    /// Start the camera once the call can send it.
+    #[cfg(any(test, feature = "calls"))]
+    pub camera: bool,
 }
 
 /// An audio device as the pickers list it. `id: None` is the system default.
@@ -366,7 +384,10 @@ pub struct CallData {
     pub hand: bool,
     pub can_share: bool,
     pub sharing: bool,
+    pub can_camera: bool,
+    pub camera: bool,
     pub prejoin_mic: bool,
+    pub prejoin_camera: bool,
     pub recording: bool,
     pub transcribing: bool,
     pub captions: bool,
@@ -418,6 +439,11 @@ pub struct CallModel {
     /// The driver can share a screen in this call (it negotiated a sharing line).
     pub can_share: bool,
     pub sharing: bool,
+    /// The driver can send our camera in this call (it negotiated a main-video line).
+    pub can_camera: bool,
+    pub camera: bool,
+    /// The pre-join camera choice.
+    pub prejoin_camera: bool,
     pub recording: bool,
     pub transcribing: bool,
     /// Live captions are on (asked for, and not refused).
@@ -499,6 +525,8 @@ impl CallModel {
             mic: self.mic_id(),
             #[cfg(any(test, feature = "calls"))]
             speaker: self.speaker_id(),
+            #[cfg(any(test, feature = "calls"))]
+            camera: self.prejoin_camera,
         }
     }
 
@@ -577,6 +605,11 @@ impl CallModel {
                 let a = replace(&mut self.can_share, available);
                 return replace(&mut self.sharing, sharing) || a;
             }
+            #[cfg(any(test, feature = "calls"))]
+            Event::Camera { available, on } => {
+                let a = replace(&mut self.can_camera, available);
+                return replace(&mut self.camera, on) || a;
+            }
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
                 self.end(reason, now);
@@ -593,6 +626,8 @@ impl CallModel {
         self.hand = false;
         self.can_share = false;
         self.sharing = false;
+        self.can_camera = false;
+        self.camera = false;
         self.recording = false;
         self.transcribing = false;
         self.notice.clear();
@@ -687,6 +722,18 @@ impl CallModel {
     pub fn toggle_share(&self) -> Option<Control> {
         (self.phase.active() && (self.can_share || self.sharing))
             .then_some(Control::Share(!self.sharing))
+    }
+
+    /// The Camera toggle: on the pre-join screen it flips the choice; in a call that can send
+    /// video it asks the driver. The state itself follows the driver's [`Event::Camera`] (the
+    /// portal can refuse).
+    pub fn toggle_camera(&mut self) -> Option<Control> {
+        if self.phase == Phase::PreJoin {
+            self.prejoin_camera = !self.prejoin_camera;
+            return None;
+        }
+        (self.phase.active() && (self.can_camera || self.camera))
+            .then_some(Control::Camera(!self.camera))
     }
 
     /// The hand toggle. Returns the new state while a call runs.
@@ -796,7 +843,10 @@ impl CallModel {
             hand: self.hand,
             can_share: self.can_share && self.phase.active(),
             sharing: self.sharing,
+            can_camera: self.can_camera && self.phase.active(),
+            camera: self.camera,
             prejoin_mic: self.mic_on,
+            prejoin_camera: self.prejoin_camera,
             recording: self.recording,
             transcribing: self.transcribing,
             captions: self.captions,
@@ -912,6 +962,9 @@ pub enum CallCmd {
     /// "Transfer now" to a person from the search.
     Transfer(String),
     ToggleShare,
+    ToggleCamera,
+    /// The pre-join camera switch.
+    PrejoinCamera(bool),
     Leave,
     /// Close the call-ended screen.
     Close,
@@ -947,6 +1000,8 @@ impl CallCmd {
             "invite" if !arg.is_empty() => CallCmd::Invite(arg.into()),
             "transfer" if !arg.is_empty() => CallCmd::Transfer(arg.into()),
             "share" => CallCmd::ToggleShare,
+            "camera" => CallCmd::ToggleCamera,
+            "prejoin-camera" => CallCmd::PrejoinCamera(arg == "on"),
             "leave" => CallCmd::Leave,
             "close" => CallCmd::Close,
             "rejoin" => CallCmd::Rejoin,
@@ -973,6 +1028,17 @@ impl EventSink {
     pub fn send(&self, ev: Event) {
         if let Some(s) = self.shared.upgrade() {
             s.apply(self.generation, ev);
+        }
+    }
+
+    /// A picture for the call window (`None` clears it). Bypasses the model: frames come many
+    /// times a second and change nothing else.
+    #[cfg(feature = "calls")]
+    pub fn video(&self, slot: VideoSlot, frame: Option<calling::video::RgbFrame>) {
+        if let Some(s) = self.shared.upgrade()
+            && s.generation.load(Ordering::SeqCst) == self.generation
+        {
+            s.ui.call_video(slot, frame);
         }
     }
 
@@ -1401,6 +1467,11 @@ impl CallManager {
                 CallCmd::Invite(mri) => m.invite(&mri),
                 CallCmd::Transfer(mri) => m.transfer(&mri),
                 CallCmd::ToggleShare => m.toggle_share(),
+                CallCmd::ToggleCamera => m.toggle_camera(),
+                CallCmd::PrejoinCamera(on) => {
+                    m.prejoin_camera = on;
+                    None
+                }
                 CallCmd::Leave => m.leave(now).then_some(Control::Leave),
                 CallCmd::Close => {
                     m.close();
@@ -1611,7 +1682,8 @@ impl CallManager {
         let mut parts = Some((session, links, media, events));
         let adopted = self.adopt_handle(kind, |sink| {
             let (session, links, media, events) = parts.take().expect("taken once");
-            let opts = shared.model.lock().unwrap().options();
+            let mut opts = shared.model.lock().unwrap().options();
+            opts.camera = camera::take_accept_with_video();
             live::adopt(hub, session, links, media, events, opts, sink)
         });
         if !adopted {
@@ -1836,6 +1908,7 @@ impl CallHandle for FakeHandle {
             Control::RaiseHand => "hand up".into(),
             Control::LowerHand => "hand down".into(),
             Control::Share(on) => format!("share {}", if *on { "on" } else { "off" }),
+            Control::Camera(on) => format!("camera {}", if *on { "on" } else { "off" }),
             Control::Devices { mic, speaker } => format!(
                 "devices {} {}",
                 mic.as_deref().unwrap_or("default"),
@@ -2080,6 +2153,51 @@ mod tests {
         m.leave(now);
         assert!(!m.sharing && !m.can_share);
         assert_eq!(m.toggle_share(), None);
+    }
+
+    #[test]
+    fn the_camera_is_chosen_before_joining_and_follows_the_driver_in_a_call() {
+        let mut m = ready();
+        assert_eq!(m.toggle_camera(), None);
+        assert!(m.prejoin_camera && m.data(Instant::now()).prejoin_camera);
+        let (_, opts) = m.joining().unwrap();
+        assert!(opts.camera, "the driver starts it once it can");
+        assert_eq!(m.toggle_camera(), None, "no video line negotiated");
+        let now = Instant::now();
+        assert!(m.apply(
+            Event::Camera {
+                available: true,
+                on: false
+            },
+            now
+        ));
+        assert_eq!(m.toggle_camera(), Some(Control::Camera(true)));
+        assert!(!m.camera, "the portal may still refuse");
+        m.apply(
+            Event::Camera {
+                available: true,
+                on: true,
+            },
+            now,
+        );
+        assert_eq!(m.toggle_camera(), Some(Control::Camera(false)));
+        assert!(m.data(now).camera && m.data(now).can_camera);
+        m.leave(now);
+        assert!(!m.camera && !m.can_camera);
+        assert_eq!(m.toggle_camera(), None);
+    }
+
+    #[test]
+    fn camera_commands_parse() {
+        assert_eq!(CallCmd::parse("camera", ""), Some(CallCmd::ToggleCamera));
+        assert_eq!(
+            CallCmd::parse("prejoin-camera", "on"),
+            Some(CallCmd::PrejoinCamera(true))
+        );
+        assert_eq!(
+            CallCmd::parse("prejoin-camera", "off"),
+            Some(CallCmd::PrejoinCamera(false))
+        );
     }
 
     #[test]

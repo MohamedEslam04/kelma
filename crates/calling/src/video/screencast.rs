@@ -13,16 +13,13 @@ use std::process::Stdio;
 use ashpd::desktop::PersistMode;
 use ashpd::desktop::Session;
 use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
-use tokio::io::AsyncReadExt;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::{I420Frame, fit_within};
 use crate::{Error, Result};
 
-/// Frames buffered between the capture and the encoder; older ones are dropped, not queued.
-const FRAME_QUEUE: usize = 2;
 /// The size used when the portal names none.
 const FALLBACK_SIZE: (u32, u32) = (1280, 720);
 
@@ -196,43 +193,17 @@ fn spawn_gstreamer(
     size: (u32, u32),
     fps: u32,
 ) -> Result<ScreenCapture> {
-    let mut child = Command::new("gst-launch-1.0")
-        .args(gstreamer_args(node, size, fps))
-        .stdin(pipewire)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| Error::Media(format!("gst-launch-1.0 (GStreamer) not started: {e}")))?;
-    let mut out = child
-        .stdout
-        .take()
-        .ok_or_else(|| Error::Media("gst-launch-1.0 has no stdout".into()))?;
-    let (tx, frames) = mpsc::channel(FRAME_QUEUE);
-    let (w, h) = (size.0 as usize, size.1 as usize);
-    let reader = tokio::spawn(async move {
-        let len = I420Frame::len_for(w, h);
-        loop {
-            let mut data = vec![0; len];
-            if let Err(e) = out.read_exact(&mut data).await {
-                tracing::info!(%e, "screen capture ended");
-                return;
-            }
-            let Ok(frame) = I420Frame::new(w, h, data) else {
-                return;
-            };
-            match tx.try_send(frame) {
-                // The encoder is behind: this frame is dropped, a newer one follows.
-                Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
-                Err(mpsc::error::TrySendError::Closed(_)) => return,
-            }
-        }
-    });
-    Ok(ScreenCapture {
-        frames,
+    let g = super::gst::spawn(
+        gstreamer_args(node, size, fps),
+        pipewire,
         size,
-        child,
-        reader,
+        "screen capture",
+    )?;
+    Ok(ScreenCapture {
+        frames: g.frames,
+        size,
+        child: g.child,
+        reader: g.reader,
         session: None,
     })
 }

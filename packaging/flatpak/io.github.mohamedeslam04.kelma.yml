@@ -25,7 +25,8 @@ finish-args:
   # The refresh token lives in the Secret Service (GNOME Keyring or KWallet).
   - --talk-name=org.freedesktop.secrets
   # Portals (file chooser, open URI, camera, screencast) need no extra permission:
-  # xdg-desktop-portal is always reachable from the sandbox. Attachments and problem reports
+  # xdg-desktop-portal is always reachable from the sandbox. Call video uses the Camera portal
+  # only here: its V4L2 fallback would need --device=all, which is not granted. Attachments and problem reports
   # are saved to the Downloads folder.
   - --filesystem=xdg-download
 
