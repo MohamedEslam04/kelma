@@ -677,11 +677,47 @@ fn link_of(st: MediaState) -> Link {
     }
 }
 
-fn people(roster: &Roster, me: &str) -> Vec<Person> {
+/// Who is heard: the participants whose audio `sourceId`s the latest packets name, and the order
+/// people last spoke in (the floating call shows the latest speakers first).
+#[derive(Debug, Default)]
+struct Talk {
+    now: std::collections::HashSet<String>,
+    last: std::collections::HashMap<String, u64>,
+    tick: u64,
+}
+
+impl Talk {
+    /// Takes the sources heard now; true when who speaks changed.
+    fn heard(&mut self, roster: &Roster, sources: &[u32]) -> bool {
+        let now: std::collections::HashSet<String> = roster
+            .participants()
+            .iter()
+            .filter(|p| {
+                p.endpoints
+                    .iter()
+                    .any(|e| e.audio_sources.iter().any(|s| sources.contains(s)))
+            })
+            .map(|p| p.mri.clone())
+            .collect();
+        if now == self.now {
+            return false;
+        }
+        self.tick += 1;
+        for m in &now {
+            self.last.insert(m.clone(), self.tick);
+        }
+        self.now = now;
+        true
+    }
+}
+
+fn people(roster: &Roster, me: &str, talk: &Talk) -> Vec<Person> {
     roster
         .participants()
         .iter()
         .map(|p| Person {
+            speaking: talk.now.contains(&p.mri),
+            spoke: talk.last.get(&p.mri).copied().unwrap_or(0),
             name: if p.display_name.is_empty() {
                 "Unknown".into()
             } else {
@@ -812,6 +848,9 @@ impl Call {
         }
         let mut forwarders = vec![forward(play_rx.clone(), events.audio)];
         let mut state_rx = events.state;
+        let mut speakers_rx = events.speakers;
+        let mut talk = Talk::default();
+        let mut speakers_open = true;
         if !opts.mic_on {
             self.control(Control::Mute(true), &mut audio, &sink).await;
         }
@@ -828,6 +867,13 @@ impl Call {
                 c = ctl.recv() => match c {
                     None | Some(Control::Leave) => break None,
                     Some(c) => self.control(c, &mut audio, &sink).await,
+                },
+                heard = speakers_rx.changed(), if speakers_open => match heard {
+                    Ok(()) => {
+                        let sources = speakers_rx.borrow_and_update().clone();
+                        roster_changed = talk.heard(&self.roster, &sources);
+                    }
+                    Err(_) => speakers_open = false,
                 },
                 st = state_rx.recv() => match st {
                     Some(MediaState::Failed | MediaState::Closed) | None => {
@@ -859,6 +905,8 @@ impl Call {
                             let swapped = self.renegotiate(&offer, &links, &sender_tx, &sink).await;
                             if let Some(ev) = swapped {
                                 state_rx = ev.state;
+                                speakers_rx = ev.speakers;
+                                speakers_open = true;
                                 forwarders.push(forward(play_rx.clone(), ev.audio));
                             }
                             self.links.0.extend(links.0);
@@ -885,7 +933,7 @@ impl Call {
                 }
             }
             if roster_changed {
-                sink.send(Event::Roster(people(&self.roster, &me)));
+                sink.send(Event::Roster(people(&self.roster, &me, &talk)));
                 if let Some(p) = self.roster.get(&me) {
                     in_lobby = p.presence == Presence::Lobby;
                     let hand = p.hand.is_some();
@@ -1169,7 +1217,7 @@ mod tests {
             "8:orgid:g": {"version": 1, "state": "active", "details": {"displayName": ""},
                 "endpoints": {"e": {"lobby": {}}}}
         }}));
-        let p = people(&r, "8:orgid:me");
+        let p = people(&r, "8:orgid:me", &Talk::default());
         let me = p.iter().find(|p| p.me).unwrap();
         assert!(me.muted && !me.lobby);
         let guest = p.iter().find(|p| !p.me).unwrap();

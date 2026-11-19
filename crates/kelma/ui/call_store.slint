@@ -12,6 +12,8 @@ export struct CallPerson {
     me: bool,
     // organizer | presenter | attendee | "".
     role: string,
+    // Heard right now.
+    speaking: bool,
 }
 
 export global CallStore {
@@ -37,6 +39,12 @@ export global CallStore {
     in property <bool> can-rejoin;
     // In the call first, then the lobby.
     in property <[CallPerson]> people;
+    // Who the floating call shows, latest speakers first (us only when alone), at most four,
+    // and how many more are in the call.
+    in property <[CallPerson]> mini-people;
+    in property <int> mini-more;
+    // The floating call's layout: "speaker" (one tile) | "gallery" (up to four).
+    in-out property <string> mini-layout: "speaker";
     in property <int> in-call;
     in property <int> in-lobby;
     in property <[string]> mics;
