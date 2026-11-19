@@ -16,6 +16,11 @@ pub const SETTINGS_IFACE: &str = "org.freedesktop.portal.Settings";
 pub const NS_APPEARANCE: &str = "org.freedesktop.appearance";
 pub const KEY_COLOR_SCHEME: &str = "color-scheme";
 pub const KEY_ACCENT_COLOR: &str = "accent-color";
+/// `contrast` (u32): 0 normal, 1 high.
+pub const KEY_CONTRAST: &str = "contrast";
+/// GNOME's animation switch, readable through the portal on GNOME desktops only.
+pub const NS_GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
+pub const KEY_ENABLE_ANIMATIONS: &str = "enable-animations";
 
 /// The portal's `color-scheme`: 0 no preference, 1 prefer dark, 2 prefer light.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -32,6 +37,10 @@ pub struct PortalSettings {
     pub color_scheme: PortalScheme,
     /// The desktop accent color, `None` when the portal has none.
     pub accent: Option<Rgb>,
+    /// The desktop asks for high contrast (`contrast` is 1).
+    pub high_contrast: bool,
+    /// `enable-animations`; `None` when the desktop does not expose it (KDE, for one).
+    pub animations_enabled: Option<bool>,
 }
 
 /// One live change from the `SettingChanged` signal.
@@ -40,6 +49,8 @@ pub struct PortalSettings {
 pub enum PortalChange {
     ColorScheme(PortalScheme),
     Accent(Option<Rgb>),
+    HighContrast(bool),
+    AnimationsEnabled(bool),
 }
 
 impl PortalSettings {
@@ -48,6 +59,8 @@ impl PortalSettings {
         match change {
             PortalChange::ColorScheme(s) => self.color_scheme = s,
             PortalChange::Accent(a) => self.accent = a,
+            PortalChange::HighContrast(h) => self.high_contrast = h,
+            PortalChange::AnimationsEnabled(e) => self.animations_enabled = Some(e),
         }
     }
 }
@@ -74,6 +87,18 @@ pub(crate) fn parse_u32(v: &Value<'_>) -> Option<u32> {
         Value::U32(n) => Some(*n),
         _ => None,
     }
+}
+
+pub(crate) fn parse_bool(v: &Value<'_>) -> Option<bool> {
+    match unwrap_variant(v) {
+        Value::Bool(b) => Some(*b),
+        _ => None,
+    }
+}
+
+/// `contrast` (u32): 1 is high contrast, any other number is normal. Another type is `None`.
+pub fn parse_contrast(v: &Value<'_>) -> Option<bool> {
+    parse_u32(v).map(|n| n == 1)
 }
 
 /// `color-scheme` (u32). Unknown numbers mean no preference, as the portal spec says;
@@ -110,6 +135,10 @@ pub fn parse_change(namespace: &str, key: &str, value: &Value<'_>) -> Option<Por
         }
         // A malformed accent is "no accent", not an ignored event.
         (NS_APPEARANCE, KEY_ACCENT_COLOR) => Some(PortalChange::Accent(parse_accent(value))),
+        (NS_APPEARANCE, KEY_CONTRAST) => parse_contrast(value).map(PortalChange::HighContrast),
+        (NS_GNOME_INTERFACE, KEY_ENABLE_ANIMATIONS) => {
+            parse_bool(value).map(PortalChange::AnimationsEnabled)
+        }
         _ => None,
     }
 }
@@ -173,7 +202,7 @@ pub(crate) async fn read_key(
     }
 }
 
-/// Reads the current color scheme and accent. `Ok(None)` if there is no session bus or no portal.
+/// Reads the current color scheme, accent, contrast and animation switch. `Ok(None)` if there is no session bus or no portal.
 pub async fn read() -> Result<Option<PortalSettings>, PortalError> {
     let Some(conn) = connect().await? else {
         return Ok(None);
@@ -194,6 +223,12 @@ pub async fn read() -> Result<Option<PortalSettings>, PortalError> {
     }
     if let Some(v) = read_key(&proxy, NS_APPEARANCE, KEY_ACCENT_COLOR).await? {
         out.accent = parse_accent(&v);
+    }
+    if let Some(v) = read_key(&proxy, NS_APPEARANCE, KEY_CONTRAST).await? {
+        out.high_contrast = parse_contrast(&v).unwrap_or(false);
+    }
+    if let Some(v) = read_key(&proxy, NS_GNOME_INTERFACE, KEY_ENABLE_ANIMATIONS).await? {
+        out.animations_enabled = parse_bool(&v);
     }
     Ok(Some(out))
 }
@@ -310,7 +345,10 @@ mod tests {
             parse_change(NS_APPEARANCE, KEY_ACCENT_COLOR, &rgb_value(9.0, 9.0, 9.0)),
             Some(PortalChange::Accent(None))
         );
-        assert_eq!(parse_change(NS_APPEARANCE, "contrast", &owned(1u32)), None);
+        assert_eq!(
+            parse_change(NS_APPEARANCE, "unused-key", &owned(1u32)),
+            None
+        );
         assert_eq!(
             parse_change("org.example", KEY_COLOR_SCHEME, &owned(1u32)),
             None
@@ -326,11 +364,44 @@ mod tests {
             s,
             PortalSettings {
                 color_scheme: PortalScheme::Light,
-                accent: Some(Rgb::new(1, 2, 3))
+                accent: Some(Rgb::new(1, 2, 3)),
+                ..Default::default()
             }
         );
         s.apply(PortalChange::Accent(None));
         assert_eq!(s.accent, None);
+    }
+
+    #[test]
+    fn contrast_values() {
+        assert_eq!(parse_contrast(&owned(0u32)), Some(false));
+        assert_eq!(parse_contrast(&owned(1u32)), Some(true));
+        assert_eq!(parse_contrast(&owned(5u32)), Some(false));
+        assert_eq!(parse_contrast(&owned(true)), None);
+        assert_eq!(
+            parse_change(NS_APPEARANCE, KEY_CONTRAST, &owned(1u32)),
+            Some(PortalChange::HighContrast(true))
+        );
+    }
+
+    #[test]
+    fn animation_switch() {
+        assert_eq!(parse_bool(&owned(false)), Some(false));
+        assert_eq!(parse_bool(&owned(1u32)), None);
+        assert_eq!(
+            parse_change(NS_GNOME_INTERFACE, KEY_ENABLE_ANIMATIONS, &owned(false)),
+            Some(PortalChange::AnimationsEnabled(false))
+        );
+        // The key only counts in the GNOME namespace.
+        assert_eq!(
+            parse_change(NS_APPEARANCE, KEY_ENABLE_ANIMATIONS, &owned(false)),
+            None
+        );
+        let mut s = PortalSettings::default();
+        s.apply(PortalChange::HighContrast(true));
+        s.apply(PortalChange::AnimationsEnabled(false));
+        assert!(s.high_contrast);
+        assert_eq!(s.animations_enabled, Some(false));
     }
 
     /// Reads the real portal on this desktop (read-only). Run with

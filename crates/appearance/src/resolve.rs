@@ -117,6 +117,7 @@ mod tests {
         let portal = PortalSettings {
             color_scheme: PortalScheme::Dark,
             accent: Some(Rgb::new(5, 6, 7)),
+            ..Default::default()
         };
         let r = resolve(&p, Some(&portal));
         assert_eq!(r.theme, ResolvedTheme::Dark);

@@ -66,3 +66,37 @@ where
     let v = serde_json::Value::deserialize(d)?;
     Ok(T::deserialize(v).unwrap_or_default())
 }
+
+/// Adds `path`, `load`, `load_from`, `save` and `save_to` to a preferences type that is
+/// `Default + Serialize + DeserializeOwned`, kept in `$file` in the config dir.
+macro_rules! prefs_file {
+    ($ty:ty, $file:expr) => {
+        impl $ty {
+            /// Where the file lives (in the app config dir).
+            pub fn path() -> Result<std::path::PathBuf, $crate::store::Error> {
+                Ok($crate::store::config_dir()?.join($file))
+            }
+
+            /// Loads the preferences; a missing or corrupt file, or no home, gives the defaults.
+            pub fn load() -> Self {
+                Self::path()
+                    .map(|p| Self::load_from(&p))
+                    .unwrap_or_default()
+            }
+
+            pub fn load_from(path: &std::path::Path) -> Self {
+                $crate::store::load_json(path)
+            }
+
+            /// Saves atomically (temp file, then rename).
+            pub fn save(&self) -> Result<(), $crate::store::Error> {
+                self.save_to(&Self::path()?)
+            }
+
+            pub fn save_to(&self, path: &std::path::Path) -> Result<(), $crate::store::Error> {
+                $crate::store::save_json(path, self)
+            }
+        }
+    };
+}
+pub(crate) use prefs_file;
