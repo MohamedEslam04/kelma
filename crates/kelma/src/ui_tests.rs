@@ -21,6 +21,7 @@ mod activity;
 mod appstore;
 mod channels;
 mod drive;
+mod engage;
 mod find;
 mod lists;
 mod people;

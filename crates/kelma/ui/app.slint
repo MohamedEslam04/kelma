@@ -29,6 +29,7 @@ import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane 
 import { AppsStore } from "apps_store.slint";
 import { RailApps, AppsOverlays } from "apps_rail.slint";
 import { AppsHost } from "apps_host.slint";
+import { EngageView, EngageStore } from "engage.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -38,6 +39,7 @@ export { PeopleStore } from "people.slint";
 export { ListStore, SectionRow, SectionChoice } from "lists.slint";
 export { ChannelStore, PostItem } from "channel_posts.slint";
 export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
+export { EngageStore, EPost } from "engage.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
@@ -379,12 +381,7 @@ export component AppWindow inherits Window {
                     PeopleStore.command("new-chat-open", "");
                 }
                 manage-teams => { TeamsStore.open = true; TeamsStore.command("open", ""); }
-                open-community(id) => {
-                    TeamsStore.tab = "communities";
-                    TeamsStore.community = id;
-                    TeamsStore.open = true;
-                    TeamsStore.command("community-open", id);
-                }
+                open-community(id) => { EngageStore.open = true; EngageStore.command("open", id); }
                 select-chat(id) => { FindStore.quick-open = false; root.select-chat(id); }
                 select-channel(id, title) => { FindStore.quick-open = false; root.select-channel(id, title); }
                 toggle-team(i) => { root.toggle-team(i); }
@@ -1091,6 +1088,14 @@ export component AppWindow inherits Window {
             root.view = "teams";
             root.select-channel(id, title);
         }
+    }
+    // Viva Engage: a community's read-only feed covers the area right of the rail.
+    if root.login-state == "ready" && EngageStore.open && (root.view == "chat" || root.view == "teams"): EngageView {
+        x: 68px;
+        y: 48px;
+        z: 41;
+        width: root.width - 68px;
+        height: root.height - 48px;
     }
     if root.login-state == "ready" && TeamsStore.dialog != "": TeamsDialogs {
         z: 50;

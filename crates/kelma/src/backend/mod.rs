@@ -22,6 +22,7 @@ mod cal;
 mod channels;
 mod drafts;
 pub(crate) mod drive;
+pub(crate) mod engage;
 mod find;
 mod lists;
 mod live;
@@ -53,6 +54,7 @@ pub use cal::{
 };
 pub use channels::ChannelCmd;
 pub use drive::DriveCmd;
+pub use engage::EngageCmd;
 pub use find::FindCmd;
 pub use lists::ListsCmd;
 pub use manage::{
@@ -113,6 +115,8 @@ pub enum Cmd {
     People(PeopleCmd),
     Teams(TeamsCmd),
     Drive(DriveCmd),
+    /// Viva Engage: a community's read-only feed (plan S3.2).
+    Engage(EngageCmd),
     /// The chat list: sections, item menu, options, channel menu (plan 8.1 to 8.3, 8.5).
     Lists(ListsCmd),
     /// The channel Posts tab (plan 8.4).
@@ -210,6 +214,7 @@ pub struct Engine {
     find: Mutex<find::State>,
     manage: Mutex<manage::State>,
     drive: Mutex<drive::Drive>,
+    engage: Mutex<engage::State>,
     lists: Mutex<lists::State>,
     channels: Mutex<channels::State>,
     apps: Mutex<appstore::Apps>,
@@ -268,6 +273,7 @@ impl Engine {
             find: Mutex::new(find::State::default()),
             manage: Mutex::new(manage::State::default()),
             drive: Mutex::new(drive::Drive::default()),
+            engage: Mutex::new(engage::State::default()),
             lists: Mutex::new(lists::State::default()),
             channels: Mutex::new(channels::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
@@ -546,6 +552,7 @@ impl Engine {
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
+            Cmd::Engage(c) => self.engage_cmd(c).await?,
             Cmd::Lists(c) => self.lists_cmd(c).await?,
             Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
