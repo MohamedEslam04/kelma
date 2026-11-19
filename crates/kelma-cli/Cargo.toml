@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 anyhow = "1.0.104"
 app_store = { package = "apps", version = "0.0.0", path = "../apps" }
+devices = { version = "0.0.0", path = "../devices" }
 diag = { version = "0.0.0", path = "../diag" }
 calendar = { version = "0.0.0", path = "../calendar" }
 render = { version = "0.0.0", path = "../render" }
