@@ -25,6 +25,8 @@
 //! kelma-cli onenote [<notebook> [<section> [<page>]]]  read OneNote notebooks, sections, pages
 //! kelma-cli lists [<site> [<list>]]  SharePoint lists of your teams' sites (read-only)
 //! kelma-cli store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>  app bar and Store (writes are dry runs)
+//! kelma-cli settings <notifications|quiet|priority|privacy|blocked|shape>  notification and privacy settings (read-only)
+//! kelma-cli settings set <what> ... --dry-run  print the settings write without sending it
 //! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
@@ -39,6 +41,7 @@ mod accounts;
 mod apps;
 mod chatx;
 mod drive;
+mod settings;
 mod store;
 mod team;
 mod web;
@@ -916,6 +919,14 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
+        Some("settings") if settings::is_offline(&args[1..]) => settings::quiet(&args[2..])?,
+        Some("settings") => {
+            // A `set` is a dry run: the settings are read, never written.
+            let (client, cfg) = connect(&paths).await?;
+            let r = settings::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("store") => {
             let (client, cfg) = connect(&paths).await?;
             let r = store::run(&client, &args[1..]).await;
@@ -1067,6 +1078,8 @@ async fn main() -> Result<()> {
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
                    translate <languages|settings|message|channel>\n\
                    preview <url> [--image]\n\
+                   settings <notifications|quiet|priority|privacy|blocked|shape>\n\
+                   settings set <notify|pause|sound|meeting-chat|meeting-rsvp|privacy|block|unblock|priority-add|priority-remove> ... --dry-run\n\
                    store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>\n\
                    tail"
             );
