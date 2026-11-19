@@ -6,6 +6,7 @@
 //! [`endpoints::routed_url`], which refuses hosts outside Microsoft's calling plane.
 
 pub mod bodies;
+pub mod call_ops;
 pub mod callbacks;
 pub mod controls;
 pub mod endpoints;
@@ -13,6 +14,7 @@ pub mod meeting;
 pub mod roster;
 
 pub use bodies::{Attached, Conversation, MeetingInfo};
+pub use call_ops::TransferOutcome;
 pub use callbacks::CallbackLinks;
 pub use controls::{Controls, HandReceipt};
 pub use endpoints::CallingEndpoints;
@@ -660,6 +662,52 @@ impl NgcClient {
         self.post("remove_state", s, &url, &body)
             .await
             .map(|_| true)
+    }
+
+    /// Rings `mri` into the call (`addParticipant`; see [`call_ops`]). The outcome comes on the
+    /// `conversation/addParticipantSuccess` or `addParticipantFailure` callback.
+    pub async fn add_participant(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        mri: &str,
+        display_name: &str,
+    ) -> Result<()> {
+        let (url, body) = call_ops::add_participant_request(s, links, controller, mri, display_name);
+        self.post("add_participant", s, &url, &body).await.map(drop)
+    }
+
+    /// Re-offers our media on the same peer connection (hold and resume; see [`call_ops`]) on
+    /// the leg's `mediaRenegotiation` link. Returns the answer when it comes inline; otherwise
+    /// it arrives on our `call/mediaAnswer/` callback.
+    pub async fn renegotiate(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        modalities: &[Modality],
+        offer: &SdpBlob,
+    ) -> Result<Option<SdpBlob>> {
+        let url = Self::link(links, "mediaRenegotiation")?;
+        let body = bodies::renegotiation_body(s, modalities, offer, false);
+        let r = self.post("media_renegotiation", s, url, &body).await?;
+        Ok(bodies::parse_inline_answer(&r.body))
+    }
+
+    /// Acknowledges a media answer we applied (an empty POST on its `mediaAcknowledgement` link,
+    /// as rusty-teams does).
+    pub async fn acknowledge_media(&self, s: &CallSession, url: &str) -> Result<()> {
+        self.send("media_acknowledgement", s, Method::POST, url, None)
+            .await
+            .map(drop)
+    }
+
+    /// Transfers the call to `target` (an MRI; blind, "Transfer now"). The outcome comes on
+    /// `call/transferCompletion` ([`call_ops::parse_transfer_completion`]).
+    pub async fn transfer(&self, s: &CallSession, links: &Links, target: &str) -> Result<()> {
+        let (url, body) = call_ops::transfer_request(s, links, target)
+            .ok_or_else(|| Error::Protocol("this call has no 'transfer' link".into()))?;
+        self.post("transfer", s, &url, &body).await.map(drop)
     }
 
     /// One keep-alive (see [`bodies::keep_alive_request`]).

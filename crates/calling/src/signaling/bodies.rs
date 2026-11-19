@@ -333,8 +333,19 @@ pub fn mediafree_acceptance_body(s: &CallSession, modalities: &[Modality]) -> Va
 /// `place_call`'s offer. The answer comes inline or on `call/mediaAnswer/`. UNVERIFIED for a ring
 /// without an offer.
 pub fn negotiation_body(s: &CallSession, modalities: &[Modality], offer: &SdpBlob) -> Value {
+    renegotiation_body(s, modalities, offer, true)
+}
+
+/// [`negotiation_body`] with `newOffer` chosen: `false` re-offers on the peer connection in
+/// place (hold and resume; rusty-teams `offer_same_peer`, MIT), `true` starts a new one.
+pub fn renegotiation_body(
+    s: &CallSession,
+    modalities: &[Modality],
+    offer: &SdpBlob,
+    new_offer: bool,
+) -> Value {
     let mut media = media_content(s, offer, true);
-    media["newOffer"] = json!(true);
+    media["newOffer"] = json!(new_offer);
     json!({"mediaNegotiation": {
         "callModalities": modality_names(modalities),
         "sender": s.me.wire(),
@@ -484,6 +495,9 @@ pub struct Attached {
 /// The link name [`parse_attach`] files the call's conversation controller under.
 pub const CONVERSATION_CONTROLLER: &str = "conversationController";
 
+/// The conversation links of an attach answer that [`parse_attach`] keeps with the leg's.
+const ATTACH_CONVERSATION_LINKS: [&str; 2] = ["addParticipant", "addParticipantAndModality"];
+
 /// Parses an attach answer.
 pub fn parse_attach(body: &Value) -> Result<Attached> {
     let inv = body
@@ -510,6 +524,16 @@ pub fn parse_attach(body: &Value) -> Result<Attached> {
         .find(|u| u.starts_with("https://"));
     if let Some(c) = controller {
         links.0.insert(CONVERSATION_CONTROLLER.into(), c.into());
+    }
+    // The conversation's own links sit next to its controller (rusty-teams reads
+    // `additionalActionResponses[0].output.links`). Only the add links are kept: `leave` there
+    // would end the conversation instead of our leg.
+    for r in body["additionalActionResponses"].as_array().into_iter().flatten() {
+        for (name, url) in parse_links(&r["output"]["links"]).0 {
+            if ATTACH_CONVERSATION_LINKS.contains(&name.as_str()) && url.starts_with("https://") {
+                links.0.entry(name).or_insert(url);
+            }
+        }
     }
     Ok(Attached {
         links,
