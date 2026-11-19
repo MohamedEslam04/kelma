@@ -101,7 +101,7 @@ impl Engine {
                     });
                 }
             }
-            Event::Presence { .. } => {}
+            Event::Presence { mri, availability } => self.on_presence(&mri, &availability),
         }
     }
 

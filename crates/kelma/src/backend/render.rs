@@ -239,7 +239,15 @@ impl Engine {
                 && (current.as_deref() != Some(r.id.as_str())
                     || keep_unread.as_deref() == Some(r.id.as_str()));
             let mention = unread && self.has_unread_mention(&r.id, r.read_horizon_ms);
+            let presence = match r.kind {
+                ConvKind::OneOnOne => avatar_mri
+                    .as_deref()
+                    .map(super::people_presence::want)
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
             let data = ChatData {
+                presence,
                 mention,
                 group: r.kind == ConvKind::Group,
                 draft: draft.is_some(),

@@ -39,6 +39,7 @@ mod outbox;
 mod people;
 #[cfg(test)]
 mod people_live;
+mod people_presence;
 mod render;
 mod send;
 pub(crate) mod settings;
@@ -358,6 +359,7 @@ impl Engine {
         self.start_calls();
         self.start_notify_prefs();
         self.start_my_presence();
+        self.start_people_presence();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();

@@ -77,6 +77,7 @@ fn chat_row(c: ChatData) -> ChatRow {
         group: c.group,
         muted: c.muted,
         channel: c.channel,
+        presence: c.presence.into(),
     }
 }
 

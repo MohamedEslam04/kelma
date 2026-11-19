@@ -1,0 +1,94 @@
+//! Other people's presence for the dots on their avatars (chat plan 6.4).
+//!
+//! The chat list asks for the people it draws ([`want`]); the engine looks them up once a minute
+//! in batches and also applies the presence pushes from trouter. A change marks the chat list for
+//! redrawing.
+
+use super::Engine;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+#[derive(Default)]
+struct Cache {
+    known: HashMap<String, String>,
+    wanted: HashSet<String>,
+}
+
+static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+
+fn with<T>(f: impl FnOnce(&mut Cache) -> T) -> T {
+    let mut g = CACHE.lock().unwrap();
+    f(g.get_or_insert_with(Cache::default))
+}
+
+/// The person's availability as last seen (`""` when unknown), and asks for it from now on.
+pub fn want(mri: &str) -> String {
+    with(|c| {
+        c.wanted.insert(mri.to_string());
+        c.known.get(mri).cloned().unwrap_or_default()
+    })
+}
+
+/// Records an availability; true when it changed.
+pub fn set(mri: &str, availability: &str) -> bool {
+    with(|c| {
+        let old = c.known.insert(mri.to_string(), availability.to_string());
+        old.as_deref() != Some(availability)
+    })
+}
+
+fn wanted() -> Vec<String> {
+    with(|c| c.wanted.iter().cloned().collect())
+}
+
+impl Engine {
+    /// Looks up the wanted people's presence once a minute (live only).
+    pub(super) fn start_people_presence(self: &Arc<Self>) {
+        let e = self.clone();
+        tokio::spawn(async move {
+            loop {
+                // The first chat list draws first, so there is a list to ask for.
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let people = wanted();
+                if !people.is_empty() {
+                    match e.client.get_presence(&people).await {
+                        Ok(found) => {
+                            let mut changed = false;
+                            for p in found {
+                                changed |= set(&p.mri, &p.availability);
+                            }
+                            if changed {
+                                e.mark(|d| d.chats = true);
+                            }
+                        }
+                        Err(err) => tracing::debug!(%err, "people presence not read"),
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(55)).await;
+            }
+        });
+    }
+
+    /// A presence push from trouter.
+    pub(super) fn on_presence(self: &Arc<Self>, mri: &str, availability: &str) {
+        if set(mri, availability) {
+            self.mark(|d| d.chats = true);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wanted_people_are_remembered_and_changes_reported() {
+        assert_eq!(want("8:orgid:pp-test-a"), "");
+        assert!(wanted().contains(&"8:orgid:pp-test-a".to_string()));
+        assert!(set("8:orgid:pp-test-a", "Busy"));
+        assert!(!set("8:orgid:pp-test-a", "Busy"));
+        assert_eq!(want("8:orgid:pp-test-a"), "Busy");
+        assert!(set("8:orgid:pp-test-a", "Available"));
+    }
+}

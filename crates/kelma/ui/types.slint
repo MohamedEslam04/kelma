@@ -17,6 +17,7 @@ export struct ChatRow {
     group: bool,   // a group chat (the item menu offers Leave)
     muted: bool,   // notifications are off (the item menu offers Unmute)
     channel: bool, // a channel (the item menu offers the channel items)
+    presence: string, // the other person's availability in a 1:1 chat ("" draws no dot)
 }
 
 // Adaptive Card rows (plan 8.8). `kind`: text | fact | columns | image | actions | banner.

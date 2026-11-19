@@ -29,6 +29,8 @@ pub struct ChatData {
     pub muted: bool,
     /// A channel (its item menu has the channel items).
     pub channel: bool,
+    /// The other person's availability in a 1:1 chat (`""`: no dot).
+    pub presence: String,
 }
 
 /// A chip above the composer.
