@@ -1130,7 +1130,9 @@ impl Engine {
                 return;
             }
         };
-        let rows = model::sched_rows(&who, &schedules, 0, SLOTS);
+        let mut rows = model::sched_rows(&who, &schedules, 0, SLOTS);
+        let mine = self.my_working_hours();
+        model::shade_work_hours(&mut rows, &schedules, start, SLOT as u32, Some(&mine));
         push(rows.clone(), vec![], "", false);
         if req.required.is_empty() && req.optional.is_empty() {
             return;
@@ -1160,6 +1162,20 @@ impl Engine {
                 );
             }
             Err(err) => tracing::warn!(%err, "find meeting times failed"),
+        }
+    }
+
+    /// My work hours (the settings', else the mailbox's) in the machine's zone, for a Scheduler
+    /// row whose `getSchedule` answer carries none.
+    fn my_working_hours(&self) -> ::calendar::WorkingHours {
+        use ::calendar::Weekday::*;
+        let (start, end) = self.cal.lock().work_hours();
+        ::calendar::WorkingHours {
+            days: vec![Monday, Tuesday, Wednesday, Thursday, Friday],
+            start_min: start.max(0) as u32,
+            end_min: end.max(0) as u32,
+            time_zone: forms::local_tz(),
+            custom_zone: None,
         }
     }
 

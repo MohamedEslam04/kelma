@@ -83,8 +83,9 @@ export struct CalDetail {
 }
 
 // The scheduler grid: one row per person or room, one cell per slot (0 free, 1 tentative,
-// 2 busy, 3 out of office, 4 working elsewhere, 5 unknown).
-export struct CalSchedRow { name: string, email: string, tz: string, kind: string, cells: [int], error: string }
+// 2 busy, 3 out of office, 4 working elsewhere, 5 unknown); `work` says per slot whether it is in
+// that person's own work hours.
+export struct CalSchedRow { name: string, email: string, tz: string, kind: string, cells: [int], work: [bool], error: string }
 export struct CalSuggest { label: string, date: string, start: string, end: string, score: string }
 export struct CalRoomList { name: string, email: string }
 export struct CalRoom { name: string, email: string, capacity: string, place: string, status: int }

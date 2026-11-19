@@ -6,6 +6,7 @@ use super::grid::{Offset, WEEKDAYS, hhmm, local_date, month_short};
 use ::calendar::{
     Attachment, AttendeeKind, Availability, CalendarInfo, Date, Event, EventDetail, EventFilter,
     EventKind, FoundTimes, RecurrenceFilter, Response, ResponseCounts, Room, Schedule, ShowAs,
+    WorkingHours, work_slots,
 };
 
 /// What the peek shows and which buttons it offers.
@@ -461,6 +462,8 @@ pub struct SchedRow {
     /// `me`, `required`, `optional` or `room`.
     pub kind: String,
     pub cells: Vec<i32>,
+    /// Per slot, whether it falls inside this person's own work hours (all true when unknown).
+    pub work: Vec<bool>,
     pub error: String,
 }
 
@@ -499,6 +502,7 @@ pub fn sched_rows(
                     .unwrap_or_default(),
                 kind: (*kind).into(),
                 cells,
+                work: vec![true; slots],
                 error: match s {
                     Some(s) => s
                         .error
@@ -510,6 +514,29 @@ pub fn sched_rows(
             }
         })
         .collect()
+}
+
+/// Marks which slots of each row are inside that person's own work hours (C2.3). The hours come
+/// from the person's `getSchedule` answer and are read in their own time zone; my row falls back
+/// to `mine` when Graph sends none, and a row with no hours at all is not dimmed. The first slot
+/// starts at `first_ms` and a slot lasts `slot_min` minutes.
+pub fn shade_work_hours(
+    rows: &mut [SchedRow],
+    schedules: &[Schedule],
+    first_ms: i64,
+    slot_min: u32,
+    mine: Option<&WorkingHours>,
+) {
+    for r in rows {
+        let hours = schedules
+            .iter()
+            .find(|s| s.email.eq_ignore_ascii_case(&r.email))
+            .and_then(|s| s.working_hours.as_ref())
+            .or(if r.kind == "me" { mine } else { None });
+        if let Some(h) = hours {
+            r.work = work_slots(h, first_ms, slot_min, r.cells.len());
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -696,7 +723,7 @@ pub fn role_of(key: &str) -> Option<::calendar::PermissionRole> {
 mod tests {
     use super::*;
     use ::calendar::{
-        parse_calendars, parse_events, parse_found_times, parse_rooms, parse_schedules,
+        Weekday, parse_calendars, parse_events, parse_found_times, parse_rooms, parse_schedules,
     };
     use serde_json::json;
 
@@ -1009,6 +1036,51 @@ mod tests {
             sched_rows(&who[..1], &fixture_schedules(), 5, 4)[0].cells,
             [0, 0, 5, 5]
         );
+    }
+
+    #[test]
+    fn each_scheduler_row_is_shaded_by_that_persons_own_work_hours() {
+        // Thursday 2026-11-19, 32 half-hour slots from 06:00 UTC.
+        let first_ms = Date::new(2026, 11, 19).midnight_ms() + 6 * H;
+        let schedules = parse_schedules(&json!({"value": [
+            {"scheduleId": "alice@contoso.com", "availabilityView": "",
+             "workingHours": {"daysOfWeek": ["thursday"], "startTime": "09:00:00.0000000", "endTime": "17:00:00.0000000", "timeZone": {"name": "Pacific Standard Time"}}},
+            {"scheduleId": "cairo@contoso.com", "availabilityView": "",
+             "workingHours": {"daysOfWeek": ["thursday"], "startTime": "09:00:00.0000000", "endTime": "17:00:00.0000000", "timeZone": {"name": "Egypt Standard Time"}}},
+            {"scheduleId": "secret@contoso.com", "availabilityView": "", "error": {"message": "No permission", "responseCode": "ErrorAccessDenied"}}
+        ]}));
+        let who = [
+            ("Me".to_string(), "me@contoso.com".to_string(), "me"),
+            ("Alice".to_string(), "alice@contoso.com".to_string(), "required"),
+            ("Cairo".to_string(), "CAIRO@contoso.com".to_string(), "required"),
+            ("Secret".to_string(), "secret@contoso.com".to_string(), "optional"),
+        ];
+        let mut rows = sched_rows(&who, &schedules, 0, 32);
+        let mine = WorkingHours {
+            days: vec![Weekday::Thursday],
+            start_min: 9 * 60,
+            end_min: 17 * 60,
+            time_zone: "UTC".into(),
+            custom_zone: None,
+        };
+        shade_work_hours(&mut rows, &schedules, first_ms, 30, Some(&mine));
+        let span = |r: &SchedRow| {
+            let on: Vec<usize> = (0..32).filter(|&i| r.work[i]).collect();
+            (on.first().copied(), on.last().copied(), on.len())
+        };
+        assert_eq!(span(&rows[0]), (Some(6), Some(21), 16), "me: my own 09:00 to 17:00");
+        assert_eq!(
+            span(&rows[1]),
+            (Some(22), Some(31), 10),
+            "Alice's 09:00 PST is 17:00 UTC, so only her morning is in view"
+        );
+        assert_eq!(
+            span(&rows[2]),
+            (Some(2), Some(17), 16),
+            "Cairo is UTC+2 in November: 07:00 to 15:00 UTC"
+        );
+        assert_eq!(rows[3].work, vec![true; 32], "no hours known: not dimmed");
+        assert_ne!(rows[1].work, rows[0].work, "no longer one row's hours for everyone");
     }
 
     #[test]

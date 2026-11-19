@@ -56,9 +56,9 @@ component SchedulerGrid inherits Rectangle {
             border-radius: 2px;
             background: CalFmt.slot-color(c);
             accessible-role: text;
-            accessible-label: r.name + " " + CalFmt.hhmm(CalForm.sched-first-min + ci * CalForm.sched-slot-min) + " " + CalFmt.slot-name(c);
-            // Outside work hours
-            if CalForm.sched-first-min + ci * CalForm.sched-slot-min < CalStore.work-start || CalForm.sched-first-min + ci * CalForm.sched-slot-min >= CalStore.work-end: Rectangle { background: #00000080; border-radius: 2px; }
+            accessible-label: r.name + " " + CalFmt.hhmm(CalForm.sched-first-min + ci * CalForm.sched-slot-min) + " " + CalFmt.slot-name(c) + (r.work[ci] ? "" : ", outside their work hours");
+            // Outside this person's own work hours
+            if !r.work[ci]: Rectangle { background: #00000080; border-radius: 2px; }
         }
     }
     // The slot the form holds

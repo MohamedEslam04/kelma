@@ -337,6 +337,7 @@ fn set_sched(w: &AppWindow, s: SchedPush) {
                 tz: r.tz.into(),
                 kind: r.kind.into(),
                 cells: model(r.cells),
+                work: model(r.work),
                 error: r.error.into(),
             })
             .collect(),
