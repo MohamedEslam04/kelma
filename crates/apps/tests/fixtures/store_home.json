@@ -1,0 +1,14 @@
+{
+  "appCategoriesDictionary": {
+    "all": {
+      "apps": [
+        { "id": "com.microsoft.teamspace.tab.planner", "version": "1.9.0", "ranking": 3864, "rating": { "count": 119, "average": 4.496 }, "metaCapabilities": ["StaticTabs", "Activities"] },
+        { "id": "44444444-5555-6666-7777-888888888888", "version": "1.0.0", "metaCapabilities": ["Bots"], "isBlocked": true }
+      ],
+      "blockedAppsCount": 28, "totalAppsCount": 3149
+    },
+    "popularApps": { "apps": [ { "id": "com.microsoft.teamspace.tab.planner", "version": "1.9.0", "ranking": 3864, "metaCapabilities": ["StaticTabs"] } ], "totalAppsCount": 1 },
+    "productivity": { "apps": [], "totalAppsCount": 0 }
+  },
+  "appMetaCapabilitiesDictionary": {}
+}

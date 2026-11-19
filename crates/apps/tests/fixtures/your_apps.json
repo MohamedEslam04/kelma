@@ -1,0 +1,6 @@
+{
+  "appIdToStoreEntitlementsDictionary": {
+    "0d820ecd-def2-4297-adad-78056cde7c78": { "id": "0d820ecd-def2-4297-adad-78056cde7c78", "version": "2.1.1", "categories": ["Productivity"], "metaCapabilities": ["StaticTabs", "GalleryTabs"] },
+    "11111111-2222-3333-4444-555555555555": { "id": "11111111-2222-3333-4444-555555555555", "version": "3.0.0", "categories": ["Utilities"], "metaCapabilities": ["Bots"] }
+  }
+}

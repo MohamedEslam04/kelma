@@ -229,6 +229,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "apps"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "teams-proto",
+ "url",
+]
+
+[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3053,6 +3063,7 @@ name = "kelma-cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "apps",
  "calendar",
  "diag",
  "onedrive",
