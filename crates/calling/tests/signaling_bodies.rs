@@ -225,7 +225,11 @@ fn attach_progress_accept_reject_answer_leave() {
         &join["input"]["conversationRequest"]["roster"]["rosterUpdate"],
         "conversation/rosterUpdate/",
     );
-    assert!(attach_body(&s, None, false).get("additionalActions").is_none());
+    assert!(
+        attach_body(&s, None, false)
+            .get("additionalActions")
+            .is_none()
+    );
 
     let p = progress_body(&s);
     assert_eq!(p["callProgress"]["status"], "ringing");

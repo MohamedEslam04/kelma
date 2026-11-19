@@ -367,8 +367,7 @@ impl NgcClient {
         offer: &SdpBlob,
     ) -> Result<Attached> {
         let url = Self::link(&inv.links, "attach")?;
-        let body =
-            bodies::attach_offer_body(s, invitation::conversation_controller(inv), offer);
+        let body = bodies::attach_offer_body(s, invitation::conversation_controller(inv), offer);
         let r = self.post("attach", s, url, &body).await?;
         bodies::parse_attach(&r.body)
     }

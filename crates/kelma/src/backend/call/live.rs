@@ -519,7 +519,10 @@ fn aec_wanted_by(no_aec: Option<&std::ffi::OsStr>) -> bool {
 fn mic_chain<S: calling::audio::FrameSource + 'static>(
     capture: S,
     aec: bool,
-) -> (mpsc::Receiver<OpusPacket>, Option<calling::audio::EchoReference>) {
+) -> (
+    mpsc::Receiver<OpusPacket>,
+    Option<calling::audio::EchoReference>,
+) {
     if aec {
         let (mic, reference) = echo_cancelled(capture, AudioProcessor::new());
         (spawn_capture_encoder(mic), Some(reference))

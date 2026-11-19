@@ -2,14 +2,14 @@
 //! shape of the live 2026-11-19 capture and fake values).
 
 use calling::incoming::{Answering, NoOffer, Step};
-use calling::invitation::{classify, parse_call_event, CallEvent, EndReason, NgcPush};
+use calling::invitation::{CallEvent, EndReason, NgcPush, classify, parse_call_event};
 use calling::signaling::bodies::{
-    attach_body, attach_offer_body, offer_acceptance_body, parse_acceptance_answer, parse_attach,
-    Attached,
+    Attached, attach_body, attach_offer_body, offer_acceptance_body, parse_acceptance_answer,
+    parse_attach,
 };
 use calling::signaling::{CallSession, CallbackLinks, LocalEndpoint};
 use calling::{CallInvitation, Links, Modality, SdpBlob};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const SURL: &str = "https://trouter.example.invalid/v4/f/AbCd/";
 
@@ -248,11 +248,12 @@ fn without_an_offer_attach_fetches_it_then_we_answer() {
     assert_eq!(a.step(), &Step::AnswerOffer(offer));
     assert_eq!(a.media_leg_id(), Some("FEDCBA9876543210FEDCBA9876543210"));
     // The real mediaAnswer link replaced the ring's placeholder.
-    assert!(a
-        .links()
-        .get("mediaAnswer")
-        .unwrap()
-        .starts_with("https://"));
+    assert!(
+        a.links()
+            .get("mediaAnswer")
+            .unwrap()
+            .starts_with("https://")
+    );
     a.on_accepted(links(&[("callLeg", "https://cc.example/leg")]), None);
     assert_eq!(a.step(), &Step::Adopt);
     assert!(!a.offering());

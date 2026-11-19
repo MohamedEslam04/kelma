@@ -1006,7 +1006,11 @@ async fn answer_invitation(
                 println!(
                     "attached; leg links [{}]; offer in the attach answer: {}",
                     a.links.0.keys().cloned().collect::<Vec<_>>().join(", "),
-                    if a.offer.is_some() { "present" } else { "missing" },
+                    if a.offer.is_some() {
+                        "present"
+                    } else {
+                        "missing"
+                    },
                 );
                 if let Some(offer) = a.offer.as_ref().and_then(|o| o.decode().ok()) {
                     dump(opt(args, "--dump"), "caller-offer-attach", &offer);
