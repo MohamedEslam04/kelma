@@ -162,16 +162,39 @@ are the same as in `plans/chat.md`.
     zone when Graph gives it, the form's slot outlined (click a time to move the event there) and suggested
     times from findMeetingTimes. Tested against a getSchedule fixture. Shading uses my work hours for every
     row; per-person hours need a time zone table.
+  - **Evidence (data layer, 2026-11-19).** `calendar::work_slots(hours, start_ms, interval, slots)` and
+    `work_intervals` place each attendee's `workingHours` (from getSchedule) in their own zone: Windows
+    names map to IANA (`tz.rs`, CLDR table plus three Exchange-only names) and a `customTimeZone` (bias and
+    transition rules) is parsed into `WorkingHours.custom_zone`. Unit tests cover a named zone, a custom
+    zone across daylight saving and slot shading. Live, read-only: `kelma-cli calendar schedule` reads my
+    getSchedule work hours (a named zone that maps to IANA) and shades 18 of 48 half-hours; all 143 Windows
+    zones Graph offers map to IANA (`kelma-cli calendar timezones`). Left open: the Scheduler still shades
+    every row with my hours; the UI has to call `work_slots` per row.
 - [ ] **C2.4 Rooms.** Impact 3, effort 2.
   - **What.** Room lists, with capacity, building and floor, and live availability for the chosen slot.
   - **How.** `GET /places/microsoft.graph.roomList` and `/rooms`, plus getSchedule.
   - **Status.** Built: Rooms in the form lists the room lists, then each room with seats, building and floor
     and Free or Busy for the form's slot; clicking one fills the room. Tested with fixtures.
+  - **Evidence (data layer, 2026-11-19).** `room_lists` and `rooms` fall back to Graph beta
+    `/me/findRoomLists` and `/me/findRooms(RoomList='…')` (no Place scope) when places is refused or empty;
+    `room_schedules` reads any number of rooms 20 at a time and `free_between` says whether a slot is free.
+    Live, read-only: `/places/microsoft.graph.room` and `…roomList` answer 200 (so places is readable
+    without Place.Read.All), and so do beta `findRooms`/`findRoomLists`, but all four are empty for this
+    tenant: it publishes no room mailboxes, so no room data could be checked live. Outlook REST
+    `api/v2.0/me/findrooms` is a 400 (only `api/beta` answers). Left open for that reason.
 - [ ] **C2.5 Propose a new time,** as an attendee or as the organizer reviewing proposals. Impact 2, effort 2.
   - **How.** `proposedNewTime` on tentativelyAccept and decline.
   - **Status.** Built the attendee side: "Propose new time" in the peek asks for a start and an end and sends it
     with a tentative or decline answer. Not built: the organizer reviewing proposals (the data layer does not
     read `proposedNewTime` yet).
+  - **Evidence (data layer, 2026-11-19).** `parse_event_proposals` reads `proposedNewTime` on an event's
+    attendees and `parse_proposal_messages` reads `eventMessageResponse` answers (Graph or Outlook REST case,
+    any zone converted to UTC); `event_proposals(client, id)` and `proposal_messages(client, top)` fetch them,
+    and `accept_proposal_request` builds the move to the proposed slot for a dry run (it is the same PATCH
+    as `move_event`). Graph's v1.0 enum is spelled `meetingTenativelyAccepted` (the correct spelling is a
+    400) and `$orderby` with that filter is refused (`InefficientFilter`). Live, read-only: `kelma-cli
+    calendar proposals` runs both reads (HTTP 200); the mailbox holds no proposals, so parsing is checked
+    by fixtures only. Left open: no organizer UI yet.
 - [ ] **C2.6 Event types.** Impact 3, effort 3.
   - **What.** The New ▾ menu offers Event and Channel meeting. Webinar, Town hall, Virtual appointment and Live event open in the web (Graph `VirtualEvent.*` needs admin consent).
   - **Status.** Built: the New event ▾ menu lists all six; Event and Channel meeting open the form (channel
@@ -217,6 +240,17 @@ are the same as in `plans/chat.md`.
     Calendar settings (first day of the week, work hours, show weekends, week numbers, a second time zone as a
     fixed UTC offset), saved in `config.json` with defaults. Work hours start from the mailbox's until set.
     Sharing was not run live (it changes permissions).
+  - **Evidence (data layer, 2026-11-19).** Work hours: Graph `GET /me/mailboxSettings` and
+    `/me/mailboxSettings/workingHours` answer 200 for this client (the earlier 403 was Outlook REST
+    `api/v2.0/me/MailboxSettings`, still 403), so `mailbox_settings` now asks Graph first, then Outlook
+    REST, then getSchedule; EWS was not needed. Time zones: `iana_name`, `utc_offset_min` and
+    `local_to_utc_ms` (chrono-tz) turn Windows or IANA names into offsets with daylight saving, and
+    `supported_time_zones` lists 143 Windows or 553 IANA zones for a picker (all known to chrono-tz).
+    Sharing: `calendar_permissions` now keeps `allowedRoles`; `add/update/remove_permission_request` build
+    the writes for `kelma-cli calendar permissions --dry-run <role>`, which prints them without sending.
+    Live, read-only: the default calendar's permissions and both zone lists were read. Left open: the
+    second time zone in the UI is still a fixed offset (it should store a zone name and call
+    `utc_offset_min`), and sharing writes were never sent (live rules).
 - [ ] **C3.4 Work location.** Impact 3, effort 2.
   - **What.** A per-day work location pin (Office, Remote, a specific building) in the day header and in the profile menu. Colleagues' locations show in profile cards.
   - **How.** Discover the endpoint; purple-teams uses `/v1/me/workLocation` on the presence service.
