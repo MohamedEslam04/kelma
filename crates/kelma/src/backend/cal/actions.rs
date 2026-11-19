@@ -114,7 +114,7 @@ fn open_temp_file(name: &str, bytes: &[u8]) -> std::io::Result<()> {
         safe
     });
     std::fs::write(&path, bytes)?;
-    open::that_detached(path)
+    crate::external::open(path)
 }
 
 /// A demo-mode event made from the form, so a new event shows up without a network.
@@ -270,7 +270,7 @@ impl Engine {
                 if let Some(url) = self.cal_open_event().and_then(|e| e.join_url)
                     && url.starts_with("https://")
                 {
-                    let _ = open::that_detached(&url);
+                    let _ = crate::external::open(&url);
                 }
             }
             CalCmd::CopyLink => {
@@ -354,7 +354,7 @@ impl Engine {
                 } else {
                     "https://outlook.office.com/calendar/addcalendar"
                 };
-                let _ = open::that_detached(url);
+                let _ = crate::external::open(url);
             }
             CalCmd::CreateCalendar(name) => self.cal_create_calendar(name.trim()).await,
             CalCmd::AddPerson(email) => self.cal_add_person(email.trim()).await,
@@ -383,7 +383,7 @@ impl Engine {
             CalCmd::MeetNow(subject) => self.cal_meet_now(subject.trim()).await,
             CalCmd::JoinId { id, passcode } => match join_by_id_url(&id, &passcode) {
                 Some(url) => {
-                    let _ = open::that_detached(&url);
+                    let _ = crate::external::open(&url);
                     self.ui.cal_modal("");
                 }
                 None => self
@@ -985,7 +985,7 @@ impl Engine {
         ];
         if let Some((_, t)) = types.iter().find(|(k, _)| *k == kind) {
             if let Some(url) = t.web_url() {
-                let _ = open::that_detached(url);
+                let _ = crate::external::open(url);
             }
             return;
         }

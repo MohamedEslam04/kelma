@@ -146,7 +146,7 @@ impl Engine {
         }
         self.apps.lock().unwrap().opened.push(url.to_owned());
         if !self.apps_offline() {
-            let _ = open::that_detached(url);
+            let _ = crate::external::open(url);
         }
     }
 
