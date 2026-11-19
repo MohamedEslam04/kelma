@@ -29,6 +29,13 @@ pub enum DriveCmd {
     Search(String),
     NewFolder(String),
     NewDoc(DocKind),
+    /// `name, a newline, then the address`: an Internet shortcut file in the open folder.
+    NewLink(String),
+    NewNotebook(String),
+    /// Opens Microsoft Forms in the browser (it has no API for this client).
+    NewForms,
+    /// A "For you" card on Home was clicked.
+    CardOpen(String),
     UploadFiles,
     UploadFolder,
     Drop(PathBuf),
@@ -112,6 +119,10 @@ impl DriveCmd {
             "search" => DriveCmd::Search(s()),
             "new-folder" => DriveCmd::NewFolder(s()),
             "new-doc" => DriveCmd::NewDoc(parse_doc_kind(arg)?),
+            "new-link" => DriveCmd::NewLink(s()),
+            "new-notebook" => DriveCmd::NewNotebook(s()),
+            "new-forms" => DriveCmd::NewForms,
+            "card-open" => DriveCmd::CardOpen(s()),
             "upload-files" => DriveCmd::UploadFiles,
             "upload-folder" => DriveCmd::UploadFolder,
             "drop" => DriveCmd::Drop(PathBuf::from(arg)),
@@ -161,6 +172,7 @@ fn parse_doc_kind(s: &str) -> Option<DocKind> {
         "word" => DocKind::Word,
         "excel" => DocKind::Excel,
         "powerpoint" => DocKind::PowerPoint,
+        "visio" => DocKind::Visio,
         "markdown" => DocKind::Markdown,
         "text" => DocKind::Text,
         _ => return None,
@@ -219,7 +231,20 @@ mod tests {
             DriveCmd::parse("new-doc", "excel"),
             Some(DriveCmd::NewDoc(DocKind::Excel))
         );
-        assert_eq!(DriveCmd::parse("new-doc", "visio"), None);
+        assert_eq!(
+            DriveCmd::parse("new-doc", "visio"),
+            Some(DriveCmd::NewDoc(DocKind::Visio))
+        );
+        assert_eq!(DriveCmd::parse("new-doc", "forms"), None);
+        assert_eq!(DriveCmd::parse("new-forms", ""), Some(DriveCmd::NewForms));
+        assert_eq!(
+            DriveCmd::parse("new-link", "Docs\nhttps://x.example/"),
+            Some(DriveCmd::NewLink("Docs\nhttps://x.example/".into()))
+        );
+        assert_eq!(
+            DriveCmd::parse("card-open", "c1"),
+            Some(DriveCmd::CardOpen("c1".into()))
+        );
         assert_eq!(
             DriveCmd::parse("drop", "/tmp/a b.txt"),
             Some(DriveCmd::Drop("/tmp/a b.txt".into()))

@@ -25,6 +25,7 @@ export struct DriveRow {
 }
 
 export struct DriveNav { key: string, label: string }
+export struct DriveCard { id: string, title: string, reason: string, kind: string, thumb: image, has-thumb: bool }
 export struct SharePerson { id: string, name: string, detail: string, picked: bool }
 export struct SharePerm { id: string, who: string, role: string, detail: string, link: bool, editable: bool }
 export struct DriveVersion { id: string, when: string, by: string, size: string, current: bool }
@@ -33,6 +34,8 @@ export global DriveStore {
     in property <string> section: "home";
     in property <string> title;
     in property <[DriveRow]> rows;
+    // Home's "For you" cards
+    in property <[DriveCard]> cards;
     in property <int> item-count;
     in property <[string]> crumbs;
     in property <[DriveNav]> quick;
@@ -61,6 +64,8 @@ export global DriveStore {
     in-out property <string> prompt-kind;
     in-out property <string> prompt-title;
     in-out property <string> prompt-text;
+    // the second field of the link prompt (the web address)
+    in-out property <string> prompt-text2;
     // info (Details, Sync)
     in property <string> info-title;
     in property <string> info-text;
@@ -417,6 +422,44 @@ component DriveTile inherits Rectangle {
         accessible-label: (root.r.favorite ? "Remove from favorites " : "Add to favorites ") + root.r.name;
         Icon { source: @image-url("icons/star.svg"); width: 16px; height: 16px; x: 5px; y: 5px; tint: root.r.favorite ? #f2c94c : Theme.fg-muted; }
         star-touch := TouchArea { mouse-cursor: pointer; clicked => { root.favorite(); } }
+    }
+}
+
+// A "For you" card: a thumbnail, the file name and why it is shown.
+component ForYouCard inherits Rectangle {
+    in property <DriveCard> c;
+    callback open();
+    width: 176px;
+    height: 132px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.accent : Theme.border;
+    background: touch.has-hover ? #262626 : #1b1b1b;
+    accessible-role: button;
+    accessible-label: "For you " + root.c.title;
+    accessible-description: root.c.reason;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open(); }
+    }
+    Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: 72px;
+        background: #232323;
+        clip: true;
+        if root.c.has-thumb: Image { source: root.c.thumb; width: parent.width; height: parent.height; image-fit: cover; }
+        if !root.c.has-thumb: KindBadge { kind: root.c.kind; size: 36px; x: (parent.width - 36px) / 2; y: (parent.height - 36px) / 2; }
+    }
+    VerticalLayout {
+        y: 76px;
+        height: 54px;
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 1px;
+        Text { text: root.c.title; color: Theme.fg; font-size: 13px; font-weight: 600; overflow: elide; }
+        Text { text: root.c.reason; color: Theme.fg-muted; font-size: 11px; wrap: word-wrap; overflow: elide; }
     }
 }
 
@@ -792,6 +835,14 @@ export component OneDriveView inherits Rectangle {
         DriveStore.prompt-text = text;
         DriveStore.dialog = "prompt";
     }
+    function ask-link() {
+        root.menu = "";
+        DriveStore.prompt-kind = "new-link";
+        DriveStore.prompt-title = "New link";
+        DriveStore.prompt-text = "";
+        DriveStore.prompt-text2 = "https://";
+        DriveStore.dialog = "prompt";
+    }
     function close-dialog() {
         DriveStore.dialog = "";
         DriveStore.command("dialog-close", "");
@@ -816,14 +867,28 @@ export component OneDriveView inherits Rectangle {
                     {key: "home", label: "Home", icon: @image-url("icons/home.svg")},
                     {key: "files", label: "My files", icon: @image-url("icons/folder.svg")},
                     {key: "shared", label: "Shared", icon: @image-url("icons/users.svg")},
+                    {key: "shared-by", label: "Shared by you", icon: @image-url("icons/share.svg")},
                     {key: "favorites", label: "Favorites", icon: @image-url("icons/star.svg")},
                     {key: "libraries", label: "Libraries", icon: @image-url("icons/library.svg")},
-                    {key: "bin", label: "Recycle bin", icon: @image-url("icons/trash.svg")},
-                    {key: "meetings", label: "Meetings", icon: @image-url("icons/video.svg")}
+                    {key: "bin", label: "Recycle bin", icon: @image-url("icons/trash.svg")}
                 ]: NavEntry {
                     label: n.label;
                     icon: n.icon;
                     active: DriveStore.section == n.key;
+                    clicked => { DriveStore.command("nav", n.key); }
+                }
+                Rectangle {
+                    height: 34px;
+                    Text { x: 14px; y: 12px; text: "Browse files by"; color: Theme.fg-subtle; font-size: 11px; font-weight: 700; }
+                }
+                for n in [
+                    {key: "people", label: "People", icon: @image-url("icons/people.svg")},
+                    {key: "meetings", label: "Meetings", icon: @image-url("icons/video.svg")},
+                    {key: "media", label: "Media", icon: @image-url("icons/image.svg")}
+                ]: NavEntry {
+                    label: n.label;
+                    icon: n.icon;
+                    active: DriveStore.section == n.key || (n.key == "people" && DriveStore.section.starts-with("person:"));
                     clicked => { DriveStore.command("nav", n.key); }
                 }
                 if DriveStore.quick.length > 0: Rectangle {
@@ -975,7 +1040,7 @@ export component OneDriveView inherits Rectangle {
                     padding-left: 16px;
                     padding-right: 16px;
                     spacing: 6px;
-                    if DriveStore.section == "home" || DriveStore.section == "shared" || DriveStore.section == "search": HorizontalLayout {
+                    if DriveStore.section == "home" || DriveStore.section == "shared" || DriveStore.section == "shared-by" || DriveStore.section == "search": HorizontalLayout {
                         spacing: 6px;
                         for t in [{key: "all", label: "All"}, {key: "word", label: "Word"}, {key: "excel", label: "Excel"}, {key: "powerpoint", label: "PowerPoint"}, {key: "pdf", label: "PDF"}, {key: "more", label: "More"}]: Pill {
                             y: 9px;
@@ -992,6 +1057,26 @@ export component OneDriveView inherits Rectangle {
                         label: "Filter by name or person";
                         text <=> DriveStore.filter;
                         edited(t) => { DriveStore.command("filter", t); }
+                    }
+                }
+            }
+            // "For you" cards (Home)
+            if DriveStore.cards.length > 0: Rectangle {
+                height: 146px;
+                min-width: 0px;
+                clip: true;
+                accessible-role: groupbox;
+                accessible-label: "For you";
+                Text { x: 16px; y: 2px; text: "For you"; color: Theme.fg-muted; font-size: 12px; font-weight: 600; }
+                Flickable {
+                    y: 22px;
+                    height: parent.height - 22px;
+                    content-width: DriveStore.cards.length * 188px + 16px;
+                    for c[i] in DriveStore.cards: ForYouCard {
+                        x: 16px + i * 188px;
+                        y: 2px;
+                        c: c;
+                        open => { DriveStore.command("card-open", c.id); }
                     }
                 }
             }
@@ -1016,7 +1101,7 @@ export component OneDriveView inherits Rectangle {
                         width: DriveLook.col-modified;
                         accessible-role: button;
                         accessible-label: "Sort by Modified";
-                        Text { x: 0px; width: parent.width; text: (DriveStore.section == "bin" ? "Deleted" : "Modified") + (DriveStore.sort == "modified" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: (DriveStore.section == "bin" ? "Deleted" : (DriveStore.section == "shared-by" ? "Shared" : "Modified")) + (DriveStore.sort == "modified" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "modified"); } }
                     }
                     if DriveStore.col-modified-by: Rectangle {
@@ -1133,6 +1218,10 @@ export component OneDriveView inherits Rectangle {
                 if root.menu == "new": MenuRow { label: "Word document"; icon: @image-url("icons/file.svg"); clicked => { DriveStore.command("new-doc", "word"); root.menu = ""; } }
                 if root.menu == "new": MenuRow { label: "Excel workbook"; icon: @image-url("icons/file.svg"); clicked => { DriveStore.command("new-doc", "excel"); root.menu = ""; } }
                 if root.menu == "new": MenuRow { label: "PowerPoint presentation"; icon: @image-url("icons/file.svg"); clicked => { DriveStore.command("new-doc", "powerpoint"); root.menu = ""; } }
+                if root.menu == "new": MenuRow { label: "Visio drawing"; icon: @image-url("icons/file.svg"); clicked => { DriveStore.command("new-doc", "visio"); root.menu = ""; } }
+                if root.menu == "new": MenuRow { label: "OneNote notebook"; icon: @image-url("icons/file.svg"); clicked => { root.ask-name("new-notebook", "New OneNote notebook", "Untitled notebook"); } }
+                if root.menu == "new": MenuRow { label: "Forms survey"; icon: @image-url("icons/link.svg"); clicked => { root.run("new-forms"); } }
+                if root.menu == "new": MenuRow { label: "Link"; icon: @image-url("icons/link.svg"); clicked => { root.ask-link(); } }
                 if root.menu == "new": MenuRow { label: "Markdown document"; icon: @image-url("icons/file.svg"); clicked => { DriveStore.command("new-doc", "markdown"); root.menu = ""; } }
                 if root.menu == "new": MenuRow { label: "Text document"; icon: @image-url("icons/file.svg"); clicked => { DriveStore.command("new-doc", "text"); root.menu = ""; } }
                 if root.menu == "upload": MenuRow { label: "Files upload"; icon: @image-url("icons/upload.svg"); clicked => { root.run("upload-files"); } }
@@ -1180,7 +1269,7 @@ export component OneDriveView inherits Rectangle {
             title: DriveStore.prompt-title;
             x: (parent.width - self.width) / 2;
             y: max(8px, (parent.height - self.height) / 2 - 60px);
-            height: 164px;
+            height: DriveStore.prompt-kind == "new-link" ? 214px : 164px;
             close => { root.close-dialog(); }
             Rectangle {
                 height: 34px;
@@ -1200,8 +1289,32 @@ export component OneDriveView inherits Rectangle {
                     accessible-label: "Name";
                     init => { self.focus(); self.select-all(); }
                     accepted => {
+                        if DriveStore.prompt-kind != "new-link" {
+                            DriveStore.dialog = "";
+                            DriveStore.command(DriveStore.prompt-kind, self.text);
+                        }
+                    }
+                }
+            }
+            if DriveStore.prompt-kind == "new-link": Rectangle {
+                height: 34px;
+                border-radius: 4px;
+                background: #1f1f1f;
+                border-width: 1px;
+                border-color: address-input.has-focus ? Theme.accent : Theme.border;
+                address-input := TextInput {
+                    x: 10px;
+                    width: parent.width - 20px;
+                    text <=> DriveStore.prompt-text2;
+                    color: Theme.fg;
+                    font-size: 13px;
+                    single-line: true;
+                    vertical-alignment: center;
+                    accessible-role: text-input;
+                    accessible-label: "Web address";
+                    accepted => {
                         DriveStore.dialog = "";
-                        DriveStore.command(DriveStore.prompt-kind, self.text);
+                        DriveStore.command("new-link", DriveStore.prompt-text + "\n" + self.text);
                     }
                 }
             }
@@ -1213,10 +1326,10 @@ export component OneDriveView inherits Rectangle {
                 DialogButton {
                     label: "OK";
                     primary: true;
-                    enabled: DriveStore.prompt-text != "";
+                    enabled: DriveStore.prompt-text != "" && (DriveStore.prompt-kind != "new-link" || DriveStore.prompt-text2 != "");
                     clicked => {
                         DriveStore.dialog = "";
-                        DriveStore.command(DriveStore.prompt-kind, DriveStore.prompt-text);
+                        DriveStore.command(DriveStore.prompt-kind, DriveStore.prompt-kind == "new-link" ? DriveStore.prompt-text + "\n" + DriveStore.prompt-text2 : DriveStore.prompt-text);
                     }
                 }
             }

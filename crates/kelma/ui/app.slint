@@ -19,7 +19,7 @@ import { NewChatPane } from "new_chat.slint";
 import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
 import { PinnedBanner } from "pinned_banner.slint";
 import { ProfileCard } from "profile_card.slint";
-import { OneDriveView, DriveStore } from "onedrive.slint";
+import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -27,7 +27,7 @@ export { EmojiApi } from "composer.slint";
 export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
-export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
 
 export component AppWindow inherits Window {
     title: root.window-title;
@@ -697,6 +697,7 @@ export component AppWindow inherits Window {
                         cancel-reply => { root.cancel-reply(); }
                         attach-image => { root.attach-image(); }
                         attach-file => { root.attach-file(); }
+                        attach-cloud => { DriveStore.command("pick-begin", "attach"); }
                     }
                 }
             }
@@ -785,6 +786,29 @@ export component AppWindow inherits Window {
                 root.forward-open = false;
                 root.forward-cancel();
             }
+        }
+    }
+
+    // The cloud-file picker of the composer (the OneDrive view has its own, in its dialogs).
+    if root.login-state == "ready" && root.view != "onedrive" && DriveStore.dialog == "picker": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        DriveFilePicker {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            title: DriveStore.picker-title;
+            folders-only: DriveStore.picker-folders-only;
+            rows: DriveStore.picker-rows;
+            crumbs: DriveStore.picker-crumbs;
+            loading: DriveStore.picker-loading;
+            can-choose: DriveStore.picker-can-choose;
+            open(id) => { DriveStore.command("pick-open", id); }
+            crumb(i) => { DriveStore.command("pick-crumb", "" + i); }
+            pick(id) => { DriveStore.command("pick-select", id); }
+            choose => { DriveStore.command("pick-choose", ""); }
+            cancel => { DriveStore.dialog = ""; DriveStore.command("pick-cancel", ""); }
         }
     }
 

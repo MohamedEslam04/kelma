@@ -803,6 +803,37 @@ pub fn drive_listing(key: &str, folder: &str, now: i64) -> Vec<onedrive::DriveIt
                 "/Recordings",
             ),
         ],
+        ("shared-by", _) => vec![
+            f("demo-by-1", "Budget 2026.xlsx", 3_400_000, 60 * 5, "", "/"),
+            f("demo-by-2", "Q4 plan.docx", 84_000, 60 * 24 * 2, "", "/"),
+            d("demo-by-3", "Brand assets", 7, 60 * 24 * 8, ""),
+        ],
+        ("media", _) => vec![
+            f(
+                "demo-img-1",
+                "Offsite group photo.jpg",
+                4_200_000,
+                60 * 24 * 3,
+                me,
+                "/Pictures",
+            ),
+            f(
+                "demo-img-2",
+                "Whiteboard.png",
+                900_000,
+                60 * 24 * 5,
+                me,
+                "/Pictures",
+            ),
+            f(
+                "demo-vid-1",
+                "Demo walkthrough.mp4",
+                88_000_000,
+                60 * 24 * 9,
+                me,
+                "/Pictures",
+            ),
+        ],
         ("search", _) => ["home", "shared"]
             .into_iter()
             .flat_map(|k| drive_listing(k, "", now))
@@ -828,6 +859,96 @@ pub fn drive_listing(key: &str, folder: &str, now: i64) -> Vec<onedrive::DriveIt
         ],
         _ => Vec::new(),
     }
+}
+
+/// The recordings kept in a team channel's library, which Meetings adds in the background.
+pub fn drive_channel_recordings(now: i64) -> Vec<onedrive::DriveItem> {
+    let mut item = drive_file(
+        "demo-rec-3",
+        "Sprint review-20261110.mp4",
+        340_000_000,
+        60 * 24 * 8,
+        "Sara Hassan",
+        "",
+        now,
+    );
+    item.drive_id = "b!sales".into();
+    item.parent_path = "Sales team \u{203a} General".into();
+    vec![item]
+}
+
+/// Home's "For you" cards.
+pub fn drive_for_you(now: i64) -> Vec<onedrive::ForYouCard> {
+    use onedrive::{ForYouCard, Insight, InsightKind, ItemRef, Person};
+    let card = |id: &str, title: &str, kind, by: Option<&str>, reason: &str, ago: i64| ForYouCard {
+        insight: Insight {
+            kind,
+            title: title.into(),
+            item: Some(ItemRef::new("b!demo", id)),
+            when_ms: now - ago * 60_000,
+            shared_by: by.map(|n| Person {
+                name: n.into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        reason: reason.into(),
+    };
+    vec![
+        card(
+            "demo-card-1",
+            "Team offsite.pptx",
+            InsightKind::Shared,
+            Some("Sara Hassan"),
+            "Sara Hassan shared this in a Teams chat",
+            60 * 30,
+        ),
+        card(
+            "demo-budget",
+            "Budget 2026.xlsx",
+            InsightKind::Used,
+            None,
+            "You frequently open this",
+            45,
+        ),
+        card(
+            "demo-card-3",
+            "Roadmap.docx",
+            InsightKind::Trending,
+            None,
+            "Trending around you",
+            60 * 6,
+        ),
+    ]
+}
+
+/// "Browse files by People": who shared files with the user, newest share first.
+pub fn drive_people_files(now: i64) -> Vec<onedrive::PersonFiles> {
+    use onedrive::{Person, PersonFiles};
+    let person = |name: &str| Person {
+        id: format!("demo-{name}"),
+        name: name.into(),
+        address: String::new(),
+    };
+    let share = |id, name, ago, by: &str| drive_file(id, name, 20_000, ago, by, "", now);
+    let group = |name: &str, files: Vec<onedrive::DriveItem>| PersonFiles {
+        latest_ms: files.iter().map(|f| f.modified_ms).max().unwrap_or(0),
+        person: person(name),
+        files,
+    };
+    vec![
+        group(
+            "Sara Hassan",
+            vec![
+                share("demo-sh-1", "Team offsite.pptx", 60 * 30, "Sara Hassan"),
+                share("demo-sh-2", "Price list.xlsx", 60 * 24 * 4, "Sara Hassan"),
+            ],
+        ),
+        group(
+            "Ahmed Ali",
+            vec![share("demo-sh-3", "Brief.docx", 60 * 72, "Ahmed Ali")],
+        ),
+    ]
 }
 
 /// Text shown when a demo text or markdown file is opened.

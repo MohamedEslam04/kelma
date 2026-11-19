@@ -5,7 +5,9 @@ use super::{UiHandle, img, model, styled};
 use crate::backend::drive::{
     DriveData, PermData, PersonData, PickerData, PreviewData, RowData, ShareData, VersionData,
 };
-use crate::{AppWindow, DriveNav, DriveRow, DriveStore, DriveVersion, SharePerm, SharePerson};
+use crate::{
+    AppWindow, DriveCard, DriveNav, DriveRow, DriveStore, DriveVersion, SharePerm, SharePerson,
+};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -75,6 +77,22 @@ pub(crate) fn set(w: &AppWindow, d: DriveData) {
     s.set_title(d.title.into());
     s.set_item_count(d.rows.iter().filter(|r| !r.header).count() as i32);
     fill_rows(w, d.rows);
+    s.set_cards(model(
+        d.cards
+            .into_iter()
+            .map(|c| {
+                let (thumb, has_thumb) = img(&c.thumb);
+                DriveCard {
+                    id: c.id.into(),
+                    title: c.title.into(),
+                    reason: c.reason.into(),
+                    kind: c.kind.into(),
+                    thumb,
+                    has_thumb,
+                }
+            })
+            .collect(),
+    ));
     s.set_crumbs(strings(d.crumbs));
     s.set_quick(model(
         d.quick

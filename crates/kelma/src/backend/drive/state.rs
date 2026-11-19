@@ -16,6 +16,14 @@ pub enum Section {
     Libraries,
     Bin,
     Meetings,
+    /// "Shared by you".
+    SharedByYou,
+    /// "Browse files by People": who shared files with the user.
+    People,
+    /// The files one person shared with the user, by display name.
+    Person(String),
+    /// "Browse files by Media": photos and videos in My files.
+    Media,
     /// A document library (a team's Documents, a site library), by drive id.
     Library(String),
     /// Search results for a query.
@@ -33,6 +41,10 @@ impl Section {
             Section::Libraries => "libraries".into(),
             Section::Bin => "bin".into(),
             Section::Meetings => "meetings".into(),
+            Section::SharedByYou => "shared-by".into(),
+            Section::People => "people".into(),
+            Section::Person(name) => format!("person:{name}"),
+            Section::Media => "media".into(),
             Section::Library(id) => format!("drive:{id}"),
             Section::Search(_) => "search".into(),
         }
@@ -47,6 +59,12 @@ impl Section {
             "libraries" => Section::Libraries,
             "bin" => Section::Bin,
             "meetings" => Section::Meetings,
+            "shared-by" => Section::SharedByYou,
+            "people" => Section::People,
+            "media" => Section::Media,
+            k if k.strip_prefix("person:").is_some_and(|n| !n.is_empty()) => {
+                Section::Person(k["person:".len()..].into())
+            }
             k => Section::Library(k.strip_prefix("drive:").filter(|d| !d.is_empty())?.into()),
         })
     }
@@ -61,12 +79,29 @@ impl Section {
             Section::Libraries => "Libraries".into(),
             Section::Bin => "Recycle bin".into(),
             Section::Meetings => "Meetings".into(),
+            Section::SharedByYou => "Shared by you".into(),
+            Section::People => "People".into(),
+            Section::Person(name) => name.clone(),
+            Section::Media => "Media".into(),
             Section::Library(id) => libraries
                 .iter()
                 .find(|l| &l.drive_id == id)
                 .map_or_else(|| "Library".into(), |l| l.name.clone()),
             Section::Search(q) => format!("Search: {q}"),
         }
+    }
+
+    /// Lists the data layer returns newest first, which the default view keeps.
+    fn newest_first(&self) -> bool {
+        matches!(
+            self,
+            Section::Bin
+                | Section::People
+                | Section::Person(_)
+                | Section::Media
+                | Section::Meetings
+                | Section::SharedByYou
+        )
     }
 
     /// Sections that list folders the user can open and write into.
@@ -359,6 +394,17 @@ pub struct RowData {
     pub thumb: Option<Pixels>,
 }
 
+/// A "For you" card on Home: a file and why it is shown.
+#[derive(Clone, Default)]
+pub struct CardData {
+    /// Key of the card (also the key of its thumbnail in `State::thumbs`).
+    pub id: String,
+    pub title: String,
+    pub reason: String,
+    pub kind: String,
+    pub thumb: Option<Pixels>,
+}
+
 /// What the selection allows, for the toolbar.
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct SelectionInfo {
@@ -376,6 +422,8 @@ pub struct DriveData {
     pub section: String,
     pub title: String,
     pub rows: Vec<RowData>,
+    /// The "For you" cards, on Home only.
+    pub cards: Vec<CardData>,
     /// Breadcrumb labels, root first; only folders of a browsable section have more than one.
     pub crumbs: Vec<String>,
     pub quick: Vec<(String, String)>,
@@ -415,6 +463,16 @@ pub struct State {
     /// Bumped on every navigation; a listing that comes back with an older number is dropped.
     pub generation: u64,
     pub thumbs: HashMap<String, Pixels>,
+    /// Home's "For you" cards, newest load first; each card's thumbnail is `thumbs[card.id]`.
+    pub cards: Vec<Card>,
+}
+
+/// A "For you" card with the item it opens.
+#[derive(Clone)]
+pub struct Card {
+    pub id: String,
+    pub item: DriveItem,
+    pub reason: String,
 }
 
 impl Default for State {
@@ -438,6 +496,7 @@ impl Default for State {
             loading: false,
             generation: 0,
             thumbs: HashMap::new(),
+            cards: Vec::new(),
         }
     }
 }
@@ -557,14 +616,14 @@ impl State {
 
     /// Click on a row: it becomes the only selected one.
     pub fn select_only(&mut self, id: &str) {
-        if self.item(id).is_some() {
+        if self.item(id).is_some() && self.selectable() {
             self.selected = vec![id.to_owned()];
         }
     }
 
     /// Checkbox: adds or removes one row.
     pub fn toggle(&mut self, id: &str) {
-        if self.item(id).is_none() {
+        if self.item(id).is_none() || !self.selectable() {
             return;
         }
         match self.selected.iter().position(|s| s == id) {
@@ -575,8 +634,16 @@ impl State {
         }
     }
 
+    /// The People list holds people, not files: nothing there can be acted on.
+    fn selectable(&self) -> bool {
+        self.section != Section::People
+    }
+
     /// Selects every row the filters show.
     pub fn select_all(&mut self) {
+        if !self.selectable() {
+            return;
+        }
         self.selected = self.visible().into_iter().map(|i| i.id).collect();
     }
 
@@ -610,8 +677,9 @@ impl State {
             })
             .cloned()
             .collect();
-        // The recycle bin has no meaningful order of its own: newest deletion first.
-        if self.section == Section::Bin && self.group.is_none() && self.sort == SortKey::Name {
+        // These lists have no meaningful name order of their own: newest first (the bin by
+        // deletion date, People by latest share) until the user picks a sort.
+        if self.section.newest_first() && self.group.is_none() && self.sort == SortKey::Name {
             v.sort_by_key(|i| std::cmp::Reverse(i.modified_ms));
             return v;
         }
@@ -729,9 +797,28 @@ impl State {
     pub fn crumbs(&self) -> Vec<String> {
         if self.section.is_browsable() {
             self.trail.iter().map(|c| c.name.clone()).collect()
+        } else if let Section::Person(name) = &self.section {
+            vec!["People".into(), name.clone()]
         } else {
             vec![self.section.title(&self.libraries)]
         }
+    }
+
+    /// The cards Home shows above the list (none while a name filter is typed).
+    fn card_data(&self) -> Vec<CardData> {
+        if self.section != Section::Home || !self.filter.trim().is_empty() {
+            return Vec::new();
+        }
+        self.cards
+            .iter()
+            .map(|c| CardData {
+                id: c.id.clone(),
+                title: c.item.name.clone(),
+                reason: c.reason.clone(),
+                kind: FileKind::of(&c.item).as_str().into(),
+                thumb: self.thumbs.get(&c.id).cloned(),
+            })
+            .collect()
     }
 
     pub fn data(&self, now_ms: i64, off: &dyn Fn(i64) -> i64) -> DriveData {
@@ -739,6 +826,7 @@ impl State {
             section: self.section.key(),
             title: self.section.title(&self.libraries),
             rows: self.rows(now_ms, off),
+            cards: self.card_data(),
             crumbs: self.crumbs(),
             quick: self
                 .libraries
@@ -749,9 +837,10 @@ impl State {
             sort: sort_key_name(self.sort),
             ascending: self.ascending,
             group: self.group.map_or("none", sort_key_name),
-            // The recycle bin is about where a file was: always show its original location.
+            // The recycle bin and Meetings are about where a file is: always show its location.
             columns: Columns {
-                location: self.columns.location || self.section == Section::Bin,
+                location: self.columns.location
+                    || matches!(self.section, Section::Bin | Section::Meetings),
                 ..self.columns
             },
             type_filter: self.type_filter.as_str(),
@@ -848,11 +937,16 @@ mod tests {
             "libraries",
             "bin",
             "meetings",
+            "shared-by",
+            "people",
+            "media",
+            "person:Ada Lovelace",
             "drive:b!x",
         ] {
             assert_eq!(Section::from_key(k).unwrap().key(), k);
         }
         assert_eq!(Section::from_key("drive:"), None);
+        assert_eq!(Section::from_key("person:"), None);
         assert_eq!(Section::from_key("nope"), None);
     }
 
@@ -1173,5 +1267,61 @@ mod tests {
         assert!(d.grid && d.group == "size" && d.sort == "name");
         assert_eq!(d.quick, [("drive:b!9".to_string(), "Design".to_string())]);
         assert_eq!(d.rows.iter().filter(|r| !r.header).count(), 6);
+    }
+    #[test]
+    fn nothing_in_the_people_list_can_be_selected() {
+        let mut s = State::default();
+        let g = s.go(Section::People);
+        let person = DriveItem {
+            id: "person:0".into(),
+            name: "Ada".into(),
+            is_folder: true,
+            ..Default::default()
+        };
+        s.set_listing(g, vec![person], None);
+        s.select_only("person:0");
+        s.toggle("person:0");
+        s.select_all();
+        assert!(s.selected.is_empty());
+        // The same list in a file section selects normally.
+        let g = s.go(Section::Shared);
+        s.set_listing(g, vec![file("1", "a.docx", 1, 0, "Ada")], None);
+        s.select_all();
+        assert_eq!(s.selected, ["1"]);
+    }
+
+    #[test]
+    fn cards_show_on_home_only_and_not_while_filtering() {
+        let mut s = State::default();
+        s.cards = vec![Card {
+            id: "card:d/1".into(),
+            item: file("1", "plan.xlsx", 1, 0, "Ada"),
+            reason: "You frequently open this".into(),
+        }];
+        assert_eq!(s.data(NOW, &|_| 0).cards.len(), 1);
+        assert_eq!(s.data(NOW, &|_| 0).cards[0].kind, "excel");
+        s.filter = "pl".into();
+        assert!(s.data(NOW, &|_| 0).cards.is_empty());
+        s.filter.clear();
+        s.go(Section::MyFiles);
+        assert!(s.data(NOW, &|_| 0).cards.is_empty());
+    }
+
+    #[test]
+    fn meetings_and_the_bin_always_show_the_location_column() {
+        let mut s = State::default();
+        assert!(!s.data(NOW, &|_| 0).columns.location);
+        s.go(Section::Meetings);
+        assert!(s.data(NOW, &|_| 0).columns.location);
+        s.go(Section::Bin);
+        assert!(s.data(NOW, &|_| 0).columns.location);
+    }
+
+    #[test]
+    fn a_person_shows_people_then_their_name_in_the_breadcrumbs() {
+        let mut s = State::default();
+        s.go(Section::Person("Ada".into()));
+        assert_eq!(s.crumbs(), ["People", "Ada"]);
+        assert_eq!(s.section.title(&[]), "Ada");
     }
 }

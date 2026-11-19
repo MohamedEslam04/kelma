@@ -64,6 +64,7 @@ export component Composer inherits Rectangle {
     callback cancel-reply();
     callback attach-image();
     callback attach-file();
+    callback attach-cloud();
 
     property <int> emoji-tab: 0;
     property <string> emoji-query;
@@ -300,7 +301,8 @@ export component Composer inherits Rectangle {
                     alignment: end;
                     IconButton { icon: @image-url("icons/emoji.svg"); clicked => { root.emoji-query = ""; emoji-popup.show(); } }
                     IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
-                    IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
+                    IconButton { icon: @image-url("icons/attach.svg"); tooltip: "Attach file"; clicked => { root.attach-file(); } }
+                    IconButton { icon: @image-url("icons/cloud.svg"); tooltip: "Attach cloud files"; clicked => { root.attach-cloud(); } }
                     IconButton { icon: @image-url("icons/more.svg"); clicked => { more-popup.show(); } }
                     Rectangle { width: 1px; background: Theme.border; }
                     IconButton {
