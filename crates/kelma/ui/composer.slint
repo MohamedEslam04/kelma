@@ -6,6 +6,7 @@ import { PeopleStore } from "people.slint";
 import { MentionApi, MentionPicker } from "mention_picker.slint";
 import { FormatApi, FormatBar, FormatEdit, FormatPreview, FormatToggle } from "composer_format.slint";
 import { ComposerAppsButton } from "composer_apps.slint";
+import { GifPicker, GifStore } from "gif_picker.slint";
 
 // Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
 export global EmojiApi {
@@ -411,6 +412,14 @@ export component Composer inherits Rectangle {
                     alignment: end;
                     FormatToggle { on: root.format-open; clicked => { root.format-open = !root.format-open; } }
                     IconButton { icon: @image-url("icons/emoji.svg"); clicked => { root.emoji-query = ""; emoji-popup.show(); } }
+                    IconButton {
+                        icon: @image-url("icons/gif.svg");
+                        tooltip: @tr("GIF");
+                        clicked => {
+                            GifStore.command("search", "");
+                            gif-popup.show();
+                        }
+                    }
                     IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
                     IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
                     IconButton { icon: @image-url("icons/more.svg"); clicked => { more-popup.show(); } }
@@ -470,6 +479,19 @@ export component Composer inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    gif-popup := PopupWindow {
+        x: parent.width - 420px;
+        y: parent.height - 530px;
+        width: 360px;
+        height: 440px;
+        close-policy: close-on-click-outside;
+        GifPicker {
+            width: parent.width;
+            height: parent.height;
+            picked => { gif-popup.close(); }
         }
     }
 

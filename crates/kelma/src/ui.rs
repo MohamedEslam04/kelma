@@ -31,6 +31,7 @@ mod composer_apps;
 pub(crate) mod drive;
 mod engage;
 mod find;
+mod gifs;
 mod lists;
 mod media;
 mod people;

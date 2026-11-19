@@ -31,6 +31,7 @@ mod drafts;
 pub(crate) mod drive;
 pub(crate) mod engage;
 mod find;
+mod gifs;
 mod lists;
 mod live;
 mod manage;
@@ -71,6 +72,7 @@ pub use composer_apps::ComposerAppsCmd;
 pub use drive::DriveCmd;
 pub use engage::EngageCmd;
 pub use find::FindCmd;
+pub use gifs::{GifCmd, GifRow};
 pub use lists::ListsCmd;
 pub use manage::{
     CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
@@ -138,6 +140,7 @@ pub enum Cmd {
     Drive(DriveCmd),
     /// Viva Engage: a community's read-only feed (plan S3.2).
     Engage(EngageCmd),
+    Gif(GifCmd),
     /// The chat list: sections, item menu, options, channel menu (plan 8.1 to 8.3, 8.5).
     Lists(ListsCmd),
     /// The channel Posts tab (plan 8.4).
@@ -617,6 +620,7 @@ impl Engine {
             Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::Settings(c) => self.settings_cmd(c).await?,
             Cmd::Engage(c) => self.engage_cmd(c).await?,
+            Cmd::Gif(c) => self.gif_cmd(c).await?,
             Cmd::Lists(c) => self.lists_cmd(c).await?,
             Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::Media(c) => self.media_cmd(c).await?,

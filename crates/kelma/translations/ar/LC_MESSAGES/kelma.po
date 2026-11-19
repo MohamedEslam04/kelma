@@ -1153,3 +1153,18 @@ msgstr "العنوان"
 
 msgid "Add"
 msgstr "إضافة"
+
+msgid "GIFs"
+msgstr "صور GIF"
+
+msgid "Search GIFs"
+msgstr "البحث عن GIF"
+
+msgid "Search GIFs (Enter)"
+msgstr "ابحث عن GIF (Enter)"
+
+msgid "Powered by GIPHY"
+msgstr "بواسطة GIPHY"
+
+msgid "GIF"
+msgstr "GIF"

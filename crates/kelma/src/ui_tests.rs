@@ -1067,6 +1067,37 @@ fn a_channel_shows_its_other_tabs_and_add_a_tab_sends_a_name_and_address() {
     assert!(!app.global::<FindStore>().get_tab_add_open());
 }
 
+#[test]
+fn the_gif_button_shows_trending_gifs_and_a_pick_is_sent() {
+    use crate::{GifItem, GifStore};
+    let app = app_with_messages(vec![]);
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let l = log.clone();
+        app.global::<GifStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    find_label(&app, "GIF")[0].invoke_accessible_default_action();
+    assert_eq!(log.borrow().last().unwrap(), "search ", "trending first");
+    let items = vec![
+        GifItem {
+            title: "Happy Dance GIF".into(),
+            ..Default::default()
+        },
+        GifItem {
+            title: "Thumbs Up GIF".into(),
+            ..Default::default()
+        },
+    ];
+    app.global::<GifStore>()
+        .set_items(ModelRc::new(VecModel::from(items)));
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let thumbs = find_label(&app, "Thumbs Up GIF");
+    assert!(!thumbs.is_empty(), "the results are in the grid");
+    thumbs[0].invoke_accessible_default_action();
+    assert_eq!(log.borrow().last().unwrap(), "pick 1");
+}
+
 // ---- failed sends (plans/chat.md 5.8) -----------------------------------
 
 fn outgoing(id: &str, text: &str, pending: bool, failed: bool) -> Msg {

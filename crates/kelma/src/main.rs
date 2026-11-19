@@ -418,6 +418,14 @@ fn main() -> anyhow::Result<()> {
     }
     {
         let tx = tx.clone();
+        window.global::<GifStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::GifCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Gif(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
         window.global::<EngageStore>().on_command(move |name, arg| {
             if let Some(c) = backend::EngageCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Engage(c));
