@@ -427,7 +427,7 @@ impl Paths {
 }
 
 /// Where refresh tokens are kept. The system keyring in the app; an in-memory map in tests.
-pub trait TokenStore {
+pub trait TokenStore: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<String>>;
     fn set(&self, key: &str, token: &str) -> Result<()>;
     fn delete(&self, key: &str) -> Result<()>;
