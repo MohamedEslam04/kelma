@@ -26,8 +26,8 @@ export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, 
 export { EmojiApi } from "composer.slint";
 export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
+export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
-export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
 
 export component AppWindow inherits Window {
     title: root.window-title;
@@ -169,6 +169,8 @@ export component AppWindow inherits Window {
     callback jump-to-newest();
     callback retry-send(string);
     callback discard-send(string);
+    // The chat header's "Schedule a meeting": opens the calendar's new-event form with the chat's members.
+    callback schedule-meeting(string);
     callback activity-refresh();
     callback activity-select(string);
     callback activity-set-filter(string);
@@ -495,6 +497,12 @@ export component AppWindow inherits Window {
                                 alignment: center;
                                 Text { text: tab; color: tab == "Chat" || tab == "Posts" ? Theme.fg : Theme.fg-muted; font-size: 14px; font-weight: tab == "Chat" || tab == "Posts" ? 600 : 400; }
                                 Rectangle { height: 3px; border-radius: 1px; background: tab == "Chat" || tab == "Posts" ? Theme.accent : transparent; }
+                            }
+                            if root.thread-root == "" && !root.current-is-channel: IconButton {
+                                icon: @image-url("icons/calendar.svg");
+                                y: 14px;
+                                tooltip: "Schedule a meeting";
+                                clicked => { root.schedule-meeting(root.current-id); }
                             }
                             Rectangle { horizontal-stretch: 1; }
                             if PeopleStore.header-group && root.thread-root == "": people-btn := Rectangle {

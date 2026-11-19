@@ -3039,6 +3039,7 @@ dependencies = [
  "diag",
  "emoji",
  "i-slint-backend-testing",
+ "iana-time-zone",
  "image",
  "notify-rust",
  "onedrive",

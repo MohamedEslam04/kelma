@@ -35,9 +35,15 @@ mod util;
 pub use activity::ActivityCmd;
 #[cfg(test)]
 pub(crate) use activity::{State as ActivityState, row_data as activity_row_data};
-pub use cal::{CalCmd, CalData};
 #[cfg(test)]
-pub use cal::{Ctx, build, parse_view};
+pub use cal::{
+    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, SuggestRow, build, filter_opts, parse_view, peek_data,
+    room_rows, sched_rows,
+};
+pub use cal::{
+    CalCmd, CalData, DetailData, FormFields, FormOpen, Panels, PeekData, PermRow, RoomsPush,
+    SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes,
+};
 pub use drive::DriveCmd;
 pub use people::PeopleCmd;
 

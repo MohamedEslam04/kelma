@@ -16,6 +16,9 @@
 //! kelma-cli card [mri]            profile card of a person, default yourself
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
 //! kelma-cli drive <ls [path]|search q|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir name|rm id|selftest>
+//! kelma-cli drive <meetings|for-you|shared-by-me|people|media>   more views (read-only)
+//! kelma-cli drive new <kind> [name] [--dry-run]                    New menu; --dry-run prints the request
+//! kelma-cli drive shape <graph path> | shape-search <kql>            redacted answer shapes (read-only)
 //! kelma-cli tasks [todo <n>|plan <n>]  To Do lists and Planner plans (read-only)
 //! kelma-cli flows [runs <n> [top]]  your Workflows and their run history (read-only)
 //! kelma-cli onenote [<notebook> [<section> [<page>]]]  read OneNote notebooks, sections, pages
@@ -762,6 +765,7 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
+        Some("drive") if drive::is_offline(&args[1..]) => drive::offline(&args[1..])?,
         Some("drive") => {
             let (client, cfg) = connect(&paths).await?;
             let r = drive::run(&client, &args[1..]).await;
@@ -895,6 +899,7 @@ async fn main() -> Result<()> {
                    card [mri]\n\
                    horizons <conv>\n\
                    drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest|purge>\n\
+                   drive <meetings|for-you|shared-by-me|people|media|new|shape|shape-search>\n\
                    tasks [todo <n>|plan <n>]\n\
                    flows [runs <n> [top]]\n\
                    onenote [<notebook> [<section> [<page>]]]\n\

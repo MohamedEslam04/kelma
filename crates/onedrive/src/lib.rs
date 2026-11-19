@@ -9,17 +9,23 @@ pub mod api;
 pub mod around;
 pub mod bin;
 pub mod browse;
+pub mod create;
+pub mod insights;
 pub mod model;
 pub mod ops;
 pub mod package;
 pub mod share;
 
 pub use api::ItemRef;
-pub use around::{recordings, sync_help};
+pub use around::{Recording, channel_recordings, meeting_recordings, recordings, sync_help};
 pub use bin::{BinItem, delete_forever, recycle_bin, restore};
 pub use browse::{
-    children, followed_sites, following, group_drive, item_at, my_drive, recent, root_children,
-    search, search_from, shared_with_me, site_drives, thumbnails,
+    children, followed_sites, following, group_drive, is_media, item_at, media, my_drive, recent,
+    root_children, search, search_from, shared_with_me, site_drives, thumbnails,
+};
+pub use create::{Created, FORMS_NEW_URL, NewItem, Notebook, Planned, create, plan};
+pub use insights::{
+    ForYouCard, Insight, InsightKind, Person, PersonFiles, for_you, people, shared_by_me,
 };
 pub use model::{
     Drive, DriveItem, Group, Page, SearchPage, Site, SortKey, Thumbnails, group_items, sort_items,
