@@ -495,7 +495,7 @@ pub fn adopt(
             ngc,
             s: session,
             links,
-            // A 1:1 call names no conversation controller; the controls use the call's links.
+            // A 1:1 call starts without a conversation controller; its conversation push names one.
             controller: String::new(),
             media,
             ice: vec![],
@@ -539,6 +539,16 @@ fn find_blob(v: &serde_json::Value) -> Option<SdpBlob> {
 /// `call join --no-aec`, for comparing both live).
 fn aec_wanted() -> bool {
     aec_wanted_by(std::env::var_os("KELMA_NO_AEC").as_deref())
+}
+
+/// The conversation controller a 1:1 call's conversation push names (`conversationController`).
+/// A 1:1 call starts without one, and the controls (mute) need it: `updateEndpointState` sits
+/// under it. Only an https URL counts.
+fn conversation_controller(body: &serde_json::Value) -> Option<String> {
+    body.get("conversationController")
+        .and_then(serde_json::Value::as_str)
+        .filter(|u| u.starts_with("https://"))
+        .map(str::to_owned)
 }
 
 fn aec_wanted_by(no_aec: Option<&std::ffi::OsStr>) -> bool {
@@ -808,6 +818,11 @@ impl Call {
                 },
                 p = pushes.recv() => {
                     let Some(p) = p else { break Some(self.ended_text()) };
+                    if self.controller.is_empty()
+                        && let Some(c) = conversation_controller(&p.body)
+                    {
+                        self.controller = c;
+                    }
                     let NgcPush::Call { event, .. } = classify(&p.url, &p.body) else { continue };
                     match event {
                         CallEvent::Accepted { answer, links, keep_alive_interval_s, .. } => {
@@ -994,6 +1009,23 @@ impl Call {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_direct_call_learns_its_controller_from_the_conversation_push() {
+        let push = json!({
+            "conversationController": "https://api.example.test/api/v2/cc/conv-1",
+            "participants": ["8:orgid:a"],
+        });
+        assert_eq!(
+            conversation_controller(&push).as_deref(),
+            Some("https://api.example.test/api/v2/cc/conv-1")
+        );
+        assert_eq!(conversation_controller(&json!({"participants": []})), None);
+        assert_eq!(
+            conversation_controller(&json!({"conversationController": "http://x.invalid"})),
+            None
+        );
+    }
 
     #[test]
     fn echo_cancellation_is_on_unless_opted_out() {
