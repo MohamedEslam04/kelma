@@ -470,6 +470,7 @@ Moved to its own plan: `plans/activity.md`.
 ### 9.10 Window state
 - [ ] Impact 2, effort 1.
   - **What.** Restore the size, position, last open chat and collapsed sections on start.
+  - **Evidence (data side done, UI missing, box stays open).** Data side done (session::window_state): `crates/session/src/window_state.rs`, stored as `window-state.json` in the config dir (next to `config.json`, `KELMA_HOME` applies). Fields `width`, `height`, `x`, `y` (both `None` when the window manager places it), `maximized`, `last_chat`, `collapsed_sections` (set of section ids), all `#[serde(default)]`, so old and partial files load. API: `WindowState::load()` / `load_from(path)` (never fails: a missing or corrupt file gives the defaults, values are clamped), `save()` / `save_to(path)` (atomic: temp file plus rename), setters `set_size`, `set_position`, `set_maximized`, `set_last_chat`, `toggle_section`, `set_section_collapsed`, `is_collapsed`. `Config` is untouched. `Debug` hides the chat id and the module never logs. Still to do: the GUI reads it at start, writes it on resize, move, chat change and section toggle (debounced), and applies it. Tests: `cargo test -p session window_state`.
 
 ---
 
