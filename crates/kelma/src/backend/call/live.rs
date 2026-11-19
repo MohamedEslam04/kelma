@@ -16,7 +16,7 @@
 use super::share::{self, Share, ShareMsg};
 use super::bots::Bots;
 use super::{
-    CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
+    CallDriver, CallHandle, Caption, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
     Link, Person, Phase, live_phase, recording_state,
 };
 use anyhow::Context;
@@ -24,8 +24,9 @@ use calling::audio::{
     AudioProcessor, Capture, Playback, echo_cancelled, spawn_capture_encoder,
     spawn_decoder_playback,
 };
+use calling::captions::{CAPTIONS_DATA_ID, Depacketizer, parse_caption_message};
 use calling::invitation::{CallEvent, NgcPush, classify};
-use calling::media::{AudioSender, MediaEvents, MediaSession, MediaState};
+use calling::media::{AudioSender, MediaEvents, MediaOptions, MediaSession, MediaState};
 use calling::ngc_trouter::{CallPush, NgcEvent, NgcTrouter};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::roster::{Presence, roster_snapshot};
@@ -420,7 +421,7 @@ async fn join_meeting(
         .await
         .context("the calling connection didn't come up")?;
     let ice = hub.ice_servers(&ngc.endpoints().region).await;
-    let (media, events) = MediaSession::with_options(ice.clone(), share::media_options()).await?;
+    let (media, events) = MediaSession::with_options(ice.clone(), media_options(true)).await?;
     let offer = media.create_offer().await?;
     let me = hub.client.self_mri().await?;
     let s = CallSession::new(&surl, &me, &opts.name);
@@ -705,6 +706,57 @@ impl Talk {
     }
 }
 
+/// A call's media options: [`share::media_options`], plus in a meeting the data channel that
+/// carries live captions.
+fn media_options(meeting: bool) -> MediaOptions {
+    MediaOptions {
+        data_channel: meeting,
+        ..share::media_options()
+    }
+}
+
+/// The captions in one data-channel frame, once the message it ends is whole. A caption without
+/// the speaker's name takes it from the roster by the speaker's id.
+fn captions_in(dp: &mut Depacketizer, frame: &[u8], roster: &Roster) -> Vec<Caption> {
+    let Some(msg) = dp.push(frame) else {
+        return Vec::new();
+    };
+    if msg.data_id != CAPTIONS_DATA_ID {
+        return Vec::new();
+    }
+    parse_caption_message(&msg.payload)
+        .into_iter()
+        .map(|l| Caption {
+            speaker: if l.speaker.is_empty() {
+                speaker_name(roster, &l.user_id)
+            } else {
+                l.speaker
+            },
+            id: l.id,
+            text: l.text,
+        })
+        .collect()
+}
+
+/// The roster's name for a caption's `userId`: the MRI itself, or (UNVERIFIED which one the
+/// service sends) the id after the MRI's prefix.
+fn speaker_name(roster: &Roster, user_id: &str) -> String {
+    if user_id.is_empty() {
+        return String::new();
+    }
+    roster
+        .get(user_id)
+        .or_else(|| {
+            roster.participants().iter().find(|p| {
+                p.mri
+                    .rsplit_once(':')
+                    .is_some_and(|(_, id)| id.eq_ignore_ascii_case(user_id))
+            })
+        })
+        .map(|p| p.display_name.clone())
+        .unwrap_or_default()
+}
+
 fn people(roster: &Roster, me: &str, talk: &Talk) -> Vec<Person> {
     roster
         .participants()
@@ -857,6 +909,8 @@ impl Call {
         let mut forwarders = vec![forward(play_rx.clone(), events.audio)];
         let mut state_rx = events.state;
         let mut speakers_rx = events.speakers;
+        let mut data_rx = events.data;
+        let mut depacketizer = Depacketizer::default();
         let mut talk = Talk::default();
         let mut speakers_open = true;
         if !opts.mic_on {
@@ -879,6 +933,11 @@ impl Call {
                     Some(c) => self.control(c, &mut audio, &sink).await,
                 },
                 Some(m) = share_rx.recv() => self.share_msg(m, &share_tx, &sink).await,
+                Some(frame) = data_rx.recv() => {
+                    for c in captions_in(&mut depacketizer, &frame, &self.roster) {
+                        sink.send(Event::Caption(c));
+                    }
+                }
                 heard = speakers_rx.changed(), if speakers_open => match heard {
                     Ok(()) => {
                         let sources = speakers_rx.borrow_and_update().clone();
@@ -922,6 +981,8 @@ impl Call {
                                 state_rx = ev.state;
                                 speakers_rx = ev.speakers;
                                 speakers_open = true;
+                                data_rx = ev.data;
+                                depacketizer = Depacketizer::default();
                                 forwarders.push(forward(play_rx.clone(), ev.audio));
                             }
                             self.links.0.extend(links.0);
@@ -1136,7 +1197,7 @@ impl Call {
                 if self.ice.is_empty() {
                     self.ice = self.hub.ice_servers(&self.ngc.endpoints().region).await;
                 }
-                match MediaSession::with_options(self.ice.clone(), share::media_options()).await {
+                match MediaSession::with_options(self.ice.clone(), media_options(self.meeting)).await {
                     Ok((fresh, ev)) => match fresh.accept_offer(&sdp).await {
                         Ok(ans) => {
                             let old = std::mem::replace(&mut self.media, fresh);
