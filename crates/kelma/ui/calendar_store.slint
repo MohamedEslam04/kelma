@@ -72,6 +72,7 @@ export struct CalPeek {
 export struct CalAttendeeRow { name: string, email: string, response: string, kind: string }
 export struct CalAttachmentRow { name: string, size: string }
 // A new time an attendee proposed for my meeting; `response` is tentative or declined.
+export struct CalZone { name: string, label: string }
 export struct CalProposalRow { name: string, response: string, when: string }
 export struct CalDetail {
     id: string,
@@ -130,6 +131,9 @@ export global CalStore {
     in property <[CalCalendarRow]> calendars;
     in property <[CalSavedView]> saved-views;
     in property <CalSettingsData> settings;
+    // How the second time zone reads (empty when off) and the zones the picker found.
+    in property <string> second-tz-label;
+    in property <[CalZone]> zone-matches;
     in property <[CalPerm]> perms;
     in property <string> share-note;
     // The roles a new share may be given.

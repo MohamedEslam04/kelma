@@ -241,13 +241,17 @@ export component SettingsDialog inherits Modal {
     property <bool> weekends: CalStore.settings.weekends;
     property <bool> week-numbers: CalStore.settings.week-numbers;
     property <bool> tz-on: CalStore.settings.second-tz != "";
-    property <int> tz-min: CalStore.settings.second-tz == "" ? 0 : Math.round(CalStore.settings.second-tz.to-float());
+    // A zone name (or the old fixed offset in minutes) as it is sent back on Save.
+    property <string> tz-value: CalStore.settings.second-tz;
+    property <string> tz-label: CalStore.second-tz-label;
+    property <string> tz-query;
     property <string> work-start: CalStore.settings.work-start;
     property <string> work-end: CalStore.settings.work-end;
     dismissed => { CalStore.modal = ""; }
+    init => { CalStore.command("zone-search", ""); }
     CalCard {
         width: 480px;
-        height: 460px;
+        height: 560px;
         x: (parent.width - self.width) / 2;
         y: max(24px, (parent.height - self.height) / 3);
         accessible-role: groupbox;
@@ -274,13 +278,23 @@ export component SettingsDialog inherits Modal {
             CalCheck { label: "Show weekends in the week and month views"; checked <=> root.weekends; }
             CalCheck { label: "Show week numbers"; checked <=> root.week-numbers; }
             CalCheck { label: "Show a second time zone"; checked <=> root.tz-on; }
-            if root.tz-on: HorizontalLayout {
-                spacing: 8px;
-                alignment: start;
-                Text { text: "UTC offset"; color: Theme.fg-muted; font-size: 13px; vertical-alignment: center; }
-                IconButton { icon: @image-url("icons/chevron-left.svg"); size: 26px; tooltip: "Earlier"; clicked => { root.tz-min = max(-720, root.tz-min - 30); } }
-                Text { text: (root.tz-min < 0 ? "-" : "+") + (Math.floor(Math.abs(root.tz-min) / 60) < 10 ? "0" : "") + Math.floor(Math.abs(root.tz-min) / 60) + ":" + (Math.mod(Math.abs(root.tz-min), 60) < 10 ? "0" : "") + Math.mod(Math.abs(root.tz-min), 60); color: Theme.fg; font-size: 13px; vertical-alignment: center; }
-                IconButton { icon: @image-url("icons/chevron-right.svg"); size: 26px; tooltip: "Later"; clicked => { root.tz-min = min(840, root.tz-min + 30); } }
+            if root.tz-on: VerticalLayout {
+                spacing: 4px;
+                Text { text: root.tz-label != "" ? root.tz-label : "No time zone picked yet"; color: Theme.fg; font-size: 13px; overflow: elide; }
+                CalField {
+                    placeholder: "Search time zones, like Cairo or Eastern";
+                    text <=> root.tz-query;
+                    edited(t) => { CalStore.command("zone-search", t); }
+                }
+                for z in CalStore.zone-matches: CalMenuItem {
+                    label: z.label;
+                    clicked => {
+                        root.tz-value = z.name;
+                        root.tz-label = z.label;
+                        root.tz-query = "";
+                        CalStore.command("zone-search", "");
+                    }
+                }
             }
             if CalStore.prompt-error != "": Text { text: CalStore.prompt-error; color: #ff8a8d; font-size: 13px; }
             Rectangle { vertical-stretch: 1; }
@@ -292,7 +306,7 @@ export component SettingsDialog inherits Modal {
                     label: "Save";
                     primary: true;
                     clicked => {
-                        CalStore.command("settings", root.first-day + "|" + root.work-start + "|" + root.work-end + "|" + (root.weekends ? "1" : "0") + "|" + (root.week-numbers ? "1" : "0") + "|" + (root.tz-on ? "" + root.tz-min : ""));
+                        CalStore.command("settings", root.first-day + "|" + root.work-start + "|" + root.work-end + "|" + (root.weekends ? "1" : "0") + "|" + (root.week-numbers ? "1" : "0") + "|" + (root.tz-on ? root.tz-value : ""));
                     }
                 }
             }
