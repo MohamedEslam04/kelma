@@ -401,31 +401,223 @@ pub fn query_request(chat_service: &str, q: &QueryRequest<'_>) -> Request {
         .iter()
         .map(|(name, value)| json!({"name": name, "value": value}))
         .collect();
-    let mut body = json!({
-        "name": "composeExtension/query",
-        "appId": q.app_id,
-        "value": {
+    invoke_request(
+        chat_service,
+        "composeExtension/query",
+        Envelope {
+            app_id: q.app_id,
+            bot_id: q.bot_id,
+            conversation_id: q.conversation_id,
+            display_name: q.display_name,
+        },
+        json!({
             "commandId": q.command_id,
             "commandContext": q.context.as_str(),
             "parameters": parameters,
             "queryOptions": {"skip": q.skip, "count": q.count},
-        },
-    });
-    if !q.conversation_id.is_empty() {
-        body["conversation"] = json!({"id": q.conversation_id});
+        }),
+    )
+}
+
+/// Who an invoke goes to and from where.
+struct Envelope<'a> {
+    app_id: &'a str,
+    bot_id: &'a str,
+    conversation_id: &'a str,
+    display_name: &'a str,
+}
+
+/// A bot invoke: `name` and `value` in the web client's envelope.
+fn invoke_request(chat_service: &str, name: &str, e: Envelope<'_>, value: Value) -> Request {
+    let mut body = json!({"name": name, "appId": e.app_id, "value": value});
+    if !e.conversation_id.is_empty() {
+        body["conversation"] = json!({"id": e.conversation_id});
     }
-    if !q.display_name.is_empty() {
-        body["imdisplayname"] = json!(q.display_name);
+    if !e.display_name.is_empty() {
+        body["imdisplayname"] = json!(e.display_name);
     }
     Request {
         method: Method::POST,
         url: format!(
             "{}/v1/agents/{}/invoke",
             chat_service.trim_end_matches('/'),
-            bot_mri(q.bot_id)
+            bot_mri(e.bot_id)
         ),
         body: Some(body),
     }
+}
+
+/// One run of an action command: asking for its task module (`composeExtension/fetchTask`) or
+/// sending what the task module's page submitted (`composeExtension/submitAction`).
+pub struct ActionRequest<'a> {
+    pub app_id: &'a str,
+    pub bot_id: &'a str,
+    pub command_id: &'a str,
+    pub context: CommandContext,
+    pub conversation_id: &'a str,
+    pub display_name: &'a str,
+    /// What the page passed to `tasks.submitTask` / `dialog.url.submit`.
+    pub data: Option<&'a Value>,
+}
+
+fn action_request(chat_service: &str, name: &str, a: &ActionRequest<'_>) -> Request {
+    let mut value = json!({
+        "commandId": a.command_id,
+        "commandContext": a.context.as_str(),
+        "context": {"theme": "default"},
+    });
+    if let Some(data) = a.data {
+        value["data"] = data.clone();
+    }
+    invoke_request(
+        chat_service,
+        name,
+        Envelope {
+            app_id: a.app_id,
+            bot_id: a.bot_id,
+            conversation_id: a.conversation_id,
+            display_name: a.display_name,
+        },
+        value,
+    )
+}
+
+/// The `composeExtension/fetchTask` bot invoke of an action command without a static task.
+pub fn fetch_task_request(chat_service: &str, a: &ActionRequest<'_>) -> Request {
+    action_request(chat_service, "composeExtension/fetchTask", a)
+}
+
+/// The `composeExtension/submitAction` bot invoke that carries a task module's result.
+pub fn submit_action_request(chat_service: &str, a: &ActionRequest<'_>) -> Request {
+    action_request(chat_service, "composeExtension/submitAction", a)
+}
+
+/// What `composeExtension/fetchTask` answered with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskOutcome {
+    /// A web page to open as the task module.
+    Url {
+        title: String,
+        url: String,
+    },
+    /// An adaptive card form, which has no page to open.
+    Card,
+    /// A plain message to show the user.
+    Message(String),
+    Empty,
+    Failed {
+        status: u16,
+        message: String,
+    },
+    Other,
+}
+
+/// Parses the invoke answer of `composeExtension/fetchTask`.
+pub fn parse_task_response(v: &Value) -> TaskOutcome {
+    if v.is_null() || v.as_object().is_some_and(|m| m.is_empty()) {
+        return TaskOutcome::Empty;
+    }
+    if let Some(status) = v["statusCode"].as_u64().filter(|s| *s >= 400) {
+        return TaskOutcome::Failed {
+            status: status as u16,
+            message: match &v["value"] {
+                Value::String(s) => s.clone(),
+                Value::Null => String::new(),
+                other => other.to_string(),
+            },
+        };
+    }
+    let task = &v["task"];
+    match task["type"].as_str() {
+        Some("message") => TaskOutcome::Message(task["value"].as_str().unwrap_or_default().into()),
+        Some("continue") => {
+            let value = &task["value"];
+            match value["url"].as_str().filter(|u| !u.is_empty()) {
+                Some(url) => TaskOutcome::Url {
+                    title: text(value, "title"),
+                    url: url.to_owned(),
+                },
+                None if value["card"].is_object() => TaskOutcome::Card,
+                None => TaskOutcome::Other,
+            }
+        }
+        _ => TaskOutcome::Other,
+    }
+}
+
+/// Asks the bot of an action command for its task module. Nothing is posted.
+pub async fn fetch_task(
+    client: &Client,
+    app: &PlaceApp,
+    extension: &Extension,
+    command: &ExtensionCommand,
+    context: CommandContext,
+    conversation_id: &str,
+    display_name: &str,
+) -> Result<TaskOutcome> {
+    let req = fetch_task_request(
+        &client.chat_service().await,
+        &ActionRequest {
+            app_id: &app.id,
+            bot_id: &extension.bot_id,
+            command_id: &command.id,
+            context,
+            conversation_id,
+            display_name,
+            data: None,
+        },
+    );
+    let body = invoke(client, req, "messaging extension task").await?;
+    Ok(match body {
+        Some(v) => parse_task_response(&v),
+        None => TaskOutcome::Empty,
+    })
+}
+
+/// Sends what a task module's page submitted to the bot of an action command and returns its
+/// answer: the card to put in the message (`result`) or its preview (`botMessagePreview`).
+#[allow(clippy::too_many_arguments)]
+pub async fn submit_action(
+    client: &Client,
+    app: &PlaceApp,
+    extension: &Extension,
+    command: &ExtensionCommand,
+    context: CommandContext,
+    data: &Value,
+    conversation_id: &str,
+    display_name: &str,
+) -> Result<QueryOutcome> {
+    let req = submit_action_request(
+        &client.chat_service().await,
+        &ActionRequest {
+            app_id: &app.id,
+            bot_id: &extension.bot_id,
+            command_id: &command.id,
+            context,
+            conversation_id,
+            display_name,
+            data: Some(data),
+        },
+    );
+    let body = invoke(client, req, "messaging extension submit").await?;
+    Ok(match body {
+        Some(v) => parse_query_response(&v),
+        None => QueryOutcome::Empty,
+    })
+}
+
+/// Sends an invoke; the parsed JSON body, or `None` when the answer is empty.
+async fn invoke(client: &Client, req: Request, what: &'static str) -> Result<Option<Value>> {
+    let (status, body) = client
+        .request(req.method, &req.url, req.body.as_ref(), &[])
+        .await?;
+    if !(200..300).contains(&status) {
+        return Err(Error::status(what, status, &body));
+    }
+    if body.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_str(&body)?))
 }
 
 /// What a query answered with.
@@ -544,7 +736,11 @@ pub fn parse_query_response(v: &Value) -> QueryOutcome {
         },
         layout: str_of(ext, "attachmentLayout"),
         text: str_of(ext, "text"),
-        items: items(ext, "attachments").map(parse_item).collect(),
+        // A preview (`botMessagePreview`) holds its cards in the activity it previews.
+        items: items(ext, "attachments")
+            .chain(items(&ext["activityPreview"], "attachments"))
+            .map(parse_item)
+            .collect(),
         actions: items(&ext["suggestedActions"], "actions")
             .filter_map(|a| Some((text(a, "title"), str_of(a, "value")?)))
             .collect(),

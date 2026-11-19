@@ -48,6 +48,9 @@ pub struct Apps {
     grants: Grants,
     /// Links that were opened (the tests read these; nothing is opened offline).
     opened: Vec<String>,
+    /// The submit callback of the last task module opened in tests.
+    #[cfg(test)]
+    task_submit: Option<webhost_open::TaskSubmit>,
 }
 
 impl Apps {

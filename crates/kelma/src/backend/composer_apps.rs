@@ -4,8 +4,12 @@
 //! - A search command (a messaging extension's query) takes text, runs `composeExtension/query`
 //!   after a pause in typing and lists the result cards as previews. Choosing one puts the card
 //!   in the draft as a card attachment. Read only: nothing is sent to the chat.
-//! - An action command opens its task module link (`taskInfo.url`) in the browser. S3.5 will
-//!   route it to the web host instead; the crate is not a dependency of kelma yet.
+//! - An action command opens its task module (`taskInfo.url`, or the page `fetchTask` answers
+//!   with) in the web host, with the app's shim (`appstore::webhost_open::plan_task`). What the
+//!   page submits (`tasks.submitTask`, `dialog.url.submit`) goes to the bot as
+//!   `composeExtension/submitAction`, and the card the bot answers with is added to the draft
+//!   like a picked search result. Nothing opens in the browser, nor for an unknown app or a
+//!   link that is not https.
 //!
 //! The draft's existing attachments are images and files that go through the outbox. Cards are
 //! kept here, by chat, until Send: `Engine::send` takes them (`take_composer_cards`) and queues
@@ -20,7 +24,7 @@ use super::Engine;
 use crate::data::Pixels;
 use app_store::bots::{
     self, CommandContext, CommandKind, Extension, ExtensionCommand, Place, PlaceApp, QueryOutcome,
-    ResultItem, ResultKind,
+    ResultItem, ResultKind, TaskOutcome,
 };
 pub use card_preview::{Preview, preview_of};
 use serde_json::Value;
@@ -290,6 +294,57 @@ fn outcome_view(outcome: QueryOutcome) -> (Vec<ResultItem>, String) {
     }
 }
 
+/// The conversation id to give a bot: the notes chat has no bots in it, so the service refuses
+/// it (seen live), and the web client sends none without a thread.
+fn notes_free(conv: &str) -> &str {
+    if conv == "48:notes" { "" } else { conv }
+}
+
+/// The cards an action command's `submitAction` answer puts in the message, or the line to show
+/// when it gives none. A bot may also post on its own and answer nothing.
+fn submitted_cards(outcome: QueryOutcome) -> Result<Vec<ResultItem>, String> {
+    match outcome {
+        QueryOutcome::Results(r)
+            if matches!(r.kind, ResultKind::Result | ResultKind::BotMessagePreview)
+                && !r.items.is_empty() =>
+        {
+            Ok(r.items)
+        }
+        QueryOutcome::Results(r) if r.kind == ResultKind::Message => Err(r
+            .text
+            .unwrap_or_else(|| "The app sent no card to add.".into())),
+        QueryOutcome::Empty => Err("The app sent no card to add.".into()),
+        QueryOutcome::Results(r) if r.kind == ResultKind::Result => {
+            Err("The app sent no card to add.".into())
+        }
+        other => Err(outcome_view(other).1),
+    }
+}
+
+/// Puts a card in a chat's draft; the line to show.
+fn add_card(
+    cards: &mut HashMap<String, Vec<CardAttachment>>,
+    conv: &str,
+    app_id: String,
+    app_name: String,
+    item: ResultItem,
+) -> String {
+    let preview = preview_of(&item);
+    let list = cards.entry(conv.to_owned()).or_default();
+    if list.len() >= MAX_CARDS {
+        return format!("A message holds up to {MAX_CARDS} cards.");
+    }
+    let note = format!("Added {} to your message.", preview.title);
+    list.push(CardAttachment {
+        app_id,
+        app_name,
+        content_type: item.content_type,
+        content: item.content,
+        preview,
+    });
+    note
+}
+
 /// The view of the state, and the thumbnail addresses it still needs.
 fn picker_data(s: &mut State, offline: bool) -> (PickerData, Vec<String>) {
     let mut wanted = Vec::new();
@@ -389,7 +444,7 @@ impl Engine {
             }
             ComposerAppsCmd::Search(key) => self.ca_search(&key).await,
             ComposerAppsCmd::Action(key) => {
-                self.ca_action(&key);
+                self.ca_action(&key).await;
                 Ok(())
             }
             ComposerAppsCmd::Query(text) => self.ca_query(text).await,
@@ -610,50 +665,163 @@ impl Engine {
         };
         let (app_id, app_name) = (app.id.clone(), app.name.clone());
         let conv = s.conv.clone();
-        let preview = preview_of(&item);
-        let note = format!("Added {} to your message.", preview.title);
-        let list = s.cards.entry(conv).or_default();
-        if list.len() >= MAX_CARDS {
-            s.note = format!("A message holds up to {MAX_CARDS} cards.");
-        } else {
-            list.push(CardAttachment {
-                app_id,
-                app_name,
-                content_type: item.content_type,
-                content: item.content,
-                preview,
-            });
-            s.note = note;
-        }
+        let note = add_card(&mut s.cards, &conv, app_id, app_name, item);
+        s.note = note;
         drop(s);
         self.ca_push();
     }
 
-    /// Opens an action command's task module link. Nothing is asked of the app.
-    fn ca_action(self: &Arc<Self>, key: &str) {
+    /// Opens an action command's task module in the web host. A command with a static
+    /// `taskInfo.url` opens it as it is; one with `fetchTask` asks the bot for the page first
+    /// (`composeExtension/fetchTask`, read only). What the page submits comes back as a card.
+    async fn ca_action(self: &Arc<Self>, key: &str) {
         let Some(k) = parse_key(key) else {
             return;
         };
-        let mut s = self.composer_apps.lock().unwrap();
-        let Some((_, _, cmd)) = s.command(k) else {
-            return;
+        let (app, ext, cmd, conv) = {
+            let s = self.composer_apps.lock().unwrap();
+            let Some((app, ext, cmd)) = s.command(k) else {
+                return;
+            };
+            if cmd.kind != CommandKind::Action {
+                return;
+            }
+            (app.clone(), ext.clone(), cmd.clone(), s.conv.clone())
         };
-        if cmd.kind != CommandKind::Action {
+        let note = self.ca_open_task(&app, &ext, &cmd, &conv).await;
+        self.composer_apps.lock().unwrap().note = note;
+        self.ca_push();
+    }
+
+    /// Opens the task module of `cmd`; the line to show about it.
+    async fn ca_open_task(
+        self: &Arc<Self>,
+        app: &PlaceApp,
+        ext: &Extension,
+        cmd: &ExtensionCommand,
+        conv: &str,
+    ) -> String {
+        let title = &cmd.title;
+        let (url, task_title) = match &cmd.task {
+            Some(t) => (t.url.clone(), t.title.clone()),
+            None if cmd.fetch_task => match self.ca_fetch_task(app, ext, cmd, conv).await {
+                Ok(TaskOutcome::Url { title, url }) => (url, title),
+                Ok(TaskOutcome::Card) => {
+                    return format!("{title} opens a card form, which is not supported yet.");
+                }
+                Ok(TaskOutcome::Message(text)) if !text.is_empty() => return text,
+                Ok(TaskOutcome::Failed { status, message }) => {
+                    return format!("{title}: the app answered {status} {message}")
+                        .trim_end()
+                        .to_owned();
+                }
+                Ok(_) => return format!("{title} gave no form to open."),
+                Err(err) => return format!("Could not open {title}: {err}"),
+            },
+            None => return format!("{title} has no form to open."),
+        };
+        let def = self.apps_definition(&app.id).or_else(|| {
+            self.offline
+                .load(Ordering::Relaxed)
+                .then(|| fixtures::definition(&app.id))
+                .flatten()
+        });
+        let (engine, app2, ext2, cmd2, conv2) = (
+            self.clone(),
+            app.clone(),
+            ext.clone(),
+            cmd.clone(),
+            conv.to_owned(),
+        );
+        let on_submit = Arc::new(move |result: Value| {
+            let (engine, app, ext, cmd, conv) = (
+                engine.clone(),
+                app2.clone(),
+                ext2.clone(),
+                cmd2.clone(),
+                conv2.clone(),
+            );
+            tokio::spawn(async move {
+                engine
+                    .composer_task_submitted(&app, &ext, &cmd, &conv, result)
+                    .await;
+            });
+        });
+        if self.apps_open_task(def.as_ref(), &cmd.id, &url, &task_title, on_submit) {
+            format!("Opened {title}.")
+        } else if !url.starts_with("https://") {
+            format!("{title} has no https link to open.")
+        } else {
+            format!("{title} cannot be opened: the app is not known.")
+        }
+    }
+
+    /// Asks the bot of an action command for its task module.
+    async fn ca_fetch_task(
+        &self,
+        app: &PlaceApp,
+        ext: &Extension,
+        cmd: &ExtensionCommand,
+        conv: &str,
+    ) -> teams_proto::Result<TaskOutcome> {
+        if self.offline.load(Ordering::Relaxed) {
+            return Ok(fixtures::task(&app.id, &cmd.id));
+        }
+        bots::fetch_task(
+            &self.client,
+            app,
+            ext,
+            cmd,
+            CONTEXT,
+            notes_free(conv),
+            &self.my_name,
+        )
+        .await
+    }
+
+    /// The task module's page submitted `result` (`tasks.submitTask`, `dialog.url.submit`): it
+    /// goes to the bot (`composeExtension/submitAction`) and the card the bot answers with is
+    /// added to the draft of the chat, like a picked search result. Nothing is sent to the
+    /// chat; the user sends the message. A page that closes without a result sends nothing.
+    pub(crate) async fn composer_task_submitted(
+        self: &Arc<Self>,
+        app: &PlaceApp,
+        ext: &Extension,
+        cmd: &ExtensionCommand,
+        conv: &str,
+        result: Value,
+    ) {
+        if result.is_null() {
             return;
         }
-        let title = cmd.title.clone();
-        let url = cmd.task.as_ref().map(|t| t.url.clone());
-        s.note = match url {
-            // S3.5: this goes to the web host once kelma depends on it.
-            Some(url) if url.starts_with("https://") => match crate::external::open(&url) {
-                Ok(()) => format!("Opened {title}."),
-                Err(err) => format!("Could not open {title}: {err}"),
-            },
-            Some(_) => format!("{title} has no https link to open."),
-            None => format!(
-                "{title} opens a form the app serves when it runs, which is not supported yet."
-            ),
+        let answer = if self.offline.load(Ordering::Relaxed) {
+            Ok(fixtures::submit(&app.id, &cmd.id, &result))
+        } else {
+            bots::submit_action(
+                &self.client,
+                app,
+                ext,
+                cmd,
+                CONTEXT,
+                &result,
+                notes_free(conv),
+                &self.my_name,
+            )
+            .await
         };
+        let mut s = self.composer_apps.lock().unwrap();
+        let note = match answer.map(submitted_cards) {
+            Ok(Ok(items)) => {
+                let mut note = String::new();
+                for item in items {
+                    note = add_card(&mut s.cards, conv, app.id.clone(), app.name.clone(), item);
+                }
+                note
+            }
+            Ok(Err(text)) => text,
+            Err(err) => format!("{} failed: {err}", cmd.title),
+        };
+        s.note = note;
         drop(s);
         self.ca_push();
     }
@@ -708,7 +876,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use app_store::bots::QueryResults;
+    use app_store::bots::{QueryResults, parse_query_response};
 
     fn demo_apps() -> Vec<PlaceApp> {
         bots::parse_place_apps(&fixtures::place_apps())
@@ -750,7 +918,7 @@ mod tests {
         let titles: Vec<_> = tickets.commands.iter().map(|c| c.title.as_str()).collect();
         assert_eq!(
             titles,
-            ["Find a ticket", "Create a ticket"],
+            ["Find a ticket", "Create a ticket", "Report a problem"],
             "no message command"
         );
 
@@ -780,6 +948,7 @@ mod tests {
                 (true, "", false),
                 (false, "Find a ticket", false),
                 (false, "Create a ticket", true),
+                (false, "Report a problem", true),
             ]
         );
         assert_eq!(rows[1].key, "0.0.0");
@@ -859,5 +1028,58 @@ mod tests {
         });
         assert_eq!(failed.1, "The app answered 404: ConversationNotFound");
         assert_eq!(outcome_view(QueryOutcome::Empty).1, "No results.");
+    }
+
+    #[test]
+    fn a_submit_answer_gives_its_cards_or_a_line_of_text() {
+        // A result and a preview both carry cards.
+        let some = fixtures::submit(fixtures::TICKET_APP, "createTicket", &serde_json::json!({}));
+        assert_eq!(submitted_cards(some).unwrap().len(), 1);
+        let preview = parse_query_response(&serde_json::json!({"composeExtension": {
+            "type": "botMessagePreview",
+            "activityPreview": {"attachments": [{
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {"type": "AdaptiveCard"},
+            }]},
+        }}));
+        assert_eq!(submitted_cards(preview).unwrap().len(), 1);
+        // A bot that posts by itself answers nothing; a message is shown as it is.
+        let none = "The app sent no card to add.";
+        assert_eq!(submitted_cards(QueryOutcome::Empty).unwrap_err(), none);
+        let message = parse_query_response(
+            &serde_json::json!({"composeExtension": {"type": "message", "text": "Ticket denied"}}),
+        );
+        assert_eq!(submitted_cards(message).unwrap_err(), "Ticket denied");
+        let empty =
+            parse_query_response(&serde_json::json!({"composeExtension": {"type": "result"}}));
+        assert_eq!(submitted_cards(empty).unwrap_err(), none);
+        let failed = submitted_cards(QueryOutcome::Failed {
+            status: 500,
+            message: "boom".into(),
+        });
+        assert_eq!(failed.unwrap_err(), "The app answered 500: boom");
+        // Another app's command gets nothing from the demo bot.
+        let other = fixtures::submit(fixtures::GIF_APP, "searchGifs", &serde_json::json!({}));
+        assert_eq!(submitted_cards(other).unwrap_err(), none);
+    }
+
+    #[test]
+    fn the_notes_chat_is_asked_without_a_conversation() {
+        assert_eq!(notes_free("48:notes"), "");
+        assert_eq!(notes_free("19:x@thread.v2"), "19:x@thread.v2");
+    }
+
+    #[test]
+    fn the_cards_of_a_draft_are_capped() {
+        let item = fixtures::submit(fixtures::TICKET_APP, "createTicket", &serde_json::json!({}));
+        let item = submitted_cards(item).unwrap().remove(0);
+        let mut cards = HashMap::new();
+        for _ in 0..MAX_CARDS {
+            let note = add_card(&mut cards, "c", "a".into(), "A".into(), item.clone());
+            assert!(note.starts_with("Added "), "{note}");
+        }
+        let note = add_card(&mut cards, "c", "a".into(), "A".into(), item);
+        assert_eq!(note, format!("A message holds up to {MAX_CARDS} cards."));
+        assert_eq!(cards["c"].len(), MAX_CARDS);
     }
 }

@@ -2,7 +2,8 @@
 //! service and the bots send, parsed by the same functions as live answers. Nothing here comes
 //! from a real tenant.
 
-use app_store::bots::{QueryOutcome, parse_query_response};
+use app_store::AppDefinition;
+use app_store::bots::{QueryOutcome, TaskOutcome, parse_query_response, parse_task_response};
 use serde_json::{Value, json};
 
 pub const GIF_APP: &str = "demo-gifs";
@@ -62,6 +63,14 @@ pub fn place_apps() -> Value {
                                 "width": "medium",
                                 "height": "medium",
                             },
+                        },
+                        {
+                            "id": "reportProblem",
+                            "title": "Report a problem",
+                            "description": "The bot serves the form",
+                            "type": "action",
+                            "context": ["compose"],
+                            "fetchTask": true,
                         },
                         {
                             "id": "ticketFromMessage",
@@ -181,5 +190,59 @@ pub fn query(app_id: &str, command_id: &str, text: &str) -> QueryOutcome {
         "type": "result",
         "attachmentLayout": "list",
         "attachments": hits,
+    }}))
+}
+
+/// The manifest of a demo app, as the app service would send it: what the web host needs to
+/// open its task modules.
+pub fn definition(app_id: &str) -> Option<AppDefinition> {
+    let manifest = match app_id {
+        TICKET_APP => json!({
+            "id": TICKET_APP,
+            "name": "Contoso Tickets",
+            "version": "1.0.0",
+            "validDomains": ["tickets.example.invalid"],
+            "webApplicationInfo": {
+                "id": "demo-tickets-sso",
+                "resource": "api://tickets.example.invalid/demo-tickets-sso",
+            },
+        }),
+        _ => return None,
+    };
+    AppDefinition::parse(&manifest)
+}
+
+/// What the bot of `app_id` answers to `composeExtension/fetchTask` for `command_id`.
+pub fn task(app_id: &str, command_id: &str) -> TaskOutcome {
+    match (app_id, command_id) {
+        (TICKET_APP, "reportProblem") => parse_task_response(&json!({"task": {
+            "type": "continue",
+            "value": {"title": "Report a problem", "url": TASK_URL, "width": "medium"},
+        }})),
+        _ => TaskOutcome::Empty,
+    }
+}
+
+/// What the bot of `app_id` answers to `composeExtension/submitAction` with the page's `data`: a
+/// card with the ticket the user filled in.
+pub fn submit(app_id: &str, command_id: &str, data: &Value) -> QueryOutcome {
+    if app_id != TICKET_APP || !matches!(command_id, "createTicket" | "reportProblem") {
+        return QueryOutcome::Empty;
+    }
+    let title = data["title"].as_str().unwrap_or("Untitled");
+    parse_query_response(&json!({"composeExtension": {
+        "type": "result",
+        "attachmentLayout": "list",
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {
+                "type": "AdaptiveCard",
+                "version": "1.4",
+                "body": [
+                    {"type": "TextBlock", "text": format!("TCK-200 {title}"), "weight": "bolder"},
+                    {"type": "TextBlock", "text": "New, created from the composer", "isSubtle": true},
+                ],
+            },
+        }],
     }}))
 }

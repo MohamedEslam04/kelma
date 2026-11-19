@@ -241,6 +241,9 @@ pub enum AppEvent {
     OpenLink(String),
     /// A call refused because the user has not granted the app `permission`.
     PermissionDenied { call: String, permission: String },
+    /// `tasks.completeTask` (teams-js `tasks.submitTask`, `dialog.url.submit`): the task module
+    /// was submitted with this result (`null` when it gave none).
+    TaskSubmit(Value),
     /// A call the shim does not implement (answered with "not supported").
     Unsupported(String),
 }
@@ -358,6 +361,10 @@ pub fn handle(cfg: &ShimConfig, raw: &str, origin: &str) -> Handled {
             event: Some(AppEvent::OpenLink(arg(0))),
             ..reply(json!([true]))
         },
+        // One-way: the page does not wait for an answer, the window closes.
+        "tasks.completeTask" => event(AppEvent::TaskSubmit(
+            args.first().cloned().unwrap_or(Value::Null),
+        )),
         other => Handled {
             event: Some(AppEvent::Unsupported(other.to_string())),
             ..reply(json!([{
@@ -1040,6 +1047,41 @@ mod tests {
             &cfg(),
             &request(4, "registerHandler", json!(["themeChange"])),
             ORIGIN,
+        );
+        assert_eq!(h, Handled::default());
+    }
+
+    #[test]
+    fn a_submitted_task_module_is_reported_with_its_result_and_needs_no_reply() {
+        // teams-js 1.x `tasks.submitTask` and 2.x `dialog.url.submit` both send this.
+        let h = handle(
+            &cfg(),
+            &request(
+                8,
+                "tasks.completeTask",
+                json!([{"title": "Printer on fire"}, ["app-1"]]),
+            ),
+            ORIGIN,
+        );
+        assert_eq!(h.reply, None);
+        assert_eq!(
+            h.event,
+            Some(AppEvent::TaskSubmit(json!({"title": "Printer on fire"})))
+        );
+        // A task closed without a result reports null; a string result is kept as it is.
+        let h = handle(&cfg(), &request(9, "tasks.completeTask", json!([])), ORIGIN);
+        assert_eq!(h.event, Some(AppEvent::TaskSubmit(Value::Null)));
+        let h = handle(
+            &cfg(),
+            &request(10, "tasks.completeTask", json!(["done"])),
+            ORIGIN,
+        );
+        assert_eq!(h.event, Some(AppEvent::TaskSubmit(json!("done"))));
+        // Only the app's own origins can submit.
+        let h = handle(
+            &cfg(),
+            &request(11, "tasks.completeTask", json!([{}])),
+            "https://evil.example.invalid",
         );
         assert_eq!(h, Handled::default());
     }

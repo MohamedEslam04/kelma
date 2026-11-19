@@ -125,13 +125,19 @@ fn the_plus_button_opens_the_picker_with_the_apps_of_the_chat() {
     assert_eq!(p.headers(), ["GIF Search", "Contoso Tickets"]);
     assert_eq!(
         p.commands(),
-        ["Search GIFs", "Find a ticket", "Create a ticket"],
+        [
+            "Search GIFs",
+            "Find a ticket",
+            "Create a ticket",
+            "Report a problem"
+        ],
         "the ticket command of messages is not for the composer"
     );
     for label in [
         "Search GIFs",
         "Find a ticket",
         "Create a ticket",
+        "Report a problem",
         "Close apps",
     ] {
         assert!(p.has_button(label), "{label} is on screen");
@@ -157,7 +163,12 @@ fn the_commands_listed_depend_on_the_kind_of_chat() {
     channel.h.runner()(Cmd::ComposerApps(ComposerAppsCmd::List));
     assert_eq!(
         channel.commands(),
-        ["Search GIFs", "Find a ticket", "Create a ticket"]
+        [
+            "Search GIFs",
+            "Find a ticket",
+            "Create a ticket",
+            "Report a problem"
+        ]
     );
 }
 
@@ -257,15 +268,20 @@ fn choosing_a_result_adds_a_card_to_the_draft_and_it_can_be_taken_out() {
 }
 
 #[test]
-fn an_action_command_opens_its_form_and_records_the_target() {
+fn an_action_command_opens_its_form_in_the_web_host_and_records_the_target() {
     let p = Picker::open(BACKEND);
     p.plus();
     p.click("Create a ticket");
+    assert_eq!(
+        p.h.engine.apps_opened(),
+        [format!("web-host:{TASK_URL}")],
+        "the task module goes to the web host (nothing launches in tests)"
+    );
     assert!(
-        crate::external::suppressed_targets()
+        !crate::external::suppressed_targets()
             .iter()
             .any(|t| t == TASK_URL),
-        "the task module link was handed to the opener (nothing launches in tests)"
+        "and not to the browser"
     );
     assert_eq!(p.store().get_note(), "Opened Create a ticket.");
     assert_eq!(
@@ -278,6 +294,74 @@ fn an_action_command_opens_its_form_and_records_the_target() {
         "an action adds no card"
     );
     assert!(p.log.borrow().iter().any(|l| l == "action 1.0.1"));
+}
+
+/// The page of the open task module submits `result`, as `tasks.submitTask` does.
+fn submit_task(p: &Picker, result: serde_json::Value) {
+    let submit =
+        p.h.engine
+            .apps_task_submit()
+            .expect("a task module is open");
+    {
+        let _guard = p.h.rt.enter();
+        submit(result);
+    }
+    // The answer is handled on the runtime.
+    p.h.rt.block_on(tokio::task::yield_now());
+}
+
+#[test]
+fn what_the_task_module_submits_comes_back_as_a_card_in_the_draft() {
+    let p = Picker::open(BACKEND);
+    p.plus();
+    p.click("Create a ticket");
+    assert!(p.h.engine.composer_cards(BACKEND).is_empty());
+
+    submit_task(&p, serde_json::json!({"title": "Printer on fire"}));
+    let cards = p.h.engine.composer_cards(BACKEND);
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].app_name, "Contoso Tickets");
+    assert_eq!(cards[0].content["type"], "AdaptiveCard");
+    assert_eq!(p.cards(), ["TCK-200 Printer on fire"]);
+    assert_eq!(
+        p.store().get_note(),
+        "Added TCK-200 Printer on fire to your message."
+    );
+
+    // Like a picked search result, the card goes out with Send.
+    p.h.runner()(Cmd::Send("here it is".into(), String::new()));
+    let queued = p.h.engine.outbox_items(BACKEND);
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].kind, store::OutboxKind::Card);
+    assert!(
+        queued[0]
+            .cards
+            .as_deref()
+            .unwrap()
+            .contains("TCK-200 Printer on fire")
+    );
+    assert!(p.h.engine.composer_cards(BACKEND).is_empty());
+}
+
+#[test]
+fn a_task_module_closed_without_a_result_adds_nothing() {
+    let p = Picker::open(BACKEND);
+    p.plus();
+    p.click("Create a ticket");
+    submit_task(&p, serde_json::Value::Null);
+    assert!(p.h.engine.composer_cards(BACKEND).is_empty());
+    assert_eq!(p.store().get_note(), "Opened Create a ticket.");
+}
+
+#[test]
+fn a_command_whose_form_the_bot_serves_is_asked_for_it_then_opened_in_the_host() {
+    let p = Picker::open(BACKEND);
+    p.plus();
+    p.click("Report a problem");
+    assert_eq!(p.h.engine.apps_opened(), [format!("web-host:{TASK_URL}")]);
+    assert_eq!(p.store().get_note(), "Opened Report a problem.");
+    submit_task(&p, serde_json::json!({"title": "Slow export"}));
+    assert_eq!(p.cards(), ["TCK-200 Slow export"]);
 }
 
 /// Picks the first ticket card in `chat`'s picker, as the user does.

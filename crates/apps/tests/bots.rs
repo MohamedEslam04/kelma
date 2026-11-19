@@ -2,8 +2,9 @@
 //! the live answers (2026-11-19).
 
 use apps::bots::{
-    CommandContext, CommandKind, Input, Place, QueryOutcome, QueryRequest, ResultKind,
-    entitlements_path, parse_place_apps, parse_query_response, query_request,
+    ActionRequest, CommandContext, CommandKind, Input, Place, QueryOutcome, QueryRequest,
+    ResultKind, TaskOutcome, entitlements_path, fetch_task_request, parse_place_apps,
+    parse_query_response, parse_task_response, query_request, submit_action_request,
 };
 use serde_json::{Value, json};
 
@@ -298,4 +299,116 @@ fn query_request_leaves_out_an_empty_conversation() {
     );
     let body = req.body.unwrap();
     assert!(body.get("conversation").is_none() && body.get("imdisplayname").is_none());
+}
+
+fn action(data: Option<&Value>) -> ActionRequest<'_> {
+    ActionRequest {
+        app_id: "app-1",
+        bot_id: "bot-1",
+        command_id: "createTicket",
+        context: CommandContext::Compose,
+        conversation_id: "19:x@thread.v2",
+        display_name: "Test User",
+        data,
+    }
+}
+
+#[test]
+fn fetch_task_and_submit_action_are_bot_invokes_on_the_route_of_a_query() {
+    let fetch = fetch_task_request("https://teams.example/api/chatsvc/emea/", &action(None));
+    assert_eq!(fetch.method, reqwest::Method::POST);
+    assert_eq!(
+        fetch.url,
+        "https://teams.example/api/chatsvc/emea/v1/agents/28:bot-1/invoke"
+    );
+    assert_eq!(
+        fetch.body.unwrap(),
+        json!({
+            "name": "composeExtension/fetchTask",
+            "appId": "app-1",
+            "value": {
+                "commandId": "createTicket",
+                "commandContext": "compose",
+                "context": {"theme": "default"},
+            },
+            "conversation": {"id": "19:x@thread.v2"},
+            "imdisplayname": "Test User",
+        })
+    );
+
+    let data = json!({"title": "Printer on fire", "severity": 2});
+    let submit = submit_action_request(
+        "https://teams.example/api/chatsvc/emea",
+        &action(Some(&data)),
+    );
+    assert_eq!(
+        submit.url,
+        "https://teams.example/api/chatsvc/emea/v1/agents/28:bot-1/invoke"
+    );
+    let body = submit.body.unwrap();
+    assert_eq!(body["name"], "composeExtension/submitAction");
+    assert_eq!(body["value"]["commandId"], "createTicket");
+    // The page's own result goes through as the data, untouched.
+    assert_eq!(body["value"]["data"], data);
+    // No conversation or name when there is none.
+    let mut a = action(None);
+    a.conversation_id = "";
+    a.display_name = "";
+    let body = fetch_task_request("https://x", &a).body.unwrap();
+    assert!(body.get("conversation").is_none() && body.get("imdisplayname").is_none());
+}
+
+#[test]
+fn a_task_answer_gives_a_web_page_a_message_or_a_card_that_is_not_opened() {
+    let url = parse_task_response(&json!({"task": {"type": "continue", "value": {
+        "title": "New ticket", "url": "https://tickets.example.invalid/new",
+        "width": "medium", "height": 480,
+    }}}));
+    assert_eq!(
+        url,
+        TaskOutcome::Url {
+            title: "New ticket".into(),
+            url: "https://tickets.example.invalid/new".into(),
+        }
+    );
+    assert_eq!(
+        parse_task_response(&json!({"task": {"type": "message", "value": "Not allowed here"}})),
+        TaskOutcome::Message("Not allowed here".into())
+    );
+    // An adaptive card task has no page to open.
+    assert_eq!(
+        parse_task_response(&json!({"task": {"type": "continue", "value": {
+            "title": "Form", "card": {"contentType": "application/vnd.microsoft.card.adaptive",
+                                      "content": {"type": "AdaptiveCard"}}}}})),
+        TaskOutcome::Card
+    );
+    assert_eq!(parse_task_response(&json!({})), TaskOutcome::Empty);
+    assert_eq!(
+        parse_task_response(&json!({"statusCode": 502, "value": "bot down"})),
+        TaskOutcome::Failed {
+            status: 502,
+            message: "bot down".into()
+        }
+    );
+    assert_eq!(
+        parse_task_response(&json!({"composeExtension": {"type": "result"}})),
+        TaskOutcome::Other
+    );
+}
+
+#[test]
+fn a_bot_message_preview_keeps_the_cards_of_its_activity() {
+    let out = parse_query_response(&json!({"composeExtension": {
+        "type": "botMessagePreview",
+        "activityPreview": {"type": "message", "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {"type": "AdaptiveCard", "body": [{"type": "TextBlock", "text": "TCK-9 Printer"}]},
+        }]},
+    }}));
+    let QueryOutcome::Results(r) = out else {
+        panic!("{out:?}")
+    };
+    assert_eq!(r.kind, ResultKind::BotMessagePreview);
+    assert_eq!(r.items.len(), 1);
+    assert_eq!(r.items[0].content["type"], "AdaptiveCard");
 }

@@ -16,6 +16,9 @@ use app_store::{AppDefinition, DevicePermission, Grants};
 use std::sync::Arc;
 use webhost::{HostContext, ShimConfig};
 
+/// Gets the result a task module's page submitted. Runs on the host window's task.
+pub(crate) type TaskSubmit = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
+
 /// A tab ready to open in the host.
 #[derive(Debug, Clone)]
 pub(super) struct WebTarget {
@@ -81,7 +84,46 @@ pub(super) fn plan_tab(
         return None;
     }
     let tab = def.personal_tabs().find(|t| t.entity_id == entity_id)?;
-    let template = tab.content_url.as_deref()?;
+    target(
+        def,
+        entity_id,
+        tab.content_url.as_deref()?,
+        &def.name,
+        who,
+        grants,
+    )
+}
+
+/// The web host target for the task module of a composer action command (plan S3.6): `url` is
+/// the command's `taskInfo.url` or the one `composeExtension/fetchTask` answered, `command_id`
+/// stands in for the entity id. The shim is built like a tab's, from the app's manifest. `None`
+/// (the caller opens nothing) when the app is unknown or the URL is not https.
+pub(super) fn plan_task(
+    def: Option<&AppDefinition>,
+    command_id: &str,
+    url: &str,
+    title: &str,
+    who: &Who,
+    grants: &Grants,
+) -> Option<WebTarget> {
+    let def = def?;
+    let title = if title.trim().is_empty() {
+        &def.name
+    } else {
+        title.trim()
+    };
+    target(def, command_id, url, title, who, grants)
+}
+
+/// A page of `def` at `template` (placeholders not yet filled), if it is https.
+fn target(
+    def: &AppDefinition,
+    entity_id: &str,
+    template: &str,
+    title: &str,
+    who: &Who,
+    grants: &Grants,
+) -> Option<WebTarget> {
     if !template.starts_with("https://") {
         return None;
     }
@@ -106,7 +148,7 @@ pub(super) fn plan_tab(
     );
     Some(WebTarget {
         url,
-        title: def.name.clone(),
+        title: title.to_owned(),
         shim,
         granted,
     })
@@ -123,14 +165,7 @@ impl Engine {
     /// Opens the personal tab `entity_id` of the app page that is showing in the web host.
     /// Returns `false` when the tab is not a W tab; the caller then uses the browser.
     pub(super) fn apps_open_in_host(self: &Arc<Self>, entity_id: &str) -> bool {
-        let who = {
-            let cfg = self.cfg.lock().unwrap();
-            Who {
-                display_name: cfg.display_name.clone(),
-                self_mri: cfg.self_mri.clone(),
-                tenant: cfg.tenant.clone(),
-            }
-        };
+        let who = self.apps_who();
         let planned = {
             let a = self.apps.lock().unwrap();
             let Some(def) = a.shop.host.as_ref().and_then(|h| a.def(h)) else {
@@ -157,7 +192,7 @@ impl Engine {
         tracing::debug!(app = %target.shim.context.app_id, granted = ?target.granted, "opening in the web host");
         let e = self.clone();
         tokio::spawn(async move {
-            if let Err(err) = e.run_host_window(target).await {
+            if let Err(err) = e.run_host_window(target, None).await {
                 tracing::warn!(%err, "web host did not open");
                 e.ui.banner(format!("Could not open the app in the web host: {err}"));
                 if matches!(err, webhost::Error::NoBrowser) {
@@ -168,8 +203,79 @@ impl Engine {
         true
     }
 
-    /// Opens the window and keeps it until the user closes it.
-    async fn run_host_window(self: &Arc<Self>, target: WebTarget) -> webhost::Result<()> {
+    /// Opens the task module of a composer action command (plan S3.6) in the web host. `def` is
+    /// the command's app; `on_submit` gets the result the page submits (`tasks.submitTask`,
+    /// `dialog.url.submit`), after which the window closes. Returns `false`, and opens nothing
+    /// (no browser either), when the app is unknown or `url` is not an https link. Demo mode
+    /// and tests only record `web-host:<url>`.
+    pub(crate) fn apps_open_task(
+        self: &Arc<Self>,
+        def: Option<&AppDefinition>,
+        command_id: &str,
+        url: &str,
+        title: &str,
+        on_submit: TaskSubmit,
+    ) -> bool {
+        let grants = if self.apps_offline() {
+            Grants::default()
+        } else {
+            grants_from_text(super::shop::read_grants_file().as_deref())
+        };
+        let Some(target) = plan_task(def, command_id, url, title, &self.apps_who(), &grants) else {
+            return false;
+        };
+        self.apps
+            .lock()
+            .unwrap()
+            .opened
+            .push(format!("web-host:{}", target.url));
+        if self.apps_offline() || crate::external::suppressed() {
+            // Tests play the page's submit through this.
+            #[cfg(test)]
+            {
+                self.apps.lock().unwrap().task_submit = Some(on_submit);
+            }
+            return true;
+        }
+        tracing::debug!(app = %target.shim.context.app_id, granted = ?target.granted, "opening a task module in the web host");
+        let e = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = e.run_host_window(target, Some(on_submit)).await {
+                tracing::warn!(%err, "web host did not open");
+                e.ui.banner(format!("Could not open the form in the web host: {err}"));
+            }
+        });
+        true
+    }
+
+    /// What a task module's page would call when it submits (tests).
+    #[cfg(test)]
+    pub(crate) fn apps_task_submit(&self) -> Option<TaskSubmit> {
+        self.apps.lock().unwrap().task_submit.clone()
+    }
+
+    /// Who the host tells an app it is working for.
+    fn apps_who(&self) -> Who {
+        let cfg = self.cfg.lock().unwrap();
+        Who {
+            display_name: cfg.display_name.clone(),
+            self_mri: cfg.self_mri.clone(),
+            tenant: cfg.tenant.clone(),
+        }
+    }
+
+    /// The definition of an installed or Store app, if the app pages loaded it.
+    pub(crate) fn apps_definition(&self, app_id: &str) -> Option<AppDefinition> {
+        self.apps.lock().unwrap().def(app_id).cloned()
+    }
+
+    /// Opens the window and keeps it until the user closes it. With `on_submit`, the first
+    /// result the page submits goes to it and closes the window.
+    async fn run_host_window(
+        self: &Arc<Self>,
+        target: WebTarget,
+        on_submit: Option<TaskSubmit>,
+    ) -> webhost::Result<()> {
         let paths = session::Paths::new().map_err(|e| webhost::Error::Startup(e.to_string()))?;
         let mut opts = webhost::WebOptions::new(webhost::default_profile_dir(&paths.data_dir));
         opts.title = Some(target.title.clone());
@@ -189,7 +295,25 @@ impl Engine {
             })
         }));
         let win = webhost::open(&target.url, opts).await?;
-        win.closed().await;
+        let Some(on_submit) = on_submit else {
+            win.closed().await;
+            return Ok(());
+        };
+        let mut events = win.events();
+        loop {
+            tokio::select! {
+                _ = win.closed() => break,
+                event = events.recv() => match event {
+                    Ok(webhost::AppEvent::TaskSubmit(result)) => {
+                        on_submit(result);
+                        win.close().await;
+                        break;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    _ => {}
+                },
+            }
+        }
         Ok(())
     }
 }
@@ -372,6 +496,81 @@ mod tests {
         assert_eq!(t.shim.granted, ["media"]);
         let none = plan_tab(&def, "home", &who(), &Grants::default()).unwrap();
         assert!(none.shim.granted.is_empty());
+    }
+
+    #[test]
+    fn an_action_commands_task_module_gets_the_apps_shim_config() {
+        let def = manifest(json!({"webApplicationInfo": {
+            "id": "0d5e", "resource": "api://tabs.example.invalid/0d5e"}}));
+        let text = r#"{"fake-app-1": {"media": true, "geolocation": false}}"#;
+        let g = grants_from_text(Some(text));
+        let t = plan_task(
+            Some(&def),
+            "createTicket",
+            "https://tabs.example.invalid/new?t={tid}&e={entityId}",
+            "New ticket",
+            &who(),
+            &g,
+        )
+        .unwrap();
+        assert_eq!(
+            t.url,
+            "https://tabs.example.invalid/new?t=00000000-0000-0000-0000-0000000000aa&e=createTicket"
+        );
+        assert_eq!(t.title, "New ticket");
+        assert_eq!(
+            t.shim.sso_resource.as_deref(),
+            Some("api://tabs.example.invalid/0d5e")
+        );
+        assert_eq!(
+            t.shim.valid_domains,
+            ["tabs.example.invalid", "*.example.invalid"]
+        );
+        assert_eq!(t.shim.allowed_origins, ["https://tabs.example.invalid"]);
+        assert_eq!(t.shim.context.app_id, "fake-app-1");
+        assert_eq!(t.shim.context.entity_id, "createTicket");
+        // Only what the manifest asks for and the user granted, in the shim too.
+        assert_eq!(t.granted, [DevicePermission::Media]);
+        assert_eq!(t.shim.granted, ["media"]);
+        // A blank title falls back to the app's name.
+        let t = plan_task(
+            Some(&def),
+            "c",
+            "https://tabs.example.invalid/new",
+            "  ",
+            &who(),
+            &g,
+        )
+        .unwrap();
+        assert_eq!(t.title, "Fake Tickets");
+    }
+
+    #[test]
+    fn a_task_module_that_is_not_an_https_page_of_a_known_app_opens_nowhere() {
+        let def = manifest(json!({}));
+        let g = Grants::default();
+        let plan = |def: Option<&AppDefinition>, url: &str| {
+            plan_task(def, "c", url, "T", &who(), &g).is_some()
+        };
+        assert!(plan(Some(&def), "https://tabs.example.invalid/new"));
+        // Unknown app: no shim config can be built.
+        assert!(!plan(None, "https://tabs.example.invalid/new"));
+        // Not https: http, other schemes, relative and empty links, and a placeholder that
+        // turns the link into another scheme.
+        for url in [
+            "http://tabs.example.invalid/new",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "/new",
+            "",
+            "{theme}://x.example.invalid/",
+        ] {
+            assert!(!plan(Some(&def), url), "{url}");
+        }
+        // An app with a screen of its own in kelma still gets its task module in the host:
+        // only its tabs stay native.
+        let native = manifest(json!({"name": "Planner"}));
+        assert!(plan(Some(&native), "https://tabs.example.invalid/new"));
     }
 
     #[test]
