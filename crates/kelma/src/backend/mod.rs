@@ -16,6 +16,7 @@ use teams_proto::Client;
 
 mod actions;
 mod activity;
+pub(crate) mod appstore;
 mod attach;
 mod cal;
 mod drafts;
@@ -35,6 +36,7 @@ mod util;
 pub use activity::ActivityCmd;
 #[cfg(test)]
 pub(crate) use activity::{State as ActivityState, row_data as activity_row_data};
+pub use appstore::AppsCmd;
 #[cfg(test)]
 pub use cal::{
     AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, SuggestRow, build, filter_opts, parse_view, peek_data,
@@ -97,6 +99,7 @@ pub enum Cmd {
     Activity(ActivityCmd),
     People(PeopleCmd),
     Drive(DriveCmd),
+    Apps(AppsCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -187,6 +190,7 @@ pub struct Engine {
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
     drive: Mutex<drive::Drive>,
+    apps: Mutex<appstore::Apps>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -239,6 +243,7 @@ impl Engine {
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
             drive: Mutex::new(drive::Drive::default()),
+            apps: Mutex::new(appstore::Apps::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -261,6 +266,7 @@ impl Engine {
         self.start_calendar_offline();
         self.push_prefs();
         self.start_people();
+        self.start_apps();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
     }
@@ -269,6 +275,7 @@ impl Engine {
     pub fn start(self: &Arc<Self>) {
         self.push_prefs();
         self.start_people();
+        self.start_apps();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -506,6 +513,7 @@ impl Engine {
             Cmd::Activity(c) => self.activity_cmd(c).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
+            Cmd::Apps(c) => self.apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),
