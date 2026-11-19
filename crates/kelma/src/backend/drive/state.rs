@@ -1302,12 +1302,14 @@ mod tests {
 
     #[test]
     fn cards_show_on_home_only_and_not_while_filtering() {
-        let mut s = State::default();
-        s.cards = vec![Card {
-            id: "card:d/1".into(),
-            item: file("1", "plan.xlsx", 1, 0, "Ada"),
-            reason: "You frequently open this".into(),
-        }];
+        let mut s = State {
+            cards: vec![Card {
+                id: "card:d/1".into(),
+                item: file("1", "plan.xlsx", 1, 0, "Ada"),
+                reason: "You frequently open this".into(),
+            }],
+            ..State::default()
+        };
         assert_eq!(s.data(NOW, &|_| 0).cards.len(), 1);
         assert_eq!(s.data(NOW, &|_| 0).cards[0].kind, "excel");
         s.filter = "pl".into();
