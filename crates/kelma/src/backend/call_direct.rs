@@ -696,12 +696,21 @@ impl Engine {
             let _ = media.close().await;
             return Ok(());
         }
+        // The ring names the 1:1 chat; else it follows from both of us.
+        let chat_id = inv.raw["groupChat"]["threadId"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| super::util::one_on_one_chat_id(&self.me, &inv.from.mri))
+            .unwrap_or_default();
         m.adopt(
             s,
             links,
             media,
             media_events,
-            CallKind::Direct { peer_name: name },
+            CallKind::Direct {
+                peer_name: name,
+                chat_id,
+            },
         )
     }
 
@@ -876,6 +885,7 @@ impl Engine {
         if let Some(o) = self.direct().outgoing.as_mut().filter(|o| o.id == id) {
             o.session = Some(s.callbacks.session_id().to_owned());
         }
+        let chat_id = super::util::one_on_one_chat_id(&self.me, &mri).unwrap_or_default();
         let callee = Participant {
             mri,
             display_name: Some(name.clone()),
@@ -940,7 +950,7 @@ impl Engine {
                     let Some(oe) = outgoing_event(&ev) else { continue };
                     match self.outgoing_event(id, oe) {
                         Some(OutgoingState::Connected) => {
-                            return m.adopt(s, links, media, media_events, CallKind::Direct { peer_name: name });
+                            return m.adopt(s, links, media, media_events, CallKind::Direct { peer_name: name, chat_id });
                         }
                         Some(st) if !st.is_live() => {
                             let _ = media.close().await;

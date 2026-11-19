@@ -38,6 +38,8 @@ pub enum CallKind {
     #[cfg(any(test, feature = "calls"))]
     Direct {
         peer_name: String,
+        /// The 1:1 chat with the peer (the call window's Chat opens it), when known.
+        chat_id: String,
     },
 }
 
@@ -54,7 +56,7 @@ impl CallKind {
         match self {
             CallKind::Meeting { title } => title,
             #[cfg(any(test, feature = "calls"))]
-            CallKind::Direct { peer_name } => peer_name,
+            CallKind::Direct { peer_name, .. } => peer_name,
         }
     }
 
@@ -210,6 +212,9 @@ pub enum Event {
     /// Our hand (raised elsewhere, or lowered by an organizer).
     #[cfg(any(test, feature = "calls"))]
     Hand(bool),
+    /// Whether the call is on hold (a hold or resume that failed puts it back).
+    #[cfg(any(test, feature = "calls"))]
+    Held(bool),
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.
@@ -233,7 +238,28 @@ pub enum Control {
     Recording(bool),
     /// Start or stop transcribing the meeting.
     Transcription(bool),
+    /// Put the call on hold (`true`) or resume it.
+    Hold(bool),
+    /// Ring a person into the call (an MRI and their name).
+    AddPerson {
+        mri: String,
+        name: String,
+    },
+    /// "Transfer now": hand the call over to a person and drop out.
+    Transfer {
+        mri: String,
+        name: String,
+    },
     Leave,
+}
+
+/// A person the call window's people search found (the invite box, the transfer dialog).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Found {
+    pub mri: String,
+    pub name: String,
+    /// Job title or email.
+    pub subtitle: String,
 }
 
 /// What to join.
@@ -346,6 +372,10 @@ pub struct CallData {
     pub mic: usize,
     pub speakers: Vec<String>,
     pub speaker: usize,
+    pub held: bool,
+    pub found: Vec<Found>,
+    /// A short status under the invite box ("Calling Ada…").
+    pub invite_notice: String,
 }
 
 /// `m:ss`, or `h:mm:ss` from an hour on.
@@ -384,6 +414,13 @@ pub struct CallModel {
     /// How long the call was connected, once it ended.
     pub duration: Option<Duration>,
     pub devices: Devices,
+    /// On hold (by us).
+    pub held: bool,
+    /// The people search's results, for the latest query ([`Self::find_seq`]).
+    pub found: Vec<Found>,
+    pub find_seq: u64,
+    /// A short status under the invite box ("Calling Ada…").
+    pub invite_notice: String,
 }
 
 pub const ALREADY_IN_CALL: &str = "You're already in a call. Leave it before joining another.";
@@ -461,9 +498,14 @@ impl CallModel {
         if self.phase.active() {
             return false;
         }
+        let chat_id = match &kind {
+            CallKind::Direct { chat_id, .. } => chat_id.clone(),
+            CallKind::Meeting { .. } => String::new(),
+        };
         *self = CallModel {
             phase: Phase::Connected,
             kind,
+            chat_id,
             my_name: std::mem::take(&mut self.my_name),
             mic_on: true,
             connected_at: Some(now),
@@ -511,6 +553,8 @@ impl CallModel {
             Event::Caption(c) => return self.caption(c),
             #[cfg(any(test, feature = "calls"))]
             Event::Hand(h) => return replace(&mut self.hand, h),
+            #[cfg(any(test, feature = "calls"))]
+            Event::Held(h) => return replace(&mut self.held, h),
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
                 self.end(reason, now);
@@ -527,6 +571,9 @@ impl CallModel {
         self.hand = false;
         self.recording = false;
         self.transcribing = false;
+        self.held = false;
+        self.found.clear();
+        self.invite_notice.clear();
         self.notice.clear();
         self.set_captions(false);
     }
@@ -619,6 +666,63 @@ impl CallModel {
         })
     }
 
+    /// Hold / Resume. Returns the new state while the call is connected.
+    pub fn toggle_hold(&mut self) -> Option<bool> {
+        (self.phase == Phase::Connected).then(|| {
+            self.held = !self.held;
+            self.held
+        })
+    }
+
+    /// Opening Transfer puts the call on hold first, as Teams does. Returns `Some(true)` when
+    /// that changed the hold.
+    pub fn transfer_opened(&mut self) -> Option<bool> {
+        self.found.clear();
+        if self.held {
+            return None;
+        }
+        self.toggle_hold()
+    }
+
+    /// A new people search: its sequence number. Older answers are then dropped.
+    pub fn find_started(&mut self) -> u64 {
+        self.find_seq += 1;
+        self.find_seq
+    }
+
+    /// The answer of search `seq`. False when it is stale.
+    pub fn found(&mut self, seq: u64, found: Vec<Found>) -> bool {
+        seq == self.find_seq && {
+            self.found = found;
+            true
+        }
+    }
+
+    /// The person `mri` from the search, as a control `make` builds; the search is done.
+    fn pick(&mut self, mri: &str, make: fn(String, String) -> Control) -> Option<Control> {
+        if !self.phase.active() {
+            return None;
+        }
+        let f = self.found.iter().find(|f| f.mri == mri)?.clone();
+        self.found.clear();
+        self.find_seq += 1;
+        Some(make(f.mri, f.name))
+    }
+
+    /// The invite box's pick: ring that person into the call.
+    pub fn invite(&mut self, mri: &str) -> Option<Control> {
+        let c = self.pick(mri, |mri, name| Control::AddPerson { mri, name })?;
+        if let Control::AddPerson { name, .. } = &c {
+            self.invite_notice = format!("Calling {name}…");
+        }
+        Some(c)
+    }
+
+    /// The transfer dialog's "Transfer now".
+    pub fn transfer(&mut self, mri: &str) -> Option<Control> {
+        self.pick(mri, |mri, name| Control::Transfer { mri, name })
+    }
+
     /// Picks a microphone (`mic`) or speaker. Returns the device ids to switch to while a call
     /// runs.
     pub fn pick_device(&mut self, mic: bool, index: usize) -> Option<Control> {
@@ -681,6 +785,9 @@ impl CallModel {
                 .map(|d| d.name.clone())
                 .collect(),
             speaker: self.devices.speaker,
+            held: self.held,
+            found: self.found.clone(),
+            invite_notice: self.invite_notice.clone(),
         }
     }
 }
@@ -743,6 +850,16 @@ pub enum CallCmd {
     Speaker(usize),
     ToggleMute,
     ToggleHand,
+    /// Hold / Resume.
+    ToggleHold,
+    /// The Transfer dialog opened (it holds the call).
+    TransferOpen,
+    /// Search people for the invite box or the transfer dialog.
+    Find(String),
+    /// The invite box picked a person (an MRI from the search).
+    Invite(String),
+    /// "Transfer now" to a person from the search.
+    Transfer(String),
     Leave,
     /// Close the call-ended screen.
     Close,
@@ -768,6 +885,11 @@ impl CallCmd {
             "speaker" => CallCmd::Speaker(arg.parse().ok()?),
             "mute" => CallCmd::ToggleMute,
             "hand" => CallCmd::ToggleHand,
+            "hold" => CallCmd::ToggleHold,
+            "transfer-open" => CallCmd::TransferOpen,
+            "find" => CallCmd::Find(arg.into()),
+            "invite" if !arg.is_empty() => CallCmd::Invite(arg.into()),
+            "transfer" if !arg.is_empty() => CallCmd::Transfer(arg.into()),
             "leave" => CallCmd::Leave,
             "close" => CallCmd::Close,
             "rejoin" => CallCmd::Rejoin,
@@ -1034,6 +1156,11 @@ impl CallManager {
                         Control::LowerHand
                     }
                 }),
+                CallCmd::ToggleHold => m.toggle_hold().map(Control::Hold),
+                CallCmd::TransferOpen => m.transfer_opened().map(Control::Hold),
+                CallCmd::Find(_) => None,
+                CallCmd::Invite(mri) => m.invite(&mri),
+                CallCmd::Transfer(mri) => m.transfer(&mri),
                 CallCmd::Leave => m.leave(now).then_some(Control::Leave),
                 CallCmd::Close => {
                     m.close();
@@ -1072,6 +1199,25 @@ impl CallManager {
             }
         }
         self.shared.push();
+    }
+
+    /// A people search starts; pass its number to [`Self::found`].
+    pub fn find_started(&self) -> u64 {
+        self.shared.model.lock().unwrap().find_started()
+    }
+
+    /// The people search `seq` answered (dropped when a newer one started).
+    pub fn found(&self, seq: u64, found: Vec<Found>) {
+        if self.shared.model.lock().unwrap().found(seq, found) {
+            self.shared.push();
+        }
+    }
+
+    /// What the people search would have answered for the latest query (tests).
+    #[cfg(test)]
+    pub fn test_found(&self, found: Vec<Found>) {
+        let seq = self.shared.model.lock().unwrap().find_seq;
+        self.found(seq, found);
     }
 
     /// Demo mode: the fake driver with a timed script; `connected` also starts a connected
@@ -1163,6 +1309,13 @@ impl CallManager {
         Ok(())
     }
 
+    /// A connected 1:1 call run by `fake` (UI tests).
+    #[cfg(test)]
+    pub fn adopt_fake(&self, fake: &FakeDriver, kind: CallKind) -> bool {
+        let fake = fake.clone();
+        self.adopt_handle(kind, move |sink| fake.adopt(sink))
+    }
+
     /// Incoming call invitations, for the ringing flows.
     pub fn subscribe_invitations(
         &self,
@@ -1208,6 +1361,34 @@ impl Engine {
                 };
                 self.calls
                     .prejoin(title, JoinTarget::Chat(thread.clone()), thread);
+            }
+            CallCmd::Find(q) => {
+                let seq = self.calls.find_started();
+                let q = q.trim();
+                if q.is_empty() {
+                    self.calls.found(seq, Vec::new());
+                    return Ok(());
+                }
+                // Tests answer with `CallManager::test_found`.
+                if cfg!(test) {
+                    return Ok(());
+                }
+                match self.client.search_people(&self.me, q).await {
+                    Ok(people) => {
+                        let found = people
+                            .into_iter()
+                            .filter(|p| p.mri != self.me)
+                            .map(|p| Found {
+                                subtitle: p.job_title.or(p.email).unwrap_or_default(),
+                                mri: p.mri,
+                                name: p.display_name,
+                            })
+                            .collect();
+                        self.calls.found(seq, found);
+                    }
+                    // The box keeps what it showed.
+                    Err(e) => tracing::warn!(%e, "people search for the call failed"),
+                }
             }
             other => self.calls.command(other),
         }
@@ -1279,6 +1460,17 @@ impl FakeDriver {
         }
     }
 
+    /// Runs a connected 1:1 call as the live driver's `adopt` would (tests).
+    #[cfg(test)]
+    pub fn adopt(&self, sink: EventSink) -> Box<dyn CallHandle> {
+        *self.sink.lock().unwrap() = Some(sink.clone());
+        Box::new(FakeHandle {
+            log: self.log.clone(),
+            sink,
+            demo: false,
+        })
+    }
+
     #[cfg(test)]
     pub fn calls(&self) -> Vec<String> {
         self.log.lock().unwrap().clone()
@@ -1335,6 +1527,9 @@ impl CallHandle for FakeHandle {
             Control::Captions(on) => format!("captions {}", if *on { "on" } else { "off" }),
             Control::Recording(on) => format!("recording {}", start_stop(*on)),
             Control::Transcription(on) => format!("transcription {}", start_stop(*on)),
+            Control::Hold(h) => format!("hold {}", if *h { "on" } else { "off" }),
+            Control::AddPerson { mri, .. } => format!("add {mri}"),
+            Control::Transfer { mri, .. } => format!("transfer {mri}"),
             Control::Leave => "leave".into(),
         };
         self.log.lock().unwrap().push(line);
@@ -1703,7 +1898,8 @@ mod tests {
         let mut m = CallModel::default();
         assert!(m.adopted(
             CallKind::Direct {
-                peer_name: "Ada".into()
+                peer_name: "Ada".into(),
+                chat_id: "19:a_b@unq.gbl.spaces".into(),
             },
             Devices::default(),
             t0
@@ -1717,6 +1913,59 @@ mod tests {
         assert!(!d.can_rejoin);
         m.leave(t0);
         assert_eq!(m.ended, YOU_LEFT_CALL);
+    }
+
+    #[test]
+    fn a_direct_call_holds_invites_and_transfers_people_from_the_search() {
+        let t0 = Instant::now();
+        let mut m = CallModel::default();
+        let kind = CallKind::Direct {
+            peer_name: "Ada".into(),
+            chat_id: "19:a_b@unq.gbl.spaces".into(),
+        };
+        assert!(m.adopted(kind, Devices::default(), t0));
+        assert_eq!(m.data(t0).chat_id, "19:a_b@unq.gbl.spaces");
+        assert_eq!(m.toggle_hold(), Some(true));
+        assert_eq!(m.toggle_hold(), Some(false));
+        assert_eq!(m.transfer_opened(), Some(true), "Transfer holds first");
+        assert_eq!(m.transfer_opened(), None, "already on hold");
+
+        let bo = Found {
+            mri: "8:orgid:b".into(),
+            name: "Bo".into(),
+            subtitle: String::new(),
+        };
+        let old = m.find_started();
+        let seq = m.find_started();
+        assert!(!m.found(old, vec![bo.clone()]), "a stale answer is dropped");
+        assert!(m.found(seq, vec![bo.clone()]));
+        assert_eq!(m.invite("8:orgid:nobody"), None);
+        assert_eq!(
+            m.invite("8:orgid:b"),
+            Some(Control::AddPerson {
+                mri: "8:orgid:b".into(),
+                name: "Bo".into()
+            })
+        );
+        assert_eq!(m.data(t0).invite_notice, "Calling Bo…");
+        assert!(m.found.is_empty());
+        assert!(
+            !m.found(seq, vec![bo.clone()]),
+            "the pick ended that search"
+        );
+        let seq = m.find_started();
+        m.found(seq, vec![bo]);
+        assert_eq!(
+            m.transfer("8:orgid:b"),
+            Some(Control::Transfer {
+                mri: "8:orgid:b".into(),
+                name: "Bo".into()
+            })
+        );
+        m.apply(Event::Held(false), t0);
+        assert!(!m.data(t0).held);
+        m.leave(t0);
+        assert!(!m.held && m.invite_notice.is_empty());
     }
 
     #[test]
@@ -1765,6 +2014,20 @@ mod tests {
         assert_eq!(CallCmd::parse("mic", "1"), Some(CallCmd::Mic(1)));
         assert_eq!(CallCmd::parse("mic", "x"), None);
         assert_eq!(CallCmd::parse("leave", ""), Some(CallCmd::Leave));
+        assert_eq!(CallCmd::parse("hold", ""), Some(CallCmd::ToggleHold));
+        assert_eq!(
+            CallCmd::parse("find", "ada"),
+            Some(CallCmd::Find("ada".into()))
+        );
+        assert_eq!(
+            CallCmd::parse("invite", "8:orgid:a"),
+            Some(CallCmd::Invite("8:orgid:a".into()))
+        );
+        assert_eq!(CallCmd::parse("invite", ""), None);
+        assert_eq!(
+            CallCmd::parse("transfer", "8:orgid:a"),
+            Some(CallCmd::Transfer("8:orgid:a".into()))
+        );
         assert_eq!(
             CallCmd::parse("react", ""),
             None,

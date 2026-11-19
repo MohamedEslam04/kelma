@@ -528,7 +528,11 @@ pub fn parse_attach(body: &Value) -> Result<Attached> {
     // The conversation's own links sit next to its controller (rusty-teams reads
     // `additionalActionResponses[0].output.links`). Only the add links are kept: `leave` there
     // would end the conversation instead of our leg.
-    for r in body["additionalActionResponses"].as_array().into_iter().flatten() {
+    for r in body["additionalActionResponses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         for (name, url) in parse_links(&r["output"]["links"]).0 {
             if ATTACH_CONVERSATION_LINKS.contains(&name.as_str()) && url.starts_with("https://") {
                 links.0.entry(name).or_insert(url);

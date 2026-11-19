@@ -23,10 +23,10 @@
 //!   `call/transferCompletion` with code 0 (or 2xx) says it went through, and we leave. Facts:
 //!   rusty-teams `transfer.rs` `transfer_body`/`completion` (MIT). UNVERIFIED live.
 
-use super::controls::control_url;
 use super::CallSession;
+use super::controls::control_url;
 use crate::types::Links;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DIRECTIONS: [&str; 4] = ["sendrecv", "sendonly", "recvonly", "inactive"];
 const INACTIVE: &str = "inactive";

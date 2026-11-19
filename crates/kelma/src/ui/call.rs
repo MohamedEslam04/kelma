@@ -1,9 +1,9 @@
 //! UI-thread side of the call window: fills the `CallStore` global (`ui/call_store.slint`).
 
 use super::{UiHandle, model};
-use crate::backend::call::{CallData, Person, is_meeting_chat};
+use crate::backend::call::{CallData, Found, Person, is_meeting_chat};
 use crate::data::{Pixels, initials};
-use crate::{AppWindow, CallCaption, CallPerson, CallStore};
+use crate::{AppWindow, CallCaption, CallFound, CallPerson, CallStore};
 use slint::{ComponentHandle, Image, SharedString};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -72,6 +72,18 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_mic(int(d.mic));
     s.set_speakers(texts(d.speakers));
     s.set_speaker(int(d.speaker));
+    s.set_held(d.held);
+    s.set_found(model(d.found.into_iter().map(call_found).collect()));
+    s.set_invite_notice(d.invite_notice.into());
+}
+
+fn call_found(f: Found) -> CallFound {
+    CallFound {
+        id: f.mri.into(),
+        initials: initials(&f.name).into(),
+        name: f.name.into(),
+        subtitle: f.subtitle.into(),
+    }
 }
 
 thread_local! {
