@@ -30,6 +30,9 @@ pub enum Audience {
     SharePoint(String),
     /// `api.yammer.com`: Communities / Viva Engage.
     Yammer,
+    /// The Viva Engage web app's own token (`https://www.yammer.com`), sent to the Engage
+    /// GraphQL host `engage.cloud.microsoft` (storyline settings and posts).
+    Engage,
     /// `service.flow.microsoft.com`: Workflows.
     Flow,
     /// `tasks.office.com`: Planner.
@@ -53,7 +56,7 @@ pub enum Audience {
 
 impl Audience {
     /// Every fixed audience (SharePoint is per host and not listed).
-    pub const FIXED: [Audience; 15] = [
+    pub const FIXED: [Audience; 16] = [
         Audience::Spaces,
         Audience::Csa,
         Audience::Presence,
@@ -62,6 +65,7 @@ impl Audience {
         Audience::Sydney,
         Audience::Outlook,
         Audience::Yammer,
+        Audience::Engage,
         Audience::Flow,
         Audience::Tasks,
         Audience::OneNote,
@@ -83,6 +87,7 @@ impl Audience {
             Audience::Outlook => "https://outlook.office.com".into(),
             Audience::SharePoint(host) => format!("https://{host}"),
             Audience::Yammer => "https://api.yammer.com".into(),
+            Audience::Engage => "https://www.yammer.com".into(),
             Audience::Flow => "https://service.flow.microsoft.com".into(),
             Audience::Tasks => "https://tasks.office.com".into(),
             Audience::OneNote => "https://onenote.com".into(),
