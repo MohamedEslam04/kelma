@@ -1,7 +1,8 @@
 // 1:1 calls (plans/calls.md K1.5, K2.1): the shared store and the incoming-call toast. The toast
 // sits in the bottom-right corner of the window, like Teams' call notification: the caller's
 // avatar and name, "Incoming call" or "Incoming video call", and Accept with video, Accept with
-// audio and Decline. Video is not available yet, so both accepts answer with audio.
+// audio and Decline. Video is not available yet, so both accepts answer with audio. A call that
+// rings while another runs (call waiting) offers Hold and accept, End and accept and Decline.
 import { Theme } from "theme.slint";
 import { Avatar, Icon } from "widgets.slint";
 
@@ -16,6 +17,8 @@ export global DirectCallStore {
     in property <bool> incoming-video: false;
     // "" while ringing; "Connecting…" after Accept, or why it failed.
     in property <string> incoming-status;
+    // It rings while another call runs (call waiting).
+    in property <bool> incoming-waiting: false;
 
     // Outgoing call (the ringing screen).
     in property <bool> outgoing-open: false;
@@ -32,7 +35,7 @@ export global DirectCallStore {
     // Set from Rust when this build can place calls.
     in property <bool> available: false;
 
-    // accept-video | accept-audio | decline | dial <chat id> | dial-person <mri> | cancel | close
+    // accept-video | accept-audio | hold-accept | end-accept | decline | dial <chat id> | dial-person <mri> | cancel | close
     callback command(string, string);
     // True for a 1:1 chat id (the chat header shows Call and Video for it).
     pure callback is-direct(string) -> bool;
@@ -110,6 +113,7 @@ export component CallIncoming inherits Rectangle {
                 }
                 Text {
                     text: DirectCallStore.incoming-status != "" ? DirectCallStore.incoming-status
+                        : DirectCallStore.incoming-waiting ? "Incoming call · You're in a call"
                         : DirectCallStore.incoming-video ? "Incoming video call" : "Incoming call";
                     color: Theme.fg-muted;
                     font-size: 13px * Theme.font-scale;
@@ -118,7 +122,30 @@ export component CallIncoming inherits Rectangle {
                 }
             }
         }
-        if DirectCallStore.incoming-status == "": HorizontalLayout {
+        if DirectCallStore.incoming-status == "" && DirectCallStore.incoming-waiting: HorizontalLayout {
+            alignment: space-around;
+            CallRoundButton {
+                icon: @image-url("icons/call-direct.svg");
+                label: "Hold and accept";
+                note: "Puts your current call on hold";
+                tone: #237b4b;
+                clicked => { DirectCallStore.command("hold-accept", ""); }
+            }
+            CallRoundButton {
+                icon: @image-url("icons/call-direct.svg");
+                label: "End and accept";
+                note: "Ends your current call";
+                tone: #a4262c;
+                clicked => { DirectCallStore.command("end-accept", ""); }
+            }
+            CallRoundButton {
+                icon: @image-url("icons/call-direct-end.svg");
+                label: "Decline";
+                tone: Theme.danger;
+                clicked => { DirectCallStore.command("decline", ""); }
+            }
+        }
+        if DirectCallStore.incoming-status == "" && !DirectCallStore.incoming-waiting: HorizontalLayout {
             alignment: space-around;
             CallRoundButton {
                 icon: @image-url("icons/video.svg");
@@ -140,7 +167,7 @@ export component CallIncoming inherits Rectangle {
                 clicked => { DirectCallStore.command("decline", ""); }
             }
         }
-        if DirectCallStore.incoming-status == "": Text {
+        if DirectCallStore.incoming-status == "" && !DirectCallStore.incoming-waiting: Text {
             text: "Video isn't available yet: Accept with video answers with audio.";
             color: Theme.fg-subtle;
             font-size: 11px * Theme.font-scale;

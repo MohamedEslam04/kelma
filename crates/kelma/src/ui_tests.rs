@@ -22,6 +22,8 @@ mod appstore;
 mod call;
 #[cfg(feature = "calls")]
 mod call_direct;
+#[cfg(feature = "calls")]
+mod call_waiting;
 mod channels;
 mod composer_apps;
 mod drive;

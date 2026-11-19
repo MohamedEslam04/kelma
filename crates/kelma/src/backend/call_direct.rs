@@ -11,6 +11,12 @@
 //! to the invitation's rejection link (or to the leg `attach` hands back). The caller cancelling
 //! closes the toast.
 //!
+//! Call waiting: an invitation while a call runs rings too, with a short beep instead of the
+//! ringtone, and the toast offers Hold and accept, End and accept, and Decline. The call in
+//! progress is held (or left) once the new one is answered ([`CallManager::adopt`]); the manager
+//! keeps both, the held one on the call window's "On hold" bar. A third call, while one is on
+//! hold, is ignored (left to ring on the other clients).
+//!
 //! Outgoing: Call in a 1:1 chat's header (or on a profile card) places an audio call with
 //! `place_call`; the ringing screen follows the callbacks of our session until the far end
 //! accepts (adopt), declines, does not answer, or we cancel.
@@ -20,7 +26,7 @@
 //! and the ringtone and notifications stay silent (`crate::external::suppressed`).
 
 use super::Engine;
-use super::call::{self, CallKind, CallManager};
+use super::call::{self, CallKind, CallManager, CurrentCall};
 use crate::data::{Pixels, color_for, initials};
 use anyhow::Context;
 use calling::incoming::NoOffer;
@@ -219,6 +225,8 @@ pub enum CallCmd {
     Accept {
         video: bool,
     },
+    /// Call waiting: "Hold and accept" (`CurrentCall::Hold`) or "End and accept".
+    AcceptWaiting(CurrentCall),
     Decline,
     /// Call the other person of this 1:1 chat.
     DialChat(String),
@@ -235,6 +243,8 @@ impl CallCmd {
         Some(match name {
             "accept-video" => CallCmd::Accept { video: true },
             "accept-audio" => CallCmd::Accept { video: false },
+            "hold-accept" => CallCmd::AcceptWaiting(CurrentCall::Hold),
+            "end-accept" => CallCmd::AcceptWaiting(CurrentCall::End),
             "decline" => CallCmd::Decline,
             "dial" if !arg.is_empty() => CallCmd::DialChat(arg.to_owned()),
             "dial-person" if !arg.is_empty() => CallCmd::DialPerson(arg.to_owned()),
@@ -256,6 +266,8 @@ pub struct CallView {
     pub video: bool,
     pub status: String,
     pub over: bool,
+    /// The call rings while another runs: the toast offers Hold and accept and End and accept.
+    pub waiting: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -267,6 +279,8 @@ struct IncomingCall {
     mri: String,
     name: String,
     video: bool,
+    /// It rang while another call ran (call waiting).
+    waiting: bool,
     state: IncomingState,
     /// `None` for the fake (demo and test) invitation.
     inv: Option<Box<CallInvitation>>,
@@ -433,7 +447,8 @@ impl Engine {
 
     pub(super) async fn direct_call_cmd(self: &Arc<Self>, c: CallCmd) -> anyhow::Result<()> {
         match c {
-            CallCmd::Accept { video } => self.accept_incoming(video),
+            CallCmd::Accept { video } => self.accept_incoming(video, None),
+            CallCmd::AcceptWaiting(current) => self.accept_incoming(false, Some(current)),
             CallCmd::Decline => self.decline_incoming(),
             CallCmd::DialChat(chat) => {
                 let peer = super::util::one_on_one_members(&chat)
@@ -478,7 +493,7 @@ impl Engine {
     // --- incoming ------------------------------------------------------------------------------
 
     /// A `callInvitation` from the manager. Ignored (left to ring on the other clients) while
-    /// another call rings or connects here.
+    /// another call rings or connects here, or while two calls already run (one on hold).
     pub(crate) fn on_invitation(self: &Arc<Self>, inv: Box<CallInvitation>) -> bool {
         let mri = inv.from.mri.clone();
         let name = inv
@@ -500,9 +515,13 @@ impl Engine {
         call_id: String,
         inv: Option<Box<CallInvitation>>,
     ) -> bool {
+        // Call waiting: a call runs in the call window. Two already (one on hold) is the limit.
+        let waiting = self.calls.in_call();
+        let full = waiting && self.calls.has_held();
         let mut c = self.direct();
         let busy = c.incoming.as_ref().is_some_and(|i| !i.state.is_over())
-            || c.outgoing.as_ref().is_some_and(|o| o.state.is_live());
+            || c.outgoing.as_ref().is_some_and(|o| o.state.is_live())
+            || full;
         if busy {
             tracing::info!("incoming call ignored: another call is in progress");
             return false;
@@ -515,15 +534,22 @@ impl Engine {
             mri: mri.clone(),
             name: name.clone(),
             video,
+            waiting,
             state: IncomingState::Ringing,
             inv,
             session: None,
             events: None,
         });
-        c.ringtone = Ringtone::start();
+        // Over a call, a short beep rather than the full ringtone.
+        c.ringtone = if waiting {
+            Ringtone::waiting()
+        } else {
+            Ringtone::start()
+        };
         drop(c);
         let mut view = self.call_view(&mri, &name);
         view.video = video;
+        view.waiting = waiting;
         self.ui.call_incoming(view);
         self.notify_call(
             &name,
@@ -555,6 +581,7 @@ impl Engine {
         };
         let mut view = self.call_view(&i.mri, &i.name);
         view.video = i.video;
+        view.waiting = i.waiting;
         if i.state == IncomingState::Accepting {
             view.status = "Connecting…".into();
         }
@@ -606,8 +633,18 @@ impl Engine {
         Some(state)
     }
 
-    fn accept_incoming(self: &Arc<Self>, video: bool) -> anyhow::Result<()> {
-        let (id, inv, name) = {
+    /// Accept. `current`: what happens to the call in progress, if one runs (call waiting); a
+    /// plain Accept over a call holds it, as Teams does.
+    fn accept_incoming(
+        self: &Arc<Self>,
+        video: bool,
+        current: Option<CurrentCall>,
+    ) -> anyhow::Result<()> {
+        let current = self
+            .calls
+            .in_call()
+            .then(|| current.unwrap_or(CurrentCall::Hold));
+        let (id, inv, name, mri) = {
             let c = self.direct();
             let Some(i) = c
                 .incoming
@@ -616,16 +653,33 @@ impl Engine {
             else {
                 return Ok(());
             };
-            (i.id, i.inv.clone(), i.name.clone())
+            (i.id, i.inv.clone(), i.name.clone(), i.mri.clone())
         };
         self.incoming_event(id, IncomingEvent::Accept);
         let Some(inv) = inv else {
             // Fake invitation (demo and tests).
             self.direct().log.push(format!(
-                "accept audio{}",
+                "{}accept audio{}",
+                match current {
+                    Some(CurrentCall::Hold) => "hold and ",
+                    Some(CurrentCall::End) => "end and ",
+                    None => "",
+                },
                 if video { " (video asked)" } else { "" }
             ));
             self.incoming_event(id, IncomingEvent::Connected);
+            // Over a call, the fake call joins the call window so both can be seen.
+            if current.is_some() {
+                let chat_id = super::util::one_on_one_chat_id(&self.me, &mri).unwrap_or_default();
+                self.calls.adopt_without_engine(
+                    CallKind::Direct {
+                        peer_name: name,
+                        chat_id,
+                    },
+                    current,
+                );
+                return Ok(());
+            }
             if self.offline.load(Ordering::Relaxed) && !cfg!(test) {
                 self.ui.banner(format!(
                     "Demo: call with {name} accepted. Calls need a signed-in account."
@@ -635,7 +689,7 @@ impl Engine {
         };
         let e = self.clone();
         later(async move {
-            let r = e.accept_live(id, &inv, name).await;
+            let r = e.accept_live(id, &inv, name, current).await;
             if let Err(err) = r {
                 tracing::warn!(%err, "answering a call failed");
                 e.incoming_event(id, IncomingEvent::Failed(err.to_string()));
@@ -650,6 +704,7 @@ impl Engine {
         id: u64,
         inv: &CallInvitation,
         name: String,
+        current: Option<CurrentCall>,
     ) -> anyhow::Result<()> {
         let m = manager()?;
         let ngc = m.ngc().await?;
@@ -711,6 +766,7 @@ impl Engine {
                 peer_name: name,
                 chat_id,
             },
+            current,
         )
     }
 
@@ -950,7 +1006,7 @@ impl Engine {
                     let Some(oe) = outgoing_event(&ev) else { continue };
                     match self.outgoing_event(id, oe) {
                         Some(OutgoingState::Connected) => {
-                            return m.adopt(s, links, media, media_events, CallKind::Direct { peer_name: name, chat_id });
+                            return m.adopt(s, links, media, media_events, CallKind::Direct { peer_name: name, chat_id }, None);
                         }
                         Some(st) if !st.is_live() => {
                             let _ = media.close().await;
@@ -1102,6 +1158,28 @@ pub fn ring_sample(n: u64) -> i16 {
     (0.2 * 32767.0 * fade * s) as i16
 }
 
+/// The call-waiting beep (a call rings over another): two short 440 Hz beeps every 4 s,
+/// quieter than the ringtone, since it plays over the call.
+const WAIT_CYCLE: u64 = RING_RATE * 4;
+const BEEP: u64 = RING_RATE * 3 / 20;
+const SECOND_BEEP_AT: u64 = RING_RATE / 4;
+
+/// Sample `n` (48 kHz mono) of the call-waiting beep.
+pub fn waiting_sample(n: u64) -> i16 {
+    let t = n % WAIT_CYCLE;
+    let start = if t < BEEP {
+        0
+    } else if (SECOND_BEEP_AT..SECOND_BEEP_AT + BEEP).contains(&t) {
+        SECOND_BEEP_AT
+    } else {
+        return 0;
+    };
+    let i = (t - start) as f64;
+    let fade = (i / 480.0).min((BEEP as f64 - i) / 480.0).min(1.0);
+    let x = 2.0 * std::f64::consts::PI * 440.0 * n as f64 / RING_RATE as f64;
+    (0.12 * 32767.0 * fade * x.sin()) as i16
+}
+
 /// Plays while it lives. Never plays in tests or demo mode.
 pub(crate) struct Ringtone {
     stop: Arc<AtomicBool>,
@@ -1109,6 +1187,15 @@ pub(crate) struct Ringtone {
 
 impl Ringtone {
     fn start() -> Option<Ringtone> {
+        Self::play(ring_sample)
+    }
+
+    /// The call-waiting beep instead of the ringtone.
+    fn waiting() -> Option<Ringtone> {
+        Self::play(waiting_sample)
+    }
+
+    fn play(sample: fn(u64) -> i16) -> Option<Ringtone> {
         if crate::external::suppressed() {
             return None;
         }
@@ -1116,7 +1203,7 @@ impl Ringtone {
         let flag = stop.clone();
         let spawned = std::thread::Builder::new()
             .name("kelma-ringtone".into())
-            .spawn(move || play_ring(&flag));
+            .spawn(move || play_ring(&flag, sample));
         match spawned {
             Ok(_) => Some(Ringtone { stop }),
             Err(err) => {
@@ -1133,7 +1220,7 @@ impl Drop for Ringtone {
     }
 }
 
-fn play_ring(stop: &AtomicBool) {
+fn play_ring(stop: &AtomicBool, sample: fn(u64) -> i16) {
     use calling::audio::FrameSink;
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -1157,7 +1244,7 @@ fn play_ring(stop: &AtomicBool) {
     let mut next = started;
     let mut n = 0u64;
     while !stop.load(Ordering::Relaxed) && started.elapsed() < RING_MAX {
-        let samples: Vec<i16> = (n..n + frame).map(ring_sample).collect();
+        let samples: Vec<i16> = (n..n + frame).map(sample).collect();
         n += frame;
         if rt.block_on(out.write_frame(&samples)).is_err() {
             break;
@@ -1327,6 +1414,14 @@ mod tests {
             CallCmd::parse("dial-person", "8:orgid:x"),
             Some(CallCmd::DialPerson("8:orgid:x".into()))
         );
+        assert_eq!(
+            CallCmd::parse("hold-accept", ""),
+            Some(CallCmd::AcceptWaiting(CurrentCall::Hold))
+        );
+        assert_eq!(
+            CallCmd::parse("end-accept", ""),
+            Some(CallCmd::AcceptWaiting(CurrentCall::End))
+        );
         assert_eq!(CallCmd::parse("cancel", ""), Some(CallCmd::Cancel));
         assert_eq!(CallCmd::parse("close", ""), Some(CallCmd::Close));
         assert_eq!(CallCmd::parse("video", ""), None);
@@ -1360,5 +1455,22 @@ mod tests {
     #[test]
     fn tests_never_ring() {
         assert!(Ringtone::start().is_none());
+        assert!(Ringtone::waiting().is_none());
+    }
+
+    #[test]
+    fn the_waiting_beep_is_two_short_quiet_beeps_then_a_long_rest() {
+        assert_ne!(waiting_sample(BEEP / 2 + 7), 0, "first beep");
+        assert_ne!(waiting_sample(SECOND_BEEP_AT + BEEP / 2 + 7), 0, "second beep");
+        assert_eq!(waiting_sample(BEEP + 10), 0, "gap");
+        assert_eq!(waiting_sample(RING_RATE), 0, "rest");
+        assert_eq!(waiting_sample(0), 0, "starts from silence");
+        assert_eq!(waiting_sample(77), waiting_sample(WAIT_CYCLE + 77));
+        let peak = (0..WAIT_CYCLE).map(|n| waiting_sample(n).unsigned_abs()).max();
+        let ring = (0..RING_CYCLE).map(|n| ring_sample(n).unsigned_abs()).max();
+        assert!(peak < ring, "quieter than the ringtone: {peak:?} < {ring:?}");
+        // Under a second of sound in every four.
+        let loud = (0..WAIT_CYCLE).filter(|n| waiting_sample(*n) != 0).count() as u64;
+        assert!(loud < RING_RATE / 2, "{loud}");
     }
 }
