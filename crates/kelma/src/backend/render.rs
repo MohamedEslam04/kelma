@@ -9,7 +9,6 @@ use crate::data::{
     initials,
 };
 use crate::markdown::{reaction_emoji, render_blocks};
-use chrono::{Local, TimeZone};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -629,9 +628,7 @@ impl Engine {
                 },
                 sender,
                 mine,
-                time: Local
-                    .timestamp_millis_opt(r.compose_ms)
-                    .single()
+                time: appearance::formats::local(r.compose_ms)
                     .map(|t| t.format(appearance::formats::time_pattern()).to_string())
                     .unwrap_or_default(),
                 day: if new_day {

@@ -155,13 +155,9 @@ pub struct Drive {
 
 // -- pure helpers --------------------------------------------------------------------------
 
-/// Local time minus UTC at `ms`, in milliseconds.
+/// Local time minus UTC at `ms`, in milliseconds, in the time zone chosen in Settings.
 fn local_offset(ms: i64) -> i64 {
-    use chrono::{Local, TimeZone};
-    Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map_or(0, |t| i64::from(t.offset().local_minus_utc()) * 1000)
+    appearance::formats::offset_ms(ms)
 }
 
 /// Folders of a drive path, outermost first: `/Docs/Reports` gives `Docs`, `Docs/Reports`.
