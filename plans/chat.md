@@ -560,7 +560,8 @@ Moved to its own plan: `plans/activity.md`.
 - Message extensions (Create Planner task, Jira, Polly, Workflows): third-party apps.
 - Team and channel admin: new team, join team, new channel, Edit, Manage, tags, email address, Archive, Delete, Add members.
 - Communities, Copilot, Meeting Recaps, work location, suggested replies, priority and blocked contacts, missed-activity emails.
-- Schedule send, spell check (Slint has no hook), and Home/End in RTL lines (upstream Slint, see ADR 0001).
+- Spell check (Slint has no hook), and Home/End in RTL lines (upstream Slint, see ADR 0001).
+- Schedule send. BLOCKED: not offered to this user (2026-11-19): Teams web and the Teams mobile app show no "Schedule message" on the Send button, and the chat service answers `GET /v1/users/ME/drafts` with 404 `LocationLookupFailed` (the user's `teamsstream_drafts` thread does not exist) and `POST` with 404 `ThreadNotFound`. The client is built and unit-tested (`teams_proto::scheduled`: `schedule_message`, `scheduled_messages`, `cancel_scheduled`; `kelma-cli schedule <conversation> <minutes> <text> | list | cancel <id>`); the composer menu waits until a tenant offers it.
 
 ## Order
 

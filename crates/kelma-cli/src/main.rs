@@ -688,6 +688,53 @@ async fn main() -> Result<()> {
                 .await?;
             println!("sent (clientmessageid {cmid})");
         }
+        Some("schedule") => {
+            // `schedule <conversation id> <minutes> <text>`: a scheduled send (live checks use
+            // 48:notes). `schedule list` and `schedule cancel <id>`.
+            let (client, cfg) = connect(&paths).await?;
+            match args.get(1).map(String::as_str) {
+                Some("list") => {
+                    let list = client.scheduled_messages().await?;
+                    println!("{} scheduled message(s)", list.len());
+                    for m in &list {
+                        println!(
+                            "  {} in {} at {} ({} bytes)",
+                            m.id,
+                            if m.conversation_id == "48:notes" {
+                                "48:notes"
+                            } else {
+                                "a chat"
+                            },
+                            calendar::format_iso_ms(m.send_at_ms),
+                            m.html.len()
+                        );
+                    }
+                }
+                Some("cancel") => {
+                    let id = args.get(2).context("usage: schedule cancel <id>")?;
+                    client.cancel_scheduled(id).await?;
+                    println!("cancelled");
+                }
+                Some(conv) => {
+                    let (Some(mins), Some(text)) = (args.get(2), args.get(3)) else {
+                        bail!("usage: schedule <conversation id> <minutes> <text>")
+                    };
+                    let mins: i64 = mins.parse().context("minutes")?;
+                    let at = teams_proto::time::now_ms() + mins * 60_000;
+                    let name = cfg.display_name.clone().unwrap_or_default();
+                    let cmid = client
+                        .schedule_message(conv, &render::text_to_teams_html(text), &name, at)
+                        .await?;
+                    println!(
+                        "scheduled for {} (clientmessageid {cmid})",
+                        calendar::format_iso_ms(at)
+                    );
+                }
+                None => {
+                    bail!("usage: schedule <conversation id> <minutes> <text> | list | cancel <id>")
+                }
+            }
+        }
         Some("reply") => {
             let (Some(conv), Some(msg), Some(text)) = (args.get(1), args.get(2), args.get(3))
             else {
