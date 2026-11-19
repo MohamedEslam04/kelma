@@ -320,9 +320,93 @@ pub fn reaction_emoji(key: &str) -> String {
                 .collect();
             parsed
                 .filter(|s| !s.is_empty() && code.len() >= 4)
+                .or_else(|| named_reaction(key))
                 .unwrap_or_else(|| key.to_string())
         }
     }
+}
+
+/// Teams' named reactions from the Skype emoticon set (`loudlycrying`, `cwl`, `yes`, …).
+const NAMED: &[(&str, &str)] = &[
+    ("smile", "🙂"),
+    ("happy", "😊"),
+    ("bigsmile", "😃"),
+    ("grinning", "😁"),
+    ("cwl", "😂"),
+    ("rofl", "🤣"),
+    ("wink", "😉"),
+    ("cool", "😎"),
+    ("tongueout", "😛"),
+    ("blush", "😊"),
+    ("inlove", "😍"),
+    ("kiss", "😘"),
+    ("cry", "😢"),
+    ("loudlycrying", "😭"),
+    ("sweat", "😓"),
+    ("speechless", "😐"),
+    ("wonder", "🤔"),
+    ("think", "🤔"),
+    ("sleepy", "😪"),
+    ("yawn", "🥱"),
+    ("dull", "😑"),
+    ("worry", "😟"),
+    ("puke", "🤮"),
+    ("devil", "😈"),
+    ("angel", "😇"),
+    ("nerd", "🤓"),
+    ("lipssealed", "🤐"),
+    ("party", "🥳"),
+    ("facepalm", "🤦"),
+    ("shock", "😱"),
+    ("rage", "😡"),
+    ("smirk", "😏"),
+    ("eg", "😈"),
+    ("wasntme", "🙄"),
+    ("hug", "🤗"),
+    ("yes", "👍"),
+    ("no", "👎"),
+    ("ok", "👌"),
+    ("clap", "👏"),
+    ("fire", "🔥"),
+    ("star", "⭐"),
+    ("brokenheart", "💔"),
+    ("muscle", "💪"),
+    ("punch", "👊"),
+    ("handshake", "🤝"),
+    ("praying", "🙏"),
+    ("victory", "✌️"),
+    ("hi", "👋"),
+    ("wave", "👋"),
+    ("rock", "🤘"),
+    ("cake", "🎂"),
+    ("coffee", "☕"),
+    ("beer", "🍺"),
+    ("100", "💯"),
+    ("tada", "🎉"),
+    ("eyes", "👀"),
+    ("rocket", "🚀"),
+];
+
+/// A named reaction: the Teams table, then the emoji with that short name ("thumbs_up"), then
+/// the emoji whose name starts with it once spaces are dropped (`loudlycrying` is "loudly crying
+/// face").
+fn named_reaction(key: &str) -> Option<String> {
+    let key = key.to_lowercase();
+    if let Some((_, e)) = NAMED.iter().find(|(k, _)| *k == key) {
+        return Some((*e).to_string());
+    }
+    if let Some(e) = emoji::by_shortcode(&key) {
+        return Some(e.ch.to_string());
+    }
+    if key.len() < 4 {
+        return None;
+    }
+    let squash = |n: &str| -> String { n.chars().filter(|c| c.is_alphanumeric()).collect() };
+    let all = emoji::all();
+    all.iter()
+        .find(|e| squash(e.name) == key || squash(e.name) == format!("{key}face"))
+        .or_else(|| all.iter().find(|e| squash(e.name).starts_with(&key)))
+        .map(|e| e.ch.to_string())
 }
 
 #[cfg(test)]
@@ -331,6 +415,18 @@ mod tests {
 
     fn r(html: &str) -> Rendered {
         render_blocks(&render::parse_teams_html(html))
+    }
+
+    #[test]
+    fn named_teams_reactions_become_emoji() {
+        assert_eq!(reaction_emoji("loudlycrying"), "😭");
+        assert_eq!(reaction_emoji("cwl"), "😂");
+        assert_eq!(reaction_emoji("yes"), "👍");
+        // Not in the table: found by the emoji's name.
+        assert_eq!(reaction_emoji("pensive"), "😔");
+        assert_eq!(reaction_emoji("1f525_fire"), "🔥");
+        // Unknown names stay as they are.
+        assert_eq!(reaction_emoji("zzqq"), "zzqq");
     }
 
     #[test]
