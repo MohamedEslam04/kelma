@@ -111,7 +111,7 @@ are the same as in `plans/chat.md`.
 
 ## Phase C2: write the calendar
 
-- [ ] **C2.1 New event form.** DEFERRED: waits for the tester session (the Done-when needs a meeting with a Teams link and an attendee; private appointments on the user's own calendar now pass live).
+- [ ] **C2.1 New event form.** DEFERRED: needs test tenant (waits for the tester session; the Done-when needs a meeting with a Teams link and an attendee; private appointments on the user's own calendar now pass live).
   - **What.**
     - Event / Series, Show as (Busy), reminder, category, sensitivity (private), Save.
     - Title.
@@ -152,7 +152,7 @@ are the same as in `plans/chat.md`.
       `new_event::tests::a_series_goes_out_in_the_windows_zone`).
   - **Tester session.** `kelma-cli calendar tester invite <address> | status | accept-proposal | move | forward <address> | cancel | cleanup`
     runs the meeting checks of C2.1, C2.2 and C2.5 with one consenting tester, one step at a time.
-- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: waits for the tester session (cancel, forward and moving a meeting mail the attendee; create, move and delete of private appointments pass live, see C2.1). Impact 4, effort 3.
+- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: needs test tenant (waits for the tester session; cancel, forward and moving a meeting mail the attendee; create, move and delete of private appointments pass live, see C2.1). Impact 4, effort 3.
   - **What.**
     - Edit sends an update.
     - Cancel meeting with a message, for one occurrence or the whole series.
@@ -205,7 +205,7 @@ are the same as in `plans/chat.md`.
     the same room at another slot) and the UI test
     `rooms_show_capacity_and_availability_and_picking_one_fills_the_form`. Not checked against a real room:
     this tenant has none, so the live step is fixtures only.
-- [ ] **C2.5 Propose a new time,** as an attendee or as the organizer reviewing proposals. DEFERRED: waits for the tester session (a real proposal from the tester is needed, and Accept moves the meeting; `calendar tester status` and `accept-proposal` are ready and mails its attendees). Impact 2, effort 2.
+- [ ] **C2.5 Propose a new time,** as an attendee or as the organizer reviewing proposals. DEFERRED: needs test tenant (waits for the tester session; a real proposal from the tester is needed, and Accept moves the meeting; `calendar tester status` and `accept-proposal` are ready and mails its attendees). Impact 2, effort 2.
   - **How.** `proposedNewTime` on tentativelyAccept and decline.
   - **Status.** Built both sides. Attendee: "Propose new time" in the peek asks for a start and an end and sends
     it with a tentative or decline answer. Organizer: opening one of my meetings with attendees reads
