@@ -45,6 +45,9 @@ Recommends:     xdg-desktop-portal
 Recommends:     gstreamer1
 Recommends:     gstreamer1-plugins-base
 Recommends:     pipewire-gstreamer
+# Camera video in calls: `pipewiresrc` (Camera portal) or `v4l2src`, and `jpegdec` for MJPEG
+# cameras, from plugins-good.
+Recommends:     gstreamer1-plugins-good
 
 %description
 kelma is a small, fast Linux client for Microsoft Teams chat, channels, activity, calendar and
