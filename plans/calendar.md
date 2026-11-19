@@ -245,6 +245,12 @@ are the same as in `plans/chat.md`.
     (`snoozeReminder`, `dismissReminder`) and have not been run against a live account. Not built: the
     "Meeting started" notification (deferred, see above; it would hook the trouter `Event/Call` message in
     `backend/live.rs`).
+  - **Status (2026-11-19, `feat/calls-page`).** A calendar-driven "started" notification now goes out at a Teams
+    meeting's start time (once, within its first 5 minutes) with Join, Snooze and Dismiss
+    (`reminders::just_started`). The Join banner and that notification skip the meeting that is already running,
+    being joined or on the pre-join screen (`CallManager::is_in_meeting`), and Join opens the pre-join screen
+    titled with the meeting's subject (`reminders::subject_for_link`). Tests: `cargo test -p kelma reminders`.
+    Still open: the chat's "Meeting started" from the trouter `Event/Call` push (the payload is not captured).
 - [ ] **C3.2 Meet now and Join with an ID.** DEFERRED: needs test tenant (Meet now and meetings are never exercised on the work account). Impact 4, effort 2.
   - **What.**
     - Meet now creates an instant meeting with a share link.

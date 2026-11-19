@@ -32,6 +32,12 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
     - New entries arrive over trouter like any chat message.
     - Check how missed calls are represented against the real history.
   - **Done when.** The last 30 entries match Teams, missed calls included.
+  - **Status (2026-11-19, `feat/calls-page`, unverified live).** Built: a Calls rail item (builds with `calls` only)
+    opens `calls_page.slint`. The left column has "Type a name" (people search, Call, star) and Speed dial. History
+    (`calling::history`, 100 entries) has All, Missed, Incoming, Outgoing and Voicemail; rows show direction,
+    outcome (missed in red), time and duration with Call back, Chat and the star. Call goes through the 1:1
+    `DialPerson` path. Not built: Remove from view, Add contact, Report call, the Filter menu. Tests:
+    `cargo test -p kelma calls_page`.
 - [ ] **K1.2 Speed dial and contacts.** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). Impact 3, effort 2.
   - **What.**
     - Speed dial: add, remove and reorder people, shown with presence.
@@ -40,6 +46,9 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
   - **How.**
     - Contacts: Outlook contacts through Graph `/me/contacts` (`Contacts.ReadWrite.Shared` is granted) and the Teams buddy list (`/v1/users/ME/contacts`, known from purple-teams).
     - Speed dial is stored where Teams keeps it (discover); otherwise keep it locally.
+  - **Status (2026-11-19, `feat/calls-page`).** Speed dial built: add and remove with the star, reorder, Call; kept
+    locally in the config per account (`session::SpeedDial`) since Teams' own store is not found. Contacts and
+    contact groups are not built.
 - [ ] **K1.3 Voicemail.** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). Impact 3, effort 3.
   - **What.**
     - The Voicemail filter lists messages with caller, time, duration and transcript.
@@ -50,6 +59,11 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
     - The audio is the mp3 attachment and the transcript is the body.
     - Play the audio through GStreamer or the system player.
   - **Done when.** A test voicemail left by the user from their own phone (or an existing one) plays.
+  - **Status (2026-11-19, `feat/calls-page`, unverified live).** `calling::voicemail` lists voicemail mail (message
+    class filter, duration `Integer 0x6801`), downloads the audio attachment and marks it read. The Voicemail
+    filter shows caller, time, duration and transcript with Play (opens in the desktop audio player, so no
+    in-app 1.5×/2×) and Mark as read. Not built: Call back from a voicemail (the mail names an address, not an
+    MRI) and Delete.
 - [ ] **K1.4 Call settings.** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). Impact 3, effort 3. Seen: Settings › Calls.
   - **What.**
     - Call handling and forwarding: forward all calls to voicemail; when you can't answer, redirect to voicemail, a person or a number; ring time (default 20 s); also ring (simultaneous ring) a contact, call group or delegates; call groups; delegates.
