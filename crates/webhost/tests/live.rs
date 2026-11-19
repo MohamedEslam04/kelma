@@ -78,7 +78,9 @@ window.results = (async () => {
   await microsoftTeams.app.initialize();
   const ctx = await microsoftTeams.app.getContext();
   microsoftTeams.app.registerOnThemeChangeHandler(t => { window.lastTheme = t; });
-  const token = await microsoftTeams.authentication.getAuthToken({ resources: ["api://127.0.0.1/test"] });
+  // The page is plain http, so the host must refuse to mint an app token for it.
+  const token = await microsoftTeams.authentication.getAuthToken({ resources: ["api://127.0.0.1/test"] })
+    .then(t => "minted:" + t, e => "refused: " + String(e && e.message || e));
   microsoftTeams.app.notifySuccess();
   const echo = await window.kelma.invoke({ ping: 1 });
   return {
@@ -146,6 +148,7 @@ fn options(
             ..HostContext::default()
         },
         allowed_origins: Vec::new(),
+        ..ShimConfig::default()
     });
     opts.token = Some(Arc::new(move |req: TokenRequest| {
         let tokens = tokens.clone();
@@ -204,14 +207,16 @@ async fn shim_answers_teams_js_and_the_bridge_round_trips() {
     assert_eq!(results["theme"], "dark");
     assert_eq!(results["entityId"], "home");
     assert_eq!(results["tid"], "tenant-live");
-    assert_eq!(results["token"], "fake-token-for:api://127.0.0.1/test");
+    let token = results["token"].as_str().unwrap_or_default();
+    assert!(
+        token.starts_with("refused: ") && token.contains("https"),
+        "{token}"
+    );
     assert_eq!(results["echo"], json!({ "pong": 1, "origin": base }));
 
-    let seen = tokens.lock().unwrap().clone();
-    assert_eq!(seen.len(), 1);
-    assert_eq!(
-        seen[0].origin, base,
-        "origin comes from the CDP execution context"
+    assert!(
+        tokens.lock().unwrap().is_empty(),
+        "a refused request never reaches the token callback"
     );
 
     let event = tokio::time::timeout(Duration::from_secs(5), async {

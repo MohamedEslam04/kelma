@@ -84,9 +84,12 @@ and then fails with `ProfileInUse`.
 - The DevTools port listens on 127.0.0.1, so other local processes could connect while a
   window is open. `--remote-debugging-pipe` (CDP over inherited file descriptors) would remove
   that and is the follow-up.
-- App SSO: the shim hands `getAuthToken` to the caller. kelma's broker still has to mint a
-  token for an app's own resource (`api://<domain>/<app id>`), which needs a per-resource
-  audience in `teams_proto::broker`.
+- App SSO: the shim checks each `getAuthToken` request (`shim::check_token_request`: one
+  `api://<domain>/<app id>` or `/botid-<id>` resource whose domain and port match the https page
+  origin or a manifest `validDomains` entry, same tenant), then the caller mints it with
+  `teams_proto::Client::app_token` (`Audience::App`, which owns no host for `request_as`). Apps
+  whose Entra registration does not pre-authorize the Teams client id get `resourceDisabled` or
+  `resourceRequiresConsent` and fall back to their own sign-in.
 
 ## WebKitGTK, if it is needed later
 
