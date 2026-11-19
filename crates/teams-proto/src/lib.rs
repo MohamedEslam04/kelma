@@ -17,6 +17,7 @@ pub mod csa;
 pub mod engage;
 pub mod error;
 pub mod files;
+pub mod global_search;
 pub mod graph;
 pub mod http;
 pub mod lists;
