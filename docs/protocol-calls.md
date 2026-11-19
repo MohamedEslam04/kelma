@@ -206,10 +206,23 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
 - Sources: rusty-teams `data_channel.rs`, `captions.rs` `parse_caption_message`, `call/mod.rs`
   (`DATA_CHANNEL_LABEL = "main-channel"`, `CAPTIONS_DATA_ID`). rusty-teams' ROADMAP says this
   works live with speech from guests.
-- **Blocked in kelma.** kelma's media session does not open that channel: webrtc-rs refuses the
-  `x-data` section, and it is answered as a port-0 stub (`media/sdp.rs` `KEPT_KINDS`). Until the
-  media session maps `x-data` to a WebRTC data channel and hands its frames to
-  `calling::captions::Depacketizer`, the caption strip turns on but stays empty.
+- **In kelma (2026-11-19, not run live yet).** A meeting's media session
+  (`MediaOptions::data_channel`) opens `main-channel` itself, ordered and announced in-band
+  (DCEP), as rusty-teams does (`call/peer_sdp.rs` `open_data_channel`, `DataChannelInit::default()`:
+  no fixed stream id). It also reads any channel the media server opens. `media/sdp.rs` maps the
+  lines both ways (rusty-teams `sdp.rs` `signal_data_line`, `browser_data_from_teams`):
+  - Teams → webrtc-rs: `m=x-data <port> RTP/AVP 127 126` becomes
+    `m=application <port> UDP/DTLS/SCTP webrtc-datachannel` with its transport lines (or the
+    bundle's credentials), `a=sctp-port:5000` and `a=max-message-size:262144`; the rtpmaps,
+    `a=x-*`, `a=rtcp*`, `a=label` and the direction go. A declined line in an answer stays as a
+    port-0 `m=application`, so the answer still matches our offer.
+  - webrtc-rs → Teams: `m=x-data <bundle port> RTP/SAVP 127 126` with `a=x-data-protocol:sctp`,
+    a random `a=x-ssrc-range:N-N`, `a=rtpmap:127 x-data/90000`, `a=rtpmap:126 rtx/90000`,
+    `a=fmtp:126 apt=127`, `a=rtcp-mux`, `a=sendrecv`, `a=label:data`, keeping webrtc-rs's
+    `a=sctp-port` and `a=max-message-size` (rusty-teams keeps them too). No `a=rtcp:<port>`.
+  - Calls that are no meeting (1:1) keep the old port-0 stub.
+  - `live.rs` joins each frame with `Depacketizer`, keeps data id 3 and sends `Event::Caption`.
+    A result without `displayName` takes the roster's name for its `userId`.
 
 ### UNVERIFIED
 
@@ -221,7 +234,14 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
   banner text.
 - Whether a 1:1 call (no meeting) accepts the bot. rusty-teams adds it threadless with
   `addParticipant`. Captions may need a meeting.
-- Whether the web client sends the `updateEndpointMetadata` preference. Only rusty-teams does.
+- Whether the web client sends the `updateEndpointMetadata` preference. Only rusty-teams does;
+  kelma sends it after each captions start and stop, as rusty-teams does.
+- The data channel as kelma opens it: whether the media server accepts our `x-data` line
+  (webrtc-rs's SDP, not libwebrtc's, under rusty-teams' mapping), whether webrtc-rs's SCTP
+  association comes up with the media server's, and whether it needs our own `main-channel` or
+  opens its own.
+- Whether a caption's `userId` is a full MRI (`8:orgid:<id>`) or the bare id: kelma looks up
+  both.
 
 ## Open
 
