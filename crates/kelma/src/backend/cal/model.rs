@@ -5,7 +5,7 @@
 use super::grid::{Offset, WEEKDAYS, hhmm, local_date, month_short};
 use ::calendar::{
     Attachment, AttendeeKind, Availability, CalendarInfo, Date, Event, EventDetail, EventFilter,
-    EventKind, FoundTimes, RecurrenceFilter, Response, ResponseCounts, Room, Schedule, ShowAs,
+    EventKind, FoundTimes, Proposal, RecurrenceFilter, Response, ResponseCounts, Room, Schedule, ShowAs,
     WorkingHours, free_between, work_slots,
 };
 
@@ -165,6 +165,45 @@ pub struct DetailData {
     pub attachments: Vec<(String, String)>,
     pub dial_in: String,
     pub hide_attendees: bool,
+    /// New times attendees proposed for my meeting (C2.5).
+    pub proposals: Vec<ProposalRow>,
+}
+
+/// One attendee's proposed time, for the organizer to accept.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProposalRow {
+    pub name: String,
+    /// `tentative` or `declined`: the answer the proposal came with.
+    pub response: String,
+    /// "Thu, Nov 19 · 14:00 – 15:00" in local time.
+    pub when: String,
+}
+
+/// The proposals as the organizer reads them: who proposed which slot. `event` supplies the
+/// slot's shape (an all-day event stays a day label).
+pub fn proposal_rows(proposals: &[Proposal], event: &Event, off: Offset) -> Vec<ProposalRow> {
+    proposals
+        .iter()
+        .map(|p| {
+            let mut slot = event.clone();
+            slot.start_ms = p.start_ms;
+            slot.end_ms = p.end_ms;
+            ProposalRow {
+                name: if p.name.is_empty() {
+                    p.email.clone()
+                } else {
+                    p.name.clone()
+                },
+                response: if p.response == Response::Declined {
+                    "declined"
+                } else {
+                    "tentative"
+                }
+                .into(),
+                when: when_label(&slot, off),
+            }
+        })
+        .collect()
 }
 
 pub fn size_label(bytes: u64) -> String {
@@ -244,6 +283,7 @@ pub fn detail_data(d: &EventDetail) -> DetailData {
             .collect(),
         dial_in: dial.join("\n"),
         hide_attendees: d.hide_attendees && !d.is_organizer,
+        proposals: vec![],
     }
 }
 
@@ -722,7 +762,7 @@ pub fn role_of(key: &str) -> Option<::calendar::PermissionRole> {
 mod tests {
     use super::*;
     use ::calendar::{
-        Weekday, parse_calendars, parse_events, parse_found_times, parse_rooms, parse_schedules,
+        Weekday, parse_calendars, parse_event_proposals, parse_events, parse_found_times, parse_rooms, parse_schedules,
     };
     use serde_json::json;
 
@@ -1034,6 +1074,35 @@ mod tests {
         assert_eq!(
             sched_rows(&who[..1], &fixture_schedules(), 5, 4)[0].cells,
             [0, 0, 5, 5]
+        );
+    }
+
+    #[test]
+    fn proposals_read_as_who_proposed_which_slot_in_local_time() {
+        let ps = parse_event_proposals(&json!({
+            "id": "AAMk=1", "subject": "Lunch",
+            "attendees": [
+                {"emailAddress": {"name": "Bob Lee", "address": "bob@contoso.com"}, "type": "required",
+                 "status": {"response": "tentativelyAccepted"},
+                 "proposedNewTime": {"start": {"dateTime": "2026-11-19T12:00:00.0000000", "timeZone": "UTC"},
+                                     "end": {"dateTime": "2026-11-19T13:00:00.0000000", "timeZone": "UTC"}}},
+                {"emailAddress": {"name": "", "address": "dana@contoso.com"}, "type": "required",
+                 "status": {"response": "declined"},
+                 "proposedNewTime": {"start": {"dateTime": "2026-11-20T08:00:00.0000000", "timeZone": "UTC"},
+                                     "end": {"dateTime": "2026-11-20T09:00:00.0000000", "timeZone": "UTC"}}},
+                {"emailAddress": {"name": "Eve", "address": "eve@contoso.com"}, "type": "required",
+                 "status": {"response": "accepted"}}
+            ]
+        }));
+        let rows = proposal_rows(&ps, &event(json!({})), &|_| 2 * H);
+        assert_eq!(rows.len(), 2, "an attendee who proposed nothing is not listed");
+        assert_eq!(
+            (rows[0].name.as_str(), rows[0].response.as_str(), rows[0].when.as_str()),
+            ("Bob Lee", "tentative", "Thu, Nov 19 · 14:00 – 15:00")
+        );
+        assert_eq!(
+            (rows[1].name.as_str(), rows[1].response.as_str()),
+            ("dana@contoso.com", "declined")
         );
     }
 

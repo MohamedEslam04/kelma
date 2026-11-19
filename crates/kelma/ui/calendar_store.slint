@@ -71,6 +71,8 @@ export struct CalPeek {
 }
 export struct CalAttendeeRow { name: string, email: string, response: string, kind: string }
 export struct CalAttachmentRow { name: string, size: string }
+// A new time an attendee proposed for my meeting; `response` is tentative or declined.
+export struct CalProposalRow { name: string, response: string, when: string }
 export struct CalDetail {
     id: string,
     loading: bool,
@@ -80,6 +82,7 @@ export struct CalDetail {
     attachments: [CalAttachmentRow],
     dial-in: string,
     hide-attendees: bool,
+    proposals: [CalProposalRow],
 }
 
 // The scheduler grid: one row per person or room, one cell per slot (0 free, 1 tentative,

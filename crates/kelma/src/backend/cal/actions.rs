@@ -10,7 +10,7 @@ use super::*;
 use ::calendar::{
     EventChange, Person, PersonView, ShowAs, add_permission, calendar_permissions, calendar_view,
     calendars, cancel_event, categories, create_calendar, create_event, delete_event,
-    download_attachment, event_detail, find_meeting_times, forward_event, get_schedule,
+    download_attachment, event_detail, event_proposals, find_meeting_times, forward_event, get_schedule,
     join_by_id_url, mailbox_settings, meet_now, meeting_chat_thread_id, move_event, person_view,
     remove_permission, respond, room_lists, room_schedules, rooms, set_work_location, target_id, to_ics,
     update_event, update_permission,
@@ -322,6 +322,7 @@ impl Engine {
             CalCmd::Delete => self.cal_delete().await,
             CalCmd::ExportEvent => self.cal_export_event().await,
             CalCmd::OpenAttachment(i) => self.cal_open_attachment(i).await,
+            CalCmd::AcceptProposal(i) => self.cal_accept_proposal(i).await,
 
             CalCmd::CalendarToggle(id) => {
                 {
@@ -419,6 +420,7 @@ impl Engine {
             }
             s.open = Some(id.into());
             s.detail = None;
+            s.proposals.clear();
         }
         self.cal_refresh_peek();
     }
@@ -453,7 +455,17 @@ impl Engine {
         }
         match event_detail(&self.client, &e.id).await {
             Ok(d) => {
-                let data = model::detail_data(&d);
+                let mut data = model::detail_data(&d);
+                // As the organizer of a meeting, also read the times attendees proposed.
+                if d.is_organizer && !d.event.attendees.is_empty() {
+                    match event_proposals(&self.client, &e.id).await {
+                        Ok(p) => {
+                            data.proposals = model::proposal_rows(&p, &d.event, &local_offset);
+                            self.cal.lock().proposals = p;
+                        }
+                        Err(err) => tracing::warn!(%err, "event proposals failed"),
+                    }
+                }
                 self.cal.lock().detail = Some(d);
                 self.ui.cal_detail(data);
             }
@@ -882,6 +894,15 @@ impl Engine {
             (s.find(id).cloned(), s.is_extra(id))
         };
         let Some(e) = e else { return };
+        let start = grid::local_midnight_ms(date, &local_offset) + i64::from(start_min) * 60_000;
+        let end = start + i64::from(dur_min.max(1)) * 60_000;
+        self.cal_move_to(e, extra, start, end).await;
+    }
+
+    /// Moves an event to `start..end`; a meeting with attendees asks first, and only its
+    /// organizer may move it.
+    async fn cal_move_to(self: &Arc<Self>, e: Event, extra: bool, start: i64, end: i64) {
+        let id = e.id.as_str();
         if extra {
             self.cal_note("Open that calendar's own view to change its events");
             return;
@@ -894,8 +915,6 @@ impl Engine {
             self.cal_note("Only the organizer can move this meeting");
             return;
         }
-        let start = grid::local_midnight_ms(date, &local_offset) + i64::from(start_min) * 60_000;
-        let end = start + i64::from(dur_min.max(1)) * 60_000;
         if meeting {
             let when = {
                 let mut moved = e.clone();
@@ -920,6 +939,19 @@ impl Engine {
             return;
         }
         self.cal_do_move(id, start, end).await;
+    }
+
+    /// Accepts an attendee's proposed time: the same move as dragging the meeting there, which
+    /// asks the organizer first.
+    async fn cal_accept_proposal(self: &Arc<Self>, i: usize) {
+        let picked = {
+            let s = self.cal.lock();
+            let e = s.open.as_deref().and_then(|id| s.find(id)).cloned();
+            e.zip(s.proposals.get(i).cloned())
+                .map(|(e, p)| (e.clone(), s.is_extra(&e.id), p))
+        };
+        let Some((e, extra, p)) = picked else { return };
+        self.cal_move_to(e, extra, p.start_ms, p.end_ms).await;
     }
 
     async fn cal_do_move(self: &Arc<Self>, id: &str, start: i64, end: i64) {
@@ -1888,6 +1920,39 @@ mod tests {
         r.run(CalCmd::MoveOk);
         assert_ne!(r.engine.cal.lock().find("M1").unwrap().start_ms, before);
         assert_eq!(s.get_modal(), "");
+    }
+
+    #[test]
+    fn accepting_a_proposed_time_asks_first_then_moves_the_meeting_there() {
+        let r = Rig::new();
+        r.seed(json!({"value": [ev_json("M1", meeting_extra("organizer"))]}));
+        r.run(CalCmd::Peek("M1".into()));
+        let before = r.engine.cal.lock().find("M1").unwrap().clone();
+        let (start, end) = (before.start_ms + 26 * 3_600_000, before.start_ms + 27 * 3_600_000);
+        r.engine.cal.lock().proposals = vec![::calendar::Proposal {
+            name: "Bob Lee".into(),
+            email: "bob@contoso.com".into(),
+            response: ::calendar::Response::Tentative,
+            start_ms: start,
+            end_ms: end,
+            event_id: Some("M1".into()),
+            message_id: None,
+            comment: String::new(),
+            sent_ms: None,
+        }];
+        r.run(CalCmd::AcceptProposal(5));
+        assert_eq!(r.app.global::<CalStore>().get_modal(), "", "no such proposal: nothing");
+        r.run(CalCmd::AcceptProposal(0));
+        let s = r.app.global::<CalStore>();
+        assert_eq!(
+            (s.get_modal().as_str(), s.get_prompt_kind().as_str()),
+            ("prompt", "move-ok"),
+            "a meeting move asks first, as for a drag"
+        );
+        assert_eq!(r.engine.cal.lock().find("M1").unwrap().start_ms, before.start_ms);
+        r.run(CalCmd::MoveOk);
+        let moved = r.engine.cal.lock().find("M1").unwrap().clone();
+        assert_eq!((moved.start_ms, moved.end_ms), (start, end));
     }
 
     #[test]

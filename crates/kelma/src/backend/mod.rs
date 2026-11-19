@@ -37,7 +37,7 @@ pub use activity::ActivityCmd;
 pub(crate) use activity::{State as ActivityState, row_data as activity_row_data};
 #[cfg(test)]
 pub use cal::{
-    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, SuggestRow, build, filter_opts, parse_view, peek_data,
+    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, ProposalRow, SuggestRow, build, filter_opts, parse_view, peek_data,
     room_rows, sched_rows,
 };
 pub use cal::{

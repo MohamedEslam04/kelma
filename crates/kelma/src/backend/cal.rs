@@ -22,7 +22,8 @@ pub use grid::{CalData, Ctx};
 #[cfg(test)]
 pub use grid::{DEFAULT_PREFS, Prefs, build, parse_view};
 pub use model::{
-    DetailData, FormOpen, Panels, PeekData, PermRow, RoomsPush, SchedPush, SettingsData,
+    DetailData, FormOpen, Panels, PeekData, PermRow, RoomsPush, SchedPush,
+    SettingsData,
 };
 use reminders::Key;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -33,7 +34,9 @@ use teams_proto::time::now_ms;
 
 pub use forms::{FormFields, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes};
 #[cfg(test)]
-pub use model::{AttendeeRow, SuggestRow, filter_opts, peek_data, room_rows, sched_rows};
+pub use model::{
+    AttendeeRow, ProposalRow, SuggestRow, filter_opts, peek_data, room_rows, sched_rows,
+};
 
 const SYNC_EVERY: Duration = Duration::from_secs(120);
 const TICK_EVERY: Duration = Duration::from_secs(15);
@@ -141,6 +144,8 @@ pub enum CalCmd {
     Delete,
     ExportEvent,
     OpenAttachment(usize),
+    /// Accept the `n`th proposed new time of the open meeting: move it there (asks first).
+    AcceptProposal(usize),
 
     // Filters, calendars, saved views, the date range and settings.
     Filter(String, String),
@@ -278,6 +283,7 @@ impl CalCmd {
             "delete" => CalCmd::Delete,
             "export-event" => CalCmd::ExportEvent,
             "open-attachment" => CalCmd::OpenAttachment(arg.parse().ok()?),
+            "accept-proposal" => CalCmd::AcceptProposal(arg.parse().ok()?),
 
             "filter" => {
                 let (g, k) = arg.split_once(':')?;
@@ -400,6 +406,8 @@ struct Inner {
     /// The event the peek or full view shows.
     open: Option<String>,
     detail: Option<EventDetail>,
+    /// The new times attendees proposed for the open meeting, as the full view lists them.
+    proposals: Vec<::calendar::Proposal>,
     editing: Option<Editing>,
     pending_move: Option<PendingMove>,
     meet_link: Option<String>,
@@ -458,6 +466,7 @@ impl CalState {
             pins: BTreeMap::new(),
             open: None,
             detail: None,
+            proposals: Vec::new(),
             editing: None,
             pending_move: None,
             meet_link: None,
@@ -1280,6 +1289,11 @@ mod tests {
             CalCmd::parse("open-attachment", "2"),
             Some(CalCmd::OpenAttachment(2))
         );
+        assert_eq!(
+            CalCmd::parse("accept-proposal", "1"),
+            Some(CalCmd::AcceptProposal(1))
+        );
+        assert_eq!(CalCmd::parse("accept-proposal", "x"), None);
         assert_eq!(
             CalCmd::parse("new", "channel"),
             Some(CalCmd::New("channel".into()))

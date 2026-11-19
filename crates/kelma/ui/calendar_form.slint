@@ -163,22 +163,28 @@ component RoomPicker inherits Rectangle {
             if CalForm.room-lists.length == 0 && !CalForm.rooms-loading: Text { text: CalForm.rooms-note != "" ? CalForm.rooms-note : "No room lists found."; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
             if CalForm.rooms-loading: Text { text: "Loading rooms…"; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
         }
-        for r[i] in CalForm.rooms: Rectangle {
-            height: 30px;
-            border-radius: 4px;
-            background: rt.has-hover ? Theme.surface-hover : transparent;
-            accessible-role: button;
-            accessible-label: r.name + (r.status == 0 ? ", free" : (r.status == 1 ? ", busy" : ""));
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                spacing: 10px;
-                Text { text: r.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                Text { text: r.capacity != "" ? r.capacity + " seats" : ""; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
-                Text { text: r.place; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                Text { text: r.status == 0 ? "Free" : (r.status == 1 ? "Busy" : "?"); color: r.status == 0 ? #6bd69b : (r.status == 1 ? #ff8a8d : Theme.fg-subtle); font-size: 12px; font-weight: 600; vertical-alignment: center; }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                width: parent.width - 10px;
+            for r[i] in CalForm.rooms: Rectangle {
+                height: 30px;
+                border-radius: 4px;
+                background: rt.has-hover ? Theme.surface-hover : transparent;
+                accessible-role: button;
+                accessible-label: r.name + (r.status == 0 ? ", free" : (r.status == 1 ? ", busy" : ""));
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 10px;
+                    Text { text: r.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    Text { text: r.capacity != "" ? r.capacity + " seats" : ""; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                    Text { text: r.place; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                    Text { text: r.status == 0 ? "Free" : (r.status == 1 ? "Busy" : "?"); color: r.status == 0 ? #6bd69b : (r.status == 1 ? #ff8a8d : Theme.fg-subtle); font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                }
+                rt := TouchArea { mouse-cursor: pointer; clicked => { CalForm.pick-room(i); } }
             }
-            rt := TouchArea { mouse-cursor: pointer; clicked => { CalForm.pick-room(i); } }
+            }
         }
     }
 }

@@ -8,7 +8,7 @@ use crate::backend::{
 };
 use crate::{
     AppWindow, CalAllDay, CalAttachmentRow, CalAttendeeRow, CalBlock, CalCalendarRow, CalDay,
-    CalDetail, CalFilterOpt, CalForm, CalMiniCell, CalMonthCell, CalMonthItem, CalPeek, CalPerm,
+    CalDetail, CalFilterOpt, CalProposalRow, CalForm, CalMiniCell, CalMonthCell, CalMonthItem, CalPeek, CalPerm,
     CalRoom, CalRoomList, CalSavedView, CalSchedRow, CalSettingsData, CalStore, CalSuggest,
 };
 use slint::{ComponentHandle, Model, SharedString};
@@ -232,6 +232,16 @@ fn detail_row(d: DetailData) -> CalDetail {
         ),
         dial_in: d.dial_in.into(),
         hide_attendees: d.hide_attendees,
+        proposals: model(
+            d.proposals
+                .into_iter()
+                .map(|p| CalProposalRow {
+                    name: p.name.into(),
+                    response: p.response.into(),
+                    when: p.when.into(),
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -1423,6 +1433,42 @@ mod tests {
                 .next()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn the_full_view_lists_proposed_times_and_accept_sends_the_one_clicked() {
+        let e = invitation("organizer");
+        let app = app(View::WorkWeek, std::slice::from_ref(&e));
+        let log = commands(&app);
+        let store = app.global::<CalStore>();
+        show_peek(&app, &e);
+        store.set_modal("full".into());
+        store.set_detail(detail_row(DetailData {
+            id: "Invite".into(),
+            proposals: vec![
+                crate::backend::ProposalRow {
+                    name: "Bob".into(),
+                    response: "tentative".into(),
+                    when: "Thu, Nov 19 · 14:00 – 15:00".into(),
+                },
+                crate::backend::ProposalRow {
+                    name: "Dana".into(),
+                    response: "declined".into(),
+                    when: "Fri, Nov 20 · 09:00 – 10:00".into(),
+                },
+            ],
+            ..Default::default()
+        }));
+        assert_eq!(
+            ElementHandle::find_by_accessible_label(
+                &app,
+                "Bob proposed Thu, Nov 19 · 14:00 – 15:00"
+            )
+            .count(),
+            1
+        );
+        click(&button(&app, "Accept Dana's proposed time"));
+        assert_eq!(log_of(&log), ["accept-proposal 1"]);
     }
 
     #[test]
