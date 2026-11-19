@@ -685,6 +685,8 @@ pub struct PermRow {
     /// `freebusy`, `limited`, `read`, `write`, `delegate` or `other`.
     pub role: String,
     pub removable: bool,
+    /// The role keys this entry may be given (see [`role_options`]).
+    pub roles: Vec<&'static str>,
 }
 
 /// The side panels: filters, calendars, saved views, settings and the category list.
@@ -744,6 +746,31 @@ pub fn role_key(r: ::calendar::PermissionRole) -> &'static str {
         R::Delegate | R::DelegateWithPrivate => "delegate",
         R::None | R::Custom => "other",
     }
+}
+
+/// The roles the share dialog offers, in order.
+const SHARE_ROLES: [&str; 5] = ["freebusy", "limited", "read", "write", "delegate"];
+
+/// The role keys to offer for a permission whose Graph `allowedRoles` are `allowed`: only those
+/// it allows, or all of them when Graph does not say (an empty list).
+pub fn role_options(allowed: &[::calendar::PermissionRole]) -> Vec<&'static str> {
+    if allowed.is_empty() {
+        return SHARE_ROLES.to_vec();
+    }
+    let keys: Vec<&str> = allowed.iter().map(|r| role_key(*r)).collect();
+    SHARE_ROLES
+        .into_iter()
+        .filter(|k| keys.contains(k))
+        .collect()
+}
+
+/// The roles for a new share: those of the first entry that is limited, else all of them.
+pub fn share_roles(rows: &[PermRow]) -> Vec<&'static str> {
+    rows.iter()
+        .map(|r| &r.roles)
+        .find(|r| r.len() < SHARE_ROLES.len())
+        .cloned()
+        .unwrap_or_else(|| SHARE_ROLES.to_vec())
 }
 
 pub fn role_of(key: &str) -> Option<::calendar::PermissionRole> {
@@ -1075,6 +1102,38 @@ mod tests {
             sched_rows(&who[..1], &fixture_schedules(), 5, 4)[0].cells,
             [0, 0, 5, 5]
         );
+    }
+
+    #[test]
+    fn share_roles_are_limited_to_what_the_permission_allows() {
+        use ::calendar::PermissionRole as R;
+        assert_eq!(
+            role_options(&[R::None, R::FreeBusy, R::LimitedRead, R::Read]),
+            ["freebusy", "limited", "read"],
+            "`none` is not a role to offer"
+        );
+        assert_eq!(
+            role_options(&[R::Delegate, R::DelegateWithPrivate, R::Write]),
+            ["write", "delegate"]
+        );
+        assert_eq!(
+            role_options(&[]),
+            ["freebusy", "limited", "read", "write", "delegate"],
+            "Graph says nothing: offer them all"
+        );
+        let row = |roles| PermRow {
+            id: "p".into(),
+            name: String::new(),
+            email: String::new(),
+            role: "read".into(),
+            removable: true,
+            roles,
+        };
+        assert_eq!(
+            share_roles(&[row(role_options(&[])), row(vec!["freebusy", "read"])]),
+            ["freebusy", "read"]
+        );
+        assert_eq!(share_roles(&[]).len(), 5);
     }
 
     #[test]

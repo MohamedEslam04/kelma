@@ -1351,6 +1351,7 @@ impl Engine {
                     email: "dana@contoso.com".into(),
                     role: "read".into(),
                     removable: true,
+                    roles: model::role_options(&[]),
                 }],
                 "Demo mode: sharing is not sent.".into(),
             );
@@ -1370,6 +1371,7 @@ impl Engine {
                         email: p.email,
                         role: model::role_key(p.role).into(),
                         removable: p.is_removable,
+                        roles: model::role_options(&p.allowed_roles),
                     })
                     .collect(),
                 note.into(),

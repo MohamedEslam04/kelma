@@ -22,8 +22,8 @@ pub use grid::{CalData, Ctx};
 #[cfg(test)]
 pub use grid::{DEFAULT_PREFS, Prefs, build, parse_view};
 pub use model::{
-    DetailData, FormOpen, Panels, PeekData, PermRow, RoomsPush, SchedPush,
-    SettingsData,
+    DetailData, FormOpen, Panels, PeekData, PermRow, RoomsPush, SchedPush, SettingsData,
+    share_roles,
 };
 use reminders::Key;
 use std::collections::{BTreeMap, HashMap, HashSet};

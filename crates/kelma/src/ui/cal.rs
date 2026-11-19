@@ -513,6 +513,12 @@ impl UiHandle {
     pub fn cal_perms(&self, rows: Vec<PermRow>, note: String) {
         self.run(move |w| {
             let s = w.global::<CalStore>();
+            s.set_share_roles(strings(
+                crate::backend::share_roles(&rows)
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ));
             s.set_perms(model(
                 rows.into_iter()
                     .map(|p| CalPerm {
@@ -521,6 +527,7 @@ impl UiHandle {
                         email: p.email.into(),
                         role: p.role.into(),
                         removable: p.removable,
+                        roles: strings(p.roles.into_iter().map(String::from).collect()),
                     })
                     .collect(),
             ));
@@ -1060,6 +1067,7 @@ mod tests {
                         email: "dana@contoso.com".into(),
                         role: "read".into(),
                         removable: true,
+                        roles: strings(vec!["freebusy".into(), "limited".into(), "read".into()]),
                     },
                     crate::CalPerm {
                         id: "p2".into(),
@@ -1067,6 +1075,7 @@ mod tests {
                         email: "".into(),
                         role: "freebusy".into(),
                         removable: false,
+                        roles: strings(vec!["freebusy".into()]),
                     },
                 ]));
             }
@@ -1433,6 +1442,36 @@ mod tests {
                 .next()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn the_share_dialog_offers_only_the_roles_the_permission_allows() {
+        let app = app(View::WorkWeek, &[]);
+        let store = app.global::<CalStore>();
+        store.set_modal("share".into());
+        store.set_share_roles(strings(vec!["freebusy".into(), "read".into()]));
+        store.set_perms(model(vec![crate::CalPerm {
+            id: "p1".into(),
+            name: "Dana Reyes".into(),
+            email: "dana@contoso.com".into(),
+            role: "read".into(),
+            removable: true,
+            roles: strings(vec!["freebusy".into(), "limited".into(), "read".into()]),
+        }]));
+        // One person row (three roles) and the add row (two): Titles is only in the first, so
+        // the other two appear twice as often (however many matches one button leaves).
+        let count = |l: &str| ElementHandle::find_by_accessible_label(&app, l).count();
+        let titles = count("Titles");
+        assert!(titles > 0, "the person's own row offers Titles");
+        assert_eq!(count("Free/busy"), 2 * titles);
+        assert_eq!(count("All details"), 2 * titles);
+        for gone in ["Edit", "Delegate"] {
+            assert_eq!(
+                ElementHandle::find_by_accessible_label(&app, gone).count(),
+                0,
+                "{gone} is not allowed here"
+            );
+        }
     }
 
     #[test]

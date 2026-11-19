@@ -42,7 +42,8 @@ pub use cal::{
 };
 pub use cal::{
     CalCmd, CalData, DetailData, FormFields, FormOpen, Panels, PeekData, PermRow, RoomsPush,
-    SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes,
+    SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, share_roles, slot_for_pick,
+    slot_minutes,
 };
 pub use drive::DriveCmd;
 pub use people::PeopleCmd;

@@ -3,7 +3,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
-import { CalStore } from "calendar_store.slint";
+import { CalStore, CalFmt } from "calendar_store.slint";
 import { CalButton, CalCard, CalCheck, CalField, CalMenuItem } from "calendar_widgets.slint";
 
 // The New ▾ menu. Types that need Graph VirtualEvent.* open in the web (marked ↗).
@@ -338,11 +338,11 @@ export component ShareDialog inherits Modal {
                             HorizontalLayout {
                                 spacing: 4px;
                                 alignment: start;
-                                for r in [{key: "freebusy", label: "Free/busy"}, {key: "limited", label: "Titles"}, {key: "read", label: "All details"}, {key: "write", label: "Edit"}, {key: "delegate", label: "Delegate"}]: CalButton {
-                                    label: r.label;
-                                    active: p.role == r.key;
+                                for k in p.roles: CalButton {
+                                    label: CalFmt.role-label(k);
+                                    active: p.role == k;
                                     enabled: p.removable;
-                                    clicked => { CalStore.command("share-role", p.id + "|" + r.key); }
+                                    clicked => { CalStore.command("share-role", p.id + "|" + k); }
                                 }
                             }
                         }
@@ -354,10 +354,10 @@ export component ShareDialog inherits Modal {
             HorizontalLayout {
                 spacing: 4px;
                 alignment: start;
-                for r in [{key: "freebusy", label: "Free/busy"}, {key: "limited", label: "Titles"}, {key: "read", label: "All details"}, {key: "write", label: "Edit"}, {key: "delegate", label: "Delegate"}]: CalButton {
-                    label: r.label;
-                    active: root.role == r.key;
-                    clicked => { root.role = r.key; }
+                for k in CalStore.share-roles: CalButton {
+                    label: CalFmt.role-label(k);
+                    active: root.role == k;
+                    clicked => { root.role = k; }
                 }
                 Rectangle { horizontal-stretch: 1; }
                 CalButton { label: "Share"; primary: true; clicked => { CalStore.command("share-add", root.email + "|" + root.role); root.email = ""; } }

@@ -46,7 +46,7 @@ export struct CalFilterOpt { group: string, key: string, label: string, on: bool
 export struct CalCalendarRow { id: string, name: string, owner: string, color: color, checked: bool, header: bool }
 export struct CalSavedView { name: string, summary: string }
 export struct CalSettingsData { first-day: int, work-start: string, work-end: string, weekends: bool, week-numbers: bool, second-tz: string }
-export struct CalPerm { id: string, name: string, email: string, role: string, removable: bool }
+export struct CalPerm { id: string, name: string, email: string, role: string, removable: bool, roles: [string] }
 
 // What the event peek shows, and decides which buttons it offers.
 export struct CalPeek {
@@ -132,6 +132,8 @@ export global CalStore {
     in property <CalSettingsData> settings;
     in property <[CalPerm]> perms;
     in property <string> share-note;
+    // The roles a new share may be given.
+    in property <[string]> share-roles;
 
     // Which popover or dialog is open: popup is "" | new | range | filters | views | more |
     // add-calendar | work-location | join | peek-more | category; modal is "" | full | settings |
@@ -272,6 +274,9 @@ export global CalFmt {
     }
     public pure function slot-name(state: int) -> string {
         return state == 2 ? "busy" : (state == 1 ? "tentative" : (state == 3 ? "out of office" : (state == 4 ? "working elsewhere" : (state == 5 ? "unknown" : "free"))));
+    }
+    public pure function role-label(k: string) -> string {
+        return k == "freebusy" ? "Free/busy" : (k == "limited" ? "Titles" : (k == "read" ? "All details" : (k == "write" ? "Edit" : "Delegate")));
     }
     public pure function response-color(r: string) -> color {
         return r == "accepted" || r == "organizer" ? #6bd69b : (r == "declined" ? #ff8a8d : (r == "tentative" ? #ffd666 : #8a8a8a));
