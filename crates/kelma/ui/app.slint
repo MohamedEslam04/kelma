@@ -20,12 +20,14 @@ import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
 import { PinnedBanner } from "pinned_banner.slint";
 import { ProfileCard } from "profile_card.slint";
 import { OneDriveView, DriveStore } from "onedrive.slint";
+import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
 export { EmojiApi } from "composer.slint";
 export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
+export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
 export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
 export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
 
@@ -207,6 +209,12 @@ export component AppWindow inherits Window {
                 root.mark-all-read();
                 return accept;
             }
+            // Ctrl+Alt+E: Search.
+            if ((event.text == "E" || event.text == "e") && event.modifiers.control && event.modifiers.alt) {
+                root.view = "search";
+                FindStore.focus-tick += 1;
+                return accept;
+            }
             // Alt+Shift+N: New chat.
             if ((event.text == "N" || event.text == "n") && event.modifiers.alt && event.modifiers.shift) {
                 root.view = "chat";
@@ -252,6 +260,12 @@ export component AppWindow inherits Window {
                             vertical-alignment: center;
                             single-line: true;
                             edited => { root.search(self.text); }
+                            // Enter opens the Search page with this text.
+                            accepted => {
+                                FindStore.query = self.text;
+                                root.view = "search";
+                                FindStore.command("search", self.text);
+                            }
                         }
                     }
                     if search-input.text == "": Text {
