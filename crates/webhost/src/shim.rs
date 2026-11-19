@@ -83,6 +83,44 @@ pub struct ShimConfig {
     pub valid_domains: Vec<String>,
 }
 
+impl ShimConfig {
+    /// The config for one app tab: `tab_url` is the tab's (already expanded) URL. Shim calls are
+    /// accepted from the tab's origin and from the exact https hosts the manifest's
+    /// `valid_domains` name. A wildcard entry (`*.contoso.com`) names no single origin, so it
+    /// only widens the app resource check ([`check_token_request`]), never who may talk to the
+    /// host.
+    pub fn for_app(
+        context: HostContext,
+        tab_url: &str,
+        sso_resource: Option<String>,
+        valid_domains: Vec<String>,
+    ) -> ShimConfig {
+        let mut allowed_origins: Vec<String> = origin_of(tab_url).into_iter().collect();
+        for d in &valid_domains {
+            let plain = !d.is_empty()
+                && d.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'));
+            if let Some(o) = plain.then(|| origin_of(&format!("https://{d}"))).flatten()
+                && !allowed_origins.iter().any(|a| same_origin(a, &o))
+            {
+                allowed_origins.push(o);
+            }
+        }
+        ShimConfig {
+            context,
+            allowed_origins,
+            sso_resource,
+            valid_domains,
+        }
+    }
+}
+
+/// The origin (`https://host[:port]`) of an http(s) URL, or `None` for anything else.
+pub fn origin_of(url: &str) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    matches!(u.scheme(), "http" | "https").then(|| u.origin().ascii_serialization())
+}
+
 /// An `authentication.getAuthToken` call, for the caller's token callback.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TokenRequest {
@@ -932,6 +970,40 @@ mod tests {
         let js = deliver_js(&msg);
         assert!(js.starts_with("window.onNativeMessage&&window.onNativeMessage("));
         assert!(js.contains(&json!({ "data": msg }).to_string()), "{js}");
+    }
+
+    #[test]
+    fn for_app_allows_the_tab_origin_and_exact_valid_domains_only() {
+        let ctx = HostContext::default();
+        let cfg = ShimConfig::for_app(
+            ctx,
+            "https://tabs.contoso.com/home?x=1",
+            Some("api://tabs.contoso.com/0d5e".into()),
+            vec![
+                "tabs.contoso.com".into(),
+                "api.contoso.com".into(),
+                "*.fabrikam.com".into(),
+                "localhost:3000".into(),
+                "evil.com/path".into(),
+                "".into(),
+            ],
+        );
+        assert_eq!(
+            cfg.allowed_origins,
+            [
+                "https://tabs.contoso.com",
+                "https://api.contoso.com",
+                "https://localhost:3000"
+            ]
+        );
+        assert_eq!(
+            cfg.sso_resource.as_deref(),
+            Some("api://tabs.contoso.com/0d5e")
+        );
+        // The wildcard is kept for the token check.
+        assert!(cfg.valid_domains.iter().any(|d| d == "*.fabrikam.com"));
+        assert_eq!(origin_of("data:text/html,x"), None);
+        assert_eq!(origin_of("not a url"), None);
     }
 
     #[test]
