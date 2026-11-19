@@ -156,5 +156,11 @@ export component FileCard inherits Rectangle {
             Text { text: "Open in browser"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; }
         }
     }
-    ta := TouchArea { mouse-cursor: pointer; clicked => { root.open(); } }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: "Open " + root.f.name;
+        accessible-action-default => { root.open(); }
+        clicked => { root.open(); }
+    }
 }

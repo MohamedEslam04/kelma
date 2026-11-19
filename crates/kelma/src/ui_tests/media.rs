@@ -358,7 +358,7 @@ fn a_file_chip_sends_its_type_and_address_so_settings_can_choose_where_it_opens(
     let o = opened.clone();
     h.app
         .on_open_url(move |u| o.borrow_mut().push(u.to_string()));
-    tap(&h.app, "plan.docx");
+    click_label(&h.app, "Open plan.docx");
     assert_eq!(
         *opened.borrow(),
         vec!["kelma-file:DOCX:https://contoso.sharepoint.com/sites/t/plan.docx".to_string()]
