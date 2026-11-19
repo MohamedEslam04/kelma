@@ -26,6 +26,7 @@ fn props_json(m: &Message) -> String {
         "m": super::mentions::store_value(&m.mentions),
         "c": m.card,
         "t": m.announcement.as_ref().map(|a| a.title.as_str()),
+        "i": m.importance.wire(),
     })
     .to_string()
 }
@@ -151,5 +152,36 @@ pub(super) fn system_text(m: &MessageRow) -> Option<String> {
         Some("Call recording".into())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn stored(importance: Option<&str>) -> Value {
+        let mut v = json!({
+            "id": "1795001078052",
+            "conversationLink": "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/conversations/19:abc@thread.v2",
+            "from": "https://emea.ng.msg.teams.microsoft.com/v1/users/ME/contacts/8:orgid:11111111-2222-3333-4444-555555555555",
+            "imdisplayname": "Sara",
+            "composetime": "2026-11-18T11:24:38.0520781Z",
+            "messagetype": "RichText/Html",
+            "content": "<p>hi</p>",
+            "properties": {}
+        });
+        if let Some(i) = importance {
+            v["properties"]["importance"] = json!(i);
+        }
+        let m = teams_proto::model::message_from_json(&v, "").unwrap();
+        serde_json::from_str(&row_from_message(&m, None).reactions_json).unwrap()
+    }
+
+    #[test]
+    fn an_incoming_importance_is_kept_with_the_message() {
+        assert_eq!(stored(Some("high"))["i"], "high");
+        assert_eq!(stored(Some("urgent"))["i"], "urgent");
+        assert_eq!(stored(None)["i"], "");
     }
 }

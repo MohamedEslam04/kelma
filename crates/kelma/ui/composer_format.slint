@@ -374,7 +374,7 @@ export component FormatBar inherits Rectangle {
         x: 301px;
         y: -self.height - 4px;
         width: 220px;
-        height: 340px;
+        height: 372px;
         Rectangle {
             background: #2b2b2b;
             border-radius: 6px;
@@ -395,6 +395,8 @@ export component FormatBar inherits Rectangle {
                 FmtItem { label: "Decrease indent"; clicked => { root.fire-kept("outdent"); more-popup.close(); } }
                 FmtItem { label: "Horizontal rule"; clicked => { root.fire-kept("hr"); more-popup.close(); } }
                 FmtItem { label: "Table…"; hint: "Insert table"; clicked => { more-popup.close(); table-popup.show(); } }
+                Rectangle { height: 1px; background: Theme.border; }
+                FmtItem { label: "Mark as important"; clicked => { root.fire-kept("important"); more-popup.close(); } }
                 Rectangle { height: 1px; background: Theme.border; }
                 FmtItem { label: "Undo"; clicked => { root.fire-kept("undo"); more-popup.close(); } }
                 FmtItem { label: "Redo"; clicked => { root.fire-kept("redo"); more-popup.close(); } }

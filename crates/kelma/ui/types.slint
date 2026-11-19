@@ -91,6 +91,7 @@ export struct Msg {
     flash: bool,           // the row a jump (pinned banner) landed on
     card: [CardRow],       // an Adaptive Card drawn like Teams does (empty: show the text body)
     headline: string,      // headline of an announcement post
+    importance: string,    // "" | "high" | "urgent": a red IMPORTANT! or URGENT! label
 }
 
 // A person (or, for the @mention picker, a team, channel or "Everyone" entry) in a people list.

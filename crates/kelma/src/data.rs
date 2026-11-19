@@ -109,6 +109,8 @@ pub struct MsgData {
     pub card: Vec<crate::lists_data::CardRowData>,
     /// Headline of an announcement post.
     pub headline: String,
+    /// `""`, `"high"` or `"urgent"`: the red label above the text.
+    pub importance: String,
 }
 
 /// A person, or a team, channel or "everyone" entry, in a people list.

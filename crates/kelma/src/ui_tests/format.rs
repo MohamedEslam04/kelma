@@ -247,3 +247,121 @@ fn incoming_headings_tables_and_colors_render() {
     assert!(drawn.contains("red"), "{drawn}");
     assert!(drawn.contains('│'), "table columns: {drawn}");
 }
+
+
+// ---- Mark as important (plan chat 5.9 Ctrl+Shift+I, 9.4) ----------------------------------
+
+#[test]
+fn ctrl_shift_i_toggles_a_red_important_chip_in_the_composer() {
+    let app = app_with_messages(vec![]);
+    focused_composer(&app);
+    assert!(find_label(&app, "Important message").is_empty());
+    chord(&app, &[Key::Control, Key::Shift], "i");
+    assert!(app.get_important());
+    assert!(!find_label(&app, "Important message").is_empty());
+    chord(&app, &[Key::Control, Key::Shift], "i");
+    assert!(!app.get_important());
+    assert!(find_label(&app, "Important message").is_empty());
+    // The chip's own button removes it, too.
+    chord(&app, &[Key::Control, Key::Shift], "i");
+    click_el(&button(&app, "Remove important"));
+    assert!(!app.get_important());
+}
+
+#[test]
+fn mark_as_important_is_in_the_overflow_menu() {
+    let app = app_with_messages(vec![]);
+    click_el(&button(&app, "Show formatting options"));
+    click_el(&button(&app, "More formatting options"));
+    click_el(&button(&app, "Mark as important"));
+    assert!(app.get_important());
+}
+
+#[test]
+fn the_flag_is_on_while_the_message_is_sent_and_used_up_by_it() {
+    let app = app_with_messages(vec![]);
+    let seen = Log::default();
+    let (l, weak) = (seen.clone(), app.as_weak());
+    app.on_send(move |t| {
+        let on = weak.upgrade().unwrap().get_important();
+        l.borrow_mut().push(format!("{t} important={on}"));
+    });
+    focused_composer(&app);
+    chord(&app, &[Key::Control, Key::Shift], "i");
+    type_text(&app, "urgent thing");
+    enter(&app);
+    assert_eq!(*seen.borrow(), vec!["urgent thing important=true"]);
+    assert!(!app.get_important(), "one message only");
+    type_text(&app, "next");
+    enter(&app);
+    assert_eq!(seen.borrow()[1], "next important=false");
+}
+
+#[test]
+fn an_important_send_is_queued_as_important_once_and_shows_the_label() {
+    let h = Harness::new();
+    h.select(NOTES);
+    let run = h.runner();
+    run(Cmd::SetImportant(true));
+    run(Cmd::Send("read this".into(), String::new()));
+    run(Cmd::Send("and this".into(), String::new()));
+    let queued = h.engine.test_store(|st| st.outbox_for(NOTES).unwrap());
+    let by_text = |t: &str| {
+        queued
+            .iter()
+            .find(|i| i.html.contains(t))
+            .unwrap_or_else(|| panic!("{t} queued"))
+    };
+    assert_eq!(by_text("read this").importance, "high");
+    assert_eq!(by_text("and this").importance, "", "the flag was used up");
+    let important: Vec<_> = h
+        .app
+        .get_messages()
+        .iter()
+        .filter(|m| m.importance == "high")
+        .map(|m| m.plain.to_string())
+        .collect();
+    assert_eq!(important, vec!["read this"]);
+    assert!(!find_label(&h.app, "IMPORTANT!").is_empty());
+    for id in h
+        .app
+        .get_messages()
+        .iter()
+        .filter(|m| m.id.starts_with("pending-"))
+        .map(|m| m.id.to_string())
+        .collect::<Vec<_>>()
+    {
+        run(Cmd::DiscardSend(id));
+    }
+}
+
+#[test]
+fn an_incoming_important_message_shows_the_label() {
+    let h = Harness::new();
+    h.engine.test_store(|st| {
+        st.upsert_message(&store::MessageRow {
+            id: "imp-1".into(),
+            conversation_id: NOTES.into(),
+            parent_id: None,
+            sender_mri: "8:orgid:00000000-0000-0000-0000-000000000002".into(),
+            sender_name: "Ahmed Ali".into(),
+            compose_ms: 1_795_000_000_000,
+            edited_ms: None,
+            deleted: false,
+            message_type: "RichText/Html".into(),
+            content_html: "<p>deploy freeze</p>".into(),
+            client_message_id: None,
+            reactions_json: r#"{"i":"high"}"#.into(),
+        })
+        .unwrap();
+    });
+    h.select(NOTES);
+    let m = h
+        .app
+        .get_messages()
+        .iter()
+        .find(|m| m.id == "imp-1")
+        .expect("listed");
+    assert_eq!(m.importance, "high");
+    assert!(!find_label(&h.app, "IMPORTANT!").is_empty());
+}
