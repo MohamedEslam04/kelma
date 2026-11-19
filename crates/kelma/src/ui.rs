@@ -1,6 +1,7 @@
 //! UI-thread side: turns view data into Slint models.
 
 mod cal;
+pub use appstore::wire as install_apps;
 #[cfg(test)]
 pub use cal::read_form as read_form_for_test;
 pub use cal::wire as install_calendar;
@@ -21,6 +22,7 @@ use std::rc::Rc;
 
 pub(crate) mod activity;
 mod channels;
+pub(crate) mod appstore;
 pub(crate) mod drive;
 mod find;
 mod lists;

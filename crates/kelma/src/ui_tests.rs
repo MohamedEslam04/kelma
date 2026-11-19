@@ -19,6 +19,7 @@ use teams_proto::Client;
 
 mod activity;
 mod channels;
+mod appstore;
 mod drive;
 mod find;
 mod lists;
