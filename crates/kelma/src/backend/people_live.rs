@@ -97,8 +97,11 @@ async fn live_people_mention_myself_in_the_sandbox_channel() {
 #[tokio::test]
 #[ignore = "live: creates ONE group chat with one colleague, then leaves it"]
 async fn live_people_one_test_group_chat() {
+    // The colleague who agreed to take part; never committed, set it in the environment.
+    let person =
+        std::env::var("KELMA_TEST_PERSON").expect("set KELMA_TEST_PERSON to the colleague's name");
     let (e, client, me) = engine().await;
-    let found = client.search_people(&me, "Doaa Khaled").await.unwrap();
+    let found = client.search_people(&me, &person).await.unwrap();
     println!("people search matches: {}", found.len());
     assert_eq!(found.len(), 1, "exactly one match is required");
     let colleague = found[0].mri.clone();
@@ -135,11 +138,11 @@ async fn live_people_one_test_group_chat() {
         // A mention of the colleague through the outbox.
         e.people.lock().unwrap().entries.push(Entry {
             mri: colleague.clone(),
-            name: "Doaa Khaled".into(),
+            name: person.clone(),
             kind: MentionKind::Person,
         });
         e.clone()
-            .handle(Cmd::Send("@Doaa Khaled kelma test".into(), String::new()))
+            .handle(Cmd::Send(format!("@{person} kelma test"), String::new()))
             .await;
         tokio::time::sleep(Duration::from_secs(3)).await;
         let page = client.messages(&id, None, 10).await.unwrap();
