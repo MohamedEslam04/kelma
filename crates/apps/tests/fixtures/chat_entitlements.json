@@ -1,0 +1,91 @@
+{
+  "type": "Microsoft.Teams.MiddleTier.Apps.Contracts.Models.ChatEntitlements",
+  "value": {
+    "appDefinitionsHash": "0000000000000000000000000000000000000000000000000000000000000001",
+    "chatEntitlementsHash": "0000000000000000000000000000000000000000000000000000000000000002",
+    "definitions": [
+      {
+        "id": "11111111-aaaa-bbbb-cccc-000000000001",
+        "name": "Contoso Tickets",
+        "smallImageUrl": "https://cdn.example/tickets-small.png",
+        "largeImageUrl": "https://cdn.example/tickets-large.png",
+        "bots": [
+          {
+            "id": "aaaaaaaa-0000-0000-0000-000000000001",
+            "isNotificationOnly": false,
+            "scopes": ["Personal", "Team"],
+            "supportsFiles": true,
+            "supportsCalling": false,
+            "supportsVideo": false,
+            "commandLists": [
+              {
+                "scopes": ["Personal"],
+                "commands": [
+                  {"title": "help", "description": "Show what the bot can do", "type": "basic"},
+                  {"title": "summarize", "description": "Summarize my tickets", "type": "prompt"},
+                  {"title": "legacy", "description": "No type"}
+                ]
+              }
+            ]
+          },
+          {"id": "aaaaaaaa-0000-0000-0000-000000000002", "isNotificationOnly": true, "scopes": ["Team"]}
+        ],
+        "inputExtensions": [
+          {
+            "type": "botBased",
+            "botId": "aaaaaaaa-0000-0000-0000-000000000001",
+            "scopes": ["Personal", "Team", "GroupChat"],
+            "canUpdateConfiguration": true,
+            "fetchCommands": false,
+            "messageHandlers": [],
+            "commands": [
+              {
+                "id": "search",
+                "title": "Search tickets",
+                "description": "Find a ticket",
+                "initialRun": true,
+                "context": ["Compose", "Commandbox"],
+                "parameters": [
+                  {"name": "keyword", "title": "Keyword", "description": "Words to look for", "isRequired": true},
+                  {
+                    "name": "status",
+                    "title": "Status",
+                    "inputType": "Choiceset",
+                    "choices": [{"title": "Open", "value": "open"}, {"title": "Closed", "value": "closed"}]
+                  }
+                ]
+              },
+              {
+                "id": "create",
+                "title": "Create ticket",
+                "type": "Action",
+                "context": ["Message", "Compose"],
+                "fetchTask": true,
+                "taskInfo": {"title": "New ticket", "url": "https://tickets.example/new", "width": "medium", "height": "large"},
+                "parameters": [{"name": "body", "title": "Body", "inputType": "Textarea"}]
+              },
+              {"id": "defaults", "title": "No context, no type"}
+            ]
+          }
+        ],
+        "metaCapabilities": {"bots": {"scopes": ["Personal", "Team"]}, "messageExtensions": {"scopes": ["Personal", "Team", "GroupChat"]}}
+      },
+      {
+        "id": "22222222-aaaa-bbbb-cccc-000000000002",
+        "name": "Contoso Wiki",
+        "inputExtensions": [
+          {"type": "botBased", "botId": "bbbbbbbb-0000-0000-0000-000000000001", "scopes": ["Team"], "fetchCommands": true, "commands": []}
+        ]
+      },
+      {"id": "33333333-aaaa-bbbb-cccc-000000000003", "name": "Tabs Only", "staticTabs": []},
+      {"id": "44444444-aaaa-bbbb-cccc-000000000004", "name": "Not Installed", "bots": [{"id": "cccccccc-0000-0000-0000-000000000001", "scopes": ["Personal"]}]},
+      {"name": "No id", "bots": [{"id": "dddddddd-0000-0000-0000-000000000001"}]}
+    ],
+    "entitlements": [
+      {"id": "11111111-aaaa-bbbb-cccc-000000000001", "state": "Installed"},
+      {"id": "22222222-aaaa-bbbb-cccc-000000000002", "state": "InstalledAndPermanent"},
+      {"id": "33333333-aaaa-bbbb-cccc-000000000003", "state": "Installed"},
+      {"id": "44444444-aaaa-bbbb-cccc-000000000004", "state": "HiddenFromAppStore"}
+    ]
+  }
+}

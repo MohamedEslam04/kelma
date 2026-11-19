@@ -166,6 +166,9 @@ pub fn storyline_body(text: &str) -> Value {
     json!({"body": text, "is_storyline_post": true})
 }
 
+/// Storyline posting stays off until the GraphQL draft route is verified (plan T2.9).
+const STORYLINE_POST_DISABLED: bool = true;
+
 impl Client {
     /// The communities we belong to.
     pub async fn communities(&self) -> Result<Vec<Community>> {
@@ -199,8 +202,15 @@ impl Client {
         Ok(parse_feed(&v))
     }
 
-    /// Posts to our storyline (best effort, the body is not verified against the service).
+    /// Posts to our storyline. Disabled: the REST body is a guess the Engage client never sends,
+    /// and without a group it may land in All Company (docs/research/storyline.md). The real
+    /// route is the Engage GraphQL `createUserWallMessage`, which is not built yet.
     pub async fn post_storyline(&self, text: &str) -> Result<Vec<EngagePost>> {
+        if STORYLINE_POST_DISABLED {
+            return Err(Error::Protocol(
+                "storyline posting is disabled until the Engage GraphQL route is verified".into(),
+            ));
+        }
         if text.trim().is_empty() {
             return Err(Error::Protocol("a storyline post needs text".into()));
         }

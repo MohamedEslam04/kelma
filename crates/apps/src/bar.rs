@@ -32,7 +32,7 @@ pub enum EntitlementState {
 }
 
 impl EntitlementState {
-    fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "Installed" => Self::Installed,
             "InstalledAndPermanent" => Self::InstalledAndPermanent,
