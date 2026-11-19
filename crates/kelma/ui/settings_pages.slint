@@ -391,6 +391,25 @@ export component AboutPage inherits VerticalLayout {
         Para { text: "A lightweight, unofficial Microsoft Teams client for Linux."; }
     }
     SSection {
+        title: "Updates";
+        hint: "Off by default. When on, kelma asks api.github.com for the latest release when it starts. The request has no cookies, no account and nothing about you. kelma never downloads or installs anything.";
+        SSwitch {
+            label: "Check for updates";
+            on: SettingsStore.check-updates;
+            toggled(on) => { SettingsStore.command("check-updates", on ? "1" : "0"); }
+        }
+        if SettingsStore.check-updates: SButton {
+            label: "Check now";
+            enabled: !SettingsStore.update-checking;
+            clicked => { SettingsStore.command("check-now", ""); }
+        }
+        if SettingsStore.update-status != "": Para { text: SettingsStore.update-status; }
+        if SettingsStore.update-available: SButton {
+            label: "View release notes";
+            clicked => { SettingsStore.command("release-notes", ""); }
+        }
+    }
+    SSection {
         title: "Report a problem";
         Para { text: "Writes a bundle of logs with tokens, ids and addresses removed to your Downloads folder. Nothing is uploaded."; }
         SButton { label: "Report a problem"; clicked => { SettingsStore.command("report-problem", ""); } }

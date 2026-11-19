@@ -17,6 +17,7 @@ mod tray_wiring;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
+mod update_check;
 mod window_state;
 
 slint::include_modules!();
@@ -421,6 +422,8 @@ fn main() -> anyhow::Result<()> {
         window.on_dismiss_banner(move || {
             if let Some(w) = weak.upgrade() {
                 w.set_banner(slint::SharedString::new());
+                w.set_banner_action(slint::SharedString::new());
+                w.set_banner_info(false);
             }
         });
     }

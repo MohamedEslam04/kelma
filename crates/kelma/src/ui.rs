@@ -261,6 +261,8 @@ impl UiHandle {
     pub fn banner(&self, text: String) {
         self.run(move |w| {
             let shown: SharedString = text.into();
+            w.set_banner_action(SharedString::new());
+            w.set_banner_info(false);
             w.set_banner(shown.clone());
             let weak = w.as_weak();
             slint::Timer::single_shot(std::time::Duration::from_secs(8), move || {

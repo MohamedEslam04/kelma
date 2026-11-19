@@ -811,6 +811,11 @@ const INDEX: &[(&str, &str, &str)] = &[
         "camera location notifications midi media",
     ),
     ("about", "Report a problem", "bug logs diagnostics"),
+    (
+        "about",
+        "Check for updates",
+        "update upgrade new version release",
+    ),
     ("about", "Version", "about"),
 ];
 
