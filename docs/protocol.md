@@ -66,6 +66,25 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 | `properties.edittime` / `deletetime` | Edited / deleted markers ✅ |
 | `ThreadActivity/*`, `Event/Call` | System lines |
 
+### Delivery options (9.4)
+
+`crates/teams-proto/src/delivery.rs` (`kelma-cli deliver`). Sources: the Teams web client JS bundle
+(message serializer, composer and renderer); `properties.importance` was also known from
+better-teams and Maxim.
+
+| Option | Wire shape | Live status |
+|---|---|---|
+| Standard | `properties.importance` is `""` (web always sends it; kelma sends nothing, which reads the same) | ✅ default sends |
+| Important | `properties.importance: "high"`. Web shows a red "IMPORTANT!" label | ✅ sent to `48:notes` 2026-11-19 and read back through history as `high`. Whether Teams web draws the label still needs a person to look |
+| Urgent | `properties.importance: "urgent"`. The receiving web client repeats the notification until the message is acknowledged (its `ackUrgentMessage` runs once the reader has reacted to or seen it; an urgent message from the current user is never acked) | ✅ sent to `48:notes` 2026-11-19 and read back as `urgent`. The repeated notification is only seen by another recipient, so it was not observed |
+| Announcement | Channel posts only. `properties.title` is the headline and `properties.cards` (JSON *string*) holds one card `{appId:"announcement-card", cardClientId:"announcement-card-<id>", contentType:"application/vnd.microsoft.teams.messaging-announcementBanner", appName?, content}`. `content` is `{colorTheme:"<0..11>"}` for a coloured banner (the 12 palette entries, from periwinkle blue to ocean green) or `{imageData:{origImage:{src,id?}, croppedImage:{src,id?,imageWidth,imageHeight,imageAltText}, isTeamsIllustration?}}` for a picture (web crops to 1317x366). A picture is uploaded to AMS first and its object id goes in the top-level `amsreferences`. `messagetype` stays `RichText/Html` | ⚠️ unverified live (not posted to any channel). Shape taken from the web bundle only; covered by unit tests |
+
+Receive side: `properties.importance` is `""`, `"high"` or `"urgent"` (the numeric forms 2 and 3 also
+appear internally). The web client builds an announcement from `properties.title` plus the card
+above (it reads `colorTheme` from `imageData.colorTheme` first, then from the content). A message is
+only an announcement when it has the card; a title alone is not one. `model::Message` carries
+`importance` and `announcement`. Live read-back: `kelma-cli deliver show <conversation>`.
+
 ## Aggregator (CSA) ✅
 
 `GET teams.microsoft.com/api/csa/api/v1/teams/users/me?isPrefetch=false&enableMembershipSummary=true`,

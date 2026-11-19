@@ -45,6 +45,7 @@
 mod accounts;
 mod apps;
 mod chatx;
+mod delivery;
 mod devices;
 mod drive;
 mod preview_file;
@@ -921,6 +922,13 @@ async fn main() -> Result<()> {
         Some("translate") => {
             let (client, cfg) = connect(&paths).await?;
             let r = chatx::translate(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("deliver") => {
+            let (client, cfg) = connect(&paths).await?;
+            let name = cfg.display_name.clone().unwrap_or_default();
+            let r = delivery::run(&client, &name, &args[1..]).await;
             session::persist(&cfg, &client).await?;
             r?;
         }
