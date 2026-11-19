@@ -1374,7 +1374,7 @@ impl Engine {
         let made = onedrive::create::create(&self.client, &self.drive_target(), &what).await?;
         if let onedrive::Created::Notebook(nb) = made {
             if nb.web_url.starts_with("https://") {
-                let _ = open::that_detached(&nb.web_url);
+                let _ = crate::external::open(&nb.web_url);
             }
             self.drive_status(format!("Created notebook {}", nb.name));
         }
@@ -1387,7 +1387,7 @@ impl Engine {
             self.drive_status("Demo mode: Microsoft Forms would open in the browser");
             return;
         }
-        let _ = open::that_detached(onedrive::FORMS_NEW_URL);
+        let _ = crate::external::open(onedrive::FORMS_NEW_URL);
     }
 
     async fn drive_upload_pick(self: &Arc<Self>, folder: bool) -> anyhow::Result<()> {
