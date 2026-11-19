@@ -238,7 +238,7 @@ impl Client {
 
 impl Client {
     /// Uploads a file, shares it with the other members of `conversation_id` and posts it there.
-    /// Channels keep their files in the team's SharePoint site, which this does not handle.
+    /// Channels keep their files in the team's SharePoint site, see [`crate::channel_files`].
     pub async fn send_file(
         &self,
         conversation_id: &str,
@@ -264,10 +264,10 @@ impl Client {
             .split(";messageid=")
             .next()
             .unwrap_or(conversation_id);
-        if conv.ends_with("@thread.tacv2") || conv.ends_with("@thread.skype") {
-            return Err(Error::Protocol(
-                "sending files to channels is not supported yet".into(),
-            ));
+        if crate::channel_files::is_channel(conv) {
+            return self
+                .send_channel_file_as(conversation_id, name, data, display_name, client_message_id)
+                .await;
         }
         let file = self.upload_file(name, data).await?;
         if conv != "48:notes" {

@@ -42,6 +42,11 @@ pub struct Message {
     pub subject: Option<String>,
     /// People, channels, teams and tags this message mentions.
     pub mentions: Vec<crate::mentions::Mention>,
+    /// The card attachments (`[{contentType, content}]`) as JSON, when they can be drawn as a
+    /// structured card (see [`crate::chat_card`]).
+    pub card: Option<String>,
+    /// Headline of an announcement post (`properties.title`).
+    pub headline: Option<String>,
 }
 
 impl Message {
@@ -162,6 +167,18 @@ fn message_content(v: &Value, props: Option<&Value>) -> String {
     raw.to_string()
 }
 
+/// The card attachments of a message as JSON, if there is something to draw.
+fn message_card(v: &Value, props: Option<&Value>) -> Option<String> {
+    let attachments = json_or_string(props.and_then(|p| p.get("cards"))).or_else(|| {
+        let raw = str_field(v, "content")?;
+        raw.contains("<Swift b64=")
+            .then(|| crate::chat_card::swift_attachments(raw))
+            .flatten()
+    })?;
+    (!crate::chat_card::rows_for_attachments(&attachments, "").is_empty())
+        .then(|| attachments.to_string())
+}
+
 /// Builds a [`Message`] from a chat-service message object (REST history or trouter resource).
 ///
 /// `fallback_conversation` is used when the object carries no conversation link.
@@ -218,6 +235,11 @@ pub fn message_from_json(v: &Value, fallback_conversation: &str) -> Option<Messa
             .filter(|s| !s.is_empty())
             .map(str::to_owned),
         mentions: crate::mentions::parse_mentions(props),
+        card: message_card(v, props),
+        headline: props
+            .and_then(|p| str_field(p, "title"))
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
     })
 }
 
@@ -577,5 +599,26 @@ mod tests {
         assert_eq!(c("0;1800;0").unread_bookmark, None);
         let none = conversation_from_json(&serde_json::json!({"id": "19:b@thread.v2"})).unwrap();
         assert_eq!(none.unread_bookmark, None);
+    }
+
+    #[test]
+    fn cards_and_the_announcement_headline_are_kept_for_drawing() {
+        let mut v = msg_json();
+        v["content"] = json!("<p>body</p>");
+        v["properties"] = json!({
+            "title": "Release 2.4",
+            "cards": "[{\"contentType\":\"application/vnd.microsoft.teams.messaging-announcementBanner\",\"content\":{\"imageData\":{\"colorTheme\":\"green\"}}}]"
+        });
+        let m = message_from_json(&v, "19:abc@thread.tacv2").unwrap();
+        assert_eq!(m.headline.as_deref(), Some("Release 2.4"));
+        let card: Value = serde_json::from_str(m.card.as_deref().unwrap()).unwrap();
+        let rows = crate::chat_card::rows_for_attachments(&card, "Release 2.4");
+        assert_eq!(rows[0].kind, crate::chat_card::Kind::Banner);
+        // A plain message has neither, and a voice-message card is not drawn as a card.
+        let plain = message_from_json(&msg_json(), "19:abc@thread.v2").unwrap();
+        assert!(plain.card.is_none() && plain.headline.is_none());
+        let mut voice = msg_json();
+        voice["properties"] = json!({"cards": [{"contentType": "application/vnd.microsoft.card.audio", "content": {"media": [{"url": "https://x"}]}}]});
+        assert!(message_from_json(&voice, "c").unwrap().card.is_none());
     }
 }
