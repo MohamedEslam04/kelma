@@ -28,6 +28,7 @@
 //! kelma-cli team <ls|discover|join|code|new|edit|settings|archive|channel|tag|members|community|…>
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
+//! kelma-cli web <url> [--shim] [--theme T] [--browser P] [--profile D]  open a page in the web host window
 //! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
 //! kelma-cli accounts [tenants|use <label>|add <label>|remove <label>|org <tenant-id|home>]
 //!                                 several accounts and organizations (list and tenants are read-only)
@@ -39,6 +40,7 @@ mod apps;
 mod drive;
 mod store;
 mod team;
+mod web;
 
 use anyhow::{Context, Result, bail};
 use session::Paths;
@@ -499,6 +501,7 @@ async fn main() -> Result<()> {
             );
         }
         Some("accounts") => accounts::run(&paths, &args[1..]).await?,
+        Some("web") => web::run(&paths, &args[1..]).await?,
         Some("logout") => {
             let cfg = paths.load_config()?;
             session::delete_refresh_token(&cfg.account)?;
