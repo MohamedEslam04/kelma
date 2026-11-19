@@ -703,12 +703,12 @@ export component CalendarView inherits Rectangle {
 // Shown above the app from 5 minutes before a Teams meeting until it ends.
 export component JoinBanner inherits Rectangle {
     height: 40px;
-    background: #1d3a2a;
+    background: Theme.dark ? #1d3a2a : #dcf3e5;
     HorizontalLayout {
         padding-left: 16px;
         padding-right: 12px;
         spacing: 10px;
-        Icon { source: @image-url("icons/video.svg"); tint: #6bd69b; y: 10px; }
+        Icon { source: @image-url("icons/video.svg"); tint: Theme.dark ? #6bd69b : #237b4b; y: 10px; }
         Text { text: CalStore.join-text; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
         join-button := Rectangle {
             width: 64px;
@@ -721,5 +721,5 @@ export component JoinBanner inherits Rectangle {
         }
         IconButton { icon: @image-url("icons/close.svg"); size: 26px; y: 7px; clicked => { CalStore.command("dismiss-banner", ""); } }
     }
-    Rectangle { y: parent.height - 1px; height: 1px; background: #2f6b4a; }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.dark ? #2f6b4a : #a6d9bb; }
 }
