@@ -32,7 +32,9 @@ pub mod tags;
 pub mod teams;
 pub mod threads;
 pub mod time;
+pub mod translate;
 pub mod trouter;
+pub mod urlpreview;
 pub mod workflows;
 
 pub use client::{Client, Session};
