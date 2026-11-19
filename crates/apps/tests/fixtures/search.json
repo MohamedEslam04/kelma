@@ -1,0 +1,21 @@
+{
+  "results": [
+    {
+      "appId": "com.microsoft.teamspace.tab.planner", "searchScore": 2.04, "name": "Planner", "developerName": "Microsoft Corporation",
+      "version": "1.9.0", "shortDescription": "A simple way to organize tasks and projects", "accentColor": "#62A0F6",
+      "smallImageUrl": "https://res.cdn.office.net/teamsappdata/planner/color.png",
+      "appCategories": ["Productivity", "ProjectManagement", "Microsoft"], "appType": "Global",
+      "capabilities": ["StaticTabs", "GalleryTabs"],
+      "features": ["Available", "Free", "Tab", "Personal", "NoContextTeamTab", "ChannelContextTab", "Meeting", "MessageExtension", "PublisherAttested"],
+      "screenshotUrls": ["https://res.cdn.office.net/teamsappdata/planner/0.png"], "keywords": ["task"]
+    },
+    {
+      "appId": "44444444-5555-6666-7777-888888888888", "titleId": "T_00000000-0000-0000-0000-000000000044", "searchScore": 1.5, "name": "Contoso Planner Agent",
+      "developerName": "Contoso Ltd", "version": "1.0.0", "shortDescription": "Plans for you", "accentColor": "#FFFFFF",
+      "smallImageUrl": "https://example.com/icon.png", "appCategories": ["Productivity"], "appType": "Global",
+      "capabilities": ["CopilotExtensions", "Bots"],
+      "features": ["Available", "Paid", "Bot", "PersonalContextBot", "GroupChatContextBot", "CopilotExtension", "Certified"]
+    },
+    { "searchScore": 1.0, "name": "No id" }
+  ]
+}
