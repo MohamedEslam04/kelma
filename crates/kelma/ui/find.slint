@@ -45,7 +45,7 @@ export global FindStore {
 
     // --- Quick views ---
     in-out property <bool> quick-open: false;
-    in property <string> quick-kind;     // mentions | followed
+    in property <string> quick-kind;     // mentions | saved | followed
     in property <[HitRow]> quick-rows;
     in property <bool> quick-loading;
     in property <bool> quick-more;
@@ -373,7 +373,7 @@ export component SearchView inherits Rectangle {
     }
 }
 
-// Quick views: Mentions and Followed threads.
+// Quick views: Mentions, Saved and Followed threads.
 export component QuickView inherits Rectangle {
     background: Theme.main;
     callback close();
@@ -386,7 +386,7 @@ export component QuickView inherits Rectangle {
                 padding-right: 16px;
                 spacing: 12px;
                 Text {
-                    text: FindStore.quick-kind == "mentions" ? "Mentions" : "Followed threads";
+                    text: FindStore.quick-kind == "mentions" ? "Mentions" : (FindStore.quick-kind == "saved" ? "Saved" : "Followed threads");
                     color: Theme.fg;
                     font-size: 17px;
                     font-weight: 700;
@@ -404,9 +404,9 @@ export component QuickView inherits Rectangle {
                 ListView {
                     for r in FindStore.quick-rows: HitItem {
                         data: r;
-                        secondary-label: FindStore.quick-kind == "followed" ? "Unfollow" : "";
+                        secondary-label: FindStore.quick-kind == "followed" ? "Unfollow" : (FindStore.quick-kind == "saved" ? "Unsave" : "");
                         clicked => { FindStore.command("open", r.id); }
-                        secondary => { FindStore.command("unfollow", r.id); }
+                        secondary => { FindStore.command(FindStore.quick-kind == "saved" ? "unsave" : "unfollow", r.id); }
                     }
                 }
                 if FindStore.quick-more && !FindStore.quick-loading: Rectangle {
@@ -418,7 +418,8 @@ export component QuickView inherits Rectangle {
             if !FindStore.quick-loading && FindStore.quick-rows.length == 0: VerticalLayout {
                 alignment: center;
                 spacing: 6px;
-                Text { text: FindStore.quick-kind == "mentions" ? "No one has mentioned you yet" : "You are not following any threads"; color: Theme.fg; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
+                Text { text: FindStore.quick-kind == "mentions" ? "No one has mentioned you yet" : (FindStore.quick-kind == "saved" ? "No saved messages" : "You are not following any threads"); color: Theme.fg; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
+                if FindStore.quick-kind == "saved": Text { text: "Choose Save this message in a message's \"…\" menu."; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: center; }
                 if FindStore.quick-kind == "followed": Text { text: "Follow a channel post from its \"…\" menu."; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: center; }
             }
         }

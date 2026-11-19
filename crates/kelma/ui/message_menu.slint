@@ -77,6 +77,20 @@ export component MessageMenu inherits Rectangle {
     drop-shadow-blur: 12px;
     drop-shadow-color: #00000090;
 
+    // Teams' letter shortcuts: R reply, F forward, S save, P pin, U mark as unread.
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.modifiers.control || event.modifiers.alt || event.modifiers.meta { return reject; }
+            if event.text == "r" || event.text == "R" { root.reply(); return accept; }
+            if event.text == "f" || event.text == "F" { root.forward-one(); return accept; }
+            if (event.text == "s" || event.text == "S") && !root.mine { root.toggle-save(); return accept; }
+            if (event.text == "p" || event.text == "P") && root.can-pin { root.pin(); return accept; }
+            if event.text == "u" || event.text == "U" { root.mark-unread(); return accept; }
+            reject
+        }
+    }
+
     items := VerticalLayout {
         padding: 6px;
         spacing: 0px;

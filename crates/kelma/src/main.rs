@@ -2,6 +2,7 @@
 
 mod backend;
 mod composer;
+mod composer_format;
 mod data;
 mod demo;
 mod find_data;
@@ -9,6 +10,7 @@ mod lists_data;
 mod markdown;
 mod mention;
 mod reactions;
+mod shortcuts;
 mod tray_wiring;
 mod ui;
 #[cfg(test)]

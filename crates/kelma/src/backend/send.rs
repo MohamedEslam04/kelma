@@ -54,7 +54,10 @@ impl Engine {
             // The composer shows the draft that was there before the edit again.
             let draft = self.view.lock().unwrap().draft_text.clone();
             self.ui.set_draft(draft);
-            let html = mentions::finish(&render::text_to_teams_html(&prepared.text), &prepared);
+            let html = mentions::finish(
+                &render::markdown_to_composer_html(&prepared.text),
+                &prepared,
+            );
             if prepared.mentions.is_empty() {
                 self.client
                     .edit_message(&target, &id, &html, &self.my_name)
@@ -88,16 +91,19 @@ impl Engine {
                         .chars()
                         .take(200)
                         .collect();
-                render::reply_html(
+                // The composer's source is Markdown-style (plan chat 5.4): the quote block is
+                // followed by the converted body.
+                let mut quote = render::reply_quote_html(
                     &r.id,
                     &r.sender_mri,
                     &r.sender_name,
                     r.compose_ms,
                     &preview,
-                    &prepared.text,
-                )
+                );
+                quote.push_str(&render::markdown_to_composer_html(&prepared.text));
+                quote
             }
-            None => render::text_to_teams_html(&prepared.text),
+            None => render::markdown_to_composer_html(&prepared.text),
         };
         let html = mentions::finish(&html, &prepared);
         // The draft is sent: forget it. It comes back if the message cannot even be queued.

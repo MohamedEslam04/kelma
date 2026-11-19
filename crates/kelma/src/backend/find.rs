@@ -42,6 +42,8 @@ pub enum FindCmd {
     Quick(String),
     QuickClose,
     Unfollow(String),
+    /// Removes a row of the Saved quick view from the saved list.
+    Unsave(String),
     FindOpen,
     FindClose,
     FindQuery(String),
@@ -74,6 +76,7 @@ impl FindCmd {
             "quick" => FindCmd::Quick(a),
             "quick-close" => FindCmd::QuickClose,
             "unfollow" => FindCmd::Unfollow(a),
+            "unsave" => FindCmd::Unsave(a),
             "find-open" => FindCmd::FindOpen,
             "find-close" => FindCmd::FindClose,
             "find-query" => FindCmd::FindQuery(a),
@@ -345,6 +348,7 @@ impl Engine {
                 self.find.lock().unwrap().quick = None;
             }
             FindCmd::Unfollow(id) => self.unfollow_row(&id).await?,
+            FindCmd::Unsave(id) => self.unsave_row(&id).await?,
             FindCmd::FindOpen => {
                 let mut f = self.find.lock().unwrap();
                 f.find = ChatFind {
@@ -1161,10 +1165,10 @@ impl Engine {
     // ---- 7.4 Quick views -----------------------------------------------------------
 
     async fn quick_open(self: &Arc<Self>, kind: &str) {
-        let kind: &'static str = if kind == "followed" {
-            "followed"
-        } else {
-            "mentions"
+        let kind: &'static str = match kind {
+            "followed" => "followed",
+            "saved" => "saved",
+            _ => "mentions",
         };
         let seq = {
             let mut f = self.find.lock().unwrap();
@@ -1179,8 +1183,105 @@ impl Engine {
         self.push_quick(true);
         match kind {
             "mentions" => self.load_mentions(seq).await,
+            "saved" => self.load_saved(seq),
             _ => self.load_followed(seq).await,
         }
+    }
+
+    /// The Saved view (plan chat 9.8): the local saved list, newest saved first. The list is
+    /// kept in the store (see `toggle_save`), so it needs no network.
+    fn load_saved(self: &Arc<Self>, seq: u64) {
+        let saved = self
+            .store
+            .lock()
+            .unwrap()
+            .saved_messages()
+            .unwrap_or_default();
+        let hits: Vec<Hit> = saved
+            .iter()
+            .map(|m| {
+                // The cached message gives the real time and sender; the saved row is enough
+                // when it has been pruned.
+                let row = self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .message(&m.message_id)
+                    .ok()
+                    .flatten();
+                let mri = row
+                    .as_ref()
+                    .map(|r| r.sender_mri.clone())
+                    .unwrap_or_default();
+                let name = if m.sender_name.is_empty() {
+                    self.user_name(&mri).unwrap_or_default()
+                } else {
+                    m.sender_name.clone()
+                };
+                Hit {
+                    kind: "message",
+                    conv: m.conversation_id.clone(),
+                    message: m.message_id.clone(),
+                    root: if m.root_id == m.message_id {
+                        String::new()
+                    } else {
+                        m.root_id.clone()
+                    },
+                    time_ms: row.as_ref().map_or(m.saved_ms, |r| r.compose_ms),
+                    mri,
+                    name,
+                    place: self.location_of(&m.conversation_id, "", ""),
+                    text: m.preview.clone(),
+                    url: String::new(),
+                }
+            })
+            .collect();
+        {
+            let mut f = self.find.lock().unwrap();
+            if f.quick_seq != seq {
+                return;
+            }
+            f.quick_hits = hits;
+        }
+        self.push_quick(false);
+    }
+
+    /// "Unsave" on a row of the Saved view: the message leaves the list (and the server flag is
+    /// cleared, best effort like in `toggle_save`).
+    async fn unsave_row(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let hit = self
+            .find
+            .lock()
+            .unwrap()
+            .quick_hits
+            .iter()
+            .find(|h| h.id() == id)
+            .cloned();
+        let Some(h) = hit else { return Ok(()) };
+        self.store
+            .lock()
+            .unwrap()
+            .unsave_message(&h.conv, &h.message)?;
+        self.find
+            .lock()
+            .unwrap()
+            .quick_hits
+            .retain(|x| x.id() != id);
+        self.push_quick(false);
+        self.mark(|d| d.messages = true);
+        let root = if h.root.is_empty() {
+            &h.message
+        } else {
+            &h.root
+        };
+        if let Err(err) = self
+            .client
+            .set_saved(&h.conv, root, &h.message, false)
+            .await
+        {
+            tracing::warn!(%err, "unsaving the message on the server failed; removed locally");
+        }
+        Ok(())
     }
 
     fn push_quick(self: &Arc<Self>, loading: bool) {

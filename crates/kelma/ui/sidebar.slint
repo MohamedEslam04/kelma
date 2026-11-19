@@ -324,6 +324,7 @@ export component Sidebar inherits Rectangle {
                     Text { text: "Quick views"; color: Theme.fg-subtle; font-size: 11px; vertical-alignment: bottom; }
                 }
                 MenuItem { label: "Mentions"; clicked => { root.quick-view("mentions"); } }
+                MenuItem { label: "Saved"; clicked => { root.quick-view("saved"); } }
                 MenuItem { label: "Followed threads"; clicked => { root.quick-view("followed"); } }
             }
         }

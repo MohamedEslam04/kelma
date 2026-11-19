@@ -1,7 +1,7 @@
 //! Converts the `render` rich-text model into the Markdown dialect Slint's `StyledText` parses,
 //! and pulls out the parts the bubble draws separately (reply quote, images).
 
-use render::{Block, Dir, RichText, Span};
+use render::{Block, Dir, RichBlock, RichDoc, RichList, RichTable, RichText, Span};
 
 /// What a message bubble needs to draw its content.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -67,6 +67,13 @@ fn spans_md(spans: &[Span]) -> String {
             }
             if s.style.strike {
                 t = format!("~~{t}~~");
+            }
+            if s.style.underline {
+                t = format!("<u>{t}</u>");
+            }
+            // A highlight has no background in `StyledText`: it shows as a text color instead.
+            if let Some(c) = s.style.color.as_ref().or(s.style.highlight.as_ref()) {
+                t = format!("<font color=\"{c}\">{t}</font>");
             }
             if let Some(url) = &s.link {
                 t = format!("[{t}]({})", link_target(url));
@@ -142,6 +149,158 @@ pub fn render_blocks(rt: &RichText) -> Rendered {
     r.plain = plain.join("\n").trim().to_string();
     r.rtl = first_dir == Some(Dir::Rtl);
     r
+}
+
+/// True when `doc` has something the plain model of [`render_blocks`] cannot show: headings,
+/// tables, rules, colors, highlights, underline or a code language.
+fn needs_rich(doc: &RichDoc) -> bool {
+    let styled = |spans: &[Span]| {
+        spans
+            .iter()
+            .any(|s| s.style.color.is_some() || s.style.highlight.is_some() || s.style.underline)
+    };
+    let list_styled = |l: &RichList| -> bool {
+        fn walk(l: &RichList, styled: &dyn Fn(&[Span]) -> bool) -> bool {
+            l.items
+                .iter()
+                .any(|i| styled(&i.spans) || i.children.iter().any(|c| walk(c, styled)))
+        }
+        walk(l, &styled)
+    };
+    doc.blocks.iter().any(|b| match b {
+        RichBlock::Heading { .. } | RichBlock::Table(_) | RichBlock::Rule => true,
+        RichBlock::Paragraph(spans) | RichBlock::Quote(spans) => styled(spans),
+        RichBlock::List(l) => list_styled(l),
+        RichBlock::Code { .. } | RichBlock::Image { .. } => false,
+    })
+}
+
+fn list_md(list: &RichList, depth: usize, out: &mut Vec<String>) {
+    for (i, item) in list.items.iter().enumerate() {
+        let bullet = if list.ordered {
+            format!("{}.", list.start.unwrap_or(1) as usize + i)
+        } else {
+            "-".to_string()
+        };
+        out.push(format!(
+            "{}{bullet} {}",
+            "  ".repeat(depth),
+            spans_md(&item.spans)
+        ));
+        for child in &item.children {
+            list_md(child, depth + 1, out);
+        }
+    }
+}
+
+/// A table as aligned monospace rows (`StyledText` has no tables): cells padded with no-break
+/// spaces, `│` between columns and a rule under the header.
+fn table_md(table: &RichTable) -> String {
+    let rows: Vec<Vec<String>> = table
+        .rows
+        .iter()
+        .map(|r| {
+            r.iter()
+                .map(|c| {
+                    spans_plain(&c.spans)
+                        .replace('\n', " ")
+                        .replace('`', "'")
+                        .trim()
+                        .to_string()
+                })
+                .collect()
+        })
+        .collect();
+    let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let widths: Vec<usize> = (0..cols)
+        .map(|c| {
+            rows.iter()
+                .filter_map(|r| r.get(c))
+                .map(|t| t.chars().count())
+                .max()
+                .unwrap_or(1)
+                .max(1)
+        })
+        .collect();
+    let line = |cells: &[String]| {
+        let parts: Vec<String> = (0..cols)
+            .map(|c| {
+                let text = cells.get(c).map_or("", String::as_str);
+                let pad = widths[c] - text.chars().count();
+                format!("{text}{}", "\u{a0}".repeat(pad))
+            })
+            .collect();
+        format!("`{}`", parts.join("\u{a0}│\u{a0}"))
+    };
+    let mut lines: Vec<String> = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        lines.push(line(row));
+        if i == 0
+            && table
+                .rows
+                .first()
+                .is_some_and(|r| r.iter().any(|c| c.header))
+        {
+            let rule: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
+            lines.push(format!("`{}`", rule.join("─┼─")));
+        }
+    }
+    lines.join("\\\n")
+}
+
+/// Replaces the markdown of a message that has headings, tables, colors or underline with one
+/// built from the richer [`RichDoc`] (a heading becomes a bold line, a table aligned monospace
+/// rows, a color a `<font>` span). `r.markdown` is left alone for a plain message.
+pub fn upgrade_rich(r: &mut Rendered, html: &str) {
+    let doc = render::parse_rich_html(html);
+    if !needs_rich(&doc) {
+        return;
+    }
+    let mut md: Vec<String> = Vec::new();
+    for (i, b) in doc.blocks.iter().enumerate() {
+        match b {
+            // The reply quote is drawn above the bubble.
+            RichBlock::Quote(_) if i == 0 && !r.quote_text.is_empty() => {}
+            RichBlock::Paragraph(spans) => md.push(spans_md(spans)),
+            RichBlock::Heading { spans, .. } => {
+                let bold: Vec<Span> = spans
+                    .iter()
+                    .map(|s| {
+                        let mut s = s.clone();
+                        s.style.bold = true;
+                        s
+                    })
+                    .collect();
+                md.push(spans_md(&bold));
+            }
+            RichBlock::Quote(spans) => md.push(
+                spans_md(spans)
+                    .split('\n')
+                    .map(|l| format!("> {l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            RichBlock::List(l) => {
+                let mut lines = Vec::new();
+                list_md(l, 0, &mut lines);
+                md.push(lines.join("\n"));
+            }
+            RichBlock::Code { text, .. } => md.push(
+                text.lines()
+                    .map(|l| format!("`{}`", l.replace('`', "'")))
+                    .collect::<Vec<_>>()
+                    .join("\\\n"),
+            ),
+            RichBlock::Table(t) => md.push(table_md(t)),
+            RichBlock::Rule => md.push("──────────".into()),
+            RichBlock::Image { .. } => {}
+        }
+    }
+    r.markdown = md
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
 }
 
 /// Emoji for a Teams reaction key (`like`, `heart`, or a codepoint key like `1f525_fire`).
@@ -234,6 +393,88 @@ mod tests {
     #[test]
     fn line_breaks_are_hard_breaks() {
         assert_eq!(r("<p>a<br>b</p>").markdown, "a\\\nb");
+    }
+
+    fn rich(html: &str) -> Rendered {
+        let mut x = r(html);
+        upgrade_rich(&mut x, html);
+        x
+    }
+
+    /// Slint must accept what we hand it, or the bubble shows the raw markers.
+    fn parses(md: &str) {
+        slint::StyledText::from_markdown(md).unwrap_or_else(|e| panic!("{md:?}: {e}"));
+    }
+
+    #[test]
+    fn plain_messages_keep_the_plain_markdown() {
+        let html = "<p>Hello <b>bold</b></p><ul><li>a</li></ul>";
+        assert_eq!(rich(html).markdown, r(html).markdown);
+    }
+
+    #[test]
+    fn headings_show_as_bold_lines() {
+        let x = rich("<h1>Release notes</h1><p>text</p><h3>Fixes</h3>");
+        assert_eq!(x.markdown, "**Release notes**\n\ntext\n\n**Fixes**");
+        parses(&x.markdown);
+    }
+
+    #[test]
+    fn colors_and_underline_become_font_and_u_tags() {
+        let x = rich(
+            r##"<p>a <span style="color:#ff0000">red</span> <u>under</u> <span style="background-color:#fdd472">hl</span></p>"##,
+        );
+        assert_eq!(
+            x.markdown,
+            "a <font color=\"#ff0000\">red</font> <u>under</u> <font color=\"#fdd472\">hl</font>"
+        );
+        parses(&x.markdown);
+    }
+
+    #[test]
+    fn a_color_nests_inside_bold_and_links() {
+        let x = rich(
+            r##"<p><a href="https://x.io"><b><span style="color:#00ff00">go</span></b></a></p>"##,
+        );
+        parses(&x.markdown);
+        assert!(
+            x.markdown.contains("<font color=\"#00ff00\">**go**</font>"),
+            "{:?}",
+            x.markdown
+        );
+    }
+
+    #[test]
+    fn a_table_becomes_aligned_rows_under_a_header_rule() {
+        let x = rich(
+            "<table><tbody><tr><th>Name</th><th>Qty</th></tr><tr><td>Tea</td><td>12</td></tr></tbody></table>",
+        );
+        parses(&x.markdown);
+        let lines: Vec<&str> = x.markdown.split("\\\n").collect();
+        assert_eq!(lines.len(), 3, "{:?}", x.markdown);
+        assert!(lines[0].contains("Name") && lines[0].contains('│'));
+        assert!(lines[1].contains('─'));
+        assert!(lines[2].contains("Tea"));
+        // Same width: the columns line up.
+        assert_eq!(lines[0].chars().count(), lines[2].chars().count());
+    }
+
+    #[test]
+    fn a_reply_quote_is_not_drawn_twice_and_images_stay_separate() {
+        let html = format!(
+            "{}<h2>Title</h2>",
+            render::reply_quote_html("1", "8:orgid:a", "Sara", 1, "original")
+        );
+        let x = rich(&html);
+        assert_eq!(x.quote_text, "original");
+        assert_eq!(x.markdown, "**Title**");
+    }
+
+    #[test]
+    fn nested_lists_and_rules_parse() {
+        let x = rich("<h2>x</h2><ul><li>a<ul><li>b</li></ul></li></ul><hr>");
+        parses(&x.markdown);
+        assert!(x.markdown.contains("- a\n  - b"), "{:?}", x.markdown);
     }
 
     #[test]

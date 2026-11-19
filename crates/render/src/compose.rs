@@ -41,6 +41,19 @@ pub fn reply_html(
     preview: &str,
     body_text: &str,
 ) -> String {
+    let mut out = reply_quote_html(message_id, author_mri, author_name, compose_ms, preview);
+    out.push_str(&text_to_teams_html(body_text));
+    out
+}
+
+/// The quote block of a reply, without a body (for a body that is already HTML).
+pub fn reply_quote_html(
+    message_id: &str,
+    author_mri: &str,
+    author_name: &str,
+    compose_ms: i64,
+    preview: &str,
+) -> String {
     let mut out = String::new();
     out.push_str(r#"<blockquote itemscope itemtype="http://schema.skype.com/Reply" itemid=""#);
     escape(message_id, &mut out);
@@ -53,7 +66,6 @@ pub fn reply_html(
     out.push_str(r#""></span><p itemprop="preview">"#);
     escape(preview, &mut out);
     out.push_str("</p></blockquote>");
-    out.push_str(&text_to_teams_html(body_text));
     out
 }
 
