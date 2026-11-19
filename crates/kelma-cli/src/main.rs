@@ -13,6 +13,7 @@
 //! kelma-cli calendar permissions --dry-run <role>  print the sharing writes without sending them
 //! kelma-cli audiences             mint a token for every audience (prints no tokens)
 //! kelma-cli people <query>        search people (prints the count first)
+//! kelma-cli search <query> [--kind messages|files|people|events] [--page N]  global search (read-only)
 //! kelma-cli presence [mri...]     presence of the given people, default yourself
 //! kelma-cli card [mri]            profile card of a person, default yourself
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
@@ -41,6 +42,7 @@ mod apps;
 mod chatx;
 mod devices;
 mod drive;
+mod search;
 mod store;
 mod team;
 mod web;
@@ -919,6 +921,13 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
+        Some("search") => {
+            let (client, cfg) = connect(&paths).await?;
+            let me = self_mri(&client, &cfg).await?;
+            let r = search::run(&client, &me, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("store") => {
             let (client, cfg) = connect(&paths).await?;
             let r = store::run(&client, &args[1..]).await;
@@ -1058,6 +1067,7 @@ async fn main() -> Result<()> {
                    pins <chat>\n\
                    audiences\n\
                    people <q>\n\
+                   search <q> [--kind messages|files|people|events] [--page N]\n\
                    presence [mri..]\n\
                    card [mri]\n\
                    horizons <conv>\n\
