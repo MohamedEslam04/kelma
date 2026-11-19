@@ -481,6 +481,9 @@ pub struct Attached {
     pub media_leg_id: Option<String>,
 }
 
+/// The link name [`parse_attach`] files the call's conversation controller under.
+pub const CONVERSATION_CONTROLLER: &str = "conversationController";
+
 /// Parses an attach answer.
 pub fn parse_attach(body: &Value) -> Result<Attached> {
     let inv = body
@@ -495,8 +498,21 @@ pub fn parse_attach(body: &Value) -> Result<Attached> {
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
     };
+    let mut links = parse_links(&inv["links"]);
+    // A 1:1 call's controls (mute) sit under its conversation controller, which only the attach
+    // answer names (`additionalActionResponses[].output.conversationController`); the push that
+    // repeats it reaches the invitation path, not the call's own callbacks.
+    let controller = body["additionalActionResponses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r.pointer("/output/conversationController")?.as_str())
+        .find(|u| u.starts_with("https://"));
+    if let Some(c) = controller {
+        links.0.insert(CONVERSATION_CONTROLLER.into(), c.into());
+    }
     Ok(Attached {
-        links: parse_links(&inv["links"]),
+        links,
         offer: text("/blob").map(|blob| SdpBlob {
             content_type: text("/contentType").unwrap_or_else(|| "application/sdp".into()),
             blob,

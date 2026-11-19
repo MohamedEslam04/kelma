@@ -495,8 +495,12 @@ pub fn adopt(
             ngc,
             s: session,
             links,
-            // A 1:1 call starts without a conversation controller; its conversation push names one.
-            controller: String::new(),
+            // An answered 1:1 call has its controller from the attach answer; a placed one may
+            // learn it from its conversation push.
+            controller: links
+                .get(calling::signaling::bodies::CONVERSATION_CONTROLLER)
+                .unwrap_or_default()
+                .to_owned(),
             media,
             ice: vec![],
             answered: true,

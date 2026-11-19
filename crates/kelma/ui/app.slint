@@ -82,6 +82,10 @@ export component AppWindow inherits Window {
     in property <string> banner-action;
 
     in-out property <string> view: "chat"; // chat | teams | activity | calendar | onedrive
+    // Any other page (an app, search, a notification) shrinks a running call to its floating bar.
+    changed view => {
+        if CallStore.phase != "" { CallStore.minimized = true; }
+    }
     in-out property <string> filter: "all";
     in property <[ChatRow]> chats-favorites;
     in property <[ChatRow]> chats-main;
@@ -416,6 +420,8 @@ export component AppWindow inherits Window {
                         rt := TouchArea {
                             mouse-cursor: pointer;
                             clicked => {
+                                // Leaving the call view keeps the call running in the small floating bar.
+                                if CallStore.phase != "" { CallStore.minimized = true; }
                                 root.view = item.key;
                                 if item.key == "activity" { root.activity-refresh(); }
                                 if item.key == "onedrive" { DriveStore.command("enter", ""); }
@@ -1290,7 +1296,7 @@ export component AppWindow inherits Window {
 
     // The call window (pre-join, meeting, call ended) covers the area right of the rail; while the meeting chat is open it is a floating bar.
     if root.login-state == "ready" && CallStore.phase != "" && !CallStore.minimized: CallWindow { x: AppsStore.rail-width; y: 48px; z: 45; width: root.width - AppsStore.rail-width; height: root.height - 48px; open-chat => { CallStore.minimized = true; root.view = "chat"; root.select-chat(CallStore.chat-id); } }
-    if root.login-state == "ready" && CallStore.phase != "" && CallStore.minimized: CallMini { x: root.width - self.width - 16px; y: root.height - self.height - 16px; z: 45; }
+    if root.login-state == "ready" && CallStore.phase != "" && CallStore.minimized: CallMini { x: clamp(root.width - self.width - 16px + CallStore.mini-dx, AppsStore.rail-width, root.width - self.width); y: clamp(root.height - self.height - 16px + CallStore.mini-dy, 48px, root.height - self.height); z: 45; }
 
     // The full-size picture viewer (plan chat 9.5), above everything else.
     if root.login-state == "ready" && MediaStore.viewer-open: ImageViewer {

@@ -372,7 +372,16 @@ export component CallMini inherits Rectangle {
     background: Theme.surface;
     drop-shadow-blur: 16px;
     drop-shadow-color: #00000080;
-    TouchArea { }
+    // Drag it anywhere in the window, like Teams' floating call.
+    TouchArea {
+        mouse-cursor: move;
+        moved => {
+            if self.pressed {
+                CallStore.mini-dx += self.mouse-x - self.pressed-x;
+                CallStore.mini-dy += self.mouse-y - self.pressed-y;
+            }
+        }
+    }
     HorizontalLayout {
         padding: 6px;
         padding-left: 12px;

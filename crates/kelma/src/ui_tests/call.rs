@@ -375,6 +375,24 @@ fn chat_shrinks_the_call_to_a_bar_and_opens_the_meeting_chat() {
 }
 
 #[test]
+fn the_rail_leaves_the_call_view_and_keeps_the_call_in_its_bar() {
+    let c = CallHarness::new();
+    c.connected();
+    let mut rail: Vec<ElementHandle> =
+        ElementHandle::find_by_element_id(&c.h.app, "AppWindow::ri").collect();
+    rail.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    // Chat is already the view under the call: clicking it still shows the chats.
+    rail[1].mock_single_click(PointerEventButton::Left);
+    assert!(cs(&c.h.app).get_minimized());
+    assert_eq!(c.h.app.get_view(), "chat");
+    click(&c.button("Back to call"));
+    rail[0].mock_single_click(PointerEventButton::Left);
+    assert!(cs(&c.h.app).get_minimized());
+    assert_eq!(c.h.app.get_view(), "activity");
+    assert_eq!(c.phase(), "connected", "the call keeps running");
+}
+
+#[test]
 fn a_second_join_while_in_a_call_is_refused() {
     let c = CallHarness::new();
     c.connected();
