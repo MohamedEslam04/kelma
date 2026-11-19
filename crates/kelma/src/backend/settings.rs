@@ -3,7 +3,7 @@
 //! Two halves:
 //! * [`Local`]: preferences kept on this machine (`appearance.json`, `general.json`,
 //!   `accessibility.json` from the `appearance` crate, plus `devices.json`, `files.json` and
-//!   `app-permissions.json` written here), the colour palette they give, and "Find in Settings".
+//!   `app-grants.json` written here, the file the web host reads), the colour palette they give, and "Find in Settings".
 //!   The UI thread owns it (`ui/settings.rs`).
 //! * [`SettingsCmd::Load`]: the engine reads the Teams side (notification and privacy settings,
 //!   blocked and priority people, organizations, profile, apps that ask for permissions). Reads
@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use teams_proto::mentions::{Mention, MentionKind};
 use teams_proto::tenants::Tenant;
 use teams_proto::user_settings::{
     self as us, Change, ContactList, Delivery, Kind, NotificationSettings, PlannedRequest,
@@ -29,15 +30,20 @@ use teams_proto::user_settings::{
 
 pub const DEVICES_FILE: &str = "devices.json";
 pub const FILES_FILE: &str = "files.json";
-pub const PERMISSIONS_FILE: &str = "app-permissions.json";
+/// The per-app grants. The same file the Store settings write and the web host reads
+/// (`appstore/webhost_open.rs`), in the `app_store::Grants::to_json` shape.
+pub const PERMISSIONS_FILE: &str = "app-grants.json";
+/// Where the first Settings build wrote the grants; read once when the new file does not exist.
+const LEGACY_PERMISSIONS_FILE: &str = "app-permissions.json";
 
 /// Where Office files open (X1.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OpenFilesIn {
-    #[default]
     Browser,
     Desktop,
+    /// kelma's own preview: how Office files opened before there was a choice.
+    #[default]
     Kelma,
 }
 
@@ -66,6 +72,14 @@ impl OpenFilesIn {
 #[serde(default)]
 pub struct FilesPrefs {
     pub open_office_in: OpenFilesIn,
+}
+
+/// The saved "open Office files in" choice, read from `files.json` in the config dir. The file is
+/// tiny, so the open path reads it each time instead of keeping a copy that could go stale.
+pub fn files_prefs() -> FilesPrefs {
+    session::Paths::new()
+        .map(|p| read_json(&p.config_dir.join(FILES_FILE)))
+        .unwrap_or_default()
 }
 
 fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
@@ -104,7 +118,12 @@ pub struct Local {
 impl Local {
     /// Loads everything from `dir` (the app config dir). Missing or broken files give defaults.
     pub fn load(dir: &Path) -> Local {
-        let perms: serde_json::Value = read_json(&dir.join(PERMISSIONS_FILE));
+        let grants_path = dir.join(PERMISSIONS_FILE);
+        let perms: serde_json::Value = if grants_path.exists() {
+            read_json(&grants_path)
+        } else {
+            read_json(&dir.join(LEGACY_PERMISSIONS_FILE))
+        };
         Local {
             dir: dir.to_path_buf(),
             appearance: AppearancePrefs::load_from(&dir.join(appearance::prefs::FILE_NAME)),
@@ -430,14 +449,14 @@ pub fn startup_rows(g: &GeneralPrefs) -> Vec<ToggleRow> {
         toggle(
             "open-in-background",
             "Open in the background",
-            "Start without showing the window (needs the tray icon, coming soon).",
+            "Start without showing the window, in the tray. Takes effect the next time kelma starts.",
             g.open_in_background,
             true,
         ),
         toggle(
             "keep-running",
             "Keep running when I close the window",
-            "kelma stays in the tray (needs the tray icon, coming soon).",
+            "Closing the window hides kelma in the tray. Off: closing quits kelma.",
             g.keep_running_on_close,
             true,
         ),
@@ -894,6 +913,143 @@ pub fn camera_rows(list: &[devices::Camera]) -> Vec<DeviceRow> {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Which events notify (chat plan 9.1).
+
+/// The notification settings last read from Teams (`userPersonalSettings`), shared with the code
+/// that raises desktop notifications. `None` until they were read; the routing then keeps
+/// kelma's behaviour from before the settings were read (every new message notifies).
+static NOTIFY_SETTINGS: std::sync::Mutex<Option<NotificationSettings>> =
+    std::sync::Mutex::new(None);
+
+/// Remembers the notification settings read from Teams.
+pub fn remember_notification_settings(n: Option<NotificationSettings>) {
+    *NOTIFY_SETTINGS.lock().unwrap_or_else(|e| e.into_inner()) = n;
+}
+
+fn remembered_notification_settings() -> Option<NotificationSettings> {
+    NOTIFY_SETTINGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// Which of the notification types a new message belongs to. Channel ids end in `@thread.tacv2`;
+/// everything else is a chat. A mention of `me` wins over the plain type; a mention that is not
+/// of me (another person) does not count.
+pub fn incoming_kind(
+    conversation_id: &str,
+    is_reply: bool,
+    mentions: &[Mention],
+    me: &str,
+) -> Kind {
+    let channel = conversation_id.ends_with("@thread.tacv2");
+    let of = |k: MentionKind| mentions.iter().any(|m| m.kind == k);
+    let me_mentioned = mentions
+        .iter()
+        .any(|m| m.kind == MentionKind::Person && m.mri == me);
+    if !channel {
+        return if me_mentioned {
+            Kind::ChatMention
+        } else if of(MentionKind::Everyone) {
+            Kind::ChatEveryoneMention
+        } else {
+            Kind::ChatMessage
+        };
+    }
+    if me_mentioned {
+        Kind::PersonMention
+    } else if of(MentionKind::Channel) {
+        Kind::ChannelMention
+    } else if of(MentionKind::Team) {
+        Kind::TeamMention
+    } else if of(MentionKind::Tag) {
+        Kind::TagMention
+    } else if is_reply {
+        Kind::ChannelReply
+    } else {
+        Kind::ChannelPost
+    }
+}
+
+/// Why a desktop notification is not shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hidden {
+    /// The tray's "Mute notifications" is on.
+    Muted,
+    /// "Pause notifications" has not ended yet.
+    Paused,
+    /// The type is set to "Only show in feed" or "Off".
+    Delivery,
+}
+
+/// What a desktop notification does for one event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Banner {
+    /// Show it; `preview` says whether it carries the message text ("Show message and content
+    /// previews").
+    Show {
+        preview: bool,
+    },
+    Hidden(Hidden),
+}
+
+/// Whether, and how, an event of `kind` pops a desktop notification. Pure.
+///
+/// In order: the tray mute; "pause notifications" while its end time is in the future; the
+/// type's own switch (banner and feed shows it; feed only and off do not; no value from Teams
+/// shows it, as before). The preview switch only changes the text.
+pub fn banner_decision(
+    settings: Option<&NotificationSettings>,
+    kind: Kind,
+    tray_muted: bool,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Banner {
+    if tray_muted {
+        return Banner::Hidden(Hidden::Muted);
+    }
+    let Some(n) = settings else {
+        return Banner::Show { preview: true };
+    };
+    let paused = n
+        .paused_until()
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .is_some_and(|until| until > now);
+    if paused {
+        return Banner::Hidden(Hidden::Paused);
+    }
+    match n.delivery(kind) {
+        Some(Delivery::FeedOnly | Delivery::Off) => Banner::Hidden(Hidden::Delivery),
+        Some(Delivery::BannerAndFeed) | None => Banner::Show {
+            preview: n
+                .to_value()
+                .pointer("/toastSettings/ShowPreviewInToasts")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true),
+        },
+    }
+}
+
+/// The routing for one incoming message with the settings read from Teams and the tray mute: the
+/// call `live.rs` makes. `None`: no banner; `Some(preview)`: show it, with the text or without.
+pub fn banner_for(m: &teams_proto::model::Message, me: &str) -> Option<bool> {
+    let kind = incoming_kind(&m.conversation_id, m.parent_id.is_some(), &m.mentions, me);
+    match banner_decision(
+        remembered_notification_settings().as_ref(),
+        kind,
+        crate::tray_wiring::notifications_muted(),
+        chrono::Utc::now(),
+    ) {
+        Banner::Show { preview } => Some(preview),
+        Banner::Hidden(_) => None,
+    }
+}
+
+/// The notification text: the message, or a neutral line when previews are off.
+pub fn banner_body(preview: bool, text: String) -> String {
+    if preview { text } else { "New message".into() }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Accounts and orgs.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -995,6 +1151,12 @@ pub struct ServerData {
 pub enum SettingsCmd {
     /// Read the Teams side of Settings and push it to the window.
     Load,
+    /// "Refresh license and restart": redeem the refresh token again (new access tokens and a new
+    /// skypetoken from the authz exchange, which is where Teams hands out the license-dependent
+    /// service addresses), save the rotated token, then tell the window to restart.
+    RefreshLicense,
+    /// The date or time format changed: draw the rows that show times again.
+    Redraw,
 }
 
 impl Engine {
@@ -1002,10 +1164,49 @@ impl Engine {
         match cmd {
             SettingsCmd::Load => {
                 let data = self.settings_read().await;
+                remember_notification_settings(data.notifications.clone());
                 self.ui.settings_server(data);
+            }
+            SettingsCmd::Redraw => self.mark(|d| {
+                d.chats = true;
+                d.messages = true;
+                d.teams = true;
+            }),
+            SettingsCmd::RefreshLicense => {
+                let r = self.refresh_license().await.map_err(|e| e.to_string());
+                self.ui.settings_license(r);
             }
         }
         Ok(())
+    }
+
+    /// The network part of "Refresh license and restart". Never runs offline (demo mode has no
+    /// credentials, and the tests have no engine).
+    async fn refresh_license(self: &Arc<Self>) -> anyhow::Result<()> {
+        if self.offline.load(Ordering::Relaxed) {
+            anyhow::bail!("Not available offline.");
+        }
+        self.client.refresh_all().await?;
+        let cfg = self.cfg.lock().unwrap().clone();
+        session::persist(&cfg, &self.client).await?;
+        Ok(())
+    }
+
+    /// Keeps the notification settings up to date for the desktop notifications: read at start
+    /// and every ten minutes (a read of the properties bag, no write).
+    pub(super) fn start_notify_prefs(self: &Arc<Self>) {
+        let e = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match us::properties(&e.client).await {
+                    Ok(p) => remember_notification_settings(Some(
+                        NotificationSettings::from_properties(&p),
+                    )),
+                    Err(err) => tracing::debug!(%err, "notification settings not read"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            }
+        });
     }
 
     fn display_name(&self, mri: &str) -> String {
@@ -1376,5 +1577,203 @@ mod tests {
         assert_eq!(rows[0].2, [(DevicePermission::Media, false)]);
         assert_eq!(rows[1].0, "app-b");
         assert_eq!(rows[1].2, [(DevicePermission::Geolocation, true)]);
+    }
+
+    // ---- which events notify (chat plan 9.1) ----
+
+    fn mention(kind: MentionKind, mri: &str) -> Mention {
+        Mention {
+            item_id: 0,
+            mri: mri.into(),
+            display_name: "x".into(),
+            kind,
+        }
+    }
+
+    const CHAT: &str = "19:abc@thread.v2";
+    const CHANNEL: &str = "19:abc@thread.tacv2";
+
+    #[test]
+    fn incoming_messages_map_to_the_notification_types() {
+        let me = "8:orgid:me";
+        let kind = |c, reply, m: &[Mention]| incoming_kind(c, reply, m, me);
+        assert_eq!(kind(CHAT, false, &[]), Kind::ChatMessage);
+        assert_eq!(kind("19:a_b@unq.gbl.spaces", false, &[]), Kind::ChatMessage);
+        assert_eq!(
+            kind(CHAT, false, &[mention(MentionKind::Person, me)]),
+            Kind::ChatMention
+        );
+        assert_eq!(
+            kind(
+                CHAT,
+                false,
+                &[mention(MentionKind::Person, "8:orgid:other")]
+            ),
+            Kind::ChatMessage,
+            "someone else's mention is a plain chat message"
+        );
+        assert_eq!(
+            kind(CHAT, false, &[mention(MentionKind::Everyone, CHAT)]),
+            Kind::ChatEveryoneMention
+        );
+        assert_eq!(kind(CHANNEL, false, &[]), Kind::ChannelPost);
+        assert_eq!(kind(CHANNEL, true, &[]), Kind::ChannelReply);
+        assert_eq!(
+            kind(CHANNEL, true, &[mention(MentionKind::Person, me)]),
+            Kind::PersonMention,
+            "a mention of me beats the reply type"
+        );
+        assert_eq!(
+            kind(CHANNEL, false, &[mention(MentionKind::Channel, CHANNEL)]),
+            Kind::ChannelMention
+        );
+        assert_eq!(
+            kind(CHANNEL, false, &[mention(MentionKind::Team, "19:t")]),
+            Kind::TeamMention
+        );
+        assert_eq!(
+            kind(CHANNEL, false, &[mention(MentionKind::Tag, "tag:1")]),
+            Kind::TagMention
+        );
+    }
+
+    fn prefs(json: serde_json::Value) -> NotificationSettings {
+        NotificationSettings::from_properties(&json!({ "userPersonalSettings": json.to_string() }))
+    }
+
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-11-19T12:00:00Z")
+            .unwrap()
+            .into()
+    }
+
+    fn shows(b: Banner) -> bool {
+        matches!(b, Banner::Show { .. })
+    }
+
+    #[test]
+    fn without_settings_every_event_notifies_as_before() {
+        for k in Kind::ALL {
+            assert_eq!(
+                banner_decision(None, k, false, now()),
+                Banner::Show { preview: true }
+            );
+        }
+        // A type Teams has no value for also notifies.
+        let n = prefs(json!({"toastSettings": {"Chat": false}}));
+        assert!(shows(banner_decision(Some(&n), Kind::Reply, false, now())));
+    }
+
+    #[test]
+    fn each_types_own_switch_decides() {
+        let n = prefs(json!({
+            "toastSettings": {"Chat": true, "Mention_Person": true, "Like": false,
+                              "Visible_ChannelNewMessage_v2": false},
+            "activityGenerationSettings": {"Chat": true, "Mention_Person": true, "Like": true,
+                                           "Visible_ChannelNewMessage_v2": false},
+        }));
+        let d = |k| banner_decision(Some(&n), k, false, now());
+        assert!(shows(d(Kind::ChatMessage)), "banner and feed");
+        assert!(shows(d(Kind::PersonMention)));
+        assert_eq!(d(Kind::Like), Banner::Hidden(Hidden::Delivery), "feed only");
+        assert_eq!(
+            d(Kind::ChannelPost),
+            Banner::Hidden(Hidden::Delivery),
+            "off"
+        );
+    }
+
+    #[test]
+    fn mute_and_pause_beat_every_type() {
+        let n = prefs(json!({
+            "toastSettings": {"Chat": true, "temporarilyPauseUntil": "2026-11-19T13:00:00.000Z"},
+            "activityGenerationSettings": {"Chat": true},
+        }));
+        assert_eq!(
+            banner_decision(Some(&n), Kind::ChatMessage, false, now()),
+            Banner::Hidden(Hidden::Paused)
+        );
+        // The pause is over one hour later.
+        let later = now() + chrono::Duration::hours(2);
+        assert!(shows(banner_decision(
+            Some(&n),
+            Kind::ChatMessage,
+            false,
+            later
+        )));
+        // The tray's mute wins, with or without settings.
+        assert_eq!(
+            banner_decision(Some(&n), Kind::ChatMessage, true, later),
+            Banner::Hidden(Hidden::Muted)
+        );
+        assert_eq!(
+            banner_decision(None, Kind::ChatMessage, true, now()),
+            Banner::Hidden(Hidden::Muted)
+        );
+        // An unreadable end time is not a pause.
+        let bad = prefs(json!({"toastSettings": {"temporarilyPauseUntil": "soon"}}));
+        assert!(shows(banner_decision(
+            Some(&bad),
+            Kind::ChatMessage,
+            false,
+            now()
+        )));
+    }
+
+    #[test]
+    fn the_preview_switch_only_changes_the_text() {
+        let off = prefs(json!({"toastSettings": {"ShowPreviewInToasts": false}}));
+        assert_eq!(
+            banner_decision(Some(&off), Kind::ChatMessage, false, now()),
+            Banner::Show { preview: false }
+        );
+        let on = prefs(json!({"toastSettings": {"ShowPreviewInToasts": true}}));
+        assert_eq!(
+            banner_decision(Some(&on), Kind::ChatMessage, false, now()),
+            Banner::Show { preview: true }
+        );
+        assert_eq!(banner_body(true, "hello".into()), "hello");
+        assert_eq!(banner_body(false, "hello".into()), "New message");
+    }
+
+    // ---- files and app grants (X1.6, X1.7) ----
+
+    #[test]
+    fn office_files_open_in_the_kelma_preview_until_another_choice_is_saved() {
+        assert_eq!(FilesPrefs::default().open_office_in, OpenFilesIn::Kelma);
+        let p: FilesPrefs = serde_json::from_str("{}").unwrap();
+        assert_eq!(p.open_office_in, OpenFilesIn::Kelma);
+        let p: FilesPrefs = serde_json::from_str(r#"{"open_office_in":"desktop"}"#).unwrap();
+        assert_eq!(p.open_office_in, OpenFilesIn::Desktop);
+    }
+
+    #[test]
+    fn settings_write_the_grants_file_the_web_host_reads() {
+        assert_eq!(PERMISSIONS_FILE, "app-grants.json");
+        let dir = tempfile_dir("grants");
+        let mut l = Local::load(&dir);
+        l.grants.set("app-1", DevicePermission::Media, true);
+        l.grants.set("app-1", DevicePermission::Geolocation, false);
+        l.save_grants().unwrap();
+        // What the web host does with the file.
+        let text = std::fs::read_to_string(dir.join("app-grants.json")).unwrap();
+        let g = Grants::from_json(&serde_json::from_str(&text).unwrap());
+        assert!(g.allowed("app-1", DevicePermission::Media));
+        assert!(!g.allowed("app-1", DevicePermission::Geolocation));
+        assert!(!g.allowed("app-2", DevicePermission::Media));
+        // And back into Settings.
+        assert_eq!(Local::load(&dir).grants, l.grants);
+    }
+
+    #[test]
+    fn grants_from_the_first_settings_build_are_still_read_once() {
+        let dir = tempfile_dir("grants-legacy");
+        let mut g = Grants::default();
+        g.set("old-app", DevicePermission::Media, true);
+        write_json(&dir.join("app-permissions.json"), &g.to_json()).unwrap();
+        assert_eq!(Local::load(&dir).grants, g);
+        // Once the new file exists it wins.
+        write_json(&dir.join("app-grants.json"), &Grants::default().to_json()).unwrap();
+        assert_eq!(Local::load(&dir).grants, Grants::default());
     }
 }

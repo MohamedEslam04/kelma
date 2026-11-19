@@ -373,7 +373,7 @@ pub fn when_label(ms: i64, now_ms: i64, off_ms: i64) -> String {
     };
     let days = (now.date_naive() - t.date_naive()).num_days();
     match days {
-        0 => t.format("%H:%M").to_string(),
+        0 => t.format(appearance::formats::time_pattern()).to_string(),
         1 => "Yesterday".into(),
         _ if t.year() == now.year() => t.format("%b %-d").to_string(),
         _ => t.format("%b %-d, %Y").to_string(),

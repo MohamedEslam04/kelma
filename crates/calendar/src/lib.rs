@@ -70,7 +70,7 @@ pub use teams_meet::{
 };
 pub use tz::{
     CustomZone, Transition, date_time_zone_ms, iana_name, local_to_utc_ms, parse_custom_zone,
-    utc_offset_min,
+    utc_offset_min, windows_name,
 };
 pub use write::{
     Rsvp, cancel_body, cancel_event, create_event, delete_event, forward_body, forward_event,

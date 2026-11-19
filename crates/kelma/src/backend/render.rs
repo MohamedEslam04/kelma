@@ -632,7 +632,7 @@ impl Engine {
                 time: Local
                     .timestamp_millis_opt(r.compose_ms)
                     .single()
-                    .map(|t| t.format("%H:%M").to_string())
+                    .map(|t| t.format(appearance::formats::time_pattern()).to_string())
                     .unwrap_or_default(),
                 day: if new_day {
                     day_label(r.compose_ms)
