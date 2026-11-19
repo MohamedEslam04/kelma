@@ -663,6 +663,8 @@ fn live_captions_show_the_speaker_and_the_text_at_the_bottom() {
     click(&c.with_role("Show live captions", AccessibleRole::Switch));
     click(&c.with_role("Show live captions", AccessibleRole::Switch));
     assert_eq!(c.fake.calls().last().unwrap(), "captions off");
+}
+
 const DM: &str =
     "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000002@unq.gbl.spaces";
 const BO: &str = "8:orgid:00000000-0000-0000-0000-000000000003";
