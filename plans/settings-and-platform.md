@@ -61,12 +61,14 @@ rest of Teams' settings plus app-wide platform work.
 
 ## Phase X3: platform
 
-- [ ] **X3.1 Web host component.** Impact 5, effort 4.
+- [x] **X3.1 Web host component.** Impact 5, effort 4.
   - **What.**
     - A shared Chromium-based host for the "W" apps, meeting and call media, Office web and the Copilot fallback.
     - One process on demand, with a separate profile.
     - Closed when idle so kelma's memory stays near its baseline.
   - **How.** ADR 0003 decides between CEF (cef-rs), a Chromium `--app` window, and wry/WebKitGTK (unsupported by Teams and ACS for media, but fine for some tabs).
+  - **Evidence.** 2026-11-19: `docs/adr/0003-web-host.md` picks a Chromium-family `--app` window driven over CDP. Crate `webhost`: `webhost::open(url, opts) -> WebWindow` (`eval`, `on_message` bridge, `events`, `set_theme`, `close`, `closed()`), profile `<data dir>/webhost-profile`, one browser process per window, stopped (process group) when the window closes or the `WebWindow` drops. 28 unit tests (browser discovery, launch args, `DevToolsActivePort`, profile lock, CDP client against a fake endpoint, shim). Live, no sign-in, throwaway profile: `cargo test -p webhost --test live -- --ignored` passed on Brave and Vivaldi (window opens, CDP attaches, bridge round-trips, page close resolves `closed()`, no browser left running); about 495 MB PSS for Brave with a trivial page, freed on close. `kelma-cli web <url> [--shim]`. Commits 3c5a382, c29f4cd.
+  - **Still open.** The UI does not call it yet; one process per window (no sharing); DevTools listens on 127.0.0.1 (`--remote-debugging-pipe` is the follow-up); popups (`window.open`, `authentication.authenticate`) are not tracked.
 - [x] **X3.2 Auth broker.** Impact 4, effort 2.
   - **What.** One place mints and caches tokens per audience: spaces, chatsvcagg, presence, Graph, substrate, sydney, outlook, SharePoint (per host), yammer, flow, tasks, onenote, ic3. Each has a wall-clock expiry and lazy refresh, and the rotated refresh token is persisted.
   - **How.** Extend `teams_proto::client` (Graph is already there) into a generic per-audience cache.
