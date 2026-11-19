@@ -8,6 +8,7 @@
 //! - [`resolve`]: pure functions that combine the two into what the UI should draw.
 
 pub mod accessibility;
+pub mod formats;
 pub mod general;
 pub mod portal;
 pub mod prefs;
