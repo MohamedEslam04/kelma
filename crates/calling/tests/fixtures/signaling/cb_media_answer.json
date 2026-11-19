@@ -1,0 +1,7 @@
+{
+  "mediaAnswer": {
+    "callModalities": ["Audio"],
+    "mediaContent": {"contentType": "application/sdp", "blob": "v=0\r\nmeeting-answer\r\n"},
+    "links": {"mediaAcknowledgement": "https://cc-example.cc.skype.com/cc/v1/active/7/mediaAck?i=2"}
+  }
+}
