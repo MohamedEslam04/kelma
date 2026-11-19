@@ -65,6 +65,7 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
     - Decline: `POST` to the invitation's rejection link.
     - Accept: the native stack (K3.2), or the browser or Chromium host until it lands.
   - **Done when.** A colleague's test call rings in kelma; Decline works; Accept opens the host connected to the call.
+  - **Evidence (2026-11-19, feat/calls-direct).** built; live check pending with tester. The incoming-call toast (`ui/call_incoming.slint`, `backend/call_direct.rs`): caller name and avatar, Accept with video (answers with audio, with a note), Accept with audio, Decline; a generated ringtone through cpal; a desktop notification when the window is not focused; closes when the caller cancels. Answering attaches, rings, accepts with the SDP answer and hands the call to the call manager. CLI: `kelma-cli call listen --ring-only|--decline|--accept-audio`. Tests use a fake backend; no live call was placed or answered. kelma adds no missed-call entry of its own: the service writes it to `48:calllogs`, which `calling::history` only reads.
 
 ## Phase K0: discovery (before K1.5 and K2)
 
@@ -81,6 +82,7 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
 - [ ] **K2.1 Outgoing calls.** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). Impact 5, effort 4.
   - **What.** The audio and video buttons in the chat header and the Call button in Calls start a call in the Chromium host (deep link `https://teams.microsoft.com/l/call/0/0?users=<upn>&withVideo=true`). Group calls work from group chats.
   - **Done when.** A 1:1 call with a colleague connects both ways.
+  - **Evidence (2026-11-19, feat/calls-direct).** built; live check pending with tester. Natively, not through the host: Call (audio) and a disabled Video button in a 1:1 chat's header, Call on the profile card, and the ringing screen ("Calling…", "Ringing…", Cancel; Declined / No answer / Call ended). On answer the call goes to the call manager. CLI: `kelma-cli call dial <mri|email>`. Tests use a fake backend; no live call was placed.
 - [ ] **K2.2 In-call controls** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). (verified in the host): mute, camera, share screen (Wayland portal), hold and resume, transfer (now, or consult first), add people, keypad, record and transcribe (policy), live captions, devices, video effects, chat during the call (the kelma chat window stays usable), convert to a meeting.
 - [ ] **K2.3 Device settings, natively:** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work).
   - speaker, microphone and camera selection through PipeWire
@@ -97,6 +99,7 @@ Part of the Teams parity plans (see `plans/README.md`). Format as in `plans/chat
   - **Incoming:** the trouter `callInvitation`, then `POST links.acceptance` with the accepted modalities. Decline goes to `rejection`; hang up to `end`.
   - **During the call:** hold, transfer and add participants through the links.
   - Impact 5, effort 4.
+  - **Evidence (2026-11-19, feat/calls-direct).** built; live check pending with tester. 1:1 incoming (attach, ringing, accept, decline) and outgoing (`place_call`, progress, acceptance, cancel) are wired to `crates/calling` in the GUI and in `kelma-cli call listen` / `call dial`; group calls, hold, transfer and adding people are not.
 - [ ] **K3.3 Emergency numbers.** DEFERRED: needs test tenant (calls are not allowed on the work account; native calling is owned by the parallel calling work). kelma is not a compliant emergency endpoint, so block 911/112/122 and similar, and tell the user to use a phone.
 
 ## Order

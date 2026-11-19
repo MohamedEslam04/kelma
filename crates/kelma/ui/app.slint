@@ -34,6 +34,8 @@ import { AppsHost } from "apps_host.slint";
 import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
 import { EngageView, EngageStore } from "engage.slint";
 import { CallWindow, CallMini, CallStore } from "call_window.slint";
+import { DirectCallStore, CallIncoming } from "call_incoming.slint";
+import { CallOutgoing, CallHeaderButtons } from "call_outgoing.slint";
 import { ComposerAppsOverlay } from "composer_apps.slint";
 
 export { Theme } from "theme.slint";
@@ -49,6 +51,7 @@ export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
 export { MediaStore } from "media.slint";
 export { EngageStore, EPost } from "engage.slint";
 export { CallStore, CallPerson } from "call_window.slint";
+export { DirectCallStore } from "call_incoming.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
@@ -640,6 +643,7 @@ export component AppWindow inherits Window {
                             }
                             if root.thread-root == "" && CallStore.is-meeting-chat(root.current-id): IconButton { icon: @image-url("icons/video.svg"); y: 14px; tooltip: "Join meeting"; clicked => { CallStore.command("join-chat", root.current-id); } }
                             Rectangle { horizontal-stretch: 1; }
+                            if root.thread-root == "" && !root.current-is-channel: CallHeaderButtons { chat-id: root.current-id; y: 14px; height: 32px; }
                             if root.thread-root == "": IconButton {
                                 icon: @image-url("icons/search.svg");
                                 y: 14px;
@@ -1234,4 +1238,7 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
     }
+    // 1:1 calls: the ringing screen of an outgoing call and the incoming-call toast, on top.
+    if root.login-state == "ready" && DirectCallStore.outgoing-open: CallOutgoing { z: 80; width: root.width; height: root.height; }
+    if root.login-state == "ready" && DirectCallStore.incoming-open: CallIncoming { z: 90; x: root.width - self.width - 20px; y: root.height - self.height - 20px; }
 }

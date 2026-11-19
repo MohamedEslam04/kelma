@@ -12,9 +12,6 @@
 //! Audio is the microphone through echo cancellation (AEC3, noise suppression, AGC2), fed by
 //! what the speaker plays, as `call join --mic --speaker` runs it.
 
-// Unit tests run the fake driver, so the live one is only built, not run, under `cfg(test)`.
-#![cfg_attr(test, allow(dead_code))]
-
 use super::{
     CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
     Link, Person, Phase, live_phase, recording_state,
@@ -108,7 +105,7 @@ impl Hub {
         self.ngc.lock().unwrap().clone()
     }
 
-    async fn ngc_client(&self) -> anyhow::Result<NgcClient> {
+    pub async fn ngc_client(&self) -> anyhow::Result<NgcClient> {
         if let Some(n) = self.ngc() {
             return Ok(n);
         }
@@ -219,7 +216,6 @@ impl Hub {
                     .and_then(meeting_from_csa_chat)
                     .context("This chat has no meeting to join.")
             }
-            JoinTarget::Target(t) => Ok(*t),
         }
     }
 }
@@ -876,6 +872,13 @@ impl Call {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_live_driver_is_native() {
+        // Built only: joining or listing devices would reach the network and the sound cards.
+        let d = LiveDriver::new(Hub::new(Client::offline("t").unwrap()));
+        assert!(d.native());
+    }
 
     #[test]
     fn the_calling_epid_is_derived_from_the_chat_one() {

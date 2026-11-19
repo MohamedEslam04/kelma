@@ -22,6 +22,19 @@
 //!     --unmute-at <s>      unmute us <s> seconds after the join
 //!     --hand-at <s>        raise our hand <s> seconds after the join
 //!     --lower-hand-at <s>  lower our hand <s> seconds after the join
+//! kelma-cli call listen [opts]  report what the calling trouter pushes; answers nothing by default
+//!     --secs <n>     listen this long (default: 120)
+//!     --dump <dir>   write every push as JSON to this directory (keep it out of the repo)
+//!     --ring-only    on the first incoming call: attach and report ringing, never answer
+//!     --decline      on the first incoming call: decline it
+//!     --accept-audio on the first incoming call: answer with audio, run it like `join` for
+//!                    --secs (default 30; --mic, --speaker, --out, --turn-tls ... apply), hang up
+//!     --accept       the same (video is not supported yet: answers with audio only)
+//!     --wait <n>     with an action: wait this long for the first call (default: 120)
+//! kelma-cli call dial <mri|email> [opts]  place a 1:1 audio call; prints ringing/connected/ended
+//!     --secs <n>       stay this long after it connects, then hang up (default: 30)
+//!     --ring-secs <n>  cancel when not answered within this (default: 60); Ctrl-C cancels too
+//!     (the audio, TURN and --dump flags of `join` apply)
 //! ```
 //!
 //! `join` prints the roster (count, display names, role, mute and hand flags) whenever it
@@ -36,12 +49,14 @@ use calling::audio::{
     spawn_capture_encoder, spawn_decoder_playback,
 };
 use calling::invitation::{CallEvent, NgcPush, classify};
-use calling::media::{MediaOptions, MediaSession, MediaState};
+use calling::media::{MediaEvents, MediaOptions, MediaSession, MediaState};
 use calling::ngc_trouter::{NgcEvent, NgcTrouter};
+use calling::relay::tls::TlsShim;
+use calling::signaling::bodies::reject_request;
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::roster::roster_snapshot;
 use calling::signaling::{CallSession, Controls, NgcClient, Roster};
-use calling::{Links, Modality, SdpBlob};
+use calling::{CallInvitation, IceServer, Links, Modality, Participant, SdpBlob};
 use serde_json::Value;
 use std::time::Duration;
 use teams_proto::Client;
@@ -146,7 +161,8 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
         Some("history") => history(client, &args[2..]).await?,
         Some("join") => join(client, &args[2..]).await?,
         Some("listen") => listen(client, &args[2..]).await?,
-        _ => bail!("usage: kelma-cli call <probe|meetings|history|join|listen>"),
+        Some("dial") => dial(client, &args[2..]).await?,
+        _ => bail!("usage: kelma-cli call <probe|meetings|history|join|listen|dial>"),
     }
     Ok(())
 }
@@ -286,40 +302,15 @@ fn dump(dir: Option<&str>, name: &str, sdp: &str) {
     }
 }
 
-async fn join(client: &Client, args: &[String]) -> Result<()> {
-    let dump_dir = opt(args, "--dump");
-    let secs: u64 = opt(args, "--secs")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(30);
-    let out = opt(args, "--out").unwrap_or("kelma-call.wav").to_owned();
-    let mut schedule = scheduled_controls(args)?;
-    let target = match opt(args, "--link") {
-        Some(link) => meeting_from_join_url(link).context("not a meeting link")?,
-        None => {
-            let mut ms = active_meetings(client).await?;
-            ms.sort_by_key(|(c, _)| c["lastJoinAt"].as_str().unwrap_or_default().to_owned());
-            let (chat, t) = ms.pop().context("no meeting with an active call")?;
-            println!(
-                "meeting: {} [{}]",
-                chat["title"].as_str().unwrap_or("?"),
-                chat["productContext"].as_str().unwrap_or("-")
-            );
-            t
-        }
-    };
-
-    let ngc = NgcClient::discover(client.clone()).await?;
-    let (trouter, mut pushes) = NgcTrouter::spawn(client.clone(), calling_epid(client.epid()));
-    let surl = tokio::time::timeout(Duration::from_secs(30), trouter.connected_surl())
-        .await
-        .ok()
-        .flatten()
-        .context("calling trouter did not register")?;
-    println!("calling trouter registered");
-
+/// TURN for one call: the relay over UDP (or over TLS with `--turn-tls`), or host candidates only
+/// when none answers. The TLS shim must outlive every media session built from the servers.
+async fn ice_servers(
+    client: &Client,
+    ngc: &NgcClient,
+    args: &[String],
+) -> (Vec<IceServer>, Option<TlsShim>) {
     let region = ngc.endpoints().region.clone();
-    // The TLS shim must outlive every media session built from `ice`.
-    let (ice, _turn_shim) = if args.iter().any(|a| a == "--turn-tls") {
+    let (ice, shim) = if args.iter().any(|a| a == "--turn-tls") {
         match calling::relay::resolve_tls_ice_servers(client, &region, opt(args, "--relay")).await {
             Ok((ice, _, shim)) => (ice, Some(shim)),
             Err(e) => {
@@ -339,52 +330,100 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     if let Some(url) = ice.first().and_then(|s| s.urls.first()) {
         println!("TURN: {url}");
     }
-    let media_opts = MediaOptions {
+    (ice, shim)
+}
+
+fn media_options(args: &[String]) -> MediaOptions {
+    MediaOptions {
         relay_only: args.iter().any(|a| a == "--relay-only"),
         ..MediaOptions::default()
-    };
-    let (mut media, events) = MediaSession::with_options(ice.clone(), media_opts.clone()).await?;
-    let mut state_rx = events.state;
-    let offer = media.create_offer().await?;
-    dump(dump_dir, "our-offer", &offer);
-    println!("offer ready ({} bytes)", offer.len());
+    }
+}
 
-    let me = client.self_mri().await?;
-    let s = CallSession::new(&surl, &me, "kelma");
+/// How a call runs once it is placed, joined or accepted (the flags `join` documents).
+struct CallOpts {
+    /// Stay this long after the call connects, then hang up.
+    secs: u64,
+    /// An outgoing call that is not answered within this is cancelled.
+    ring_timeout: Option<Duration>,
+    schedule: Vec<(Duration, Control)>,
+    dump_dir: Option<String>,
+    mic: bool,
+    speaker: bool,
+    no_aec: bool,
+    out: String,
+}
+
+impl CallOpts {
+    fn from_args(args: &[String], default_secs: u64) -> Result<Self> {
+        Ok(CallOpts {
+            secs: opt(args, "--secs")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(default_secs),
+            ring_timeout: None,
+            schedule: scheduled_controls(args)?,
+            dump_dir: opt(args, "--dump").map(str::to_owned),
+            mic: args.iter().any(|a| a == "--mic"),
+            speaker: args.iter().any(|a| a == "--speaker"),
+            no_aec: args.iter().any(|a| a == "--no-aec"),
+            out: opt(args, "--out").unwrap_or("kelma-call.wav").to_owned(),
+        })
+    }
+}
+
+/// One call in progress, as `run_call` drives it.
+struct LiveCall {
+    ngc: NgcClient,
+    s: CallSession,
+    /// The conversation controller (meetings and placed calls); an answered call has none.
+    controller: Option<String>,
+    links: Links,
+    media: MediaSession,
+    events: MediaEvents,
+    ice: Vec<IceServer>,
+    media_opts: MediaOptions,
+    /// Our offer's answer is applied (always true for an answered incoming call).
+    answered: bool,
+    /// Joined or answered; false while an outgoing call rings.
+    connected: bool,
+    roster: Roster,
+}
+
+/// Sends audio (a tone, or the microphone with `--mic`), plays or records what arrives, and
+/// follows the call's callbacks until `--secs` after it connected, the far end hangs up, the media
+/// fails, the ring times out or Ctrl-C; then hangs up unless the service ended the call.
+async fn run_call(
+    call: LiveCall,
+    pushes: &mut tokio::sync::mpsc::UnboundedReceiver<NgcEvent>,
+    o: CallOpts,
+) -> Result<()> {
+    let LiveCall {
+        ngc,
+        s,
+        controller,
+        mut links,
+        mut media,
+        events,
+        ice,
+        media_opts,
+        mut answered,
+        connected,
+        mut roster,
+    } = call;
+    let dump_dir = o.dump_dir.as_deref();
+    let mut schedule = o.schedule;
     let modalities = [Modality::Audio];
-    let conv = ngc
-        .join(&s, &target, &SdpBlob::ngc(offer), &modalities)
-        .await
-        .context("join")?;
-    println!("joined: controller {}", host(&conv.controller));
-    let joined_at = tokio::time::Instant::now();
+    let mut state_rx = events.state;
+    let started = tokio::time::Instant::now();
+    let mut connected_at = connected.then_some(started);
     let mut controls = Controls::default();
-    let mut roster = Roster::default();
-    if let Some(snapshot) = roster_snapshot(&conv.raw)
-        && roster.apply_snapshot(snapshot)
-    {
-        print_roster(&roster, &s.me.mri);
-    }
-    let mut links: Links = conv.links.clone();
-    let mut answered = false;
-    if let Some(ans) = find_blob(&conv.raw) {
-        let sdp = ans.decode()?;
-        dump(dump_dir, "service-answer-inline", &sdp);
-        match media.set_answer(&sdp).await {
-            Ok(()) => {
-                answered = true;
-                println!("media answer (inline in the join answer) applied");
-            }
-            Err(e) => println!("inline media answer refused: {e}"),
-        }
-    }
 
     // Audio: source -> encoder -> media; media -> decoder -> sink. The microphone goes through
     // the echo canceller, whose reference is what the speaker plays.
     let mut echo_reference = None;
-    let mut encoded = if args.iter().any(|a| a == "--mic") {
+    let mut encoded = if o.mic {
         let mic = Capture::start(None)?;
-        if args.iter().any(|a| a == "--no-aec") {
+        if o.no_aec {
             spawn_capture_encoder(mic)
         } else {
             let (mic, reference) = echo_cancelled(mic, AudioProcessor::new());
@@ -430,27 +469,40 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
         })
     };
     let mut forwarders = vec![forward(events.audio)];
-    let playback = if args.iter().any(|a| a == "--speaker") {
+    let playback = if o.speaker {
         let speaker = match echo_reference {
             Some(reference) => Playback::start_with_tap(None, move |f| reference.push(f))?,
             None => Playback::start(None)?,
         };
         spawn_decoder_playback(fwd_rx, speaker)
     } else {
-        spawn_decoder_playback(fwd_rx, WavSink::create(&out)?)
+        spawn_decoder_playback(fwd_rx, WavSink::create(&o.out)?)
     };
 
     let mut keep_alive: Option<tokio::task::JoinHandle<()>> = None;
-    let deadline = tokio::time::sleep(Duration::from_secs(secs));
-    tokio::pin!(deadline);
     let mut ended = false;
+    let far = started + Duration::from_secs(365 * 86_400);
     loop {
-        let next_control = joined_at + schedule.first().map(|(at, _)| *at).unwrap_or_default();
+        let deadline = connected_at.map(|t| t + Duration::from_secs(o.secs));
+        let ring_deadline = o.ring_timeout.map(|r| started + r);
+        let next_control =
+            connected_at.unwrap_or(far) + schedule.first().map(|(at, _)| *at).unwrap_or_default();
         tokio::select! {
-            _ = &mut deadline => break,
-            _ = tokio::time::sleep_until(next_control), if !schedule.is_empty() => {
+            _ = tokio::time::sleep_until(deadline.unwrap_or(far)), if deadline.is_some() => break,
+            _ = tokio::time::sleep_until(ring_deadline.unwrap_or(far)), if connected_at.is_none() && ring_deadline.is_some() => {
+                println!("no answer within {} s; cancelling", o.ring_timeout.unwrap_or_default().as_secs());
+                break;
+            }
+            _ = tokio::signal::ctrl_c() => {
+                println!("interrupted");
+                break;
+            }
+            _ = tokio::time::sleep_until(next_control), if connected_at.is_some() && !schedule.is_empty() => {
                 let (_, control) = schedule.remove(0);
-                let controller = conv.controller.as_str();
+                let Some(controller) = controller.as_deref() else {
+                    println!("control {control:?} skipped: this call has no conversation controller");
+                    continue;
+                };
                 let result = match control {
                     Control::Mute | Control::Unmute => {
                         let muted = control == Control::Mute;
@@ -489,7 +541,12 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                 match classify(&p.url, &p.body) {
                     NgcPush::Call { event, .. } => match event {
                         CallEvent::Accepted { answer, links: l, keep_alive_interval_s, .. } => {
-                            println!("accepted");
+                            if connected_at.is_none() {
+                                println!("connected");
+                                connected_at = Some(tokio::time::Instant::now());
+                            } else {
+                                println!("accepted");
+                            }
                             links.0.extend(l.0);
                             if let (Some(a), false) = (answer, answered) {
                                 let sdp = a.decode().unwrap_or_else(|e| { println!("undecodable SDP: {e}"); String::new() });
@@ -560,7 +617,9 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                                                 println!("renegotiation answered");
                                                 // Teams ignored the first state update after admission
                                                 // (mautrix-teams), so publish the mute state again.
-                                                if let Err(e) = ngc.repeat_muted(&s, &links, &conv.controller, &mut controls).await {
+                                                if let Some(controller) = controller.as_deref()
+                                                    && let Err(e) = ngc.repeat_muted(&s, &links, controller, &mut controls).await
+                                                {
                                                     println!("mute state not repeated: {e}");
                                                 }
                                             }
@@ -572,7 +631,12 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
                             }
                             links.0.extend(l.0);
                         }
-                        CallEvent::Rejected(r) | CallEvent::Ended(r) => {
+                        CallEvent::Rejected(r) => {
+                            println!("rejected by the far end: {r:?}");
+                            ended = true;
+                            break;
+                        }
+                        CallEvent::Ended(r) => {
                             println!("ended by service: {r:?}");
                             ended = true;
                             break;
@@ -605,12 +669,14 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
     if !ended {
         let r = if links.get("leave").is_some() || links.get("callLeg").is_some() {
             ngc.hang_up(&s, &links).await
+        } else if let Some(controller) = controller.as_deref() {
+            ngc.leave_controller(&s, controller).await
         } else {
-            ngc.leave_controller(&s, &conv.controller).await
+            Err(calling::Error::Protocol("no link to hang up on".into()))
         };
         match r {
-            Ok(()) => println!("left the meeting"),
-            Err(e) => println!("leave failed: {e}"),
+            Ok(()) => println!("hung up"),
+            Err(e) => println!("hang-up failed: {e}"),
         }
     }
     if let Some(k) = keep_alive {
@@ -636,32 +702,210 @@ async fn join(client: &Client, args: &[String]) -> Result<()> {
         "audio packets: sent {sent}, received {}",
         received.load(std::sync::atomic::Ordering::Relaxed)
     );
-    if !args.iter().any(|a| a == "--speaker") {
-        println!("received audio written to {out}");
+    if !o.speaker {
+        println!("received audio written to {}", o.out);
     }
+    Ok(())
+}
+
+/// Spawns the calling trouter and waits (30 s at most) for its surl.
+async fn calling_trouter(
+    client: &Client,
+) -> Result<(
+    NgcTrouter,
+    tokio::sync::mpsc::UnboundedReceiver<NgcEvent>,
+    String,
+)> {
+    let (trouter, pushes) = NgcTrouter::spawn(client.clone(), calling_epid(client.epid()));
+    let surl = tokio::time::timeout(Duration::from_secs(30), trouter.connected_surl())
+        .await
+        .ok()
+        .flatten()
+        .context("calling trouter did not register")?;
+    println!("calling trouter registered");
+    Ok((trouter, pushes, surl))
+}
+
+async fn join(client: &Client, args: &[String]) -> Result<()> {
+    let o = CallOpts::from_args(args, 30)?;
+    let dump_dir = o.dump_dir.clone();
+    let target = match opt(args, "--link") {
+        Some(link) => meeting_from_join_url(link).context("not a meeting link")?,
+        None => {
+            let mut ms = active_meetings(client).await?;
+            ms.sort_by_key(|(c, _)| c["lastJoinAt"].as_str().unwrap_or_default().to_owned());
+            let (chat, t) = ms.pop().context("no meeting with an active call")?;
+            println!(
+                "meeting: {} [{}]",
+                chat["title"].as_str().unwrap_or("?"),
+                chat["productContext"].as_str().unwrap_or("-")
+            );
+            t
+        }
+    };
+
+    let ngc = NgcClient::discover(client.clone()).await?;
+    let (trouter, mut pushes, surl) = calling_trouter(client).await?;
+    // The TLS shim must outlive every media session built from `ice`.
+    let (ice, _turn_shim) = ice_servers(client, &ngc, args).await;
+    let media_opts = media_options(args);
+    let (media, events) = MediaSession::with_options(ice.clone(), media_opts.clone()).await?;
+    let offer = media.create_offer().await?;
+    dump(dump_dir.as_deref(), "our-offer", &offer);
+    println!("offer ready ({} bytes)", offer.len());
+
+    let me = client.self_mri().await?;
+    let s = CallSession::new(&surl, &me, "kelma");
+    let conv = ngc
+        .join(&s, &target, &SdpBlob::ngc(offer), &[Modality::Audio])
+        .await
+        .context("join")?;
+    println!("joined: controller {}", host(&conv.controller));
+    let mut roster = Roster::default();
+    if let Some(snapshot) = roster_snapshot(&conv.raw)
+        && roster.apply_snapshot(snapshot)
+    {
+        print_roster(&roster, &s.me.mri);
+    }
+    let answered = apply_inline_answer(&media, &conv.raw, dump_dir.as_deref()).await;
+    let call = LiveCall {
+        ngc,
+        s,
+        controller: Some(conv.controller.clone()),
+        links: conv.links.clone(),
+        media,
+        events,
+        ice,
+        media_opts,
+        answered,
+        connected: true,
+        roster,
+    };
+    run_call(call, &mut pushes, o).await?;
     drop(trouter);
     Ok(())
 }
 
+/// Applies a media answer the service sent inline in a join or place answer. True when applied.
+async fn apply_inline_answer(media: &MediaSession, raw: &Value, dump_dir: Option<&str>) -> bool {
+    let Some(ans) = find_blob(raw) else {
+        return false;
+    };
+    let sdp = match ans.decode() {
+        Ok(sdp) => sdp,
+        Err(e) => {
+            println!("undecodable inline SDP: {e}");
+            return false;
+        }
+    };
+    dump(dump_dir, "service-answer-inline", &sdp);
+    match media.set_answer(&sdp).await {
+        Ok(()) => {
+            println!("media answer (inline in the answer) applied");
+            true
+        }
+        Err(e) => {
+            println!("inline media answer refused: {e}");
+            false
+        }
+    }
+}
+
+/// What `call listen` does with the first incoming call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListenAction {
+    /// Report pushes only (the default): nothing is answered.
+    Report,
+    /// Attach and report ringing, then keep reporting; never answer.
+    RingOnly,
+    Decline,
+    /// Answer with audio (`--accept` and `--accept-audio`: video is not supported yet).
+    Accept,
+}
+
+fn listen_action(args: &[String]) -> Result<ListenAction> {
+    let mut picked: Vec<ListenAction> = args
+        .iter()
+        .filter_map(|a| match a.as_str() {
+            "--ring-only" => Some(ListenAction::RingOnly),
+            "--decline" => Some(ListenAction::Decline),
+            "--accept" | "--accept-audio" => Some(ListenAction::Accept),
+            _ => None,
+        })
+        .collect();
+    picked.dedup();
+    match picked.as_slice() {
+        [] => Ok(ListenAction::Report),
+        [one] => Ok(*one),
+        _ => bail!("pick one of --accept, --accept-audio, --decline and --ring-only"),
+    }
+}
+
+/// Declines an invitation: on its own `reject`/`rejection` link, else on the leg `attach` hands
+/// back. UNVERIFIED live.
+async fn decline(ngc: &NgcClient, s: &CallSession, inv: &CallInvitation) -> calling::Result<()> {
+    if reject_request(&inv.links).is_some() {
+        return ngc.reject(s, &inv.links).await;
+    }
+    let links = ngc.attach(s, inv).await?;
+    ngc.reject(s, &links).await
+}
+
+fn invitation_line(n: u32, inv: &CallInvitation) -> String {
+    format!(
+        "#{n} incoming call: modalities {:?}, caller name {}, offer {}, links [{}]",
+        inv.modalities,
+        if inv.from.display_name.is_some() {
+            "present"
+        } else {
+            "missing"
+        },
+        if inv.offer.is_some() {
+            "present"
+        } else {
+            "missing"
+        },
+        inv.links.0.keys().cloned().collect::<Vec<_>>().join(", "),
+    )
+}
+
 /// `call listen [--secs N] [--dump DIR]`: registers the calling trouter and reports what it pushes
-/// (incoming call invitations and call callbacks) without answering anything. The ringing call is
-/// left to the other clients; nothing is accepted, rejected or redirected from here.
+/// (incoming call invitations and call callbacks) without answering anything.
+///
+/// With `--ring-only`, `--decline`, `--accept` or `--accept-audio` it acts on the first invitation
+/// that arrives within `--wait` seconds (default 120): `--ring-only` attaches and reports ringing
+/// and keeps reporting; `--decline` declines; `--accept[-audio]` attaches, rings, answers the
+/// caller's offer with audio and runs the call like `join` for `--secs` (default 30, the audio
+/// flags of `join` apply), then hangs up.
 async fn listen(client: &Client, args: &[String]) -> Result<()> {
-    let secs: u64 = opt(args, "--secs")
-        .map(str::parse)
-        .transpose()?
-        .unwrap_or(120);
+    let action = listen_action(args)?;
+    let secs: u64 = if action == ListenAction::Report {
+        opt(args, "--secs")
+            .map(str::parse)
+            .transpose()?
+            .unwrap_or(120)
+    } else {
+        opt(args, "--wait")
+            .map(str::parse)
+            .transpose()?
+            .unwrap_or(120)
+    };
     let dump = opt(args, "--dump").map(std::path::PathBuf::from);
     if let Some(d) = &dump {
         std::fs::create_dir_all(d)?;
     }
+    if action == ListenAction::Accept && args.iter().any(|a| a == "--accept") {
+        println!("note: video is not supported yet; --accept answers with audio only");
+    }
     let (trouter, mut rx) = NgcTrouter::spawn(client.clone(), calling_epid(client.epid()));
     let mut n = 0u32;
+    let mut surl = None;
     let run = tokio::time::timeout(Duration::from_secs(secs), async {
         while let Some(ev) = rx.recv().await {
             match ev {
-                NgcEvent::Connected { surl } => {
-                    println!("listening on {} for {secs} s", host(&surl))
+                NgcEvent::Connected { surl: u } => {
+                    println!("listening on {} for {secs} s", host(&u));
+                    surl = Some(u);
                 }
                 NgcEvent::Disconnected(r) => println!("calling trouter: disconnected: {r}"),
                 NgcEvent::Push(p) => {
@@ -672,25 +916,236 @@ async fn listen(client: &Client, args: &[String]) -> Result<()> {
                         std::fs::write(&f, serde_json::to_vec_pretty(&doc)?)?;
                     }
                     match classify(&p.url, &p.body) {
-                        NgcPush::Invitation(inv) => println!(
-                            "#{n} incoming call: modalities {:?}, caller name {}, offer {}, links [{}]",
-                            inv.modalities,
-                            if inv.from.display_name.is_some() { "present" } else { "missing" },
-                            if inv.offer.is_some() { "present" } else { "missing" },
-                            inv.links.0.keys().cloned().collect::<Vec<_>>().join(", "),
-                        ),
+                        NgcPush::Invitation(inv) => {
+                            println!("{}", invitation_line(n, &inv));
+                            if action != ListenAction::Report {
+                                return anyhow::Ok(Some(inv));
+                            }
+                        }
                         NgcPush::Call { event, .. } => println!("#{n} call callback: {event:?}"),
                         NgcPush::Other { url, .. } => println!("#{n} other push: {}", host(&url)),
                     }
                 }
             }
         }
-        anyhow::Ok(())
+        anyhow::Ok(None)
     })
     .await;
-    if run.is_err() {
-        println!("stopped after {secs} s, {n} push(es)");
+    let inv = match run {
+        Ok(r) => r?,
+        Err(_) => {
+            println!("stopped after {secs} s, {n} push(es)");
+            None
+        }
+    };
+    if let (Some(inv), Some(surl)) = (inv, surl) {
+        answer_invitation(client, args, action, &inv, &surl, &mut rx).await?;
     }
+    drop(trouter);
+    Ok(())
+}
+
+/// Prints the calling pushes that arrive within `secs` (or until the call ends or Ctrl-C).
+async fn report_pushes(rx: &mut tokio::sync::mpsc::UnboundedReceiver<NgcEvent>, secs: u64) {
+    let _ = tokio::time::timeout(Duration::from_secs(secs), async {
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => { println!("interrupted"); return; }
+                ev = rx.recv() => {
+                    let Some(ev) = ev else { return };
+                    let NgcEvent::Push(p) = ev else {
+                        println!("calling trouter: {ev:?}");
+                        continue;
+                    };
+                    match classify(&p.url, &p.body) {
+                        NgcPush::Call { event, .. } => {
+                            let end = matches!(event, CallEvent::Ended(_) | CallEvent::Rejected(_));
+                            println!("call callback: {event:?}");
+                            if end { return; }
+                        }
+                        NgcPush::Invitation(inv) => println!("{}", invitation_line(0, &inv)),
+                        NgcPush::Other { url, body } => {
+                            println!("other push: {} keys [{}]", host(&url), body.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default());
+                        }
+                    }
+                }
+            }
+        }
+    })
+    .await;
+}
+
+async fn answer_invitation(
+    client: &Client,
+    args: &[String],
+    action: ListenAction,
+    inv: &CallInvitation,
+    surl: &str,
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<NgcEvent>,
+) -> Result<()> {
+    let ngc = NgcClient::discover(client.clone())
+        .await
+        .context("authz (calling endpoints)")?;
+    let me = client.self_mri().await?;
+    let s = CallSession::for_invitation(surl, &me, "kelma", inv);
+    match action {
+        ListenAction::Report => {}
+        ListenAction::RingOnly => {
+            let links = if inv.links.get("progress").is_some() {
+                inv.links.clone()
+            } else {
+                let l = ngc.attach(&s, inv).await.context("attach")?;
+                println!(
+                    "attached; leg links [{}]",
+                    l.0.keys().cloned().collect::<Vec<_>>().join(", ")
+                );
+                l
+            };
+            match ngc.send_ringing(&s, &links).await {
+                Ok(()) => println!("ringing reported; not answering (Ctrl-C to stop)"),
+                Err(e) => println!("ringing not reported: {e}"),
+            }
+            let secs = opt(args, "--secs")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60);
+            report_pushes(rx, secs).await;
+        }
+        ListenAction::Decline => {
+            match decline(&ngc, &s, inv).await {
+                Ok(()) => println!("declined"),
+                Err(e) => println!("decline failed: {e}"),
+            }
+            report_pushes(rx, 5).await;
+        }
+        ListenAction::Accept => {
+            let o = CallOpts::from_args(args, 30)?;
+            let offer = inv
+                .offer
+                .as_ref()
+                .context("the invitation carries no media offer")?
+                .decode()?;
+            dump(o.dump_dir.as_deref(), "caller-offer", &offer);
+            let (ice, _turn_shim) = ice_servers(client, &ngc, args).await;
+            let media_opts = media_options(args);
+            let (media, events) =
+                MediaSession::with_options(ice.clone(), media_opts.clone()).await?;
+            let answer = media.accept_offer(&offer).await?;
+            dump(o.dump_dir.as_deref(), "our-answer", &answer);
+            let links = ngc
+                .accept_invitation(&s, inv, &[Modality::Audio], &SdpBlob::ngc(answer))
+                .await
+                .context("accept")?;
+            println!(
+                "accepted; links [{}]",
+                links.0.keys().cloned().collect::<Vec<_>>().join(", ")
+            );
+            let call = LiveCall {
+                ngc,
+                s,
+                controller: calling::invitation::conversation_controller(inv).map(str::to_owned),
+                links,
+                media,
+                events,
+                ice,
+                media_opts,
+                answered: true,
+                connected: true,
+                roster: Roster::default(),
+            };
+            run_call(call, rx, o).await?;
+        }
+    }
+    Ok(())
+}
+
+/// The MRI and name to call: an MRI as given, or the directory entry whose email is `target`.
+async fn resolve_callee(client: &Client, target: &str) -> Result<(String, Option<String>)> {
+    if is_mri(target) {
+        return Ok((target.to_owned(), None));
+    }
+    if !target.contains('@') {
+        bail!("call dial takes an MRI (8:orgid:<oid>) or an email address");
+    }
+    let me = client.self_mri().await?;
+    let people = client.search_people(&me, target).await?;
+    let p = people
+        .into_iter()
+        .find(|p| {
+            p.email
+                .as_deref()
+                .is_some_and(|e| e.eq_ignore_ascii_case(target))
+        })
+        .with_context(|| format!("nobody in the directory has the email {target}"))?;
+    Ok((p.mri, Some(p.display_name)))
+}
+
+/// `8:orgid:<oid>`, `8:live:...`, `28:<bot>`: a type number, a colon, then the id.
+fn is_mri(s: &str) -> bool {
+    s.split_once(':').is_some_and(|(t, rest)| {
+        !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) && !rest.is_empty()
+    })
+}
+
+/// `call dial <mri|email> [--secs N] [--ring-secs N]`: places an outgoing 1:1 audio call, prints
+/// its progress (ringing, connected, ended), runs it like `join` for `--secs` after it connects
+/// (the audio flags of `join` apply), then hangs up. An unanswered call is cancelled after
+/// `--ring-secs` (default 60); Ctrl-C cancels or hangs up at any time. UNVERIFIED live.
+async fn dial(client: &Client, args: &[String]) -> Result<()> {
+    let target = args
+        .first()
+        .filter(|a| !a.starts_with("--"))
+        .context("usage: kelma-cli call dial <mri|email> [--secs N] [--ring-secs N]")?;
+    let mut o = CallOpts::from_args(args, 30)?;
+    o.ring_timeout = Some(Duration::from_secs(
+        opt(args, "--ring-secs")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(60),
+    ));
+    let (mri, name) = resolve_callee(client, target).await?;
+    println!("calling {}", name.as_deref().unwrap_or("the given MRI"));
+    let ngc = NgcClient::discover(client.clone()).await?;
+    let (trouter, mut pushes, surl) = calling_trouter(client).await?;
+    let (ice, _turn_shim) = ice_servers(client, &ngc, args).await;
+    let media_opts = media_options(args);
+    let (media, events) = MediaSession::with_options(ice.clone(), media_opts.clone()).await?;
+    let offer = media.create_offer().await?;
+    dump(o.dump_dir.as_deref(), "our-offer", &offer);
+    let me = client.self_mri().await?;
+    let s = CallSession::new(&surl, &me, "kelma");
+    let callee = Participant {
+        mri,
+        display_name: name,
+        ..Participant::default()
+    };
+    let conv = ngc
+        .place_call(
+            &s,
+            &[callee],
+            None,
+            &SdpBlob::ngc(offer),
+            &[Modality::Audio],
+        )
+        .await
+        .context("place call")?;
+    println!(
+        "placed: controller {}; waiting for an answer (Ctrl-C cancels)",
+        host(&conv.controller)
+    );
+    let answered = apply_inline_answer(&media, &conv.raw, o.dump_dir.as_deref()).await;
+    let call = LiveCall {
+        ngc,
+        s,
+        controller: Some(conv.controller.clone()),
+        links: conv.links.clone(),
+        media,
+        events,
+        ice,
+        media_opts,
+        answered,
+        connected: false,
+        roster: Roster::default(),
+    };
+    run_call(call, &mut pushes, o).await?;
     drop(trouter);
     Ok(())
 }
@@ -742,6 +1197,52 @@ mod tests {
         assert!(scheduled_controls(&args(&["--mute-at"])).is_err());
         assert!(scheduled_controls(&args(&["--hand-at", "soon"])).is_err());
         assert!(scheduled_controls(&args(&["--unmute-at", "-1"])).is_err());
+    }
+
+    #[test]
+    fn listen_takes_at_most_one_action() {
+        assert_eq!(
+            listen_action(&args(&["--secs", "60"])).unwrap(),
+            ListenAction::Report
+        );
+        assert_eq!(
+            listen_action(&args(&["--ring-only"])).unwrap(),
+            ListenAction::RingOnly
+        );
+        assert_eq!(
+            listen_action(&args(&["--decline"])).unwrap(),
+            ListenAction::Decline
+        );
+        assert_eq!(
+            listen_action(&args(&["--accept"])).unwrap(),
+            ListenAction::Accept
+        );
+        assert_eq!(
+            listen_action(&args(&["--accept-audio", "--secs", "20"])).unwrap(),
+            ListenAction::Accept
+        );
+        assert!(listen_action(&args(&["--accept", "--decline"])).is_err());
+    }
+
+    #[test]
+    fn a_callee_is_an_mri_or_an_email() {
+        assert!(is_mri("8:orgid:00000000-0000-0000-0000-000000000001"));
+        assert!(is_mri("8:live:.cid.abc"));
+        assert!(is_mri("28:bot"));
+        assert!(!is_mri("ada@example.com"));
+        assert!(!is_mri("orgid:x"));
+        assert!(!is_mri("8:"));
+    }
+
+    #[test]
+    fn call_options_default_to_thirty_seconds_and_a_tone() {
+        let o = CallOpts::from_args(&args(&["8:orgid:x"]), 30).unwrap();
+        assert_eq!(o.secs, 30);
+        assert!(!o.mic && !o.speaker && o.ring_timeout.is_none());
+        assert_eq!(o.out, "kelma-call.wav");
+        let o = CallOpts::from_args(&args(&["--secs", "5", "--mic", "--speaker"]), 30).unwrap();
+        assert_eq!(o.secs, 5);
+        assert!(o.mic && o.speaker);
     }
 
     use calling::history::{CallDirection, CallOutcome, CallRecord};

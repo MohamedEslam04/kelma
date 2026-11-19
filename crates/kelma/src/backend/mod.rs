@@ -20,6 +20,8 @@ pub(crate) mod appstore;
 mod attach;
 mod cal;
 pub(crate) mod call;
+#[cfg(feature = "calls")]
+pub(crate) mod call_direct;
 mod channels;
 pub(crate) mod composer_apps;
 mod drafts;
@@ -57,6 +59,8 @@ pub use cal::{
     SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, share_roles, slot_for_pick,
     slot_minutes,
 };
+#[cfg(feature = "calls")]
+pub use call_direct::CallCmd as DirectCallCmd;
 pub use channels::ChannelCmd;
 pub use composer_apps::ComposerAppsCmd;
 pub use drive::DriveCmd;
@@ -153,6 +157,9 @@ pub enum Cmd {
     /// A file dropped on the window.
     AddFile(std::path::PathBuf),
     RemoveAttachment(usize),
+    /// 1:1 calls: the incoming toast and the outgoing ringing screen.
+    #[cfg(feature = "calls")]
+    DirectCall(DirectCallCmd),
 }
 
 #[derive(Default)]
@@ -241,6 +248,9 @@ pub struct Engine {
     apps: Mutex<appstore::Apps>,
     /// The active call or meeting and the calling signalling.
     pub(crate) calls: call::CallManager,
+    /// 1:1 calls: the incoming toast and the outgoing ringing screen.
+    #[cfg(feature = "calls")]
+    direct_calls: call_direct::Calls,
     composer_apps: Mutex<composer_apps::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
@@ -303,6 +313,8 @@ impl Engine {
             channels: Mutex::new(channels::State::default()),
             media: Mutex::new(media::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
+            #[cfg(feature = "calls")]
+            direct_calls: call_direct::Calls::default(),
             composer_apps: Mutex::new(composer_apps::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
@@ -327,6 +339,8 @@ impl Engine {
         self.push_prefs();
         self.start_people();
         self.start_apps();
+        #[cfg(feature = "calls")]
+        self.start_calls_demo();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
     }
@@ -338,6 +352,8 @@ impl Engine {
         self.start_apps();
         self.start_manage();
         self.calls.start();
+        #[cfg(feature = "calls")]
+        self.start_calls();
         self.start_notify_prefs();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
@@ -591,6 +607,8 @@ impl Engine {
             Cmd::Media(c) => self.media_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
             Cmd::Call(c) => self.call_cmd(c).await?,
+            #[cfg(feature = "calls")]
+            Cmd::DirectCall(c) => self.direct_call_cmd(c).await?,
             Cmd::ComposerApps(c) => self.composer_apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,

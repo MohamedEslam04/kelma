@@ -15,6 +15,7 @@
 
 use super::Engine;
 use crate::ui::UiHandle;
+#[cfg(any(test, feature = "calls"))]
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -26,8 +27,14 @@ pub(crate) mod live;
 /// What kind of call the window shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallKind {
-    Meeting { title: String },
-    Direct { peer_name: String },
+    Meeting {
+        title: String,
+    },
+    /// A 1:1 call handed over by `call_direct` ([`CallManager::adopt`]).
+    #[cfg(any(test, feature = "calls"))]
+    Direct {
+        peer_name: String,
+    },
 }
 
 impl Default for CallKind {
@@ -42,6 +49,7 @@ impl CallKind {
     pub fn title(&self) -> &str {
         match self {
             CallKind::Meeting { title } => title,
+            #[cfg(any(test, feature = "calls"))]
             CallKind::Direct { peer_name } => peer_name,
         }
     }
@@ -49,6 +57,7 @@ impl CallKind {
     fn name(&self) -> &'static str {
         match self {
             CallKind::Meeting { .. } => "meeting",
+            #[cfg(any(test, feature = "calls"))]
             CallKind::Direct { .. } => "direct",
         }
     }
@@ -66,7 +75,8 @@ pub enum Phase {
     /// Waiting for someone in the meeting to admit us.
     Lobby,
     Connected,
-    /// The media connection dropped and may come back.
+    /// The media connection dropped and may come back (the live driver reports it).
+    #[cfg(any(test, feature = "calls"))]
     Reconnecting,
     /// The call-ended screen.
     Ended,
@@ -80,6 +90,7 @@ impl Phase {
             Phase::Connecting => "connecting",
             Phase::Lobby => "lobby",
             Phase::Connected => "connected",
+            #[cfg(any(test, feature = "calls"))]
             Phase::Reconnecting => "reconnecting",
             Phase::Ended => "ended",
         }
@@ -87,15 +98,18 @@ impl Phase {
 
     /// A call is running (joined or joining).
     pub fn active(self) -> bool {
-        matches!(
-            self,
-            Phase::Connecting | Phase::Lobby | Phase::Connected | Phase::Reconnecting
-        )
+        match self {
+            Phase::Connecting | Phase::Lobby | Phase::Connected => true,
+            #[cfg(any(test, feature = "calls"))]
+            Phase::Reconnecting => true,
+            Phase::Idle | Phase::PreJoin | Phase::Ended => false,
+        }
     }
 }
 
 /// The media connection as the live driver sees it (`MediaState` without the calling types).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(any(test, feature = "calls"))]
 pub enum Link {
     New,
     Connecting,
@@ -106,6 +120,7 @@ pub enum Link {
 /// The phase a live call is in. `in_lobby`: the roster shows us waiting in the lobby (the lobby
 /// leg's media reaches Connected too, so the roster decides). `was_in_call`: the call was
 /// connected outside the lobby before, so a drop is a reconnect.
+#[cfg(any(test, feature = "calls"))]
 pub fn live_phase(link: Link, in_lobby: bool, was_in_call: bool) -> Phase {
     match (in_lobby, link) {
         (true, _) => Phase::Lobby,
@@ -135,11 +150,13 @@ pub enum Event {
     Connecting,
     Lobby,
     Connected,
+    #[cfg(any(test, feature = "calls"))]
     Reconnecting,
     Roster(Vec<Person>),
     /// The meeting is (not) being recorded.
     Recording(bool),
     /// Our hand (raised elsewhere, or lowered by an organizer).
+    #[cfg(any(test, feature = "calls"))]
     Hand(bool),
     /// Something went wrong; the call may go on.
     Error(String),
@@ -170,16 +187,6 @@ pub enum JoinTarget {
     Code { id: String, passcode: String },
     /// A meeting chat (`19:meeting_...@thread.v2`); the live driver looks its meeting up.
     Chat(String),
-    /// A target the calling crate read (a CSA meeting chat, a join link).
-    #[cfg(feature = "calls")]
-    Target(Box<calling::signaling::MeetingTarget>),
-}
-
-#[cfg(feature = "calls")]
-impl From<calling::signaling::MeetingTarget> for JoinTarget {
-    fn from(t: calling::signaling::MeetingTarget) -> Self {
-        JoinTarget::Target(Box::new(t))
-    }
 }
 
 impl JoinTarget {
@@ -189,8 +196,6 @@ impl JoinTarget {
             JoinTarget::Link(_) => "link".into(),
             JoinTarget::Code { .. } => "code".into(),
             JoinTarget::Chat(id) => format!("chat:{id}"),
-            #[cfg(feature = "calls")]
-            JoinTarget::Target(_) => "target".into(),
         }
     }
 }
@@ -200,7 +205,10 @@ impl JoinTarget {
 pub struct JoinOptions {
     pub name: String,
     pub mic_on: bool,
+    /// Device ids for the live driver's audio (`None`: the system default).
+    #[cfg(any(test, feature = "calls"))]
     pub mic: Option<String>,
+    #[cfg(any(test, feature = "calls"))]
     pub speaker: Option<String>,
 }
 
@@ -311,6 +319,7 @@ pub struct CallModel {
 
 pub const ALREADY_IN_CALL: &str = "You're already in a call. Leave it before joining another.";
 pub const YOU_LEFT_MEETING: &str = "You left the meeting.";
+#[cfg(any(test, feature = "calls"))]
 pub const YOU_LEFT_CALL: &str = "You left the call.";
 
 impl CallModel {
@@ -362,7 +371,9 @@ impl CallModel {
         JoinOptions {
             name: self.my_name.clone(),
             mic_on: self.mic_on,
+            #[cfg(any(test, feature = "calls"))]
             mic: self.mic_id(),
+            #[cfg(any(test, feature = "calls"))]
             speaker: self.speaker_id(),
         }
     }
@@ -376,6 +387,7 @@ impl CallModel {
     }
 
     /// A connected call handed over (a 1:1 call answered or placed elsewhere).
+    #[cfg(any(test, feature = "calls"))]
     pub fn adopted(&mut self, kind: CallKind, devices: Devices, now: Instant) -> bool {
         if self.phase.active() {
             return false;
@@ -410,6 +422,7 @@ impl CallModel {
                 self.connected_at.get_or_insert(now);
                 Phase::Connected
             }
+            #[cfg(any(test, feature = "calls"))]
             Event::Reconnecting => {
                 if self.phase != Phase::Connected {
                     return false;
@@ -418,6 +431,7 @@ impl CallModel {
             }
             Event::Roster(r) => return replace(&mut self.roster, r),
             Event::Recording(on) => return replace(&mut self.recording, on),
+            #[cfg(any(test, feature = "calls"))]
             Event::Hand(h) => return replace(&mut self.hand, h),
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
@@ -443,6 +457,7 @@ impl CallModel {
         }
         let reason = match self.kind {
             CallKind::Meeting { .. } => YOU_LEFT_MEETING,
+            #[cfg(any(test, feature = "calls"))]
             CallKind::Direct { .. } => YOU_LEFT_CALL,
         };
         self.end(reason.into(), now);
@@ -565,6 +580,7 @@ fn replace<T: PartialEq>(slot: &mut T, v: T) -> bool {
 /// field yet, so this reads the likely shapes (`recordingStatus`/`recordingState` set to
 /// `Started`/`Active`/`Recording` or `Stopped`/`None`, a boolean `isRecording`) anywhere in the
 /// body. `None` when the body says nothing about recording.
+#[cfg(any(test, feature = "calls"))]
 pub fn recording_state(body: &Value) -> Option<bool> {
     match body {
         Value::Object(m) => {
@@ -736,8 +752,10 @@ pub struct CallManager {
 }
 
 /// Used when kelma is built without the `calls` feature: nothing joins natively.
+#[cfg(any(test, not(feature = "calls")))]
 struct Unavailable;
 
+#[cfg(any(test, not(feature = "calls")))]
 impl CallDriver for Unavailable {
     fn native(&self) -> bool {
         false
@@ -756,8 +774,10 @@ impl CallDriver for Unavailable {
     }
 }
 
+#[cfg(any(test, not(feature = "calls")))]
 struct NoHandle;
 
+#[cfg(any(test, not(feature = "calls")))]
 impl CallHandle for NoHandle {
     fn control(&self, _: Control) {}
 }
@@ -796,7 +816,10 @@ impl CallManager {
     /// Starts the calling signalling at sign-in (the calling trouter, so incoming calls arrive).
     pub fn start(&self) {
         #[cfg(feature = "calls")]
-        self.hub.start();
+        {
+            self.hub.start();
+            *MANAGER.lock().unwrap() = Some(Arc::new(self.clone()));
+        }
     }
 
     /// Replaces the driver (tests and the demo use [`FakeDriver`]).
@@ -918,18 +941,19 @@ impl CallManager {
     }
 }
 
-/// The entry points of the 1:1 ringing flows (feat/calls-direct) and of meeting targets read by the
-/// calling crate. Nothing in this branch calls them yet.
+/// The running manager, once kelma is signed in ([`CallManager::start`]); the 1:1 call flows
+/// (`call_direct`) reach it here.
 #[cfg(feature = "calls")]
-#[allow(dead_code)]
-impl CallManager {
-    /// Opens the pre-join screen for a meeting target read by the calling crate (a calendar
-    /// event's join link, a CSA meeting chat or a code).
-    pub fn join_meeting(&self, title: String, target: calling::signaling::MeetingTarget) {
-        let chat = target.thread_id.clone().unwrap_or_default();
-        self.prejoin(title, JoinTarget::from(target), chat);
-    }
+static MANAGER: Mutex<Option<Arc<CallManager>>> = Mutex::new(None);
 
+#[cfg(feature = "calls")]
+pub fn manager() -> Option<Arc<CallManager>> {
+    MANAGER.lock().unwrap().clone()
+}
+
+/// The entry points of the 1:1 call flows (`call_direct`).
+#[cfg(feature = "calls")]
+impl CallManager {
     /// Starts the window on a call that is already connected, run by `handle`. False while
     /// another call runs.
     fn adopt_handle(
@@ -987,12 +1011,6 @@ impl CallManager {
         Ok(())
     }
 
-    /// Routes one calling-trouter push: the active call's callbacks to it, an invitation to
-    /// [`Self::subscribe_invitations`], anything else to [`Self::subscribe_unmatched`].
-    pub fn call_push(&self, push: calling::ngc_trouter::CallPush) {
-        self.hub.route(push);
-    }
-
     /// Incoming call invitations, for the ringing flows.
     pub fn subscribe_invitations(
         &self,
@@ -1013,9 +1031,9 @@ impl CallManager {
         self.hub.surl()
     }
 
-    /// The conversation service client, once discovered (at sign-in).
-    pub fn ngc(&self) -> Option<calling::signaling::NgcClient> {
-        self.hub.ngc()
+    /// The conversation service client (discovered at sign-in, else now).
+    pub async fn ngc(&self) -> anyhow::Result<calling::signaling::NgcClient> {
+        self.hub.ngc_client().await
     }
 }
 
@@ -1087,6 +1105,7 @@ pub struct FakeDriver {
 
 impl FakeDriver {
     /// Reports only what [`Self::emit`] sends.
+    #[cfg(test)]
     pub fn manual() -> Self {
         Self::default()
     }
@@ -1100,6 +1119,7 @@ impl FakeDriver {
     }
 
     /// Sends an event as the running call would.
+    #[cfg(test)]
     pub fn emit(&self, ev: Event) {
         let sink = self.sink.lock().unwrap().clone();
         if let Some(s) = sink {
@@ -1107,6 +1127,7 @@ impl FakeDriver {
         }
     }
 
+    #[cfg(test)]
     pub fn calls(&self) -> Vec<String> {
         self.log.lock().unwrap().clone()
     }
