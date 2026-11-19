@@ -93,7 +93,7 @@ component Chip inherits Rectangle {
         padding-left: 12px;
         padding-right: root.value != "" ? 4px : 12px;
         spacing: 6px;
-        Text { text: root.value != "" ? root.label + ": " + root.value : root.label; color: Theme.fg; font-size: 12px; vertical-alignment: center; }
+        Text { text: root.value != "" ? root.label + ": " + root.value : root.label; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
         if root.value != "": IconButton {
             icon: @image-url("icons/close.svg");
             tooltip: "Clear " + root.label;
@@ -115,14 +115,14 @@ component HitItem inherits Rectangle {
             height: 30px;
             text: root.data.section;
             color: Theme.fg-muted;
-            font-size: 13px;
+            font-size: 13px * Theme.font-scale;
             font-weight: 700;
             vertical-alignment: bottom;
         }
         row := Rectangle {
             height: 74px;
             border-radius: 4px;
-            background: touch.has-hover ? #262626 : transparent;
+            background: touch.has-hover ? Theme.surface-hover : transparent;
             accessible-role: list-item;
             accessible-label: root.data.title;
             accessible-description: root.data.snippet-plain + " · " + root.data.subtitle;
@@ -143,8 +143,8 @@ component HitItem inherits Rectangle {
                     spacing: 2px;
                     HorizontalLayout {
                         spacing: 8px;
-                        Text { text: root.data.title; color: Theme.fg; font-size: 14px; font-weight: 600; overflow: elide; horizontal-stretch: 1; }
-                        Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; }
+                        Text { text: root.data.title; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 600; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-stretch: 0; vertical-alignment: center; }
                     }
                     if root.data.snippet-plain != "": Rectangle {
                         height: 18px;
@@ -153,11 +153,11 @@ component HitItem inherits Rectangle {
                             width: parent.width;
                             text: root.data.snippet;
                             default-color: Theme.fg-muted;
-                            default-font-size: 12px;
+                            default-font-size: 12px * Theme.font-scale;
                             horizontal-alignment: root.data.rtl ? right : left;
                         }
                     }
-                    Text { text: root.data.subtitle; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+                    Text { text: root.data.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
                 }
                 if root.secondary-label != "": Rectangle { width: 82px; horizontal-stretch: 0; }
             }
@@ -174,7 +174,7 @@ component HitItem inherits Rectangle {
                 background: sec.has-hover ? Theme.surface-hover : transparent;
                 accessible-role: button;
                 accessible-label: root.secondary-label;
-                Text { text: root.secondary-label; color: Theme.fg; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: root.secondary-label; color: Theme.fg; font-size: 12px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                 sec := TouchArea { mouse-cursor: pointer; clicked => { root.secondary(); } }
             }
         }
@@ -187,7 +187,7 @@ component PickEditor inherits Rectangle {
     callback query(string);
     callback pick(string);
     height: 44px + min(6, root.picks.length) * 44px;
-    background: #1f1f1f;
+    background: Theme.sidebar;
     border-radius: 4px;
     border-width: 1px;
     border-color: Theme.border;
@@ -198,7 +198,7 @@ component PickEditor inherits Rectangle {
                 x: 12px;
                 width: parent.width - 24px;
                 color: Theme.fg;
-                font-size: 13px;
+                font-size: 13px * Theme.font-scale;
                 single-line: true;
                 vertical-alignment: center;
                 accessible-role: text-input;
@@ -206,7 +206,7 @@ component PickEditor inherits Rectangle {
                 edited => { root.query(self.text); }
                 init => { self.focus(); }
             }
-            if pick-input.text == "": Text { x: 12px; text: root.placeholder; color: Theme.fg-subtle; font-size: 13px; vertical-alignment: center; }
+            if pick-input.text == "": Text { x: 12px; text: root.placeholder; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
         }
         for p in root.picks: Rectangle {
             height: 44px;
@@ -217,8 +217,8 @@ component PickEditor inherits Rectangle {
                 padding-left: 12px;
                 padding-right: 12px;
                 alignment: center;
-                Text { text: p.title; color: Theme.fg; font-size: 13px; overflow: elide; }
-                if p.subtitle != "": Text { text: p.subtitle; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+                Text { text: p.title; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+                if p.subtitle != "": Text { text: p.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
             }
             pt := TouchArea { mouse-cursor: pointer; clicked => { root.pick(p.id); } }
         }
@@ -240,7 +240,7 @@ export component SearchView inherits Rectangle {
             IconButton { icon: @image-url("icons/back.svg"); tooltip: "Back to chat"; y: 4px; clicked => { root.close(); } }
             Rectangle {
                 border-radius: 4px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-width: 1px;
                 border-color: query-input.has-focus ? Theme.accent : Theme.border;
                 max-width: 720px;
@@ -263,7 +263,7 @@ export component SearchView inherits Rectangle {
                     query-input := TextInput {
                         text <=> FindStore.query;
                         color: Theme.fg;
-                        font-size: 14px;
+                        font-size: 14px * Theme.font-scale;
                         single-line: true;
                         vertical-alignment: center;
                         accessible-role: text-input;
@@ -283,7 +283,7 @@ export component SearchView inherits Rectangle {
                     }
                 }
                 }
-                if query-input.text == "": Text { x: 40px; text: "Search messages, files, people and chats"; color: Theme.fg-subtle; font-size: 14px; vertical-alignment: center; }
+                if query-input.text == "": Text { x: 40px; text: "Search messages, files, people and chats"; color: Theme.fg-subtle; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
             }
         }
         HorizontalLayout {
@@ -319,7 +319,7 @@ export component SearchView inherits Rectangle {
             Rectangle {
                 width: 220px;
                 height: 4 * 40px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-radius: 4px;
                 border-width: 1px;
                 border-color: Theme.border;
@@ -329,7 +329,7 @@ export component SearchView inherits Rectangle {
                         background: dt.has-hover ? Theme.surface-hover : transparent;
                         accessible-role: button;
                         accessible-label: d.label;
-                        Text { x: 12px; text: d.label; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+                        Text { x: 12px; text: d.label; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                         dt := TouchArea { mouse-cursor: pointer; clicked => { FindStore.filter-editor = ""; FindStore.command("date", d.key); } }
                     }
                 }
@@ -352,20 +352,20 @@ export component SearchView inherits Rectangle {
             if FindStore.searching && FindStore.results.length == 0: Text {
                 text: "Searching…";
                 color: Theme.fg-muted;
-                font-size: 14px;
+                font-size: 14px * Theme.font-scale;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
             if !FindStore.searching && FindStore.searched && FindStore.results.length == 0: VerticalLayout {
                 alignment: center;
                 spacing: 6px;
-                Text { text: "We couldn't find any results"; color: Theme.fg; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
-                Text { text: "Check your spelling or try different keywords."; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: center; }
+                Text { text: "We couldn't find any results"; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; }
+                Text { text: "Check your spelling or try different keywords."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; }
             }
             if !FindStore.searched && !FindStore.searching: Text {
                 text: "Type a word or phrase and press Enter";
                 color: Theme.fg-subtle;
-                font-size: 13px;
+                font-size: 13px * Theme.font-scale;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -388,7 +388,7 @@ export component QuickView inherits Rectangle {
                 Text {
                     text: FindStore.quick-kind == "mentions" ? "Mentions" : "Followed threads";
                     color: Theme.fg;
-                    font-size: 17px;
+                    font-size: 17px * Theme.font-scale;
                     font-weight: 700;
                     vertical-alignment: center;
                     accessible-role: text;
@@ -396,7 +396,7 @@ export component QuickView inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
                 IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; y: 14px; clicked => { root.close(); } }
             }
-            Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
         }
         Rectangle {
             vertical-stretch: 1;
@@ -414,12 +414,12 @@ export component QuickView inherits Rectangle {
                     Pill { label: "Show more"; x: 12px; y: 8px; clicked => { FindStore.command("more", ""); } }
                 }
             }
-            if FindStore.quick-loading && FindStore.quick-rows.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+            if FindStore.quick-loading && FindStore.quick-rows.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
             if !FindStore.quick-loading && FindStore.quick-rows.length == 0: VerticalLayout {
                 alignment: center;
                 spacing: 6px;
-                Text { text: FindStore.quick-kind == "mentions" ? "No one has mentioned you yet" : "You are not following any threads"; color: Theme.fg; font-size: 16px; font-weight: 600; horizontal-alignment: center; }
-                if FindStore.quick-kind == "followed": Text { text: "Follow a channel post from its \"…\" menu."; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: center; }
+                Text { text: FindStore.quick-kind == "mentions" ? "No one has mentioned you yet" : "You are not following any threads"; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; }
+                if FindStore.quick-kind == "followed": Text { text: "Follow a channel post from its \"…\" menu."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; }
             }
         }
     }
@@ -429,7 +429,7 @@ export component QuickView inherits Rectangle {
 export component ChatFindBar inherits Rectangle {
     in property <bool> channel;
     height: 44px;
-    background: #1b1b1b;
+    background: Theme.sidebar;
     VerticalLayout {
         HorizontalLayout {
             padding-left: 20px;
@@ -440,7 +440,7 @@ export component ChatFindBar inherits Rectangle {
                 height: 32px;
                 max-width: 420px;
                 border-radius: 4px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-width: 1px;
                 border-color: find-input.has-focus ? Theme.accent : Theme.border;
                 FocusScope {
@@ -460,7 +460,7 @@ export component ChatFindBar inherits Rectangle {
                         width: parent.width - 20px;
                         text <=> FindStore.chat-find-query;
                         color: Theme.fg;
-                        font-size: 13px;
+                        font-size: 13px * Theme.font-scale;
                         single-line: true;
                         vertical-alignment: center;
                         accessible-role: text-input;
@@ -469,13 +469,13 @@ export component ChatFindBar inherits Rectangle {
                         init => { self.focus(); }
                     }
                 }
-                if find-input.text == "": Text { x: 10px; text: root.channel ? "Find in channel" : "Find in chat"; color: Theme.fg-subtle; font-size: 13px; vertical-alignment: center; }
+                if find-input.text == "": Text { x: 10px; text: root.channel ? "Find in channel" : "Find in chat"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
             }
             Text {
                 horizontal-stretch: 0;
                 vertical-alignment: center;
                 color: Theme.fg-muted;
-                font-size: 12px;
+                font-size: 12px * Theme.font-scale;
                 text: FindStore.chat-find-query == "" ? "" : (FindStore.chat-find-count == 0 ? "No results" : FindStore.chat-find-index + " of " + FindStore.chat-find-count);
                 accessible-role: text;
                 accessible-label: self.text;
@@ -484,7 +484,7 @@ export component ChatFindBar inherits Rectangle {
             IconButton { icon: @image-url("icons/chevron-down.svg"); tooltip: "Next match"; y: 6px; size: 32px; clicked => { FindStore.command("find-next", ""); } }
             IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close find"; y: 6px; size: 32px; clicked => { FindStore.command("find-close", ""); } }
         }
-        Rectangle { height: 1px; background: #2b2b2b; }
+        Rectangle { height: 1px; background: Theme.border; }
     }
     // Refocus the box when the header button is pressed again.
     changed-tick := Rectangle {
@@ -500,7 +500,7 @@ component SharedLine inherits Rectangle {
     in property <bool> compact: false;
     callback open();
     height: root.compact ? 48px : 44px;
-    background: t.has-hover ? #262626 : transparent;
+    background: t.has-hover ? Theme.surface-hover : transparent;
     accessible-role: list-item;
     accessible-label: root.data.name;
     accessible-description: root.data.shared-by + " · " + root.data.date;
@@ -515,15 +515,15 @@ component SharedLine inherits Rectangle {
             border-radius: 3px;
             background: root.data.kind == "link" ? #2d3a5f : #ffffff;
             if root.data.kind == "link": Icon { source: @image-url("icons/link.svg"); tint: #ffffff; width: 16px; height: 16px; }
-            if root.data.kind != "link": Text { text: root.data.ext; color: #141414; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            if root.data.kind != "link": Text { text: root.data.ext; color: #141414; font-size: 9px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
         }
         VerticalLayout {
             alignment: center;
-            Text { text: root.data.name; color: Theme.fg; font-size: 13px; overflow: elide; }
-            if root.compact: Text { text: root.data.shared-by + " · " + root.data.date; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+            Text { text: root.data.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+            if root.compact: Text { text: root.data.shared-by + " · " + root.data.date; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
         }
-        if !root.compact: Text { width: 140px; horizontal-stretch: 0; text: root.data.date; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
-        if !root.compact: Text { width: 160px; horizontal-stretch: 0; text: root.data.shared-by; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        if !root.compact: Text { width: 140px; horizontal-stretch: 0; text: root.data.date; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+        if !root.compact: Text { width: 160px; horizontal-stretch: 0; text: root.data.shared-by; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
     }
     t := TouchArea { mouse-cursor: pointer; clicked => { root.open(); } }
 }
@@ -550,21 +550,21 @@ export component SharedView inherits Rectangle {
                 height: 30px;
                 horizontal-stretch: 0;
                 border-radius: 4px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-width: 1px;
                 border-color: kw-input.has-focus ? Theme.accent : Theme.border;
                 kw-input := TextInput {
                     x: 10px;
                     width: parent.width - 20px;
                     color: Theme.fg;
-                    font-size: 12px;
+                    font-size: 12px * Theme.font-scale;
                     single-line: true;
                     vertical-alignment: center;
                     accessible-role: text-input;
                     accessible-label: "Filter by keyword";
                     edited => { FindStore.command("shared-keyword", self.text); }
                 }
-                if kw-input.text == "": Text { x: 10px; text: "Filter by keyword"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                if kw-input.text == "": Text { x: 10px; text: "Filter by keyword"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
             }
             Rectangle {
                 width: 84px;
@@ -574,7 +574,7 @@ export component SharedView inherits Rectangle {
                 background: up.has-hover ? Theme.accent : Theme.accent-strong;
                 accessible-role: button;
                 accessible-label: "Upload";
-                Text { text: "Upload"; color: #ffffff; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Upload"; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 up := TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("shared-upload", ""); } }
             }
             Rectangle {
@@ -587,7 +587,7 @@ export component SharedView inherits Rectangle {
                 background: od.has-hover ? Theme.surface-hover : transparent;
                 accessible-role: button;
                 accessible-label: "Upload from OneDrive";
-                Text { text: "From OneDrive"; color: Theme.fg; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "From OneDrive"; color: Theme.fg; font-size: 12px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                 od := TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("shared-onedrive", ""); } }
             }
         }
@@ -596,11 +596,11 @@ export component SharedView inherits Rectangle {
             padding-right: 12px;
             spacing: 12px;
             height: 24px;
-            Text { text: "Name"; color: Theme.fg-subtle; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-            Text { width: 140px; horizontal-stretch: 0; text: "Date shared"; color: Theme.fg-subtle; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-            Text { width: 160px; horizontal-stretch: 0; text: "Shared by"; color: Theme.fg-subtle; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+            Text { text: "Name"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
+            Text { width: 140px; horizontal-stretch: 0; text: "Date shared"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
+            Text { width: 160px; horizontal-stretch: 0; text: "Shared by"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
         }
-        Rectangle { height: 1px; background: #2b2b2b; }
+        Rectangle { height: 1px; background: Theme.border; }
         Rectangle {
             vertical-stretch: 1;
             ListView {
@@ -609,8 +609,8 @@ export component SharedView inherits Rectangle {
                     open => { FindStore.command("shared-open", s.url); }
                 }
             }
-            if FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-            if !FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Nothing has been shared here yet"; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+            if FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if !FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Nothing has been shared here yet"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
         }
     }
 }
@@ -621,7 +621,7 @@ export component DetailsPane inherits Rectangle {
     width: 320px;
     background: Theme.sidebar;
     border-width: 1px;
-    border-color: #2b2b2b;
+    border-color: Theme.border;
     accessible-role: groupbox;
     accessible-label: "In this chat";
     VerticalLayout {
@@ -630,7 +630,7 @@ export component DetailsPane inherits Rectangle {
             HorizontalLayout {
                 padding-left: 16px;
                 padding-right: 8px;
-                Text { text: "In this chat"; color: Theme.fg; font-size: 15px; font-weight: 700; vertical-alignment: center; }
+                Text { text: "In this chat"; color: Theme.fg; font-size: 15px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
                 IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close details"; y: 10px; clicked => { FindStore.details-open = false; FindStore.command("details", "close"); } }
             }
@@ -639,20 +639,20 @@ export component DetailsPane inherits Rectangle {
             padding-left: 16px;
             padding-right: 16px;
             height: 20px;
-            Text { text: root.title; color: Theme.fg-muted; font-size: 12px; overflow: elide; }
+            Text { text: root.title; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
         }
         HorizontalLayout {
             padding-left: 16px;
             padding-right: 16px;
             height: 40px;
-            Text { text: "Shared"; color: Theme.fg; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+            Text { text: "Shared"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
             Rectangle { horizontal-stretch: 1; }
             Rectangle {
                 width: see-text.preferred-width + 8px;
                 horizontal-stretch: 0;
                 accessible-role: button;
                 accessible-label: "See all";
-                see-text := Text { text: "See all"; color: Theme.accent; font-size: 12px; vertical-alignment: center; horizontal-alignment: center; }
+                see-text := Text { text: "See all"; color: Theme.accent; font-size: 12px * Theme.font-scale; vertical-alignment: center; horizontal-alignment: center; }
                 TouchArea { mouse-cursor: pointer; clicked => { FindStore.chat-tab = "shared"; FindStore.command("tab", "shared"); } }
             }
         }
@@ -664,7 +664,7 @@ export component DetailsPane inherits Rectangle {
         if FindStore.recent.length == 0: HorizontalLayout {
             padding-left: 16px;
             height: 32px;
-            Text { text: FindStore.shared-loading ? "Loading…" : "Nothing has been shared here yet"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+            Text { text: FindStore.shared-loading ? "Loading…" : "Nothing has been shared here yet"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
         }
         Rectangle { vertical-stretch: 1; }
     }

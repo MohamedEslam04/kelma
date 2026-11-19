@@ -192,7 +192,7 @@ component CmdButton inherits Rectangle {
             y: 8px;
             tint: root.primary ? #ffffff : (root.danger ? Theme.danger : Theme.fg-muted);
         }
-        Text { text: root.label; color: root.primary ? #ffffff : (root.danger ? Theme.danger : Theme.fg); font-size: 13px; vertical-alignment: center; }
+        Text { text: root.label; color: root.primary ? #ffffff : (root.danger ? Theme.danger : Theme.fg); font-size: 13px * Theme.font-scale; vertical-alignment: center; }
         if root.chevron: Icon { source: @image-url("icons/chevron-down.svg"); width: 12px; height: 12px; y: 10px; tint: root.primary ? #ffffff : Theme.fg-muted; }
     }
     touch := TouchArea {
@@ -220,8 +220,8 @@ component MenuRow inherits Rectangle {
         padding-right: 10px;
         spacing: 10px;
         Icon { source: root.icon; width: 16px; height: 16px; y: 8px; tint: root.danger ? Theme.danger : Theme.fg-muted; }
-        Text { text: root.label; color: root.danger ? Theme.danger : Theme.fg; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
-        Text { text: root.checked ? "✓" : ""; color: Theme.accent; font-size: 13px; vertical-alignment: center; }
+        Text { text: root.label; color: root.danger ? Theme.danger : Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 1; }
+        Text { text: root.checked ? "✓" : ""; color: Theme.accent; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
     }
     touch := TouchArea {
         enabled: root.enabled;
@@ -247,7 +247,7 @@ component NavEntry inherits Rectangle {
         padding-right: 8px;
         spacing: 10px;
         Icon { source: root.icon; width: 16px; height: 16px; y: 9px; tint: root.active ? Theme.accent : Theme.fg-muted; }
-        Text { text: root.label; color: Theme.fg; font-size: 13px; font-weight: root.active ? 600 : 400; vertical-alignment: center; overflow: elide; }
+        Text { text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: root.active ? 600 : 400; vertical-alignment: center; overflow: elide; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -265,11 +265,11 @@ component CheckBox inherits Rectangle {
     border-radius: 3px;
     border-width: 1px;
     border-color: root.checked ? Theme.accent : Theme.fg-subtle;
-    background: root.checked ? Theme.accent-strong : #1f1f1f;
+    background: root.checked ? Theme.accent-strong : Theme.sidebar;
     accessible-role: checkbox;
     accessible-label: root.label;
     accessible-checked: root.checked;
-    Text { text: root.checked ? "✓" : ""; color: #ffffff; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    Text { text: root.checked ? "✓" : ""; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
 }
 
@@ -285,7 +285,7 @@ component DriveListRow inherits Rectangle {
     callback more(length, length);
     height: 36px;
     property <bool> hot: touch.has-hover || star.has-hover || dots.has-hover;
-    background: root.r.header ? transparent : (root.r.selected ? Theme.selected : (root.hot ? #262626 : transparent));
+    background: root.r.header ? transparent : (root.r.selected ? Theme.selected : (root.hot ? Theme.surface-hover : transparent));
     accessible-role: list-item;
     accessible-label: root.r.header ? "Group " + root.r.name : root.r.name;
     accessible-item-selected: root.r.selected;
@@ -294,7 +294,7 @@ component DriveListRow inherits Rectangle {
         x: 14px;
         text: root.r.name;
         color: Theme.fg-muted;
-        font-size: 12px;
+        font-size: 12px * Theme.font-scale;
         font-weight: 700;
         vertical-alignment: center;
     }
@@ -312,12 +312,12 @@ component DriveListRow inherits Rectangle {
             width: 24px;
             KindBadge { kind: root.r.kind; size: 24px; y: (parent.height - 24px) / 2; }
         }
-        Text { text: root.r.name; color: Theme.fg; font-size: 13px; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; min-width: 80px; }
-        if DriveStore.col-modified: Text { text: root.r.modified; color: Theme.fg-muted; font-size: 12px; width: DriveLook.col-modified; overflow: elide; vertical-alignment: center; }
-        if DriveStore.col-modified-by: Text { text: root.r.modified-by; color: Theme.fg-muted; font-size: 12px; width: DriveLook.col-modified-by; overflow: elide; vertical-alignment: center; }
-        if DriveStore.col-size: Text { text: root.r.size; color: Theme.fg-muted; font-size: 12px; width: DriveLook.col-size; overflow: elide; vertical-alignment: center; }
-        if DriveStore.col-location: Text { text: root.r.location; color: Theme.fg-muted; font-size: 12px; width: DriveLook.col-location; overflow: elide; vertical-alignment: center; }
-        if DriveStore.col-activity: Text { text: root.r.activity; color: Theme.fg-muted; font-size: 12px; width: DriveLook.col-activity; overflow: elide; vertical-alignment: center; }
+        Text { text: root.r.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; min-width: 80px; }
+        if DriveStore.col-modified: Text { text: root.r.modified; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; width: DriveLook.col-modified; overflow: elide; vertical-alignment: center; }
+        if DriveStore.col-modified-by: Text { text: root.r.modified-by; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; width: DriveLook.col-modified-by; overflow: elide; vertical-alignment: center; }
+        if DriveStore.col-size: Text { text: root.r.size; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; width: DriveLook.col-size; overflow: elide; vertical-alignment: center; }
+        if DriveStore.col-location: Text { text: root.r.location; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; width: DriveLook.col-location; overflow: elide; vertical-alignment: center; }
+        if DriveStore.col-activity: Text { text: root.r.activity; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; width: DriveLook.col-activity; overflow: elide; vertical-alignment: center; }
     }
     if !root.r.header && (root.hot || root.r.selected || root.any-selected): CheckBox {
         x: 12px;
@@ -377,7 +377,7 @@ component DriveTile inherits Rectangle {
     border-radius: 6px;
     border-width: 1px;
     border-color: root.r.selected ? Theme.accent : Theme.border;
-    background: root.r.selected ? Theme.selected : (root.hot ? #262626 : #1b1b1b);
+    background: root.r.selected ? Theme.selected : (root.hot ? Theme.surface-hover : Theme.sidebar);
     accessible-role: list-item;
     accessible-label: root.r.name;
     accessible-item-selected: root.r.selected;
@@ -392,7 +392,7 @@ component DriveTile inherits Rectangle {
         y: 1px;
         width: parent.width - 2px;
         height: 112px;
-        background: #232323;
+        background: Theme.sidebar;
         clip: true;
         if root.r.has-thumb: Image { source: root.r.thumb; width: parent.width; height: parent.height; image-fit: cover; }
         if !root.r.has-thumb: KindBadge { kind: root.r.kind; size: 48px; x: (parent.width - 48px) / 2; y: (parent.height - 48px) / 2; }
@@ -403,8 +403,8 @@ component DriveTile inherits Rectangle {
         padding-left: 10px;
         padding-right: 10px;
         spacing: 2px;
-        Text { text: root.r.name; color: Theme.fg; font-size: 13px; font-weight: 600; overflow: elide; }
-        Text { text: root.r.modified + (root.r.modified-by != "" ? " · " + root.r.modified-by : ""); color: Theme.fg-muted; font-size: 11px; overflow: elide; }
+        Text { text: root.r.name; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; overflow: elide; }
+        Text { text: root.r.modified + (root.r.modified-by != "" ? " · " + root.r.modified-by : ""); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; overflow: elide; }
     }
     if root.hot || root.r.selected: CheckBox {
         x: 8px;
@@ -436,7 +436,7 @@ component ForYouCard inherits Rectangle {
     border-radius: 6px;
     border-width: 1px;
     border-color: touch.has-hover ? Theme.accent : Theme.border;
-    background: touch.has-hover ? #262626 : #1b1b1b;
+    background: touch.has-hover ? Theme.surface-hover : Theme.sidebar;
     accessible-role: button;
     accessible-label: "For you " + root.c.title;
     accessible-description: root.c.reason;
@@ -449,7 +449,7 @@ component ForYouCard inherits Rectangle {
         y: 1px;
         width: parent.width - 2px;
         height: 72px;
-        background: #232323;
+        background: Theme.sidebar;
         clip: true;
         if root.c.has-thumb: Image { source: root.c.thumb; width: parent.width; height: parent.height; image-fit: cover; }
         if !root.c.has-thumb: KindBadge { kind: root.c.kind; size: 36px; x: (parent.width - 36px) / 2; y: (parent.height - 36px) / 2; }
@@ -460,8 +460,8 @@ component ForYouCard inherits Rectangle {
         padding-left: 10px;
         padding-right: 10px;
         spacing: 1px;
-        Text { text: root.c.title; color: Theme.fg; font-size: 13px; font-weight: 600; overflow: elide; }
-        Text { text: root.c.reason; color: Theme.fg-muted; font-size: 11px; wrap: word-wrap; overflow: elide; }
+        Text { text: root.c.title; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; overflow: elide; }
+        Text { text: root.c.reason; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; wrap: word-wrap; overflow: elide; }
     }
 }
 
@@ -473,7 +473,7 @@ component SearchBox inherits Rectangle {
     callback accepted(string);
     height: 32px;
     border-radius: 4px;
-    background: #1f1f1f;
+    background: Theme.sidebar;
     border-width: 1px;
     border-color: input.has-focus ? Theme.accent : Theme.border;
     HorizontalLayout {
@@ -484,7 +484,7 @@ component SearchBox inherits Rectangle {
         input := TextInput {
             text <=> root.text;
             color: Theme.fg;
-            font-size: 13px;
+            font-size: 13px * Theme.font-scale;
             vertical-alignment: center;
             single-line: true;
             accessible-role: text-input;
@@ -497,7 +497,7 @@ component SearchBox inherits Rectangle {
         x: 36px;
         text: root.placeholder;
         color: Theme.fg-subtle;
-        font-size: 13px;
+        font-size: 13px * Theme.font-scale;
         vertical-alignment: center;
     }
 }
@@ -508,7 +508,7 @@ component DialogFrame inherits Rectangle {
     callback close();
     width: root.dialog-width;
     border-radius: 8px;
-    background: #2b2b2b;
+    background: Theme.surface;
     border-width: 1px;
     border-color: Theme.border;
     drop-shadow-blur: 16px;
@@ -521,7 +521,7 @@ component DialogFrame inherits Rectangle {
         spacing: 10px;
         HorizontalLayout {
             height: 28px;
-            Text { text: root.title; color: Theme.fg; font-size: 17px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            Text { text: root.title; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
             IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; size: 28px; clicked => { root.close(); } }
         }
         @children
@@ -542,7 +542,7 @@ component DialogButton inherits Rectangle {
     accessible-role: button;
     accessible-label: root.label;
     accessible-enabled: root.enabled;
-    t := Text { text: root.label; color: root.primary || root.danger ? #ffffff : Theme.fg; font-size: 13px; font-weight: root.primary ? 600 : 400; horizontal-alignment: center; vertical-alignment: center; }
+    t := Text { text: root.label; color: root.primary || root.danger ? #ffffff : Theme.fg; font-size: 13px * Theme.font-scale; font-weight: root.primary ? 600 : 400; horizontal-alignment: center; vertical-alignment: center; }
     touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
@@ -551,7 +551,7 @@ component Breadcrumbs inherits HorizontalLayout {
     alignment: start;
     for c[i] in DriveStore.crumbs: HorizontalLayout {
         spacing: 4px;
-        if i > 0: Text { text: "›"; color: Theme.fg-subtle; font-size: 16px; vertical-alignment: center; }
+        if i > 0: Text { text: "›"; color: Theme.fg-subtle; font-size: 16px * Theme.font-scale; vertical-alignment: center; }
         Rectangle {
             height: 30px;
             width: ct.preferred-width + 16px;
@@ -564,7 +564,7 @@ component Breadcrumbs inherits HorizontalLayout {
                 x: 8px;
                 text: c;
                 color: i == DriveStore.crumbs.length - 1 ? Theme.fg : Theme.fg-muted;
-                font-size: i == DriveStore.crumbs.length - 1 ? 18px : 15px;
+                font-size: (i == DriveStore.crumbs.length - 1 ? 18px : 15px) * Theme.font-scale;
                 font-weight: i == DriveStore.crumbs.length - 1 ? 700 : 400;
                 vertical-alignment: center;
             }
@@ -606,14 +606,14 @@ export component DriveFilePicker inherits Rectangle {
             alignment: start;
             for c[i] in root.crumbs: HorizontalLayout {
                 spacing: 2px;
-                if i > 0: Text { text: "›"; color: Theme.fg-subtle; font-size: 14px; vertical-alignment: center; }
+                if i > 0: Text { text: "›"; color: Theme.fg-subtle; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
                 Rectangle {
                     width: pc.preferred-width + 12px;
                     border-radius: 4px;
                     background: pt.has-hover && i < root.crumbs.length - 1 ? Theme.surface-hover : transparent;
                     accessible-role: button;
                     accessible-label: "Picker location " + c;
-                    pc := Text { x: 6px; text: c; color: i == root.crumbs.length - 1 ? Theme.fg : Theme.fg-muted; font-size: 13px; vertical-alignment: center; }
+                    pc := Text { x: 6px; text: c; color: i == root.crumbs.length - 1 ? Theme.fg : Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                     pt := TouchArea { enabled: i < root.crumbs.length - 1; mouse-cursor: pointer; clicked => { root.crumb(i); } }
                 }
             }
@@ -621,7 +621,7 @@ export component DriveFilePicker inherits Rectangle {
         Rectangle {
             vertical-stretch: 1;
             border-radius: 4px;
-            background: #1f1f1f;
+            background: Theme.sidebar;
             clip: true;
             ListView {
                 for r in root.rows: Rectangle {
@@ -635,7 +635,7 @@ export component DriveFilePicker inherits Rectangle {
                         padding-right: 10px;
                         spacing: 10px;
                         KindBadge { kind: r.kind; size: 22px; y: 6px; }
-                        Text { text: r.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: r.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                         if r.is-folder: Icon { source: @image-url("icons/chevron-right.svg"); width: 14px; height: 14px; y: 10px; }
                     }
                     pr := TouchArea {
@@ -644,8 +644,8 @@ export component DriveFilePicker inherits Rectangle {
                     }
                 }
             }
-            if root.loading: Text { text: "Loading..."; color: Theme.fg-muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-            if !root.loading && root.rows.length == 0: Text { text: "Nothing here"; color: Theme.fg-subtle; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+            if root.loading: Text { text: "Loading..."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if !root.loading && root.rows.length == 0: Text { text: "Nothing here"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
         }
         HorizontalLayout {
             height: 34px;
@@ -671,8 +671,8 @@ component ShareDialog inherits DialogFrame {
         content-height: body.preferred-height;
         body := VerticalLayout {
             spacing: 8px;
-            Text { text: DriveStore.share-status; color: Theme.fg-muted; font-size: 12px; wrap: word-wrap; accessible-role: text; accessible-label: "Share status " + DriveStore.share-status; }
-            Text { text: "Share with people"; color: Theme.fg; font-size: 14px; font-weight: 600; }
+            Text { text: DriveStore.share-status; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; wrap: word-wrap; accessible-role: text; accessible-label: "Share status " + DriveStore.share-status; }
+            Text { text: "Share with people"; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 600; }
             SearchBox {
                 placeholder: "Search for people";
                 label: "Search for people";
@@ -688,8 +688,8 @@ component ShareDialog inherits DialogFrame {
                     background: #34365c;
                     accessible-role: button;
                     accessible-label: "Remove " + p.name;
-                    pn := Text { x: 10px; text: p.name; color: Theme.fg; font-size: 12px; vertical-alignment: center; }
-                    Text { x: parent.width - 16px; text: "×"; color: Theme.fg-muted; font-size: 14px; vertical-alignment: center; }
+                    pn := Text { x: 10px; text: p.name; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                    Text { x: parent.width - 16px; text: "×"; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
                     TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("share-pick", p.id); } }
                 }
             }
@@ -704,9 +704,9 @@ component ShareDialog inherits DialogFrame {
                     padding-left: 8px;
                     padding-right: 8px;
                     spacing: 10px;
-                    Text { text: p.name; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
-                    Text { text: p.detail; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                    Text { text: p.picked ? "✓" : ""; color: Theme.accent; font-size: 15px; vertical-alignment: center; }
+                    Text { text: p.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                    Text { text: p.detail; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    Text { text: p.picked ? "✓" : ""; color: Theme.accent; font-size: 15px * Theme.font-scale; vertical-alignment: center; }
                 }
                 ph := TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("share-pick", p.id); } }
             }
@@ -719,20 +719,20 @@ component ShareDialog inherits DialogFrame {
             Rectangle {
                 height: 32px;
                 border-radius: 4px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-width: 1px;
                 border-color: note.has-focus ? Theme.accent : Theme.border;
                 note := TextInput {
                     x: 10px;
                     width: parent.width - 20px;
                     color: Theme.fg;
-                    font-size: 13px;
+                    font-size: 13px * Theme.font-scale;
                     single-line: true;
                     vertical-alignment: center;
                     accessible-role: text-input;
                     accessible-label: "Message";
                 }
-                if note.text == "": Text { x: 10px; text: "Add a message (optional)"; color: Theme.fg-subtle; font-size: 13px; vertical-alignment: center; }
+                if note.text == "": Text { x: 10px; text: "Add a message (optional)"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
             }
             HorizontalLayout {
                 alignment: end;
@@ -744,7 +744,7 @@ component ShareDialog inherits DialogFrame {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            Text { text: "Link settings"; color: Theme.fg; font-size: 14px; font-weight: 600; }
+            Text { text: "Link settings"; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 600; }
             HorizontalLayout {
                 spacing: 6px;
                 alignment: start;
@@ -774,7 +774,7 @@ component ShareDialog inherits DialogFrame {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            Text { text: "Manage access"; color: Theme.fg; font-size: 14px; font-weight: 600; }
+            Text { text: "Manage access"; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 600; }
             for p in DriveStore.share-perms: Rectangle {
                 height: 40px;
                 accessible-role: list-item;
@@ -786,15 +786,15 @@ component ShareDialog inherits DialogFrame {
                     VerticalLayout {
                         alignment: center;
                         horizontal-stretch: 1;
-                        Text { text: p.who; color: Theme.fg; font-size: 13px; overflow: elide; }
-                        if p.detail != "": Text { text: p.detail; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+                        Text { text: p.who; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+                        if p.detail != "": Text { text: p.detail; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
                     }
                     if p.editable: Pill {
                         y: 7px;
                         label: p.role == "write" ? "Can edit" : "Can view";
                         clicked => { DriveStore.command("share-perm-role", p.id + "|" + (p.role == "write" ? "read" : "write")); }
                     }
-                    if !p.editable: Text { text: p.role == "owner" ? "Owner" : (p.role == "write" ? "Can edit" : "Can view"); color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; }
+                    if !p.editable: Text { text: p.role == "owner" ? "Owner" : (p.role == "write" ? "Can edit" : "Can view"); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                     if p.editable: IconButton {
                         y: 7px;
                         icon: @image-url("icons/close.svg");
@@ -804,7 +804,7 @@ component ShareDialog inherits DialogFrame {
                     }
                 }
             }
-            if DriveStore.share-perms.length == 0: Text { text: "Only you have access."; color: Theme.fg-subtle; font-size: 12px; }
+            if DriveStore.share-perms.length == 0: Text { text: "Only you have access."; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; }
         }
     }
 }
@@ -863,7 +863,7 @@ export component OneDriveView inherits Rectangle {
                 alignment: start;
                 Rectangle {
                     height: 40px;
-                    Text { x: 6px; text: "OneDrive"; color: Theme.fg; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+                    Text { x: 6px; text: "OneDrive"; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
                 }
                 for n in [
                     {key: "home", label: "Home", icon: @image-url("icons/home.svg")},
@@ -881,7 +881,7 @@ export component OneDriveView inherits Rectangle {
                 }
                 Rectangle {
                     height: 34px;
-                    Text { x: 14px; y: 12px; text: "Browse files by"; color: Theme.fg-subtle; font-size: 11px; font-weight: 700; }
+                    Text { x: 14px; y: 12px; text: "Browse files by"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 700; }
                 }
                 for n in [
                     {key: "people", label: "People", icon: @image-url("icons/people.svg")},
@@ -895,7 +895,7 @@ export component OneDriveView inherits Rectangle {
                 }
                 if DriveStore.quick.length > 0: Rectangle {
                     height: 34px;
-                    Text { x: 14px; y: 12px; text: "Quick access"; color: Theme.fg-subtle; font-size: 11px; font-weight: 700; }
+                    Text { x: 14px; y: 12px; text: "Quick access"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 700; }
                 }
                 for q in DriveStore.quick: NavEntry {
                     label: q.label;
@@ -1003,7 +1003,7 @@ export component OneDriveView inherits Rectangle {
                     if root.some: Text {
                         text: DriveStore.sel-count + " selected";
                         color: Theme.fg-muted;
-                        font-size: 12px;
+                        font-size: 12px * Theme.font-scale;
                         vertical-alignment: center;
                         accessible-role: text;
                         accessible-label: DriveStore.sel-count + " selected";
@@ -1032,7 +1032,7 @@ export component OneDriveView inherits Rectangle {
                         clicked => { root.open-menu("columns", self.absolute-position.x, self.absolute-position.y + self.height, false); }
                     }
                 }
-                Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
             }
             // Type pills and the filter box
             Rectangle {
@@ -1069,7 +1069,7 @@ export component OneDriveView inherits Rectangle {
                 clip: true;
                 accessible-role: groupbox;
                 accessible-label: "For you";
-                Text { x: 16px; y: 2px; text: "For you"; color: Theme.fg-muted; font-size: 12px; font-weight: 600; }
+                Text { x: 16px; y: 2px; text: "For you"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 600; }
                 Flickable {
                     y: 22px;
                     height: parent.height - 22px;
@@ -1096,34 +1096,34 @@ export component OneDriveView inherits Rectangle {
                         min-width: 80px;
                         accessible-role: button;
                         accessible-label: "Sort by Name";
-                        Text { x: 0px; width: parent.width; text: "Name" + (DriveStore.sort == "name" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: "Name" + (DriveStore.sort == "name" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "name"); } }
                     }
                     if DriveStore.col-modified: Rectangle {
                         width: DriveLook.col-modified;
                         accessible-role: button;
                         accessible-label: "Sort by Modified";
-                        Text { x: 0px; width: parent.width; text: (DriveStore.section == "bin" ? "Deleted" : (DriveStore.section == "shared-by" ? "Shared" : "Modified")) + (DriveStore.sort == "modified" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: (DriveStore.section == "bin" ? "Deleted" : (DriveStore.section == "shared-by" ? "Shared" : "Modified")) + (DriveStore.sort == "modified" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "modified"); } }
                     }
                     if DriveStore.col-modified-by: Rectangle {
                         width: DriveLook.col-modified-by;
                         accessible-role: button;
                         accessible-label: "Sort by Modified by";
-                        Text { x: 0px; width: parent.width; text: (DriveStore.section == "bin" ? "Deleted by" : "Modified by") + (DriveStore.sort == "modified-by" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: (DriveStore.section == "bin" ? "Deleted by" : "Modified by") + (DriveStore.sort == "modified-by" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "modified-by"); } }
                     }
                     if DriveStore.col-size: Rectangle {
                         width: DriveLook.col-size;
                         accessible-role: button;
                         accessible-label: "Sort by Size";
-                        Text { x: 0px; width: parent.width; text: "Size" + (DriveStore.sort == "size" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
+                        Text { x: 0px; width: parent.width; text: "Size" + (DriveStore.sort == "size" ? (DriveStore.ascending ? " ↑" : " ↓") : ""); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-alignment: left; }
                         TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("sort", "size"); } }
                     }
-                    if DriveStore.col-location: Text { text: "Location"; color: Theme.fg-muted; font-size: 12px; font-weight: 600; width: DriveLook.col-location; vertical-alignment: center; horizontal-alignment: left; }
-                    if DriveStore.col-activity: Text { text: "Activity"; color: Theme.fg-muted; font-size: 12px; font-weight: 600; width: DriveLook.col-activity; vertical-alignment: center; horizontal-alignment: left; }
+                    if DriveStore.col-location: Text { text: "Location"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 600; width: DriveLook.col-location; vertical-alignment: center; horizontal-alignment: left; }
+                    if DriveStore.col-activity: Text { text: "Activity"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; font-weight: 600; width: DriveLook.col-activity; vertical-alignment: center; horizontal-alignment: left; }
                 }
-                Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
             }
             // The files
             Rectangle {
@@ -1158,11 +1158,11 @@ export component OneDriveView inherits Rectangle {
                         favorite => { DriveStore.command("favorite", r.id); }
                     }
                 }
-                if DriveStore.loading && DriveStore.rows.length == 0: Text { text: "Loading..."; color: Theme.fg-muted; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                if DriveStore.loading && DriveStore.rows.length == 0: Text { text: "Loading..."; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                 if !DriveStore.loading && DriveStore.rows.length == 0: Text {
                     text: DriveStore.filter != "" ? "No files match the filter" : (root.bin ? "The recycle bin is empty" : "Nothing here yet");
                     color: Theme.fg-subtle;
-                    font-size: 14px;
+                    font-size: 14px * Theme.font-scale;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -1178,7 +1178,7 @@ export component OneDriveView inherits Rectangle {
                     Text {
                         text: DriveStore.status != "" ? DriveStore.status : DriveStore.item-count + " item" + (DriveStore.item-count == 1 ? "" : "s");
                         color: DriveStore.status != "" ? #ffb900 : Theme.fg-muted;
-                        font-size: 12px;
+                        font-size: 12px * Theme.font-scale;
                         vertical-alignment: center;
                         overflow: elide;
                         accessible-role: text;
@@ -1188,7 +1188,7 @@ export component OneDriveView inherits Rectangle {
                     if DriveStore.more: Text {
                         text: "Load more";
                         color: Theme.accent;
-                        font-size: 12px;
+                        font-size: 12px * Theme.font-scale;
                         vertical-alignment: center;
                         accessible-role: button;
                         accessible-label: "Load more";
@@ -1208,7 +1208,7 @@ export component OneDriveView inherits Rectangle {
             width: 250px;
             height: items.preferred-height + 12px;
             border-radius: 6px;
-            background: #2b2b2b;
+            background: Theme.surface;
             border-width: 1px;
             border-color: Theme.border;
             drop-shadow-blur: 12px;
@@ -1276,7 +1276,7 @@ export component OneDriveView inherits Rectangle {
             Rectangle {
                 height: 34px;
                 border-radius: 4px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-width: 1px;
                 border-color: name-input.has-focus ? Theme.accent : Theme.border;
                 name-input := TextInput {
@@ -1284,7 +1284,7 @@ export component OneDriveView inherits Rectangle {
                     width: parent.width - 20px;
                     text <=> DriveStore.prompt-text;
                     color: Theme.fg;
-                    font-size: 13px;
+                    font-size: 13px * Theme.font-scale;
                     single-line: true;
                     vertical-alignment: center;
                     accessible-role: text-input;
@@ -1301,7 +1301,7 @@ export component OneDriveView inherits Rectangle {
             if DriveStore.prompt-kind == "new-link": Rectangle {
                 height: 34px;
                 border-radius: 4px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-width: 1px;
                 border-color: address-input.has-focus ? Theme.accent : Theme.border;
                 address-input := TextInput {
@@ -1309,7 +1309,7 @@ export component OneDriveView inherits Rectangle {
                     width: parent.width - 20px;
                     text <=> DriveStore.prompt-text2;
                     color: Theme.fg;
-                    font-size: 13px;
+                    font-size: 13px * Theme.font-scale;
                     single-line: true;
                     vertical-alignment: center;
                     accessible-role: text-input;
@@ -1342,7 +1342,7 @@ export component OneDriveView inherits Rectangle {
             y: max(8px, (parent.height - self.height) / 2 - 60px);
             height: 150px;
             close => { root.close-dialog(); }
-            Text { text: "This removes " + DriveStore.sel-count + " item" + (DriveStore.sel-count == 1 ? "" : "s") + " for good. You cannot get them back."; color: Theme.fg-muted; font-size: 13px; wrap: word-wrap; }
+            Text { text: "This removes " + DriveStore.sel-count + " item" + (DriveStore.sel-count == 1 ? "" : "s") + " for good. You cannot get them back."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
             HorizontalLayout {
                 height: 34px;
                 spacing: 8px;
@@ -1401,13 +1401,13 @@ export component OneDriveView inherits Rectangle {
                             VerticalLayout {
                                 alignment: center;
                                 horizontal-stretch: 1;
-                                Text { text: v.when + (v.current ? " (current)" : ""); color: Theme.fg; font-size: 13px; }
-                                Text { text: v.by + " · " + v.size; color: Theme.fg-subtle; font-size: 11px; }
+                                Text { text: v.when + (v.current ? " (current)" : ""); color: Theme.fg; font-size: 13px * Theme.font-scale; }
+                                Text { text: v.by + " · " + v.size; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; }
                             }
                             if !v.current: DialogButton { y: 5px; label: "Restore " + v.id; clicked => { DriveStore.command("version-restore", v.id); DriveStore.dialog = ""; } }
                         }
                     }
-                    if DriveStore.versions.length == 0: Text { text: "No earlier versions."; color: Theme.fg-subtle; font-size: 13px; }
+                    if DriveStore.versions.length == 0: Text { text: "No earlier versions."; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
                 }
             }
         }
@@ -1424,7 +1424,7 @@ export component OneDriveView inherits Rectangle {
                 info := Text {
                     text: DriveStore.info-text;
                     color: Theme.fg;
-                    font-size: 12px;
+                    font-size: 12px * Theme.font-scale;
                     font-family: "monospace";
                     wrap: word-wrap;
                     accessible-role: text;
@@ -1447,7 +1447,7 @@ export component OneDriveView inherits Rectangle {
             Rectangle {
                 vertical-stretch: 1;
                 border-radius: 4px;
-                background: #1b1b1b;
+                background: Theme.sidebar;
                 clip: true;
                 if DriveStore.preview-kind == "image" || DriveStore.preview-kind == "pages": Image {
                     source: DriveStore.preview-image;
@@ -1465,7 +1465,7 @@ export component OneDriveView inherits Rectangle {
                         width: parent.width - 24px;
                         text: DriveStore.preview-text;
                         color: Theme.fg;
-                        font-size: 12px;
+                        font-size: 12px * Theme.font-scale;
                         font-family: "monospace";
                         wrap: word-wrap;
                         accessible-role: text;
@@ -1480,7 +1480,7 @@ export component OneDriveView inherits Rectangle {
                         width: parent.width - 24px;
                         text: DriveStore.preview-body;
                         default-color: Theme.fg;
-                        default-font-size: 14px;
+                        default-font-size: 14px * Theme.font-scale;
                         link-color: Theme.accent;
                         selectable: true;
                         accessible-role: text;
@@ -1495,7 +1495,7 @@ export component OneDriveView inherits Rectangle {
                 if DriveStore.preview-kind == "pages": Text {
                     text: "Page " + DriveStore.preview-page + " of " + DriveStore.preview-pages;
                     color: Theme.fg-muted;
-                    font-size: 13px;
+                    font-size: 13px * Theme.font-scale;
                     vertical-alignment: center;
                     accessible-role: text;
                     accessible-label: "Page " + DriveStore.preview-page + " of " + DriveStore.preview-pages;
