@@ -1,0 +1,415 @@
+// The call window: the pre-join screen, the Teams-like meeting view (top bar, stage, People and
+// More panels, lobby, reconnecting banner) and the call-ended screen. It covers the area right of
+// the rail (see app.slint); `CallMini` is the floating bar while the meeting chat is open.
+//
+// Video, screen sharing, reactions and views are drawn but disabled: the calling engine carries
+// audio only and has no reaction API (crates/calling/src/signaling/controls.rs).
+import { Theme } from "theme.slint";
+import { Avatar, Icon } from "widgets.slint";
+import { CallStore, CallPerson } from "call_store.slint";
+import { CallButton, CallAction, DeviceSettings } from "call_widgets.slint";
+import { PreJoin } from "call_prejoin.slint";
+import { PeoplePanel, MorePanel } from "call_people.slint";
+
+export { CallStore, CallPerson }
+
+component TopBar inherits Rectangle {
+    callback open-chat();
+    height: 62px;
+    background: Theme.topbar;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 8px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 6px;
+            if CallStore.recording: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: Theme.danger;
+                    accessible-role: text;
+                    accessible-label: "Recording";
+                }
+            }
+            Text {
+                text: CallStore.timer;
+                color: Theme.fg;
+                font-size: 14px * Theme.font-scale;
+                font-weight: 600;
+                vertical-alignment: center;
+                accessible-role: text;
+                accessible-label: "Call duration " + CallStore.timer;
+            }
+        }
+        Text {
+            text: CallStore.title;
+            color: Theme.fg-muted;
+            font-size: 13px * Theme.font-scale;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        CallButton {
+            icon: @image-url("icons/chat.svg");
+            label: "Chat";
+            enabled: CallStore.chat-id != "";
+            tip: CallStore.chat-id != "" ? "Open the meeting chat" : "This meeting's chat isn't available here";
+            clicked => { root.open-chat(); }
+        }
+        CallButton {
+            icon: @image-url("icons/people.svg");
+            label: "People";
+            checkable: true;
+            active: CallStore.panel == "people";
+            clicked => { CallStore.panel = CallStore.panel == "people" ? "" : "people"; }
+        }
+        CallButton {
+            icon: @image-url("icons/hand.svg");
+            label: CallStore.hand ? "Lower" : "Raise";
+            checkable: true;
+            active: CallStore.hand;
+            clicked => { CallStore.command("hand", ""); }
+        }
+        CallButton {
+            icon: @image-url("icons/emoji.svg");
+            label: "React";
+            enabled: false;
+            tip: "Reactions aren't available yet";
+        }
+        CallButton {
+            icon: @image-url("icons/grid.svg");
+            label: "View";
+            enabled: false;
+            tip: "Only this view is available";
+        }
+        CallButton {
+            icon: @image-url("icons/more.svg");
+            label: "More";
+            checkable: true;
+            active: CallStore.panel == "more";
+            tip: "Device settings";
+            clicked => { CallStore.panel = CallStore.panel == "more" ? "" : "more"; }
+        }
+        Rectangle {
+            width: 1px;
+            background: Theme.border;
+        }
+        CallButton {
+            icon: @image-url("icons/video-off.svg");
+            label: "Camera";
+            enabled: false;
+            tip: "Video isn't available yet";
+        }
+        HorizontalLayout {
+            CallButton {
+                icon: CallStore.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
+                label: CallStore.muted ? "Unmute" : "Mute";
+                checkable: true;
+                active: CallStore.muted;
+                clicked => { CallStore.command("mute", ""); }
+            }
+            CallButton {
+                width: 22px;
+                icon: @image-url("icons/chevron-down.svg");
+                label: "";
+                tip: "Microphone and speaker";
+                active: CallStore.menu == "devices";
+                accessible-label: "Audio devices";
+                clicked => { CallStore.menu = CallStore.menu == "devices" ? "" : "devices"; }
+            }
+        }
+        CallButton {
+            icon: @image-url("icons/screen-share.svg");
+            label: "Share";
+            enabled: false;
+            tip: "Screen sharing isn't available yet";
+        }
+        CallButton {
+            icon: @image-url("icons/call-end.svg");
+            label: "Leave";
+            danger: true;
+            clicked => { CallStore.command("leave", ""); }
+        }
+    }
+}
+
+component Banner inherits Rectangle {
+    in property <string> message;
+    in property <color> tone;
+    in property <bool> dismissable;
+    height: 36px;
+    background: root.tone;
+    accessible-role: text;
+    accessible-label: root.message;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 8px;
+        Text {
+            text: root.message;
+            color: #ffffff;
+            font-size: 13px * Theme.font-scale;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.dismissable: CallAction {
+            label: "Dismiss";
+            y: 1px;
+            clicked => { CallStore.command("dismiss-error", ""); }
+        }
+    }
+}
+
+component Tile inherits Rectangle {
+    in property <CallPerson> p;
+    border-radius: 8px;
+    background: Theme.surface;
+    border-width: root.p.hand ? 2px : 0px;
+    border-color: Theme.accent;
+    Avatar {
+        initials: root.p.initials;
+        size: min(72px, root.height / 2);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2 - 10px;
+    }
+    HorizontalLayout {
+        x: 10px;
+        y: root.height - 30px;
+        height: 22px;
+        width: root.width - 20px;
+        spacing: 6px;
+        if root.p.muted: Icon {
+            source: @image-url("icons/mic-off.svg");
+            width: 16px;
+            height: 16px;
+            y: 3px;
+        }
+        Text {
+            text: root.p.name + (root.p.me ? " (You)" : "");
+            color: Theme.fg;
+            font-size: 12px * Theme.font-scale;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        if root.p.hand: Icon {
+            source: @image-url("icons/hand.svg");
+            tint: Theme.accent;
+            width: 16px;
+            height: 16px;
+            y: 3px;
+        }
+    }
+}
+
+// What fills the middle: the lobby, connecting, or the participants' tiles.
+component Stage inherits Rectangle {
+    property <int> count: max(1, min(CallStore.in-call, 12));
+    property <int> cols: count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
+    property <int> rows: Math.ceil(count / cols);
+    property <length> gap: 8px;
+    property <length> tile-w: (root.width - 32px - (cols - 1) * gap) / cols;
+    property <length> tile-h: min(tile-w * 9 / 16, (root.height - 32px - (rows - 1) * gap) / rows);
+    background: Theme.main;
+    if CallStore.phase == "lobby" || CallStore.phase == "connecting": VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+        HorizontalLayout {
+            alignment: center;
+            Avatar { initials: CallStore.my-initials; size: 88px; }
+        }
+        Text {
+            text: CallStore.phase == "lobby" ? "Someone in the meeting should let you in soon" : "Connecting…";
+            color: Theme.fg;
+            font-size: 16px * Theme.font-scale;
+            horizontal-alignment: center;
+        }
+        if CallStore.phase == "lobby": Text {
+            text: "You're in the lobby of " + CallStore.title;
+            color: Theme.fg-subtle;
+            font-size: 13px * Theme.font-scale;
+            horizontal-alignment: center;
+        }
+    }
+    if CallStore.phase == "connected" || CallStore.phase == "reconnecting": Rectangle {
+        if CallStore.in-call == 0: Text {
+            text: CallStore.kind == "direct" ? CallStore.title : "You're the only one here";
+            color: Theme.fg-muted;
+            font-size: 15px * Theme.font-scale;
+        }
+        for p[i] in CallStore.people: Tile {
+            visible: i < root.count;
+            p: p;
+            width: root.tile-w;
+            height: root.tile-h;
+            x: 16px + Math.mod(i, root.cols) * (root.tile-w + root.gap);
+            y: (root.height - root.rows * root.tile-h - (root.rows - 1) * root.gap) / 2
+                + Math.floor(i / root.cols) * (root.tile-h + root.gap);
+        }
+    }
+}
+
+component InCall inherits Rectangle {
+    callback open-chat();
+    VerticalLayout {
+        TopBar { open-chat => { root.open-chat(); } }
+        if CallStore.phase == "reconnecting": Banner {
+            message: "Reconnecting… Your connection was interrupted.";
+            tone: #8a5a00;
+        }
+        if CallStore.error != "": Banner {
+            message: CallStore.error;
+            tone: #8b2a2d;
+            dismissable: true;
+        }
+        HorizontalLayout {
+            Stage { horizontal-stretch: 1; }
+            if CallStore.panel == "people": PeoplePanel { width: 320px; }
+            if CallStore.panel == "more": MorePanel { width: 320px; }
+        }
+    }
+    // The mic button's dropdown.
+    if CallStore.menu == "devices" || CallStore.menu == "card-mic" || CallStore.menu == "card-speaker": Rectangle {
+        x: root.width - self.width - 12px;
+        y: 64px;
+        z: 30;
+        width: 300px;
+        height: card.preferred-height;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.surface;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000080;
+        card := VerticalLayout {
+            padding: 12px;
+            spacing: 10px;
+            Text {
+                text: "Audio devices";
+                color: Theme.fg;
+                font-size: 14px * Theme.font-scale;
+                font-weight: 600;
+            }
+            DeviceSettings { prefix: "card"; }
+        }
+    }
+}
+
+component Ended inherits Rectangle {
+    background: Theme.main;
+    VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+        Text {
+            text: CallStore.title;
+            color: Theme.fg;
+            font-size: 20px * Theme.font-scale;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: CallStore.ended;
+            color: Theme.fg;
+            font-size: 15px * Theme.font-scale;
+            horizontal-alignment: center;
+        }
+        if CallStore.timer != "00:00": Text {
+            text: "Call duration " + CallStore.timer;
+            color: Theme.fg-subtle;
+            font-size: 13px * Theme.font-scale;
+            horizontal-alignment: center;
+        }
+        if CallStore.error != "": Text {
+            text: CallStore.error;
+            color: Theme.danger;
+            font-size: 13px * Theme.font-scale;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 8px;
+            if CallStore.can-rejoin: CallAction {
+                label: "Rejoin";
+                primary: true;
+                clicked => { CallStore.command("rejoin", ""); }
+            }
+            CallAction {
+                label: "Close";
+                clicked => { CallStore.command("close", ""); }
+            }
+        }
+    }
+}
+
+export component CallWindow inherits Rectangle {
+    // The meeting chat: shrink the call to its floating bar and show the chat.
+    callback open-chat();
+    background: Theme.main;
+    // Nothing behind the call window takes clicks.
+    TouchArea { }
+    if CallStore.phase == "prejoin": PreJoin { width: root.width; height: root.height; }
+    if CallStore.in-call-phase(): InCall {
+        width: root.width;
+        height: root.height;
+        open-chat => { root.open-chat(); }
+    }
+    if CallStore.phase == "ended": Ended { width: root.width; height: root.height; }
+}
+
+// The call while the meeting chat is open: title, timer, mute, back to the call, leave.
+export component CallMini inherits Rectangle {
+    width: 380px;
+    height: 64px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #00000080;
+    TouchArea { }
+    HorizontalLayout {
+        padding: 6px;
+        padding-left: 12px;
+        spacing: 4px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: CallStore.title;
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: CallStore.phase == "ended" ? CallStore.ended : CallStore.timer;
+                color: Theme.fg-muted;
+                font-size: 12px * Theme.font-scale;
+            }
+        }
+        CallButton {
+            icon: CallStore.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
+            label: CallStore.muted ? "Unmute" : "Mute";
+            checkable: true;
+            active: CallStore.muted;
+            clicked => { CallStore.command("mute", ""); }
+        }
+        CallButton {
+            icon: @image-url("icons/restore.svg");
+            label: "Back to call";
+            clicked => { CallStore.minimized = false; }
+        }
+        CallButton {
+            icon: @image-url("icons/call-end.svg");
+            label: "Leave";
+            danger: true;
+            clicked => { CallStore.command("leave", ""); }
+        }
+    }
+}

@@ -952,7 +952,7 @@ impl Engine {
     pub(super) async fn calendar_cmd(self: &Arc<Self>, cmd: CalCmd) -> anyhow::Result<()> {
         match cmd {
             CalCmd::Join(url) => {
-                if url.starts_with("https://") {
+                if url.starts_with("https://") && !self.call_prejoin_link("Meeting", &url) {
                     let _ = crate::external::open(&url);
                 }
                 return Ok(());

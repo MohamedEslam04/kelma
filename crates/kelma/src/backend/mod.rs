@@ -19,6 +19,7 @@ mod activity;
 pub(crate) mod appstore;
 mod attach;
 mod cal;
+pub(crate) mod call;
 mod channels;
 mod drafts;
 pub(crate) mod drive;
@@ -131,6 +132,8 @@ pub enum Cmd {
     /// The image viewer, Translate and link previews (plan 9.5 to 9.7).
     Media(MediaCmd),
     Apps(AppsCmd),
+    /// The call window (pre-join, meeting controls, call ended).
+    Call(call::CallCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -228,6 +231,8 @@ pub struct Engine {
     channels: Mutex<channels::State>,
     media: Mutex<media::State>,
     apps: Mutex<appstore::Apps>,
+    /// The active call or meeting and the calling signalling.
+    pub(crate) calls: call::CallManager,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -259,6 +264,7 @@ impl Engine {
         my_name: String,
     ) -> Arc<Engine> {
         Arc::new(Engine {
+            calls: call::CallManager::new(ui.clone(), client.clone(), my_name.clone()),
             client,
             store: Mutex::new(store),
             cal: cal::CalState::new(&cfg),
@@ -321,6 +327,7 @@ impl Engine {
         self.start_people();
         self.start_apps();
         self.start_manage();
+        self.calls.start();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -569,6 +576,7 @@ impl Engine {
             Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::Media(c) => self.media_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
+            Cmd::Call(c) => self.call_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),

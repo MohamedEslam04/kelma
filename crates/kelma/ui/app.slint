@@ -33,6 +33,7 @@ import { RailApps, AppsOverlays } from "apps_rail.slint";
 import { AppsHost } from "apps_host.slint";
 import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
 import { EngageView, EngageStore } from "engage.slint";
+import { CallWindow, CallMini, CallStore } from "call_window.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -46,6 +47,7 @@ export { ChannelStore, PostItem } from "channel_posts.slint";
 export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
 export { MediaStore } from "media.slint";
 export { EngageStore, EPost } from "engage.slint";
+export { CallStore, CallPerson } from "call_window.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
@@ -632,6 +634,7 @@ export component AppWindow inherits Window {
                                 tooltip: "Schedule a meeting";
                                 clicked => { root.schedule-meeting(root.current-id); }
                             }
+                            if root.thread-root == "" && CallStore.is-meeting-chat(root.current-id): IconButton { icon: @image-url("icons/video.svg"); y: 14px; tooltip: "Join meeting"; clicked => { CallStore.command("join-chat", root.current-id); } }
                             Rectangle { horizontal-stretch: 1; }
                             if root.thread-root == "": IconButton {
                                 icon: @image-url("icons/search.svg");
@@ -1209,6 +1212,10 @@ export component AppWindow inherits Window {
     }
     if root.login-state == "ready" && SettingsStore.open: SettingsPage { x: AppsStore.rail-width; y: 48px; z: 60; width: root.width - AppsStore.rail-width; height: root.height - 48px; }
     if root.login-state == "ready" && SettingsStore.profile-open: ProfileMenu { z: 70; width: root.width; height: root.height; }
+
+    // The call window (pre-join, meeting, call ended) covers the area right of the rail; while the meeting chat is open it is a floating bar.
+    if root.login-state == "ready" && CallStore.phase != "" && !CallStore.minimized: CallWindow { x: AppsStore.rail-width; y: 48px; z: 45; width: root.width - AppsStore.rail-width; height: root.height - 48px; open-chat => { CallStore.minimized = true; root.view = "chat"; root.select-chat(CallStore.chat-id); } }
+    if root.login-state == "ready" && CallStore.phase != "" && CallStore.minimized: CallMini { x: root.width - self.width - 16px; y: root.height - self.height - 16px; z: 45; }
 
     // The full-size picture viewer (plan chat 9.5), above everything else.
     if root.login-state == "ready" && MediaStore.viewer-open: ImageViewer {

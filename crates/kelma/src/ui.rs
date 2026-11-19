@@ -22,6 +22,7 @@ use std::rc::Rc;
 
 pub(crate) mod activity;
 pub(crate) mod appstore;
+pub(crate) mod call;
 mod channels;
 pub(crate) mod drive;
 mod engage;
