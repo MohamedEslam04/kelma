@@ -14,6 +14,7 @@ pub mod chatsvc;
 pub mod client;
 pub mod client_info;
 pub mod csa;
+pub mod delivery;
 pub mod engage;
 pub mod error;
 pub mod files;

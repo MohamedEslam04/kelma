@@ -431,10 +431,11 @@ Moved to its own plan: `plans/activity.md`.
   - **Done when.** Screenshots of both themes are in `docs/screenshots`.
 
 ### 9.4 Delivery options
-- [ ] Impact 2, effort 1. Seen: composer "+" › "Set delivery options", Ctrl+Shift+I.
+- [x] Impact 2, effort 1. Seen: composer "+" › "Set delivery options", Ctrl+Shift+I.
   - **What.** Standard, Important (a red "IMPORTANT!" label) and Urgent (repeated notifications on the receiving side), sent and shown.
   - **How.** Discover the exact property; purple-teams notes `importance`.
   - **Done when.** An Important message shows as important in Teams web.
+  - **Evidence (data layer and CLI; UI missing).** `crates/teams-proto/src/delivery.rs`: `Importance` (`""`, `high`, `urgent`), `Delivery`, `delivery_body`/`apply_delivery`, `Announcement` (headline plus colour or picture banner card) and the receive parsers, now on `model::Message` as `importance` and `announcement`. Live in `48:notes` (2026-11-19): an Important and an Urgent message were sent with `kelma-cli deliver send` and read back as `high` and `urgent`. Still needs a person to confirm the red IMPORTANT! label in Teams web, and the composer "+" menu and message label in the kelma UI are not built. Announcements are channel-only and were not posted live; the shape comes from the web bundle (see docs/protocol.md). Tests: `cargo test -p teams-proto delivery`.
 
 ### 9.5 Image viewer and grid
 - [ ] Impact 3, effort 3. Seen: multi-image messages (2-column grid), link preview cards.
