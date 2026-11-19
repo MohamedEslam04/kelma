@@ -34,6 +34,7 @@ pub mod planner;
 pub mod posts;
 pub mod presence;
 pub mod receipts;
+pub mod search;
 pub mod sections;
 pub mod tags;
 pub mod teams;
@@ -44,6 +45,7 @@ pub mod translate;
 pub mod trouter;
 pub mod urlpreview;
 pub mod user_settings;
+pub mod views;
 pub mod workflows;
 
 pub use client::{Client, Session};

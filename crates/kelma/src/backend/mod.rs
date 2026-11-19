@@ -21,6 +21,7 @@ mod cal;
 mod channels;
 mod drafts;
 pub(crate) mod drive;
+mod find;
 mod lists;
 mod live;
 mod manage;
@@ -31,6 +32,7 @@ mod people;
 mod people_live;
 mod render;
 mod send;
+mod shared;
 mod sync;
 mod unread;
 mod util;
@@ -49,6 +51,7 @@ pub use cal::{
 };
 pub use channels::ChannelCmd;
 pub use drive::DriveCmd;
+pub use find::FindCmd;
 pub use lists::ListsCmd;
 pub use manage::{
     CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
@@ -104,6 +107,7 @@ pub enum Cmd {
     MarkAllRead,
     Calendar(CalCmd),
     Activity(ActivityCmd),
+    Find(FindCmd),
     People(PeopleCmd),
     Teams(TeamsCmd),
     Drive(DriveCmd),
@@ -200,6 +204,7 @@ pub struct Engine {
     dirty: Mutex<Dirty>,
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
+    find: Mutex<find::State>,
     manage: Mutex<manage::State>,
     drive: Mutex<drive::Drive>,
     lists: Mutex<lists::State>,
@@ -256,6 +261,7 @@ impl Engine {
             }),
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
+            find: Mutex::new(find::State::default()),
             manage: Mutex::new(manage::State::default()),
             drive: Mutex::new(drive::Drive::default()),
             lists: Mutex::new(lists::State::default()),
@@ -528,6 +534,8 @@ impl Engine {
             Cmd::MarkAllRead => self.mark_all_read().await?,
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
             Cmd::Activity(c) => self.activity_cmd(c).await?,
+            // Boxed: a search result opens a chat through `handle` again.
+            Cmd::Find(c) => Box::pin(self.find_cmd(c)).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,

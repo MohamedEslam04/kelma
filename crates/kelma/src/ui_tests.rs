@@ -20,6 +20,7 @@ use teams_proto::Client;
 mod activity;
 mod channels;
 mod drive;
+mod find;
 mod lists;
 mod people;
 mod teams;
@@ -672,7 +673,9 @@ fn send_button_sends_draft() {
     let app = app_with_messages(vec![]);
     let sent = record_send(&app);
     app.set_draft(SharedString::from("from button"));
+    // The composer's buttons, not the header's (find and details sit at the header's right edge).
     let send = ElementHandle::find_by_element_id(&app, "IconButton::touch")
+        .filter(|e| e.absolute_position().y > 400.0)
         .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
         .unwrap();
     send.mock_single_click(PointerEventButton::Left);

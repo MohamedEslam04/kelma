@@ -22,6 +22,7 @@ use std::rc::Rc;
 pub(crate) mod activity;
 mod channels;
 pub(crate) mod drive;
+mod find;
 mod lists;
 mod people;
 mod teams;

@@ -131,6 +131,8 @@ export component Sidebar inherits Rectangle {
     callback mark-all-read();
     callback leave-chat(string);
     callback new-chat();
+    // Quick views: "mentions" or "followed".
+    callback quick-view(string);
     callback manage-teams();
     callback open-community(string);
 
@@ -301,7 +303,7 @@ export component Sidebar inherits Rectangle {
         x: parent.width - 240px;
         y: 48px;
         width: 228px;
-        height: 6 * 32px + 9px;
+        height: 6 * 32px + 9px + 2 * 32px + 24px;
         Rectangle {
             background: #2b2b2b;
             border-radius: 6px;
@@ -316,6 +318,13 @@ export component Sidebar inherits Rectangle {
                 OptionRow { label: "Show message previews"; checked: ListStore.show-previews; clicked => { ListStore.command("option", "previews\u{9}" + (ListStore.show-previews ? "off" : "on")); } }
                 OptionRow { label: "Show time stamps"; checked: ListStore.show-times; clicked => { ListStore.command("option", "times\u{9}" + (ListStore.show-times ? "off" : "on")); } }
                 OptionRow { label: "Chats and channels together"; checked: ListStore.combined; clicked => { ListStore.command("option", "combined\u{9}" + (ListStore.combined ? "off" : "on")); } }
+                HorizontalLayout {
+                    height: 24px;
+                    padding-left: 10px;
+                    Text { text: "Quick views"; color: Theme.fg-subtle; font-size: 11px; vertical-alignment: bottom; }
+                }
+                MenuItem { label: "Mentions"; clicked => { root.quick-view("mentions"); } }
+                MenuItem { label: "Followed threads"; clicked => { root.quick-view("followed"); } }
             }
         }
     }

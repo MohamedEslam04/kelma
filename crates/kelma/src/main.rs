@@ -4,6 +4,7 @@ mod backend;
 mod composer;
 mod data;
 mod demo;
+mod find_data;
 mod lists_data;
 mod markdown;
 mod mention;
@@ -346,6 +347,14 @@ fn main() -> anyhow::Result<()> {
         });
     }
     ui::install_calendar(&window, tx.clone());
+    {
+        let tx = tx.clone();
+        window.global::<FindStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::FindCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Find(c));
+            }
+        });
+    }
     {
         let tx = tx.clone();
         window.global::<PeopleStore>().on_command(move |name, arg| {

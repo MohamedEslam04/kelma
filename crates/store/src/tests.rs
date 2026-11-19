@@ -945,3 +945,46 @@ fn delete_conversation_forgets_the_chat_its_messages_and_draft_only() {
     assert!(s.conversation("h").unwrap().is_some());
     assert!(s.message("2").unwrap().is_some());
 }
+
+#[test]
+fn messages_containing_finds_text_in_one_chat_or_all_of_them() {
+    let s = Store::open_in_memory().unwrap();
+    let mut a = msg("1", "c1", 10);
+    a.content_html = "<p>Quarterly Report 100%_done</p>".into();
+    let mut b = msg("2", "c2", 20);
+    b.content_html = "<p>the quarterly plan</p>".into();
+    let mut reply = msg("3", "c1", 30);
+    reply.parent_id = Some("1".into());
+    reply.content_html = "<p>re: quarterly</p>".into();
+    let mut gone = msg("4", "c1", 40);
+    gone.deleted = true;
+    gone.content_html = "<p>quarterly secret</p>".into();
+    for m in [&a, &b, &reply, &gone] {
+        s.upsert_message(m).unwrap();
+    }
+    let ids = |rows: Vec<MessageRow>| rows.into_iter().map(|m| m.id).collect::<Vec<_>>();
+    // Case-insensitive, newest first, replies included, deleted rows left out.
+    assert_eq!(
+        ids(s.messages_containing(None, "QUARTERLY", 10).unwrap()),
+        ["3", "2", "1"]
+    );
+    assert_eq!(
+        ids(s.messages_containing(Some("c1"), "quarterly", 10).unwrap()),
+        ["3", "1"]
+    );
+    assert_eq!(
+        ids(s.messages_containing(None, "quarterly", 1).unwrap()),
+        ["3"]
+    );
+    // LIKE wildcards in the needle are plain characters.
+    assert_eq!(
+        ids(s.messages_containing(None, "100%_d", 10).unwrap()),
+        ["1"]
+    );
+    assert_eq!(s.messages_containing(None, "%", 10).unwrap().len(), 1);
+    assert!(
+        s.messages_containing(None, "nothing", 10)
+            .unwrap()
+            .is_empty()
+    );
+}

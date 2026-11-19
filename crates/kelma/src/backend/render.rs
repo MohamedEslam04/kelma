@@ -567,7 +567,8 @@ impl Engine {
                                 key,
                             })
                         })
-                        .filter(|r| r.count > 0)
+                        // `follow` (a followed thread) is stored as an emotion but is not a reaction.
+                        .filter(|r| r.count > 0 && r.key != "follow")
                         .collect()
                 })
                 .unwrap_or_default();

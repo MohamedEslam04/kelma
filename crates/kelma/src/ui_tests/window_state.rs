@@ -83,6 +83,7 @@ fn the_last_chat_is_found_in_the_sidebar_or_skipped() {
             id: "19:team-chan".into(),
             name: "General".into(),
             unread: false,
+            ..Default::default()
         }])),
         ..Default::default()
     }])));
