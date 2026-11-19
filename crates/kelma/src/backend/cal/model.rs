@@ -2,10 +2,11 @@
 //! list, the Scheduler grid and rooms. Pure functions from the calendar crate's types, so the
 //! UI layer only maps fields and the logic is tested without a window.
 
-use super::grid::{Offset, WEEKDAYS, hhmm, local_date, month_short};
+use super::grid::{Offset, WEEKDAYS, hhmm, local_date, local_minutes, month_short};
 use ::calendar::{
     Attachment, AttendeeKind, Availability, CalendarInfo, Date, Event, EventDetail, EventFilter,
-    EventKind, FoundTimes, RecurrenceFilter, Response, ResponseCounts, Room, Schedule, ShowAs,
+    EventKind, FoundTimes, Proposal, RecurrenceFilter, Response, ResponseCounts, Room, Schedule,
+    ShowAs, WorkingHours, free_between, local_to_utc_ms, work_slots,
 };
 
 /// What the peek shows and which buttons it offers.
@@ -164,6 +165,45 @@ pub struct DetailData {
     pub attachments: Vec<(String, String)>,
     pub dial_in: String,
     pub hide_attendees: bool,
+    /// New times attendees proposed for my meeting (C2.5).
+    pub proposals: Vec<ProposalRow>,
+}
+
+/// One attendee's proposed time, for the organizer to accept.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProposalRow {
+    pub name: String,
+    /// `tentative` or `declined`: the answer the proposal came with.
+    pub response: String,
+    /// "Thu, Nov 19 · 14:00 – 15:00" in local time.
+    pub when: String,
+}
+
+/// The proposals as the organizer reads them: who proposed which slot. `event` supplies the
+/// slot's shape (an all-day event stays a day label).
+pub fn proposal_rows(proposals: &[Proposal], event: &Event, off: Offset) -> Vec<ProposalRow> {
+    proposals
+        .iter()
+        .map(|p| {
+            let mut slot = event.clone();
+            slot.start_ms = p.start_ms;
+            slot.end_ms = p.end_ms;
+            ProposalRow {
+                name: if p.name.is_empty() {
+                    p.email.clone()
+                } else {
+                    p.name.clone()
+                },
+                response: if p.response == Response::Declined {
+                    "declined"
+                } else {
+                    "tentative"
+                }
+                .into(),
+                when: when_label(&slot, off),
+            }
+        })
+        .collect()
 }
 
 pub fn size_label(bytes: u64) -> String {
@@ -243,6 +283,7 @@ pub fn detail_data(d: &EventDetail) -> DetailData {
             .collect(),
         dial_in: dial.join("\n"),
         hide_attendees: d.hide_attendees && !d.is_organizer,
+        proposals: vec![],
     }
 }
 
@@ -461,6 +502,8 @@ pub struct SchedRow {
     /// `me`, `required`, `optional` or `room`.
     pub kind: String,
     pub cells: Vec<i32>,
+    /// Per slot, whether it falls inside this person's own work hours (all true when unknown).
+    pub work: Vec<bool>,
     pub error: String,
 }
 
@@ -499,6 +542,7 @@ pub fn sched_rows(
                     .unwrap_or_default(),
                 kind: (*kind).into(),
                 cells,
+                work: vec![true; slots],
                 error: match s {
                     Some(s) => s
                         .error
@@ -510,6 +554,29 @@ pub fn sched_rows(
             }
         })
         .collect()
+}
+
+/// Marks which slots of each row are inside that person's own work hours (C2.3). The hours come
+/// from the person's `getSchedule` answer and are read in their own time zone; my row falls back
+/// to `mine` when Graph sends none, and a row with no hours at all is not dimmed. The first slot
+/// starts at `first_ms` and a slot lasts `slot_min` minutes.
+pub fn shade_work_hours(
+    rows: &mut [SchedRow],
+    schedules: &[Schedule],
+    first_ms: i64,
+    slot_min: u32,
+    mine: Option<&WorkingHours>,
+) {
+    for r in rows {
+        let hours = schedules
+            .iter()
+            .find(|s| s.email.eq_ignore_ascii_case(&r.email))
+            .and_then(|s| s.working_hours.as_ref())
+            .or(if r.kind == "me" { mine } else { None });
+        if let Some(h) = hours {
+            r.work = work_slots(h, first_ms, slot_min, r.cells.len());
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -554,27 +621,21 @@ pub struct RoomRow {
     pub status: i32,
 }
 
-/// Free, busy or unknown for a room over the form's slot, from a schedule asked for exactly
-/// that slot (every slot of it must be free).
-pub fn room_status(s: Option<&Schedule>) -> i32 {
-    match s {
-        Some(s) if s.error.is_none() && !s.availability.is_empty() => {
-            if s.availability
-                .iter()
-                .all(|a| *a == Availability::Free || *a == Availability::WorkingElsewhere)
-            {
-                0
-            } else if s.availability.contains(&Availability::Unknown) {
-                2
-            } else {
-                1
-            }
-        }
+/// Free, busy or unknown for a room over the form's slot `(start, end)` in Unix ms, by the
+/// data layer's `free_between` over the room's busy blocks (unknown when Graph could not read
+/// the room or there is no slot yet).
+pub fn room_status(s: Option<&Schedule>, slot: Option<(i64, i64)>) -> i32 {
+    match (s, slot) {
+        (Some(s), Some((start, end))) => match free_between(s, start, end) {
+            Some(true) => 0,
+            Some(false) => 1,
+            None => 2,
+        },
         _ => 2,
     }
 }
 
-pub fn room_rows(rooms: &[Room], schedules: &[Schedule]) -> Vec<RoomRow> {
+pub fn room_rows(rooms: &[Room], schedules: &[Schedule], slot: Option<(i64, i64)>) -> Vec<RoomRow> {
     rooms
         .iter()
         .map(|r| RoomRow {
@@ -591,6 +652,7 @@ pub fn room_rows(rooms: &[Room], schedules: &[Schedule]) -> Vec<RoomRow> {
                 schedules
                     .iter()
                     .find(|s| s.email.eq_ignore_ascii_case(&r.email)),
+                slot,
             ),
         })
         .collect()
@@ -606,8 +668,44 @@ pub struct SettingsData {
     pub work_end: String,
     pub weekends: bool,
     pub week_numbers: bool,
-    /// The second time zone's UTC offset in minutes, empty when off.
+    /// The second time zone as the dialog sends it back: a zone name, or the old fixed offset
+    /// in minutes; empty when off.
     pub second_tz: String,
+}
+
+/// The mailbox's work hours as minutes after local midnight on `day`. Graph gives them in the
+/// mailbox's own zone, which is not always this machine's; a zone that is not known keeps the
+/// hours as they are.
+pub fn local_work_hours(h: &WorkingHours, day: Date, off: Offset) -> (i32, i32) {
+    let conv = |min: u32| {
+        let wall = format!("{day}T{:02}:{:02}:00", min / 60, min % 60);
+        local_to_utc_ms(&wall, &h.time_zone).map(|ms| local_minutes(ms, off) as i32)
+    };
+    match (conv(h.start_min), conv(h.end_min)) {
+        (Some(s), Some(e)) if e > s => (s, e),
+        _ => (h.start_min as i32, h.end_min as i32),
+    }
+}
+
+/// Up to `limit` zones whose name or display name contains `query`, as `(name, display)`;
+/// nothing for an empty query.
+pub fn zone_matches(
+    zones: &[(String, String)],
+    query: &str,
+    limit: usize,
+) -> Vec<(String, String)> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return vec![];
+    }
+    zones
+        .iter()
+        .filter(|(name, display)| {
+            name.to_lowercase().contains(&q) || display.to_lowercase().contains(&q)
+        })
+        .take(limit)
+        .cloned()
+        .collect()
 }
 
 /// A person or group with access to my calendar.
@@ -619,6 +717,8 @@ pub struct PermRow {
     /// `freebusy`, `limited`, `read`, `write`, `delegate` or `other`.
     pub role: String,
     pub removable: bool,
+    /// The role keys this entry may be given (see [`role_options`]).
+    pub roles: Vec<&'static str>,
 }
 
 /// The side panels: filters, calendars, saved views, settings and the category list.
@@ -630,6 +730,9 @@ pub struct Panels {
     /// `(name, summary)`
     pub saved_views: Vec<(String, String)>,
     pub settings: SettingsData,
+    /// How the second time zone reads in the dialog (a zone with its offset, or the old fixed
+    /// offset); empty when off.
+    pub second_tz_label: String,
     pub categories: Vec<String>,
 }
 
@@ -680,6 +783,31 @@ pub fn role_key(r: ::calendar::PermissionRole) -> &'static str {
     }
 }
 
+/// The roles the share dialog offers, in order.
+const SHARE_ROLES: [&str; 5] = ["freebusy", "limited", "read", "write", "delegate"];
+
+/// The role keys to offer for a permission whose Graph `allowedRoles` are `allowed`: only those
+/// it allows, or all of them when Graph does not say (an empty list).
+pub fn role_options(allowed: &[::calendar::PermissionRole]) -> Vec<&'static str> {
+    if allowed.is_empty() {
+        return SHARE_ROLES.to_vec();
+    }
+    let keys: Vec<&str> = allowed.iter().map(|r| role_key(*r)).collect();
+    SHARE_ROLES
+        .into_iter()
+        .filter(|k| keys.contains(k))
+        .collect()
+}
+
+/// The roles for a new share: those of the first entry that is limited, else all of them.
+pub fn share_roles(rows: &[PermRow]) -> Vec<&'static str> {
+    rows.iter()
+        .map(|r| &r.roles)
+        .find(|r| r.len() < SHARE_ROLES.len())
+        .cloned()
+        .unwrap_or_else(|| SHARE_ROLES.to_vec())
+}
+
 pub fn role_of(key: &str) -> Option<::calendar::PermissionRole> {
     use ::calendar::PermissionRole as R;
     Some(match key {
@@ -696,7 +824,8 @@ pub fn role_of(key: &str) -> Option<::calendar::PermissionRole> {
 mod tests {
     use super::*;
     use ::calendar::{
-        parse_calendars, parse_events, parse_found_times, parse_rooms, parse_schedules,
+        Weekday, parse_calendars, parse_event_proposals, parse_events, parse_found_times,
+        parse_rooms, parse_schedules,
     };
     use serde_json::json;
 
@@ -1012,6 +1141,188 @@ mod tests {
     }
 
     #[test]
+    fn mailbox_work_hours_are_read_in_the_mailbox_zone_then_shown_in_local_time() {
+        let hours = |zone: &str| WorkingHours {
+            days: vec![Weekday::Thursday],
+            start_min: 9 * 60,
+            end_min: 17 * 60,
+            time_zone: zone.into(),
+            custom_zone: None,
+        };
+        let day = Date::new(2026, 11, 19);
+        // Cairo is UTC+2 in November: 09:00 there is 02:00 at UTC-5.
+        assert_eq!(
+            local_work_hours(&hours("Egypt Standard Time"), day, &|_| -5 * H),
+            (2 * 60, 10 * 60)
+        );
+        assert_eq!(
+            local_work_hours(&hours("Africa/Cairo"), day, &|_| 2 * H),
+            (9 * 60, 17 * 60),
+            "an IANA name works too, and the same zone changes nothing"
+        );
+        assert_eq!(
+            local_work_hours(&hours("No Such Zone"), day, &|_| 3 * H),
+            (9 * 60, 17 * 60),
+            "an unknown zone keeps the hours as written"
+        );
+    }
+
+    #[test]
+    fn the_zone_picker_finds_zones_by_name_or_display_name() {
+        let zones: Vec<(String, String)> = [
+            ("Egypt Standard Time", "(UTC+02:00) Cairo"),
+            (
+                "Eastern Standard Time",
+                "(UTC-05:00) Eastern Time (US & Canada)",
+            ),
+            (
+                "India Standard Time",
+                "(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi",
+            ),
+        ]
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .to_vec();
+        assert_eq!(zone_matches(&zones, "cairo", 8)[0].0, "Egypt Standard Time");
+        assert_eq!(zone_matches(&zones, " STANDARD ", 2).len(), 2, "capped");
+        assert_eq!(zone_matches(&zones, "mumbai", 8).len(), 1);
+        assert!(zone_matches(&zones, "", 8).is_empty());
+        assert!(zone_matches(&zones, "atlantis", 8).is_empty());
+    }
+
+    #[test]
+    fn share_roles_are_limited_to_what_the_permission_allows() {
+        use ::calendar::PermissionRole as R;
+        assert_eq!(
+            role_options(&[R::None, R::FreeBusy, R::LimitedRead, R::Read]),
+            ["freebusy", "limited", "read"],
+            "`none` is not a role to offer"
+        );
+        assert_eq!(
+            role_options(&[R::Delegate, R::DelegateWithPrivate, R::Write]),
+            ["write", "delegate"]
+        );
+        assert_eq!(
+            role_options(&[]),
+            ["freebusy", "limited", "read", "write", "delegate"],
+            "Graph says nothing: offer them all"
+        );
+        let row = |roles| PermRow {
+            id: "p".into(),
+            name: String::new(),
+            email: String::new(),
+            role: "read".into(),
+            removable: true,
+            roles,
+        };
+        assert_eq!(
+            share_roles(&[row(role_options(&[])), row(vec!["freebusy", "read"])]),
+            ["freebusy", "read"]
+        );
+        assert_eq!(share_roles(&[]).len(), 5);
+    }
+
+    #[test]
+    fn proposals_read_as_who_proposed_which_slot_in_local_time() {
+        let ps = parse_event_proposals(&json!({
+            "id": "AAMk=1", "subject": "Lunch",
+            "attendees": [
+                {"emailAddress": {"name": "Bob Lee", "address": "bob@contoso.com"}, "type": "required",
+                 "status": {"response": "tentativelyAccepted"},
+                 "proposedNewTime": {"start": {"dateTime": "2026-11-19T12:00:00.0000000", "timeZone": "UTC"},
+                                     "end": {"dateTime": "2026-11-19T13:00:00.0000000", "timeZone": "UTC"}}},
+                {"emailAddress": {"name": "", "address": "dana@contoso.com"}, "type": "required",
+                 "status": {"response": "declined"},
+                 "proposedNewTime": {"start": {"dateTime": "2026-11-20T08:00:00.0000000", "timeZone": "UTC"},
+                                     "end": {"dateTime": "2026-11-20T09:00:00.0000000", "timeZone": "UTC"}}},
+                {"emailAddress": {"name": "Eve", "address": "eve@contoso.com"}, "type": "required",
+                 "status": {"response": "accepted"}}
+            ]
+        }));
+        let rows = proposal_rows(&ps, &event(json!({})), &|_| 2 * H);
+        assert_eq!(
+            rows.len(),
+            2,
+            "an attendee who proposed nothing is not listed"
+        );
+        assert_eq!(
+            (
+                rows[0].name.as_str(),
+                rows[0].response.as_str(),
+                rows[0].when.as_str()
+            ),
+            ("Bob Lee", "tentative", "Thu, Nov 19 · 14:00 – 15:00")
+        );
+        assert_eq!(
+            (rows[1].name.as_str(), rows[1].response.as_str()),
+            ("dana@contoso.com", "declined")
+        );
+    }
+
+    #[test]
+    fn each_scheduler_row_is_shaded_by_that_persons_own_work_hours() {
+        // Thursday 2026-11-19, 32 half-hour slots from 06:00 UTC.
+        let first_ms = Date::new(2026, 11, 19).midnight_ms() + 6 * H;
+        let schedules = parse_schedules(&json!({"value": [
+            {"scheduleId": "alice@contoso.com", "availabilityView": "",
+             "workingHours": {"daysOfWeek": ["thursday"], "startTime": "09:00:00.0000000", "endTime": "17:00:00.0000000", "timeZone": {"name": "Pacific Standard Time"}}},
+            {"scheduleId": "cairo@contoso.com", "availabilityView": "",
+             "workingHours": {"daysOfWeek": ["thursday"], "startTime": "09:00:00.0000000", "endTime": "17:00:00.0000000", "timeZone": {"name": "Egypt Standard Time"}}},
+            {"scheduleId": "secret@contoso.com", "availabilityView": "", "error": {"message": "No permission", "responseCode": "ErrorAccessDenied"}}
+        ]}));
+        let who = [
+            ("Me".to_string(), "me@contoso.com".to_string(), "me"),
+            (
+                "Alice".to_string(),
+                "alice@contoso.com".to_string(),
+                "required",
+            ),
+            (
+                "Cairo".to_string(),
+                "CAIRO@contoso.com".to_string(),
+                "required",
+            ),
+            (
+                "Secret".to_string(),
+                "secret@contoso.com".to_string(),
+                "optional",
+            ),
+        ];
+        let mut rows = sched_rows(&who, &schedules, 0, 32);
+        let mine = WorkingHours {
+            days: vec![Weekday::Thursday],
+            start_min: 9 * 60,
+            end_min: 17 * 60,
+            time_zone: "UTC".into(),
+            custom_zone: None,
+        };
+        shade_work_hours(&mut rows, &schedules, first_ms, 30, Some(&mine));
+        let span = |r: &SchedRow| {
+            let on: Vec<usize> = (0..32).filter(|&i| r.work[i]).collect();
+            (on.first().copied(), on.last().copied(), on.len())
+        };
+        assert_eq!(
+            span(&rows[0]),
+            (Some(6), Some(21), 16),
+            "me: my own 09:00 to 17:00"
+        );
+        assert_eq!(
+            span(&rows[1]),
+            (Some(22), Some(31), 10),
+            "Alice's 09:00 PST is 17:00 UTC, so only her morning is in view"
+        );
+        assert_eq!(
+            span(&rows[2]),
+            (Some(2), Some(17), 16),
+            "Cairo is UTC+2 in November: 07:00 to 15:00 UTC"
+        );
+        assert_eq!(rows[3].work, vec![true; 32], "no hours known: not dimmed");
+        assert_ne!(
+            rows[1].work, rows[0].work,
+            "no longer one row's hours for everyone"
+        );
+    }
+
+    #[test]
     fn suggested_times_read_as_a_day_and_a_range_in_local_time() {
         let found = parse_found_times(&json!({"meetingTimeSuggestions": [
             {"confidence": 100.0, "suggestionReason": "Suggested because everyone is available.",
@@ -1036,22 +1347,44 @@ mod tests {
         let rooms = parse_rooms(&json!({"value": [
             {"id": "r1", "displayName": "Atlas", "emailAddress": "atlas@contoso.com", "capacity": 8, "building": "HQ", "floorLabel": "2"},
             {"id": "r2", "displayName": "Boreas", "emailAddress": "boreas@contoso.com"},
-            {"id": "r3", "displayName": "Ceres", "emailAddress": "ceres@contoso.com"}
+            {"id": "r3", "displayName": "Ceres", "emailAddress": "ceres@contoso.com"},
+            {"id": "r4", "displayName": "Dione", "emailAddress": "dione@contoso.com"}
         ]}));
+        let item = |s: &str, e: &str, status: &str| {
+            json!({
+            "status": status,
+            "start": {"dateTime": s, "timeZone": "UTC"},
+            "end": {"dateTime": e, "timeZone": "UTC"}})
+        };
         let sched = parse_schedules(&json!({"value": [
-            {"scheduleId": "atlas@contoso.com", "availabilityView": "00"},
-            {"scheduleId": "boreas@contoso.com", "availabilityView": "02"}
+            {"scheduleId": "atlas@contoso.com", "availabilityView": "00",
+             "scheduleItems": [item("2026-11-19T08:00:00.0000000", "2026-11-19T09:00:00.0000000", "busy")]},
+            {"scheduleId": "boreas@contoso.com", "availabilityView": "02",
+             "scheduleItems": [item("2026-11-19T10:15:00.0000000", "2026-11-19T10:45:00.0000000", "busy")]},
+            {"scheduleId": "dione@contoso.com", "availabilityView": "",
+             "error": {"message": "No permission", "responseCode": "ErrorAccessDenied"}}
         ]}));
-        let rows = room_rows(&rooms, &sched);
+        let at = |h: i64, m: i64| Date::new(2026, 11, 19).midnight_ms() + h * H + m * 60_000;
+        // The form's slot is 10:00 to 10:30 (UTC here).
+        let rows = room_rows(&rooms, &sched, Some((at(10, 0), at(10, 30))));
         assert_eq!(
             rows.iter().map(|r| r.status).collect::<Vec<_>>(),
-            [0, 1, 2],
-            "free, busy, unknown (no answer)"
+            [0, 1, 2, 2],
+            "free (its busy block is earlier), busy (overlaps), unknown (no answer), unknown (denied)"
         );
         assert_eq!(
             (rows[0].capacity.as_str(), rows[0].place.as_str()),
             ("8", "HQ, 2")
         );
         assert_eq!(rows[1].capacity, "");
+        let moved = room_rows(&rooms, &sched, Some((at(8, 30), at(9, 30))));
+        assert_eq!(moved[0].status, 1, "the same room is busy at another slot");
+        assert_eq!(moved[1].status, 0);
+        assert!(
+            room_rows(&rooms, &sched, None)
+                .iter()
+                .all(|r| r.status == 2),
+            "no slot, no verdict"
+        );
     }
 }

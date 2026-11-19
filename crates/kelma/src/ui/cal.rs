@@ -9,7 +9,8 @@ use crate::backend::{
 use crate::{
     AppWindow, CalAllDay, CalAttachmentRow, CalAttendeeRow, CalBlock, CalCalendarRow, CalDay,
     CalDetail, CalFilterOpt, CalForm, CalMiniCell, CalMonthCell, CalMonthItem, CalPeek, CalPerm,
-    CalRoom, CalRoomList, CalSavedView, CalSchedRow, CalSettingsData, CalStore, CalSuggest,
+    CalProposalRow, CalRoom, CalRoomList, CalSavedView, CalSchedRow, CalSettingsData, CalStore,
+    CalSuggest,
 };
 use slint::{ComponentHandle, Model, SharedString};
 use tokio::sync::mpsc::UnboundedSender;
@@ -178,6 +179,7 @@ fn set_panels(w: &AppWindow, p: Panels) {
         week_numbers: p.settings.week_numbers,
         second_tz: p.settings.second_tz.into(),
     });
+    s.set_second_tz_label(p.second_tz_label.into());
     s.set_categories(strings(p.categories));
 }
 
@@ -232,6 +234,16 @@ fn detail_row(d: DetailData) -> CalDetail {
         ),
         dial_in: d.dial_in.into(),
         hide_attendees: d.hide_attendees,
+        proposals: model(
+            d.proposals
+                .into_iter()
+                .map(|p| CalProposalRow {
+                    name: p.name.into(),
+                    response: p.response.into(),
+                    when: p.when.into(),
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -337,6 +349,7 @@ fn set_sched(w: &AppWindow, s: SchedPush) {
                 tz: r.tz.into(),
                 kind: r.kind.into(),
                 cells: model(r.cells),
+                work: model(r.work),
                 error: r.error.into(),
             })
             .collect(),
@@ -499,9 +512,30 @@ impl UiHandle {
         });
     }
 
+    /// The zones the settings dialog's picker lists, as `(name, display name)`.
+    pub fn cal_zones(&self, zones: Vec<(String, String)>) {
+        self.run(move |w| {
+            w.global::<CalStore>().set_zone_matches(model(
+                zones
+                    .into_iter()
+                    .map(|(name, label)| crate::CalZone {
+                        name: name.into(),
+                        label: label.into(),
+                    })
+                    .collect(),
+            ))
+        });
+    }
+
     pub fn cal_perms(&self, rows: Vec<PermRow>, note: String) {
         self.run(move |w| {
             let s = w.global::<CalStore>();
+            s.set_share_roles(strings(
+                crate::backend::share_roles(&rows)
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ));
             s.set_perms(model(
                 rows.into_iter()
                     .map(|p| CalPerm {
@@ -510,6 +544,7 @@ impl UiHandle {
                         email: p.email.into(),
                         role: p.role.into(),
                         removable: p.removable,
+                        roles: strings(p.roles.into_iter().map(String::from).collect()),
                     })
                     .collect(),
             ));
@@ -1012,9 +1047,12 @@ mod tests {
                         {"id": "r3", "displayName": "Ceres", "emailAddress": "ceres@contoso.com", "capacity": 4, "building": "Annex"}
                     ]}));
                     let sched = calendar::parse_schedules(&json!({"value": [
-                        {"scheduleId": "atlas@contoso.com", "availabilityView": "0"},
-                        {"scheduleId": "boreas@contoso.com", "availabilityView": "2"}
+                        {"scheduleId": "atlas@contoso.com", "availabilityView": "0", "scheduleItems": []},
+                        {"scheduleId": "boreas@contoso.com", "availabilityView": "2", "scheduleItems": [{"status": "busy",
+                            "start": {"dateTime": "2026-11-19T10:00:00.0000000", "timeZone": "UTC"},
+                            "end": {"dateTime": "2026-11-19T10:30:00.0000000", "timeZone": "UTC"}}]}
                     ]}));
+                    let slot = ::calendar::Date::new(2026, 11, 19).midnight_ms() + 10 * 3_600_000;
                     set_rooms(
                         app,
                         RoomsPush {
@@ -1022,7 +1060,11 @@ mod tests {
                                 ("HQ".into(), "hq@contoso.com".into()),
                                 ("Annex".into(), "annex@contoso.com".into()),
                             ],
-                            rooms: crate::backend::room_rows(&rooms, &sched),
+                            rooms: crate::backend::room_rows(
+                                &rooms,
+                                &sched,
+                                Some((slot, slot + 1_800_000)),
+                            ),
                             ..Default::default()
                         },
                     );
@@ -1046,6 +1088,7 @@ mod tests {
                         email: "dana@contoso.com".into(),
                         role: "read".into(),
                         removable: true,
+                        roles: strings(vec!["freebusy".into(), "limited".into(), "read".into()]),
                     },
                     crate::CalPerm {
                         id: "p2".into(),
@@ -1053,6 +1096,7 @@ mod tests {
                         email: "".into(),
                         role: "freebusy".into(),
                         removable: false,
+                        roles: strings(vec!["freebusy".into()]),
                     },
                 ]));
             }
@@ -1422,6 +1466,72 @@ mod tests {
     }
 
     #[test]
+    fn the_share_dialog_offers_only_the_roles_the_permission_allows() {
+        let app = app(View::WorkWeek, &[]);
+        let store = app.global::<CalStore>();
+        store.set_modal("share".into());
+        store.set_share_roles(strings(vec!["freebusy".into(), "read".into()]));
+        store.set_perms(model(vec![crate::CalPerm {
+            id: "p1".into(),
+            name: "Dana Reyes".into(),
+            email: "dana@contoso.com".into(),
+            role: "read".into(),
+            removable: true,
+            roles: strings(vec!["freebusy".into(), "limited".into(), "read".into()]),
+        }]));
+        // One person row (three roles) and the add row (two): Titles is only in the first, so
+        // the other two appear twice as often (however many matches one button leaves).
+        let count = |l: &str| ElementHandle::find_by_accessible_label(&app, l).count();
+        let titles = count("Titles");
+        assert!(titles > 0, "the person's own row offers Titles");
+        assert_eq!(count("Free/busy"), 2 * titles);
+        assert_eq!(count("All details"), 2 * titles);
+        for gone in ["Edit", "Delegate"] {
+            assert_eq!(
+                ElementHandle::find_by_accessible_label(&app, gone).count(),
+                0,
+                "{gone} is not allowed here"
+            );
+        }
+    }
+
+    #[test]
+    fn the_full_view_lists_proposed_times_and_accept_sends_the_one_clicked() {
+        let e = invitation("organizer");
+        let app = app(View::WorkWeek, std::slice::from_ref(&e));
+        let log = commands(&app);
+        let store = app.global::<CalStore>();
+        show_peek(&app, &e);
+        store.set_modal("full".into());
+        store.set_detail(detail_row(DetailData {
+            id: "Invite".into(),
+            proposals: vec![
+                crate::backend::ProposalRow {
+                    name: "Bob".into(),
+                    response: "tentative".into(),
+                    when: "Thu, Nov 19 · 14:00 – 15:00".into(),
+                },
+                crate::backend::ProposalRow {
+                    name: "Dana".into(),
+                    response: "declined".into(),
+                    when: "Fri, Nov 20 · 09:00 – 10:00".into(),
+                },
+            ],
+            ..Default::default()
+        }));
+        assert_eq!(
+            ElementHandle::find_by_accessible_label(
+                &app,
+                "Bob proposed Thu, Nov 19 · 14:00 – 15:00"
+            )
+            .count(),
+            1
+        );
+        click(&button(&app, "Accept Dana's proposed time"));
+        assert_eq!(log_of(&log), ["accept-proposal 1"]);
+    }
+
+    #[test]
     fn filter_toggles_send_their_group_and_choice_and_clear_enables_with_a_filter() {
         let app = app(View::WorkWeek, &[]);
         let log = commands(&app);
@@ -1611,7 +1721,48 @@ mod tests {
         click(&button(&app, "Show week numbers"));
         click(&button(&app, "Show weekends in the week and month views"));
         click(&button(&app, "Save"));
-        assert_eq!(log_of(&log), ["settings 0|09:00|17:00|0|1|"]);
+        assert_eq!(
+            log_of(&log),
+            ["zone-search ", "settings 0|09:00|17:00|0|1|"],
+            "opening the dialog clears the zone matches"
+        );
+    }
+
+    #[test]
+    fn the_second_time_zone_is_picked_by_name_and_an_old_offset_is_kept_until_then() {
+        let app = app(View::WorkWeek, &[]);
+        let log = commands(&app);
+        let store = app.global::<CalStore>();
+        // An old config: only a fixed offset (-5 hours).
+        store.set_settings(crate::CalSettingsData {
+            first_day: 1,
+            work_start: "09:00".into(),
+            work_end: "17:00".into(),
+            weekends: true,
+            week_numbers: false,
+            second_tz: "-300".into(),
+        });
+        store.set_second_tz_label("UTC-05:00 (fixed offset)".into());
+        click(&button(&app, "⋯"));
+        click(&button(&app, "Calendar settings…"));
+        click(&button(&app, "Save"));
+        assert_eq!(
+            log_of(&log).last().unwrap(),
+            "settings 1|09:00|17:00|1|0|-300",
+            "saving without picking a zone keeps the fixed offset"
+        );
+        // Pick a zone from the matches instead.
+        log.borrow_mut().clear();
+        store.set_zone_matches(model(vec![crate::CalZone {
+            name: "Egypt Standard Time".into(),
+            label: "(UTC+02:00) Cairo".into(),
+        }]));
+        click(&button(&app, "(UTC+02:00) Cairo"));
+        click(&button(&app, "Save"));
+        assert_eq!(
+            log_of(&log).last().unwrap(),
+            "settings 1|09:00|17:00|1|0|Egypt Standard Time"
+        );
     }
 
     #[test]
@@ -1885,10 +2036,13 @@ mod tests {
             {"id": "r2", "displayName": "Boreas", "emailAddress": "boreas@contoso.com"}
         ]}));
         let sched = calendar::parse_schedules(&json!({"value": [
-            {"scheduleId": "atlas@contoso.com", "availabilityView": "0"},
-            {"scheduleId": "boreas@contoso.com", "availabilityView": "2"}
+            {"scheduleId": "atlas@contoso.com", "availabilityView": "0", "scheduleItems": []},
+            {"scheduleId": "boreas@contoso.com", "availabilityView": "2", "scheduleItems": [{"status": "busy",
+                "start": {"dateTime": "2026-11-19T10:00:00.0000000", "timeZone": "UTC"},
+                "end": {"dateTime": "2026-11-19T10:30:00.0000000", "timeZone": "UTC"}}]}
         ]}));
-        let rows = crate::backend::room_rows(&rooms, &sched);
+        let slot = calendar::Date::new(2026, 11, 19).midnight_ms() + 10 * 3_600_000;
+        let rows = crate::backend::room_rows(&rooms, &sched, Some((slot, slot + 1_800_000)));
         set_rooms(
             &app,
             RoomsPush {

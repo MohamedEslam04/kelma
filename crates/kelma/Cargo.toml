@@ -20,6 +20,7 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 notify-rust = "4.19.0"
 onedrive = { version = "0.0.0", path = "../onedrive" }
 open = "5.4.5"
+preview = { version = "0.0.0", path = "../preview" }
 reqwest = "0.13.5"
 render = { version = "0.0.0", path = "../render" }
 rfd = "0.18.0"
