@@ -361,7 +361,7 @@ pub fn size_label(bytes: u64) -> String {
 }
 
 /// "10:30" today, "Yesterday", "Nov 10" this year, "Nov 10, 2025" before. `off_ms` is local time
-/// minus UTC at `ms`.
+/// minus UTC at `ms` (in the time zone chosen in Settings), so "today" is the day there.
 pub fn when_label(ms: i64, now_ms: i64, off_ms: i64) -> String {
     use chrono::{Datelike, TimeZone, Utc};
     if ms <= 0 {
@@ -1001,6 +1001,24 @@ mod tests {
         assert_eq!(when_label(NOW - 9 * DAY_MS, NOW, 0), "Nov 9");
         assert_eq!(when_label(NOW - 400 * DAY_MS, NOW, 0), "Oct 14, 2025");
         assert_eq!(when_label(0, NOW, 0), "");
+    }
+
+    #[test]
+    fn when_labels_count_the_day_in_the_offset_zone() {
+        use chrono::{TimeZone, Utc};
+        let hour = 3_600_000;
+        let at = Utc
+            .with_ymd_and_hms(2026, 11, 18, 23, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let now = Utc
+            .with_ymd_and_hms(2026, 11, 19, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(when_label(at, now, 0), "Yesterday");
+        // At UTC+2 the same instant is 01:00 on the 19th: a time, not "Yesterday".
+        assert!(when_label(at, now, 2 * hour).contains(":00"));
+        assert_ne!(when_label(at, now, 2 * hour), "Yesterday");
     }
 
     #[test]

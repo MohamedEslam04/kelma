@@ -83,6 +83,8 @@ pub async fn run(paths: &Paths, args: &[String]) -> Result<()> {
             allowed_origins: Vec::new(),
             sso_resource: a.sso_resource.clone(),
             valid_domains: a.valid_domains.clone(),
+            // A dev window: no device permissions, like an app the user granted nothing.
+            granted: Vec::new(),
         });
         let client = match signed_in(paths).await {
             Ok(c) => Some(c),

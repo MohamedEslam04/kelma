@@ -46,7 +46,6 @@ pub struct Apps {
     notes: notes::Notes,
     lists: notes::Lists,
     grants: Grants,
-    grants_loaded: bool,
     /// Links that were opened (the tests read these; nothing is opened offline).
     opened: Vec<String>,
 }

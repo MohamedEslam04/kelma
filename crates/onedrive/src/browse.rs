@@ -88,6 +88,14 @@ pub async fn item_at(client: &Client, path: &str) -> Result<DriveItem> {
     parse_item(&v).ok_or_else(|| Error::Protocol(format!("no item at {path}")))
 }
 
+/// The item behind a SharePoint/OneDrive file URL, such as the link of a chat attachment
+/// (`GET /shares/{id}/driveItem`, read only).
+pub async fn item_from_share(client: &Client, file_url: &str) -> Result<DriveItem> {
+    let url = teams_proto::images::graph_share_item_url(file_url);
+    let v = graph(client, "item_from_share", Method::GET, &url, None).await?;
+    parse_item(&v).ok_or_else(|| Error::Protocol("no item behind this link".into()))
+}
+
 /// Items the user follows (Favorites).
 pub async fn following(client: &Client) -> Result<Page<DriveItem>> {
     list(client, "following", &format!("{GRAPH}/me/drive/following")).await

@@ -122,7 +122,7 @@ component Stepper inherits Rectangle {
             border-radius: 4px;
             background: minus.has-hover ? Theme.surface-hover : Theme.surface;
             accessible-role: button;
-            accessible-label: "Fewer " + root.label;
+            accessible-label: @tr("Fewer {}", root.label);
             Text { text: "−"; color: Theme.fg; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
             minus := TouchArea { mouse-cursor: pointer; clicked => { root.value = max(root.lo, root.value - 1); } }
         }
@@ -132,7 +132,7 @@ component Stepper inherits Rectangle {
             border-radius: 4px;
             background: plus.has-hover ? Theme.surface-hover : Theme.surface;
             accessible-role: button;
-            accessible-label: "More " + root.label;
+            accessible-label: @tr("More {}", root.label);
             Text { text: "+"; color: Theme.fg; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
             plus := TouchArea { mouse-cursor: pointer; clicked => { root.value = min(root.hi, root.value + 1); } }
         }
@@ -148,7 +148,7 @@ export component FormatToggle inherits Rectangle {
     border-radius: 4px;
     background: touch.has-hover || root.on ? Theme.surface-hover : transparent;
     accessible-role: button;
-    accessible-label: "Show formatting options";
+    accessible-label: @tr("Show formatting options");
     accessible-checkable: true;
     accessible-checked: root.on;
     Text { text: "Aa"; color: touch.has-hover || root.on ? Theme.accent : Theme.fg-muted; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
@@ -166,12 +166,12 @@ export component FormatPreview inherits Rectangle {
     border-radius: 4px;
     clip: true;
     accessible-role: groupbox;
-    accessible-label: "Formatting preview";
+    accessible-label: @tr("Formatting preview");
     body := VerticalLayout {
         padding: 8px;
         padding-top: 4px;
         spacing: 2px;
-        Text { text: "Preview"; color: Theme.fg-subtle; font-size: 10px * Theme.font-scale; font-weight: 600; }
+        Text { text: @tr("Preview"); color: Theme.fg-subtle; font-size: 10px * Theme.font-scale; font-weight: 600; }
         StyledText {
             text: FormatApi.preview(root.source);
             default-color: Theme.fg;
@@ -231,22 +231,22 @@ export component FormatBar inherits Rectangle {
         padding-top: 4px;
         spacing: 2px;
         alignment: start;
-        FmtButton { label: "B"; hint: "Bold"; bold: true; clicked => { root.fire("bold"); } }
-        FmtButton { label: "I"; hint: "Italic"; italic: true; clicked => { root.fire("italic"); } }
-        FmtButton { label: "U"; hint: "Underline"; underline: true; clicked => { root.fire("underline"); } }
-        FmtButton { label: "S"; hint: "Strikethrough"; strike: true; clicked => { root.fire("strike"); } }
+        FmtButton { label: "B"; hint: @tr("Bold"); bold: true; clicked => { root.fire("bold"); } }
+        FmtButton { label: "I"; hint: @tr("Italic"); italic: true; clicked => { root.fire("italic"); } }
+        FmtButton { label: "U"; hint: @tr("Underline"); underline: true; clicked => { root.fire("underline"); } }
+        FmtButton { label: "S"; hint: @tr("Strikethrough"); strike: true; clicked => { root.fire("strike"); } }
         Rectangle { width: 1px; height: 20px; y: 4px; background: Theme.border; }
-        FmtButton { label: "A"; hint: "Font color"; swatch: root.last-color; clicked => { root.remember(); color-popup.show(); } }
-        FmtButton { label: "ab"; hint: "Text highlight color"; swatch: root.last-highlight; clicked => { root.remember(); highlight-popup.show(); } }
-        FmtButton { label: "Aa"; hint: "Font size"; clicked => { root.remember(); size-popup.show(); } }
+        FmtButton { label: "A"; hint: @tr("Font color"); swatch: root.last-color; clicked => { root.remember(); color-popup.show(); } }
+        FmtButton { label: "ab"; hint: @tr("Text highlight color"); swatch: root.last-highlight; clicked => { root.remember(); highlight-popup.show(); } }
+        FmtButton { label: "Aa"; hint: @tr("Font size"); clicked => { root.remember(); size-popup.show(); } }
         Rectangle { width: 1px; height: 20px; y: 4px; background: Theme.border; }
-        FmtButton { label: "•≡"; hint: "Bullet list"; clicked => { root.fire("ul"); } }
-        FmtButton { label: "1."; hint: "Numbered list"; clicked => { root.fire("ol"); } }
+        FmtButton { label: "•≡"; hint: @tr("Bullet list"); clicked => { root.fire("ul"); } }
+        FmtButton { label: "1."; hint: @tr("Numbered list"); clicked => { root.fire("ol"); } }
         Rectangle { width: 1px; height: 20px; y: 4px; background: Theme.border; }
-        FmtButton { label: "❝"; hint: "Quote"; clicked => { root.fire("quote"); } }
-        FmtButton { label: "🔗"; hint: "Insert link"; clicked => { root.open-link(); } }
-        FmtButton { label: "</>"; hint: "Code block"; clicked => { root.remember(); code-popup.show(); } }
-        FmtButton { label: "⋯"; hint: "More formatting options"; clicked => { root.remember(); more-popup.show(); } }
+        FmtButton { label: "❝"; hint: @tr("Quote"); clicked => { root.fire("quote"); } }
+        FmtButton { label: "🔗"; hint: @tr("Insert link"); clicked => { root.open-link(); } }
+        FmtButton { label: "</>"; hint: @tr("Code block"); clicked => { root.remember(); code-popup.show(); } }
+        FmtButton { label: "⋯"; hint: @tr("More formatting options"); clicked => { root.remember(); more-popup.show(); } }
     }
 
     color-popup := PopupWindow {
@@ -262,25 +262,25 @@ export component FormatBar inherits Rectangle {
             VerticalLayout {
                 padding: 8px;
                 spacing: 6px;
-                Text { text: "Font color"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                Text { text: @tr("Font color"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 GridLayout {
                     spacing: 4px;
                     Row {
                         for c[i] in [#d13438, #ca5010, #c19c00, #13a10e, #038387]: Swatch {
                             tone: c;
-                            hint: "Color " + (i + 1);
+                            hint: @tr("Color {}", i + 1);
                             clicked => { root.last-color = c; root.fire-kept("color:" + Colors.hex(c)); color-popup.close(); }
                         }
                     }
                     Row {
                         for c[i] in [#0078d4, #8764b8, #c239b3, #ffffff, #8a8a8a]: Swatch {
                             tone: c;
-                            hint: "Color " + (i + 6);
+                            hint: @tr("Color {}", i + 6);
                             clicked => { root.last-color = c; root.fire-kept("color:" + Colors.hex(c)); color-popup.close(); }
                         }
                     }
                 }
-                FmtItem { label: "No color"; clicked => { root.fire-kept("color:none"); color-popup.close(); } }
+                FmtItem { label: @tr("No color"); clicked => { root.fire-kept("color:none"); color-popup.close(); } }
             }
         }
     }
@@ -298,26 +298,26 @@ export component FormatBar inherits Rectangle {
             VerticalLayout {
                 padding: 8px;
                 spacing: 6px;
-                Text { text: "Text highlight color"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                Text { text: @tr("Text highlight color"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 // Teams' own palette, so the sent message keeps its highlight names.
                 GridLayout {
                     spacing: 4px;
                     Row {
                         for c[i] in [#df9299, #f4a593, #fdd472, #e5f18f]: Swatch {
                             tone: c;
-                            hint: "Highlight " + (i + 1);
+                            hint: @tr("Highlight {}", i + 1);
                             clicked => { root.last-highlight = c; root.fire-kept("bg:" + Colors.hex(c)); highlight-popup.close(); }
                         }
                     }
                     Row {
                         for c[i] in [#82cda8, #9dd9db, #c7d4e8, #ebd3e1]: Swatch {
                             tone: c;
-                            hint: "Highlight " + (i + 5);
+                            hint: @tr("Highlight {}", i + 5);
                             clicked => { root.last-highlight = c; root.fire-kept("bg:" + Colors.hex(c)); highlight-popup.close(); }
                         }
                     }
                 }
-                FmtItem { label: "No highlight"; clicked => { root.fire-kept("bg:none"); highlight-popup.close(); } }
+                FmtItem { label: @tr("No highlight"); clicked => { root.fire-kept("bg:none"); highlight-popup.close(); } }
             }
         }
     }
@@ -335,9 +335,9 @@ export component FormatBar inherits Rectangle {
             VerticalLayout {
                 padding: 6px;
                 spacing: 2px;
-                FmtItem { label: "Large"; hint: "Large text"; clicked => { root.fire-kept("size:large"); size-popup.close(); } }
-                FmtItem { label: "Small"; hint: "Small text"; clicked => { root.fire-kept("size:small"); size-popup.close(); } }
-                FmtItem { label: "Normal"; hint: "Normal size"; clicked => { root.fire-kept("size:none"); size-popup.close(); } }
+                FmtItem { label: @tr("Large"); hint: @tr("Large text"); clicked => { root.fire-kept("size:large"); size-popup.close(); } }
+                FmtItem { label: @tr("Small"); hint: @tr("Small text"); clicked => { root.fire-kept("size:small"); size-popup.close(); } }
+                FmtItem { label: @tr("Normal"); hint: @tr("Normal size"); clicked => { root.fire-kept("size:none"); size-popup.close(); } }
             }
         }
     }
@@ -355,13 +355,13 @@ export component FormatBar inherits Rectangle {
             VerticalLayout {
                 padding: 6px;
                 spacing: 2px;
-                Text { text: "Code block language"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                Text { text: @tr("Code block language"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 ScrollView {
                     VerticalLayout {
                         spacing: 1px;
                         for lang in ["plaintext", "bash", "c", "cpp", "csharp", "css", "go", "html", "java", "javascript", "json", "python", "rust", "sql"]: FmtItem {
                             label: lang;
-                            hint: "Code block " + lang;
+                            hint: @tr("Code block {}", lang);
                             clicked => { root.fire-kept("codeblock:" + lang); code-popup.close(); }
                         }
                     }
@@ -383,23 +383,23 @@ export component FormatBar inherits Rectangle {
             VerticalLayout {
                 padding: 6px;
                 spacing: 1px;
-                FmtItem { label: "Paragraph"; clicked => { root.fire-kept("para"); more-popup.close(); } }
-                FmtItem { label: "Heading 1"; clicked => { root.fire-kept("h1"); more-popup.close(); } }
-                FmtItem { label: "Heading 2"; clicked => { root.fire-kept("h2"); more-popup.close(); } }
-                FmtItem { label: "Heading 3"; clicked => { root.fire-kept("h3"); more-popup.close(); } }
+                FmtItem { label: @tr("Paragraph"); clicked => { root.fire-kept("para"); more-popup.close(); } }
+                FmtItem { label: @tr("Heading 1"); clicked => { root.fire-kept("h1"); more-popup.close(); } }
+                FmtItem { label: @tr("Heading 2"); clicked => { root.fire-kept("h2"); more-popup.close(); } }
+                FmtItem { label: @tr("Heading 3"); clicked => { root.fire-kept("h3"); more-popup.close(); } }
                 Rectangle { height: 1px; background: Theme.border; }
-                FmtItem { label: "Code"; hint: "Inline code"; clicked => { root.fire-kept("code"); more-popup.close(); } }
-                FmtItem { label: "Clear formatting"; clicked => { root.fire-kept("clear"); more-popup.close(); } }
+                FmtItem { label: @tr("Code"); hint: @tr("Inline code"); clicked => { root.fire-kept("code"); more-popup.close(); } }
+                FmtItem { label: @tr("Clear formatting"); clicked => { root.fire-kept("clear"); more-popup.close(); } }
                 Rectangle { height: 1px; background: Theme.border; }
-                FmtItem { label: "Increase indent"; clicked => { root.fire-kept("indent"); more-popup.close(); } }
-                FmtItem { label: "Decrease indent"; clicked => { root.fire-kept("outdent"); more-popup.close(); } }
-                FmtItem { label: "Horizontal rule"; clicked => { root.fire-kept("hr"); more-popup.close(); } }
-                FmtItem { label: "Table…"; hint: "Insert table"; clicked => { more-popup.close(); table-popup.show(); } }
+                FmtItem { label: @tr("Increase indent"); clicked => { root.fire-kept("indent"); more-popup.close(); } }
+                FmtItem { label: @tr("Decrease indent"); clicked => { root.fire-kept("outdent"); more-popup.close(); } }
+                FmtItem { label: @tr("Horizontal rule"); clicked => { root.fire-kept("hr"); more-popup.close(); } }
+                FmtItem { label: @tr("Table…"); hint: @tr("Insert table"); clicked => { more-popup.close(); table-popup.show(); } }
                 Rectangle { height: 1px; background: Theme.border; }
-                FmtItem { label: "Mark as important"; clicked => { root.fire-kept("important"); more-popup.close(); } }
+                FmtItem { label: @tr("Mark as important"); clicked => { root.fire-kept("important"); more-popup.close(); } }
                 Rectangle { height: 1px; background: Theme.border; }
-                FmtItem { label: "Undo"; clicked => { root.fire-kept("undo"); more-popup.close(); } }
-                FmtItem { label: "Redo"; clicked => { root.fire-kept("redo"); more-popup.close(); } }
+                FmtItem { label: @tr("Undo"); clicked => { root.fire-kept("undo"); more-popup.close(); } }
+                FmtItem { label: @tr("Redo"); clicked => { root.fire-kept("redo"); more-popup.close(); } }
             }
         }
     }
@@ -417,16 +417,16 @@ export component FormatBar inherits Rectangle {
             VerticalLayout {
                 padding: 10px;
                 spacing: 6px;
-                Text { text: "Insert table"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
-                Stepper { label: "Rows"; value <=> root.table-rows; lo: 1; hi: 12; }
-                Stepper { label: "Columns"; value <=> root.table-cols; lo: 1; hi: 8; }
+                Text { text: @tr("Insert table"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                Stepper { label: @tr("Rows"); value <=> root.table-rows; lo: 1; hi: 12; }
+                Stepper { label: @tr("Columns"); value <=> root.table-cols; lo: 1; hi: 8; }
                 Rectangle {
                     height: 30px;
                     border-radius: 4px;
                     background: table-ok.has-hover ? #6c71e0 : Theme.accent-strong;
                     accessible-role: button;
-                    accessible-label: "Insert table";
-                    Text { text: "Insert"; color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                    accessible-label: @tr("Insert table");
+                    Text { text: @tr("Insert"); color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
                     table-ok := TouchArea {
                         mouse-cursor: pointer;
                         clicked => {
@@ -452,7 +452,7 @@ export component FormatBar inherits Rectangle {
             VerticalLayout {
                 padding: 10px;
                 spacing: 6px;
-                Text { text: "Insert link"; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                Text { text: @tr("Insert link"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
                 HorizontalLayout {
                     spacing: 6px;
                     Rectangle {
@@ -470,11 +470,11 @@ export component FormatBar inherits Rectangle {
                             single-line: true;
                             vertical-alignment: center;
                             accessible-role: text-input;
-                            accessible-label: "Link address";
+                            accessible-label: @tr("Link address");
                             accepted => { root.insert-link(); }
                             init => { self.focus(); }
                         }
-                        if root.link-url == "": Text { x: 8px; text: "Address, for example example.com"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                        if root.link-url == "": Text { x: 8px; text: @tr("Address, for example example.com"); color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
                     }
                     Rectangle {
                         width: 64px;
@@ -482,8 +482,8 @@ export component FormatBar inherits Rectangle {
                         border-radius: 4px;
                         background: link-ok.has-hover ? #6c71e0 : Theme.accent-strong;
                         accessible-role: button;
-                        accessible-label: "Insert link address";
-                        Text { text: "Insert"; color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                        accessible-label: @tr("Insert link address");
+                        Text { text: @tr("Insert"); color: #ffffff; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
                         link-ok := TouchArea { mouse-cursor: pointer; clicked => { root.insert-link(); } }
                     }
                 }

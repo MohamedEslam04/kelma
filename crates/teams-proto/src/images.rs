@@ -489,12 +489,29 @@ pub fn resolve_content_type(header: Option<&str>, bytes: &[u8]) -> String {
     }
 }
 
+/// The Graph shares id of a SharePoint/OneDrive URL: `u!` and the base64url of the URL without
+/// padding.
+pub fn graph_share_id(file_url: &str) -> String {
+    format!("u!{}", URL_SAFE_NO_PAD.encode(file_url))
+}
+
 /// The Graph shares URL of a SharePoint/OneDrive file URL (`/shares/u!<base64url>/driveItem/content`).
 pub fn graph_share_content_url(file_url: &str) -> String {
+    format!("{}/content", graph_share_item_url(file_url))
+}
+
+/// The Graph URL of the drive item behind a SharePoint/OneDrive file URL
+/// (`/shares/u!<base64url>/driveItem`).
+pub fn graph_share_item_url(file_url: &str) -> String {
     format!(
-        "https://graph.microsoft.com/v1.0/shares/u!{}/driveItem/content",
-        URL_SAFE_NO_PAD.encode(file_url)
+        "https://graph.microsoft.com/v1.0/shares/{}/driveItem",
+        graph_share_id(file_url)
     )
+}
+
+/// True for an https URL on a SharePoint or OneDrive host, the files `shares` can resolve.
+pub fn is_sharepoint_url(url: &str) -> bool {
+    matches!(classify(url), Some(ImageHost::SharePoint(_)))
 }
 
 fn too_big(len: usize) -> Error {
@@ -1121,6 +1138,27 @@ mod tests {
             graph_share_content_url("https://contoso.sharepoint.com/a b"),
             "https://graph.microsoft.com/v1.0/shares/u!aHR0cHM6Ly9jb250b3NvLnNoYXJlcG9pbnQuY29tL2EgYg/driveItem/content"
         );
+    }
+
+    #[test]
+    fn graph_share_item_lookup_and_host_check() {
+        assert_eq!(
+            graph_share_id("https://contoso.sharepoint.com/a b"),
+            "u!aHR0cHM6Ly9jb250b3NvLnNoYXJlcG9pbnQuY29tL2EgYg"
+        );
+        assert_eq!(
+            graph_share_item_url("https://contoso.sharepoint.com/a b"),
+            "https://graph.microsoft.com/v1.0/shares/u!aHR0cHM6Ly9jb250b3NvLnNoYXJlcG9pbnQuY29tL2EgYg/driveItem"
+        );
+        assert!(is_sharepoint_url(
+            "https://contoso-my.sharepoint.com/:w:/p/x/doc"
+        ));
+        assert!(!is_sharepoint_url("http://contoso.sharepoint.com/x"));
+        assert!(!is_sharepoint_url(
+            "https://evil.com/contoso.sharepoint.com"
+        ));
+        assert!(!is_sharepoint_url("https://example.com/a.docx"));
+        assert!(!is_sharepoint_url("not a url"));
     }
 
     #[test]

@@ -9,8 +9,8 @@ pub const FILE_NAME: &str = "general.json";
 
 /// A language kelma can show its interface in.
 ///
-/// There is no translation catalogue yet, so the list is static: only English and Arabic
-/// (the latter right-to-left). Extend [`available_languages`] when a catalogue lands.
+/// The list is static: English (the source text) and Arabic (right-to-left, with a catalogue in
+/// `crates/kelma/translations`). Add a language here together with its `.po` catalogue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Language {
     /// BCP-47 tag.

@@ -338,3 +338,29 @@ fn a_message_with_a_preview_shows_a_card_that_opens_the_link() {
         vec!["https://www.rust-lang.org/".to_string()]
     );
 }
+
+#[test]
+fn a_file_chip_sends_its_type_and_address_so_settings_can_choose_where_it_opens() {
+    let h = Harness::new();
+    wire(&h);
+    put(
+        &h,
+        "f1",
+        "<p>the plan</p>",
+        json!({"f": [{
+            "name": "plan.docx",
+            "url": "https://contoso.sharepoint.com/sites/t/plan.docx",
+            "type": "docx",
+        }]}),
+    );
+    h.select(CHAT);
+    let opened = Log::default();
+    let o = opened.clone();
+    h.app
+        .on_open_url(move |u| o.borrow_mut().push(u.to_string()));
+    click_label(&h.app, "Open plan.docx");
+    assert_eq!(
+        *opened.borrow(),
+        vec!["kelma-file:DOCX:https://contoso.sharepoint.com/sites/t/plan.docx".to_string()]
+    );
+}

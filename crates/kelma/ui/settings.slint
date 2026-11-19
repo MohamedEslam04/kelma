@@ -45,11 +45,11 @@ export component SettingsPage inherits Rectangle {
                         height: 40px;
                         IconButton {
                             icon: @image-url("icons/back.svg");
-                            tooltip: "Close settings";
+                            tooltip: @tr("Close settings");
                             y: 4px;
                             clicked => { SettingsStore.close(); }
                         }
-                        Text { text: "Settings"; color: Theme.fg; font-size: SFont.title; font-weight: 700; vertical-alignment: center; }
+                        Text { text: @tr("Settings"); color: Theme.fg; font-size: SFont.title; font-weight: 700; vertical-alignment: center; }
                     }
                     // Find in Settings.
                     Rectangle {
@@ -67,12 +67,12 @@ export component SettingsPage inherits Rectangle {
                             single-line: true;
                             vertical-alignment: center;
                             accessible-role: text-input;
-                            accessible-label: "Find in Settings";
+                            accessible-label: @tr("Find in Settings");
                             edited => { SettingsStore.query = self.text; SettingsStore.command("query", self.text); }
                         }
                         if find-input.text == "": Text {
                             x: 32px;
-                            text: "Find in Settings (Ctrl+Alt+F)";
+                            text: @tr("Find in Settings (Ctrl+Alt+F)");
                             color: Theme.fg-subtle;
                             font-size: SFont.body;
                             vertical-alignment: center;
@@ -80,15 +80,15 @@ export component SettingsPage inherits Rectangle {
                     }
                     Rectangle { height: 6px; }
                     for p in [
-                        {key: "general", label: "General", icon: @image-url("icons/home.svg")},
-                        {key: "accounts", label: "Accounts and orgs", icon: @image-url("icons/users.svg")},
-                        {key: "privacy", label: "Privacy", icon: @image-url("icons/lock.svg")},
-                        {key: "notifications", label: "Notifications and activity", icon: @image-url("icons/activity.svg")},
-                        {key: "appearance", label: "Appearance", icon: @image-url("icons/eye.svg")},
-                        {key: "accessibility", label: "Accessibility", icon: @image-url("icons/people.svg")},
-                        {key: "devices", label: "Devices", icon: @image-url("icons/video.svg")},
-                        {key: "files", label: "Files and links", icon: @image-url("icons/file.svg")},
-                        {key: "permissions", label: "App permissions", icon: @image-url("icons/shortcut.svg")},
+                        {key: "general", label: @tr("General"), icon: @image-url("icons/home.svg")},
+                        {key: "accounts", label: @tr("Accounts and orgs"), icon: @image-url("icons/users.svg")},
+                        {key: "privacy", label: @tr("Privacy"), icon: @image-url("icons/lock.svg")},
+                        {key: "notifications", label: @tr("Notifications and activity"), icon: @image-url("icons/activity.svg")},
+                        {key: "appearance", label: @tr("Appearance"), icon: @image-url("icons/eye.svg")},
+                        {key: "accessibility", label: @tr("Accessibility"), icon: @image-url("icons/people.svg")},
+                        {key: "devices", label: @tr("Devices"), icon: @image-url("icons/video.svg")},
+                        {key: "files", label: @tr("Files and links"), icon: @image-url("icons/file.svg")},
+                        {key: "permissions", label: @tr("App permissions"), icon: @image-url("icons/shortcut.svg")},
                     ]: SNavItem {
                         label: p.label;
                         icon: p.icon;
@@ -97,7 +97,7 @@ export component SettingsPage inherits Rectangle {
                     }
                     Rectangle { vertical-stretch: 1; }
                     SNavItem {
-                        label: "About";
+                        label: @tr("About");
                         icon: @image-url("icons/info.svg");
                         active: SettingsStore.query == "" && SettingsStore.page == "about";
                         clicked => { SettingsStore.query = ""; find-input.text = ""; SettingsStore.page = "about"; SettingsStore.command("page", "about"); }
@@ -115,20 +115,20 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
                         if SettingsStore.query != "": VerticalLayout {
                             spacing: 6px;
-                            Text { text: "Results for \"" + SettingsStore.query + "\""; color: Theme.fg; font-size: SFont.title; font-weight: 700; }
-                            if SettingsStore.found.length == 0: Text { text: "No setting matches."; color: Theme.fg-muted; font-size: SFont.body; }
+                            Text { horizontal-alignment: Theme.start-align; text: @tr("Results for \"{}\"", SettingsStore.query); color: Theme.fg; font-size: SFont.title; font-weight: 700; }
+                            if SettingsStore.found.length == 0: Text { horizontal-alignment: Theme.start-align; text: @tr("No setting matches."); color: Theme.fg-muted; font-size: SFont.body; }
                             for f in SettingsStore.found: Rectangle {
                                 height: max(40px, fr.preferred-height + 12px);
                                 border-radius: 4px;
                                 background: ft.has-hover ? Theme.surface-hover : Theme.surface;
                                 accessible-role: button;
-                                accessible-label: "Result: " + f.label + " in " + f.page-title;
+                                accessible-label: @tr("Result: {} in {}", f.label, f.page-title);
                                 accessible-action-default => { SettingsStore.query = ""; find-input.text = ""; SettingsStore.page = f.page; SettingsStore.command("page", f.page); }
                                 fr := VerticalLayout {
                                     padding-left: 12px;
                                     alignment: center;
-                                    Text { text: f.label; color: Theme.fg; font-size: SFont.body; }
-                                    Text { text: f.page-title; color: Theme.fg-subtle; font-size: SFont.small; }
+                                    Text { horizontal-alignment: Theme.start-align; text: f.label; color: Theme.fg; font-size: SFont.body; }
+                                    Text { horizontal-alignment: Theme.start-align; text: f.page-title; color: Theme.fg-subtle; font-size: SFont.small; }
                                 }
                                 ft := TouchArea {
                                     mouse-cursor: pointer;
@@ -137,12 +137,13 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                         if SettingsStore.query == "": Text {
-                            text: SettingsStore.page == "general" ? "General" : SettingsStore.page == "accounts" ? "Accounts and orgs" : SettingsStore.page == "privacy" ? "Privacy" : SettingsStore.page == "notifications" ? "Notifications and activity" : SettingsStore.page == "appearance" ? "Appearance" : SettingsStore.page == "accessibility" ? "Accessibility" : SettingsStore.page == "devices" ? "Devices" : SettingsStore.page == "files" ? "Files and links" : SettingsStore.page == "permissions" ? "App permissions" : "About";
+                            horizontal-alignment: Theme.start-align;
+                            text: SettingsStore.page == "general" ? @tr("General") : SettingsStore.page == "accounts" ? @tr("Accounts and orgs") : SettingsStore.page == "privacy" ? @tr("Privacy") : SettingsStore.page == "notifications" ? @tr("Notifications and activity") : SettingsStore.page == "appearance" ? @tr("Appearance") : SettingsStore.page == "accessibility" ? @tr("Accessibility") : SettingsStore.page == "devices" ? @tr("Devices") : SettingsStore.page == "files" ? @tr("Files and links") : SettingsStore.page == "permissions" ? @tr("App permissions") : @tr("About");
                             color: Theme.fg;
                             font-size: SFont.title;
                             font-weight: 700;
                             accessible-role: text;
-                            accessible-label: "Settings page";
+                            accessible-label: @tr("Settings page");
                             accessible-value: self.text;
                         }
                         if SettingsStore.query == "" && SettingsStore.page == "general": GeneralPage { }
@@ -163,7 +164,7 @@ export component SettingsPage inherits Rectangle {
                     border-width: 1px;
                     border-color: Theme.border;
                     accessible-role: text;
-                    accessible-label: "Settings notice";
+                    accessible-label: @tr("Settings notice");
                     accessible-value: SettingsStore.notice;
                     nt := Text {
                         x: 16px;
@@ -205,7 +206,7 @@ export component ProfileMenu inherits Rectangle {
         drop-shadow-blur: 8px;
         drop-shadow-color: #00000080;
         accessible-role: groupbox;
-        accessible-label: "Your profile";
+        accessible-label: @tr("Your profile");
         TouchArea { }
         col := VerticalLayout {
             padding: 14px;
@@ -215,8 +216,8 @@ export component ProfileMenu inherits Rectangle {
                 Avatar { initials: SettingsStore.me-initials; size: 48px; }
                 VerticalLayout {
                     alignment: center;
-                    Text { text: SettingsStore.me-name; color: Theme.fg; font-size: SFont.heading; font-weight: 600; overflow: elide; accessible-role: text; accessible-label: "Name"; accessible-value: self.text; }
-                    Text { text: SettingsStore.me-email; color: Theme.fg-muted; font-size: SFont.small; overflow: elide; accessible-role: text; accessible-label: "Email"; accessible-value: self.text; }
+                    Text { text: SettingsStore.me-name; color: Theme.fg; font-size: SFont.heading; font-weight: 600; overflow: elide; accessible-role: text; accessible-label: @tr("Name"); accessible-value: self.text; }
+                    Text { text: SettingsStore.me-email; color: Theme.fg-muted; font-size: SFont.small; overflow: elide; accessible-role: text; accessible-label: @tr("Email"); accessible-value: self.text; }
                     if SettingsStore.me-presence != "": Text { text: SettingsStore.me-presence; color: Theme.fg-muted; font-size: SFont.small; }
                 }
             }
@@ -225,30 +226,30 @@ export component ProfileMenu inherits Rectangle {
                 border-radius: 4px;
                 background: Theme.main;
                 accessible-role: text;
-                accessible-label: "Status message";
+                accessible-label: @tr("Status message");
                 accessible-value: SettingsStore.me-status;
                 sm := Text {
                     x: 10px;
                     width: parent.width - 20px;
-                    text: SettingsStore.me-status != "" ? SettingsStore.me-status : "No status message";
+                    text: SettingsStore.me-status != "" ? SettingsStore.me-status : @tr("No status message");
                     color: SettingsStore.me-status != "" ? Theme.fg : Theme.fg-subtle;
                     font-size: SFont.body;
                     wrap: word-wrap;
                     vertical-alignment: center;
                 }
             }
-            SButton { label: "Change profile photo (not available yet)"; enabled: false; }
-            SButton { label: "Settings"; clicked => { SettingsStore.show("general"); } }
-            SButton { label: "View account"; clicked => { SettingsStore.command("view-account", ""); } }
-            if !SettingsStore.confirm-sign-out: SButton { label: "Sign out"; clicked => { SettingsStore.confirm-sign-out = true; } }
+            SButton { label: @tr("Change profile photo (not available yet)"); enabled: false; }
+            SButton { label: @tr("Settings"); clicked => { SettingsStore.show("general"); } }
+            SButton { label: @tr("View account"); clicked => { SettingsStore.command("view-account", ""); } }
+            if !SettingsStore.confirm-sign-out: SButton { label: @tr("Sign out"); clicked => { SettingsStore.confirm-sign-out = true; } }
             if SettingsStore.confirm-sign-out: VerticalLayout {
                 spacing: 6px;
-                Text { text: "Sign out of kelma on this computer? kelma closes; open it again to sign in."; color: Theme.fg; font-size: SFont.small; wrap: word-wrap; }
+                Text { text: @tr("Sign out of kelma on this computer? kelma closes; open it again to sign in."); color: Theme.fg; font-size: SFont.small; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: end;
-                    SButton { label: "Cancel"; clicked => { SettingsStore.confirm-sign-out = false; } }
-                    SButton { label: "Yes, sign out"; danger: true; clicked => { SettingsStore.confirm-sign-out = false; SettingsStore.command("sign-out", ""); } }
+                    SButton { label: @tr("Cancel"); clicked => { SettingsStore.confirm-sign-out = false; } }
+                    SButton { label: @tr("Yes, sign out"); danger: true; clicked => { SettingsStore.confirm-sign-out = false; SettingsStore.command("sign-out", ""); } }
                 }
             }
         }

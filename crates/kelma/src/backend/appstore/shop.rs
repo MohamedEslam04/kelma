@@ -837,13 +837,11 @@ impl Engine {
         let policy = self.src_policy().await.ok();
         {
             let mut a = self.apps.lock().unwrap();
-            if !a.grants_loaded {
-                a.grants_loaded = true;
-                if !self.apps_offline()
-                    && let Some(g) = load_grants()
-                {
-                    a.grants = g;
-                }
+            // Every time the page opens: Settings may have changed the file since.
+            if !self.apps_offline()
+                && let Some(g) = load_grants()
+            {
+                a.grants = g;
             }
             a.policy = policy.or(a.policy);
         }
@@ -865,13 +863,14 @@ impl Engine {
         let Some(p) = DevicePermission::parse(perm) else {
             return Ok(());
         };
-        let json = {
+        {
             let mut a = self.apps.lock().unwrap();
-            a.grants.set(app, p, on);
-            a.grants.to_json()
-        };
-        if !self.apps_offline() {
-            save_grants(&json);
+            match grants_path().filter(|_| !self.apps_offline()) {
+                // Read the file again first: Settings writes it too, and a switch made there
+                // since the Store last read it would be lost if the Store wrote its own copy.
+                Some(path) => a.grants = grant_in_file(&path, &a.grants, app, p, on),
+                None => a.grants.set(app, p, on),
+            }
         }
         self.shop_push();
         Ok(())
@@ -893,14 +892,33 @@ pub(super) fn read_grants_file() -> Option<String> {
 }
 
 fn load_grants() -> Option<app_store::Grants> {
-    let text = std::fs::read_to_string(grants_path()?).ok()?;
+    load_grants_at(&grants_path()?)
+}
+
+fn load_grants_at(path: &std::path::Path) -> Option<app_store::Grants> {
+    let text = std::fs::read_to_string(path).ok()?;
     Some(app_store::Grants::from_json(
         &serde_json::from_str(&text).ok()?,
     ))
 }
 
-fn save_grants(json: &serde_json::Value) {
-    let Some(path) = grants_path() else { return };
+/// Switches one permission in the grants file and returns the grants as written. The file is
+/// read again right before the change (read-modify-write), so what Settings saved in the
+/// meantime stays; `known` is the base only when the file is missing or unreadable.
+fn grant_in_file(
+    path: &std::path::Path,
+    known: &app_store::Grants,
+    app: &str,
+    p: DevicePermission,
+    on: bool,
+) -> app_store::Grants {
+    let mut grants = load_grants_at(path).unwrap_or_else(|| known.clone());
+    grants.set(app, p, on);
+    save_grants_at(path, &grants.to_json());
+    grants
+}
+
+fn save_grants_at(path: &std::path::Path, json: &serde_json::Value) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -919,5 +937,73 @@ mod tests {
         assert_eq!(category_label("popularApps"), "Popular apps");
         assert_eq!(category_label("productivity"), "Productivity");
         assert_eq!(category_label("humanResources"), "Human resources");
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("kelma-shop-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_grant_keeps_what_settings_wrote_since_the_store_read_the_file() {
+        let dir = temp_dir("rmw");
+        let path = dir.join("app-grants.json");
+        // The Store read the file when it opened: nothing granted.
+        let in_memory = app_store::Grants::default();
+        // Then Settings switched app-1's media on and wrote the file.
+        let mut settings = app_store::Grants::default();
+        settings.set("app-1", DevicePermission::Media, true);
+        save_grants_at(&path, &settings.to_json());
+        // The Store now switches another permission: Settings' switch must survive.
+        let merged = grant_in_file(
+            &path,
+            &in_memory,
+            "app-2",
+            DevicePermission::Geolocation,
+            true,
+        );
+        assert!(merged.allowed("app-1", DevicePermission::Media));
+        assert!(merged.allowed("app-2", DevicePermission::Geolocation));
+        assert_eq!(load_grants_at(&path).unwrap(), merged);
+        // The same app: the Store changes one permission, Settings' other one stays.
+        let merged = grant_in_file(&path, &in_memory, "app-1", DevicePermission::Midi, true);
+        assert!(merged.allowed("app-1", DevicePermission::Media));
+        assert!(merged.allowed("app-1", DevicePermission::Midi));
+        // Switching one off writes false, it does not forget the others.
+        let merged = grant_in_file(&path, &in_memory, "app-1", DevicePermission::Media, false);
+        assert!(
+            !load_grants_at(&path)
+                .unwrap()
+                .allowed("app-1", DevicePermission::Media)
+        );
+        assert!(merged.allowed("app-1", DevicePermission::Midi));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_grant_without_a_readable_file_starts_from_what_the_store_has() {
+        let dir = temp_dir("rmw-missing");
+        let path = dir.join("config").join("app-grants.json");
+        let mut known = app_store::Grants::default();
+        known.set("app-1", DevicePermission::Media, true);
+        // No file yet (and no config dir): written, with the Store's own copy as the base.
+        let merged = grant_in_file(&path, &known, "app-1", DevicePermission::Midi, true);
+        assert!(merged.allowed("app-1", DevicePermission::Media));
+        assert_eq!(load_grants_at(&path).unwrap(), merged);
+        // A corrupt file is replaced the same way rather than blocking the switch.
+        std::fs::write(&path, "not json").unwrap();
+        let merged = grant_in_file(
+            &path,
+            &known,
+            "app-3",
+            DevicePermission::Notifications,
+            true,
+        );
+        assert!(merged.allowed("app-1", DevicePermission::Media));
+        assert!(merged.allowed("app-3", DevicePermission::Notifications));
+        assert_eq!(load_grants_at(&path).unwrap(), merged);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

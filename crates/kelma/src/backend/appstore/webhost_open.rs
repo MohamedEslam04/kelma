@@ -90,13 +90,20 @@ pub(super) fn plan_tab(
     if !url.starts_with("https://") || webhost::shim::origin_of(&url).is_none() {
         return None;
     }
-    let shim = ShimConfig::for_app(ctx, &url, sso_resource(def), def.valid_domains.clone());
-    let granted = def
+    let granted: Vec<DevicePermission> = def
         .device_permissions
         .iter()
         .copied()
         .filter(|p| grants.allowed(&def.id, *p))
         .collect();
+    // The shim refuses everything not in this list, with the manifest spelling as the name.
+    let shim = ShimConfig::for_app(
+        ctx,
+        &url,
+        sso_resource(def),
+        def.valid_domains.clone(),
+        granted.iter().map(|p| p.as_str().to_owned()).collect(),
+    );
     Some(WebTarget {
         url,
         title: def.name.clone(),
@@ -147,7 +154,6 @@ impl Engine {
         if self.apps_offline() || crate::external::suppressed() {
             return true;
         }
-        // The shim does not enforce device grants yet; they are kept on the target for it.
         tracing::debug!(app = %target.shim.context.app_id, granted = ?target.granted, "opening in the web host");
         let e = self.clone();
         tokio::spawn(async move {
@@ -362,6 +368,10 @@ mod tests {
         let t = plan_tab(&def, "home", &who(), &g).unwrap();
         // Only permissions the manifest asks for and the user allowed.
         assert_eq!(t.granted, [DevicePermission::Media]);
+        // The shim gets the same list, so it refuses the rest.
+        assert_eq!(t.shim.granted, ["media"]);
+        let none = plan_tab(&def, "home", &who(), &Grants::default()).unwrap();
+        assert!(none.shim.granted.is_empty());
     }
 
     #[test]

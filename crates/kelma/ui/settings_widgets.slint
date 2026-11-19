@@ -48,8 +48,8 @@ export component SSection inherits VerticalLayout {
     in property <string> hint;
     spacing: 8px;
     padding-bottom: 18px;
-    if root.title != "": Text { text: root.title; color: Theme.fg; font-size: SFont.heading; font-weight: 600; }
-    if root.hint != "": Text { text: root.hint; color: Theme.fg-muted; font-size: SFont.small; wrap: word-wrap; }
+    if root.title != "": Text { horizontal-alignment: Theme.start-align; text: root.title; color: Theme.fg; font-size: SFont.heading; font-weight: 600; }
+    if root.hint != "": Text { horizontal-alignment: Theme.start-align; text: root.hint; color: Theme.fg-muted; font-size: SFont.small; wrap: word-wrap; }
     @children
 }
 
@@ -77,8 +77,8 @@ export component SSwitch inherits Rectangle {
         col := VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;
-            Text { text: root.label; color: root.enabled ? Theme.fg : Theme.fg-subtle; font-size: SFont.body; wrap: word-wrap; }
-            if root.hint != "": Text { text: root.hint; color: Theme.fg-subtle; font-size: SFont.small; wrap: word-wrap; }
+            Text { horizontal-alignment: Theme.start-align; text: root.label; color: root.enabled ? Theme.fg : Theme.fg-subtle; font-size: SFont.body; wrap: word-wrap; }
+            if root.hint != "": Text { horizontal-alignment: Theme.start-align; text: root.hint; color: Theme.fg-subtle; font-size: SFont.small; wrap: word-wrap; }
         }
         Rectangle {
             width: 40px;
@@ -147,8 +147,8 @@ export component SChoiceRow inherits VerticalLayout {
     in property <bool> enabled: true;
     callback picked(string);
     spacing: 4px;
-    Text { text: root.label; color: Theme.fg; font-size: SFont.body; }
-    if root.hint != "": Text { text: root.hint; color: Theme.fg-subtle; font-size: SFont.small; wrap: word-wrap; }
+    Text { horizontal-alignment: Theme.start-align; text: root.label; color: Theme.fg; font-size: SFont.body; }
+    if root.hint != "": Text { horizontal-alignment: Theme.start-align; text: root.hint; color: Theme.fg-subtle; font-size: SFont.small; wrap: word-wrap; }
     SChoice {
         group: root.label;
         options: root.options;
@@ -186,8 +186,8 @@ export component SRadio inherits Rectangle {
         }
         rcol := VerticalLayout {
             alignment: center;
-            Text { text: root.label; color: Theme.fg; font-size: SFont.body; wrap: word-wrap; }
-            if root.detail != "": Text { text: root.detail; color: Theme.fg-subtle; font-size: SFont.small; }
+            Text { horizontal-alignment: Theme.start-align; text: root.label; color: Theme.fg; font-size: SFont.body; wrap: word-wrap; }
+            if root.detail != "": Text { horizontal-alignment: Theme.start-align; text: root.detail; color: Theme.fg-subtle; font-size: SFont.small; }
         }
     }
     rt := TouchArea { mouse-cursor: pointer; clicked => { root.picked(); } }
@@ -201,7 +201,7 @@ export component SField inherits VerticalLayout {
     out property <string> text <=> input.text;
     callback committed(string);
     spacing: 4px;
-    Text { text: root.label; color: Theme.fg; font-size: SFont.body; }
+    Text { horizontal-alignment: Theme.start-align; text: root.label; color: Theme.fg; font-size: SFont.body; }
     Rectangle {
         height: max(30px, input.preferred-height + 12px);
         max-width: 360px;
@@ -269,7 +269,7 @@ export component SNavItem inherits Rectangle {
         padding-left: 12px;
         spacing: 10px;
         Icon { source: root.icon; tint: root.active ? Theme.accent : Theme.fg-muted; width: 18px; height: 18px; y: (parent.height - 18px) / 2; }
-        nl := Text { text: root.label; color: root.active ? Theme.fg : Theme.fg-muted; font-size: SFont.body; font-weight: root.active ? 600 : 400; vertical-alignment: center; }
+        nl := Text { horizontal-alignment: Theme.start-align; text: root.label; color: root.active ? Theme.fg : Theme.fg-muted; font-size: SFont.body; font-weight: root.active ? 600 : 400; vertical-alignment: center; }
     }
     nt := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
