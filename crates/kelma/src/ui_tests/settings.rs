@@ -74,6 +74,7 @@ fn env(home: &Home, log: &Log, tokens: Arc<session::MemoryStore>) -> SettingsEnv
         tokens,
         portal: false,
         background: false,
+        apply_globals: false,
         hooks: Hooks {
             // The real autostart entry, written under the temp home instead of ~/.config.
             autostart: Autostart::desktop(Some(home.0.join("xdg"))),
@@ -116,11 +117,29 @@ struct Ui {
 }
 
 fn window(home: Home) -> Ui {
-    window_with(home, |_| {})
+    window_full(home, None, false, |_| {})
 }
 
 /// `window` with a change to the environment (a fake update check, say).
-fn window_with(home: Home, tweak: impl FnOnce(&mut SettingsEnv)) -> Ui {
+fn window_tweaked(home: Home, tweak: impl FnOnce(&mut SettingsEnv)) -> Ui {
+    window_full(home, None, false, tweak)
+}
+
+/// A window whose engine commands arrive on `tx`, and that may apply the process-wide settings.
+fn window_with(
+    home: Home,
+    tx: Option<tokio::sync::mpsc::UnboundedSender<crate::backend::Cmd>>,
+    apply_globals: bool,
+) -> Ui {
+    window_full(home, tx, apply_globals, |_| {})
+}
+
+fn window_full(
+    home: Home,
+    tx: Option<tokio::sync::mpsc::UnboundedSender<crate::backend::Cmd>>,
+    apply_globals: bool,
+    tweak: impl FnOnce(&mut SettingsEnv),
+) -> Ui {
     let app = new_window();
     app.window().set_size(LogicalSize::new(1200., 800.));
     app.set_login_state("ready".into());
@@ -128,8 +147,9 @@ fn window_with(home: Home, tweak: impl FnOnce(&mut SettingsEnv)) -> Ui {
     let log = Log::default();
     let tokens = Arc::new(session::MemoryStore::default());
     let mut e = env(&home, &log, tokens.clone());
+    e.apply_globals = apply_globals;
     tweak(&mut e);
-    install(&app, None, e);
+    install(&app, tx, e);
     app.show().unwrap();
     Ui {
         app,
@@ -503,7 +523,7 @@ fn update_check_is_off_by_default_and_the_switch_stores_the_pref() {
     let home = Home::new("update-off");
     let dir = home.paths().config_dir;
     let calls = Arc::new(AtomicUsize::new(0));
-    let ui = window_with(home, fake_update(&calls, Ok(release("999.0.0"))));
+    let ui = window_tweaked(home, fake_update(&calls, Ok(release("999.0.0"))));
     let app = &ui.app;
     open_page(app, "about");
     assert!(!checked(app, "Check for updates"));
@@ -530,7 +550,7 @@ fn update_check_is_off_by_default_and_the_switch_stores_the_pref() {
 fn a_newer_release_shows_the_banner_and_release_notes_opens_its_page() {
     let home = Home::new("update-newer");
     let calls = Arc::new(AtomicUsize::new(0));
-    let ui = window_with(home, fake_update(&calls, Ok(release("999.0.0"))));
+    let ui = window_tweaked(home, fake_update(&calls, Ok(release("999.0.0"))));
     let app = &ui.app;
     open_page(app, "about");
     press(app, "Check for updates");
@@ -561,7 +581,7 @@ fn the_automatic_check_runs_once_at_start_when_the_pref_is_on() {
     local.general.check_updates = true;
     local.save_general().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
-    let ui = window_with(
+    let ui = window_tweaked(
         home,
         fake_update(&calls, Ok(release(env!("CARGO_PKG_VERSION")))),
     );
@@ -581,7 +601,7 @@ fn the_automatic_check_runs_once_at_start_when_the_pref_is_on() {
 fn a_failed_check_only_says_so_on_the_about_page() {
     let home = Home::new("update-fail");
     let calls = Arc::new(AtomicUsize::new(0));
-    let ui = window_with(home, fake_update(&calls, Err("offline".into())));
+    let ui = window_tweaked(home, fake_update(&calls, Err("offline".into())));
     let app = &ui.app;
     open_page(app, "about");
     press(app, "Check for updates");
@@ -592,4 +612,170 @@ fn a_failed_check_only_says_so_on_the_about_page() {
     );
     assert_eq!(app.get_banner().as_str(), "");
     assert!(!store(app).get_update_available());
+}
+
+#[test]
+fn adding_an_account_makes_it_active_and_asks_for_a_restart_to_sign_in() {
+    let home = Home::new("add").with_accounts();
+    let paths = home.paths();
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "accounts");
+    store(app).invoke_command("add-account".into(), "  work2 ".into());
+    let cfg = paths.load_config().unwrap();
+    assert_eq!(
+        cfg.account, "work2",
+        "the new account is the one kelma starts with"
+    );
+    assert_eq!(cfg.accounts.len(), 3);
+    assert!(
+        session::stored_session_in(&*ui.tokens, &cfg)
+            .unwrap()
+            .is_none(),
+        "not signed in yet: the next start shows the sign-in code"
+    );
+    assert!(store(app).get_restart_needed());
+    assert!(checked(app, "Account: work2"));
+
+    // A name that exists, or that cannot be a keyring entry, is refused and changes nothing.
+    store(app).invoke_command("add-account".into(), "second".into());
+    assert!(store(app).get_accounts_status().contains("Could not add"));
+    store(app).invoke_command("add-account".into(), "a@b".into());
+    assert!(store(app).get_accounts_status().contains("Could not add"));
+    assert_eq!(paths.load_config().unwrap().accounts.len(), 3);
+    assert!(
+        ui.tokens.keys().is_empty(),
+        "nothing was signed in or stored"
+    );
+}
+
+#[test]
+fn removing_an_account_asks_first_and_forgets_its_tokens_and_entry() {
+    use session::TokenStore;
+    let home = Home::new("remove").with_accounts();
+    let paths = home.paths();
+    let ui = window(home);
+    let app = &ui.app;
+    ui.tokens.set("default", "fake-default").unwrap();
+    ui.tokens.set("second", "fake-second").unwrap();
+    open_page(app, "accounts");
+
+    // Asks first; Cancel changes nothing.
+    press(app, "Remove second");
+    assert_eq!(store(app).get_confirm_remove(), "second");
+    assert_eq!(ui.tokens.keys(), ["default", "second"]);
+    press(app, "Cancel removal");
+    assert_eq!(store(app).get_confirm_remove(), "");
+    assert_eq!(paths.load_config().unwrap().accounts.len(), 2);
+
+    press(app, "Remove second");
+    press(app, "Yes, remove the account");
+    let cfg = paths.load_config().unwrap();
+    assert_eq!(cfg.accounts.len(), 1);
+    assert!(cfg.account_by_label("second").is_none());
+    assert_eq!(cfg.account, "default", "the active account is untouched");
+    assert_eq!(
+        ui.tokens.keys(),
+        ["default"],
+        "only the removed account's tokens went"
+    );
+    assert!(session::tokens_revoked("second"));
+    assert!(
+        !store(app).get_restart_needed(),
+        "the running account did not change"
+    );
+    assert!(store(app).get_accounts_status().contains("Removed"));
+    assert!(
+        ui.log.borrow().is_empty(),
+        "nothing was signed out or restarted"
+    );
+}
+
+#[test]
+fn removing_the_active_account_switches_and_asks_for_a_restart() {
+    use session::TokenStore;
+    let home = Home::new("remove-active").with_accounts();
+    let paths = home.paths();
+    let ui = window(home);
+    let app = &ui.app;
+    ui.tokens.set("default", "fake-default").unwrap();
+    open_page(app, "accounts");
+    press(app, "Remove Test User");
+    press(app, "Yes, remove the account");
+    let cfg = paths.load_config().unwrap();
+    assert_eq!(cfg.account, "second");
+    assert!(ui.tokens.keys().is_empty());
+    assert!(store(app).get_restart_needed());
+}
+
+#[test]
+fn refresh_license_asks_the_engine_and_restarts_only_when_it_worked() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("license").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    open_page(app, "accounts");
+    // Opening the page asked for the Teams settings; skip that read.
+    while rx.try_recv().is_ok() {}
+    press(app, "Refresh license and restart");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(
+            crate::backend::settings::SettingsCmd::RefreshLicense
+        ))
+    ));
+    assert!(
+        ui.log.borrow().is_empty(),
+        "no restart before the engine answers"
+    );
+
+    let handle = UiHandle::new(app.as_weak());
+    handle.settings_license(Err("no network".into()));
+    assert!(
+        ui.log.borrow().is_empty(),
+        "a failed refresh does not restart"
+    );
+    assert!(store(app).get_notice().contains("no network"));
+    handle.settings_license(Ok(()));
+    assert_eq!(*ui.log.borrow(), ["restart"]);
+}
+
+#[test]
+fn the_test_notification_button_raises_a_desktop_notification() {
+    let ui = window(Home::new("test-notify"));
+    let app = &ui.app;
+    open_page(app, "notifications");
+    press(app, "Test notification");
+    assert_eq!(*ui.log.borrow(), ["test-notification"]);
+    assert!(store(app).get_notice().contains("test notification"));
+}
+
+#[test]
+fn time_format_and_keep_running_reach_the_helpers_that_read_them() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("general-globals"), Some(tx), true);
+    let app = &ui.app;
+    open_page(app, "general");
+    while rx.try_recv().is_ok() {}
+
+    press(app, "Time format: 1:30 PM");
+    assert_eq!(appearance::formats::time_pattern(), "%-I:%M %p");
+    assert!(
+        matches!(
+            rx.try_recv(),
+            Ok(Cmd::Settings(crate::backend::settings::SettingsCmd::Redraw))
+        ),
+        "the rows that show times are drawn again"
+    );
+    press(app, "Date format: 31/12/2026");
+    assert_eq!(appearance::formats::date_pattern(true), "%-d/%-m/%y");
+
+    assert!(crate::tray_wiring::keep_running(), "on by default");
+    press(app, "Keep running when I close the window");
+    assert!(!crate::tray_wiring::keep_running());
+    let saved = Local::load(&ui.home.paths().config_dir);
+    assert!(!saved.general.keep_running_on_close);
+
+    // Leave the shared settings as every other test expects them.
+    appearance::formats::set_from(&appearance::GeneralPrefs::default());
+    crate::tray_wiring::set_keep_running(true);
 }

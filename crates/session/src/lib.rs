@@ -10,11 +10,37 @@
 //!   entry `label@tenant` once it issued a token.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 pub mod window_state;
 
 const SERVICE: &str = "kelma";
+
+/// One writer at a time for `config.json` inside this process: every read-modify-write of the
+/// file ([`Paths::update_config`], [`Paths::save_app_prefs`]) holds it.
+static CONFIG_LOCK: Mutex<()> = Mutex::new(());
+
+/// Account labels whose tokens were removed (sign-out, remove account). While a label is in
+/// here, [`persist_in`] does not write its token back: the engine saves the rotated token every
+/// 240 s, and a save that was already on its way when the tokens were forgotten must not undo
+/// the removal. The set is also the lock that orders a save against a removal.
+static REVOKED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+fn revoked() -> std::sync::MutexGuard<'static, BTreeSet<String>> {
+    REVOKED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether the tokens of this account label were removed in this process.
+pub fn tokens_revoked(label: &str) -> bool {
+    revoked().contains(label)
+}
+
+/// Lets an account label store tokens again (a new account that reuses a removed label).
+pub fn allow_account_tokens(label: &str) {
+    revoked().remove(label);
+}
 
 /// Errors from session persistence.
 #[derive(Debug, thiserror::Error)]
@@ -365,6 +391,35 @@ impl Config {
     fn home_tenant(&self) -> Option<&str> {
         self.active_account().and_then(|a| a.home_tenant.as_deref())
     }
+
+    /// Copies the settings a running app edits (composer, calendar) from `app` onto `self`.
+    /// Who is signed in (`account`, `tenant`, `epid`, the identity and `accounts`) stays as it is
+    /// in `self`: those belong to whoever changed them last on disk (Settings), not to the
+    /// engine's copy from start-up.
+    pub fn take_app_prefs(&mut self, app: &Config) {
+        self.open_chat_at = app.open_chat_at;
+        self.calendar_view = app.calendar_view.clone();
+        self.calendar_scale = app.calendar_scale;
+        self.calendar_settings = app.calendar_settings.clone();
+        self.calendar_saved_views = app.calendar_saved_views.clone();
+        self.enter_sends = app.enter_sends;
+        self.skin_tone = app.skin_tone;
+        self.recent_emoji = app.recent_emoji.clone();
+    }
+
+    /// The file name of this account's message cache in the data dir. The first account
+    /// (`default`) keeps the name from before accounts existed; every other account, and every
+    /// guest organization, has a cache of its own so chats never mix.
+    pub fn db_file_name(&self) -> String {
+        let home = self.home_tenant();
+        let guest = self.tenant != teams_proto::client_info::DEFAULT_TENANT
+            && Some(self.tenant.as_str()) != home;
+        match (self.account.as_str(), guest) {
+            ("default", false) => "cache.sqlite".into(),
+            (label, false) => format!("cache-{label}.sqlite"),
+            (label, true) => format!("cache-{label}-{}.sqlite", self.tenant),
+        }
+    }
 }
 
 /// Standard directories for kelma.
@@ -419,6 +474,31 @@ impl Paths {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// The message cache of the account (and organization) `c` is on.
+    pub fn db_path_for(&self, c: &Config) -> PathBuf {
+        self.data_dir.join(c.db_file_name())
+    }
+
+    /// Reads the config, lets `f` change it and saves it, all under the process-wide config
+    /// lock, so two writers (Settings and the engine) cannot overwrite each other. Nothing is
+    /// saved when `f` fails.
+    pub fn update_config<T>(&self, f: impl FnOnce(&mut Config) -> Result<T>) -> Result<T> {
+        let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut c = self.load_config()?;
+        let out = f(&mut c)?;
+        self.save_config(&c)?;
+        Ok(out)
+    }
+
+    /// Saves the settings the running app edits (see [`Config::take_app_prefs`]) onto the file
+    /// as it is now, so an account or organization switch made in the meantime survives.
+    pub fn save_app_prefs(&self, app: &Config) -> Result<()> {
+        self.update_config(|c| {
+            c.take_app_prefs(app);
+            Ok(())
+        })
     }
 
     /// Saves the config atomically, after copying the legacy fields into the active account.
@@ -515,7 +595,12 @@ pub fn save_token_in(
 }
 
 /// Removes every refresh token of an account: the home one and each guest tenant it knows.
+///
+/// The label is also marked as removed for [`persist_in`], before anything is deleted, so a
+/// token save that is already running cannot write the token back.
 pub fn forget_account_tokens(store: &dyn TokenStore, account: &Account) -> Result<()> {
+    let mut gone = revoked();
+    gone.insert(account.label.clone());
     store.delete(&account.label)?;
     let tenants = account
         .orgs
@@ -529,6 +614,7 @@ pub fn forget_account_tokens(store: &dyn TokenStore, account: &Account) -> Resul
             account.home_tenant.as_deref(),
         ))?;
     }
+    drop(gone);
     Ok(())
 }
 
@@ -580,14 +666,30 @@ pub async fn persist_in(
     c: &Config,
     client: &teams_proto::Client,
 ) -> Result<()> {
-    let s = client.session().await;
-    save_token_in(
+    persist_session_in(store, c, &client.session().await)
+}
+
+/// [`persist_in`] for a session that was already read from the client.
+pub fn persist_session_in(
+    store: &dyn TokenStore,
+    c: &Config,
+    s: &teams_proto::Session,
+) -> Result<()> {
+    // Held while writing, so a removal either happens before (and the save is skipped) or after
+    // (and deletes what was written).
+    let gone = revoked();
+    if gone.contains(&c.account) {
+        return Ok(());
+    }
+    let r = save_token_in(
         store,
         &c.account,
         &s.tenant,
         c.home_tenant(),
         &s.refresh_token,
-    )
+    );
+    drop(gone);
+    r
 }
 
 /// Persists the (possibly rotated) refresh token of a live client.
@@ -950,5 +1052,129 @@ mod tests {
         c.recent_emoji = vec!["👍".into()];
         let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
         assert_eq!(back, c);
+    }
+
+    // ---- one writer for config.json, and removed tokens stay removed (X2.1) ----
+
+    fn temp_paths(tag: &str) -> (tempfile::TempDir, Paths) {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Paths {
+            config_dir: dir.path().join(format!("{tag}-config")),
+            data_dir: dir.path().join(format!("{tag}-data")),
+            cache_dir: dir.path().join(format!("{tag}-cache")),
+        };
+        (dir, p)
+    }
+
+    #[test]
+    fn an_account_switch_survives_an_engine_save() {
+        let (_dir, p) = temp_paths("race");
+        let mut c = p.load_config().unwrap();
+        c.add_account("second").unwrap();
+        p.save_config(&c).unwrap();
+
+        // The engine started on `default` and keeps its own copy.
+        let mut engine = p.load_config().unwrap();
+        assert_eq!(engine.account, "default");
+
+        // Settings switches to `second` and to a guest organization.
+        p.update_config(|c| {
+            c.switch_account("second")?;
+            c.switch_tenant("guest-1")
+        })
+        .unwrap();
+
+        // The engine then saves a composer preference from its (older) copy.
+        engine.enter_sends = false;
+        engine.skin_tone = 4;
+        engine.calendar_scale = Some(15);
+        p.save_app_prefs(&engine).unwrap();
+
+        let back = p.load_config().unwrap();
+        assert_eq!(back.account, "second", "the switch was not overwritten");
+        assert_eq!(back.tenant, "guest-1");
+        assert_eq!(back.epid, p.load_config().unwrap().epid);
+        assert_eq!(back.accounts.len(), 2);
+        assert!(!back.enter_sends, "the engine's own settings were saved");
+        assert_eq!(back.skin_tone, 4);
+        assert_eq!(back.calendar_scale, Some(15));
+    }
+
+    #[test]
+    fn update_config_saves_nothing_when_the_change_fails() {
+        let (_dir, p) = temp_paths("fail");
+        p.load_config().unwrap();
+        let before = std::fs::read_to_string(p.config_path()).unwrap();
+        let r = p.update_config(|c| {
+            c.switch_tenant("guest-1")?;
+            c.switch_account("nope")
+        });
+        assert!(r.is_err());
+        assert_eq!(std::fs::read_to_string(p.config_path()).unwrap(), before);
+    }
+
+    #[test]
+    fn a_token_save_after_sign_out_does_not_write_the_token_back() {
+        let store = MemoryStore::default();
+        let sess = teams_proto::Session {
+            tenant: "organizations".into(),
+            refresh_token: "rotated".into(),
+            epid: "e".into(),
+        };
+        let mut c = old_config();
+        c.account = "signout-race".into();
+        c.normalize();
+        store.set("signout-race", "old").unwrap();
+
+        // The saver runs while the account is signed in: it writes.
+        persist_session_in(&store, &c, &sess).unwrap();
+        assert_eq!(store.keys(), vec!["signout-race".to_string()]);
+
+        // Sign-out forgets the tokens and marks the account.
+        let acct = c.active_account().unwrap().clone();
+        forget_account_tokens(&store, &acct).unwrap();
+        assert!(store.keys().is_empty());
+        assert!(tokens_revoked("signout-race"));
+
+        // The saver's next round (or one already in flight) must not bring them back.
+        persist_session_in(&store, &c, &sess).unwrap();
+        assert!(store.keys().is_empty(), "the removed token stayed removed");
+
+        // A new account that reuses the label can store tokens again.
+        allow_account_tokens("signout-race");
+        persist_session_in(&store, &c, &sess).unwrap();
+        assert_eq!(store.keys(), vec!["signout-race".to_string()]);
+    }
+
+    #[test]
+    fn each_account_and_guest_organization_has_its_own_cache_file() {
+        let mut c = old_config();
+        assert_eq!(
+            c.db_file_name(),
+            "cache.sqlite",
+            "the first account keeps its cache"
+        );
+        c.add_account("work").unwrap();
+        c.switch_account("work").unwrap();
+        assert_eq!(c.db_file_name(), "cache-work.sqlite");
+        c.switch_tenant("guest-1").unwrap();
+        assert_eq!(c.db_file_name(), "cache-work-guest-1.sqlite");
+        c.set_orgs(vec![OrgRef {
+            tenant_id: "home-id".into(),
+            name: "Home".into(),
+            is_home: true,
+        }]);
+        c.switch_tenant("home-id").unwrap();
+        assert_eq!(
+            c.db_file_name(),
+            "cache-work.sqlite",
+            "the home tenant id is the home org"
+        );
+        let p = Paths {
+            config_dir: "/c".into(),
+            data_dir: "/d".into(),
+            cache_dir: "/x".into(),
+        };
+        assert_eq!(p.db_path_for(&c), PathBuf::from("/d/cache-work.sqlite"));
     }
 }

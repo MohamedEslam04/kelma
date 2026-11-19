@@ -34,6 +34,7 @@ import { AppsHost } from "apps_host.slint";
 import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
 import { EngageView, EngageStore } from "engage.slint";
 import { CallWindow, CallMini, CallStore } from "call_window.slint";
+import { ComposerAppsOverlay } from "composer_apps.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -51,6 +52,7 @@ export { CallStore, CallPerson } from "call_window.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { ComposerApps, CaCommand, CaResult, CaCard } from "composer_apps.slint";
 export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
 export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
 
@@ -146,6 +148,8 @@ export component AppWindow inherits Window {
     in-out property <bool> shortcuts-open: false;
     in-out property <bool> composer-expanded: false;
     in-out property <int> msg-focus-tick: 0;
+    // The composer's "Mark as important"; main.rs reads it when the message is sent.
+    in-out property <bool> important: false;
     in-out property <bool> composer-focused;
     in-out property <int> skin-tone: 0;
     in property <[ComposerEmoji]> recent-emoji;
@@ -882,6 +886,7 @@ export component AppWindow inherits Window {
                         focus-tick <=> root.focus-tick;
                         enter-sends <=> root.enter-sends;
                         expanded <=> root.composer-expanded;
+                        important <=> root.important;
                         input-focus(f) => { root.composer-focused = f; }
                         edit-last => {
                             if ShortcutApi.last-own(root.messages) != "" { root.edit(ShortcutApi.last-own(root.messages)); }
@@ -1220,6 +1225,12 @@ export component AppWindow inherits Window {
     // The full-size picture viewer (plan chat 9.5), above everything else.
     if root.login-state == "ready" && MediaStore.viewer-open: ImageViewer {
         z: 60;
+        width: root.width;
+        height: root.height;
+    }
+
+    // The composer's apps picker (the "+" button).
+    if root.login-state == "ready": ComposerAppsOverlay {
         width: root.width;
         height: root.height;
     }

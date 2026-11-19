@@ -5,6 +5,7 @@ pub use appstore::wire as install_apps;
 #[cfg(test)]
 pub use cal::read_form as read_form_for_test;
 pub use cal::wire as install_calendar;
+pub use composer_apps::wire as install_composer_apps;
 
 use crate::data::{
     AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
@@ -24,6 +25,7 @@ pub(crate) mod activity;
 pub(crate) mod appstore;
 pub(crate) mod call;
 mod channels;
+mod composer_apps;
 pub(crate) mod drive;
 mod engage;
 mod find;
@@ -155,6 +157,7 @@ fn msg(m: MsgData) -> Msg {
         flash: m.flash,
         card: channels::card_rows(m.card),
         headline: m.headline.into(),
+        importance: m.importance.into(),
         grid_w: m.grid_w,
         grid_h: m.grid_h,
         translate: m.translate.into(),

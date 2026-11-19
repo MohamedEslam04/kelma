@@ -685,7 +685,7 @@ component ShareDialog inherits DialogFrame {
                     height: 24px;
                     width: pn.preferred-width + 26px;
                     border-radius: 12px;
-                    background: #34365c;
+                    background: Theme.dark ? #34365c : #e3e4fa;
                     accessible-role: button;
                     accessible-label: "Remove " + p.name;
                     pn := Text { x: 10px; text: p.name; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }

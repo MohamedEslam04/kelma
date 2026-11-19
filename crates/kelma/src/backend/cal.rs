@@ -1015,7 +1015,7 @@ impl Engine {
             cfg.calendar_saved_views = saved;
             cfg.clone()
         };
-        let saved = session::Paths::new().and_then(|p| p.save_config(&cfg));
+        let saved = session::Paths::new().and_then(|p| p.save_app_prefs(&cfg));
         if let Err(err) = saved {
             tracing::warn!(%err, "could not save the calendar view");
         }

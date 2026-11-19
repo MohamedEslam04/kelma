@@ -176,6 +176,8 @@ pub struct OutboxItem {
     pub reply_to: Option<String>,
     /// The `properties.mentions` value (a JSON array string) when the text mentions people.
     pub mentions: Option<String>,
+    /// `properties.importance` to send: `""` (standard) or `"high"` (important).
+    pub importance: String,
     pub kind: OutboxKind,
     /// Local file to upload for `Image` and `File` items.
     pub payload_path: Option<String>,

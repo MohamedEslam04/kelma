@@ -14,6 +14,8 @@ impl Engine {
         subject: String,
     ) -> anyhow::Result<()> {
         let text = text.trim().to_string();
+        // The importance applies to this one message (and never to an edit or a chip).
+        let important = std::mem::take(&mut self.view.lock().unwrap().important);
         let editing_now = self.view.lock().unwrap().editing.is_some();
         // Chips go first, each as its own outbox item (an image or a file card), then the text.
         if !editing_now && let Err(err) = self.queue_attachments() {
@@ -127,6 +129,9 @@ impl Engine {
             None,
         );
         item.mentions = mentions::property(&prepared);
+        if important {
+            item.importance = teams_proto::delivery::Importance::Important.wire().into();
+        }
         self.ui.clear_subject();
         if let Err(err) = self.enqueue(item) {
             self.ui.set_draft(text.clone());

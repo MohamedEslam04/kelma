@@ -124,6 +124,8 @@ pub struct MsgData {
     pub card: Vec<crate::lists_data::CardRowData>,
     /// Headline of an announcement post.
     pub headline: String,
+    /// `""`, `"high"` or `"urgent"`: the red label above the text.
+    pub importance: String,
     /// Size of the image grid.
     pub grid_w: f32,
     pub grid_h: f32,

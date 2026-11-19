@@ -649,6 +649,7 @@ fn item(id: &str, conv: &str, created: i64) -> OutboxItem {
         subject: None,
         reply_to: None,
         mentions: None,
+        importance: String::new(),
         kind: OutboxKind::Text,
         payload_path: None,
         created_ms: created,
@@ -926,6 +927,52 @@ fn outbox_keeps_the_mentions_property_and_old_rows_have_none() {
     let due = s.outbox_due().unwrap();
     assert_eq!(due[0].mentions.as_deref(), Some(r#"[{"itemid":0}]"#));
     assert_eq!(due[1].mentions, None);
+}
+
+#[test]
+fn outbox_keeps_the_importance_through_failure_and_retry() {
+    let s = Store::open_in_memory().unwrap();
+    let mut important = item("i", "c1", 1);
+    important.importance = "high".into();
+    s.enqueue(&important).unwrap();
+    s.enqueue(&item("p", "c1", 2)).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due[0].importance, "high");
+    assert_eq!(due[1].importance, "", "standard stays standard");
+    // A refusal, a retry and a requeue keep it: the same item is sent again the same way.
+    s.mark_failed("i", "no").unwrap();
+    s.retry("i").unwrap();
+    s.mark_sending("i").unwrap();
+    s.requeue("i").unwrap();
+    let again = s.outbox_for("c1").unwrap();
+    let i = again.iter().find(|x| x.client_message_id == "i").unwrap();
+    assert_eq!(i.importance, "high");
+}
+
+#[test]
+fn v4_database_gains_the_importance_column_with_the_standard_default() {
+    let dir = temp_db_dir("migrate-importance");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cache.db");
+    {
+        let conn = Connection::open(&path).unwrap();
+        for sql in &migrations::MIGRATIONS[..4] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 4).unwrap();
+        conn.execute(
+            "INSERT INTO outbox (client_message_id, conversation_id, html, kind, created_ms, \
+             attempts, state) VALUES ('old', 'c', '<p>x</p>', 'text', 1, 0, 'queued')",
+            [],
+        )
+        .unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].importance, "");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

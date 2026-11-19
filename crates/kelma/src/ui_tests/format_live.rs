@@ -78,3 +78,61 @@ async fn live_format_constructs_round_trip_through_the_server() {
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
+
+/// `cargo test -p kelma live_important -- --ignored --nocapture`: "Mark as important" through the
+/// real send path and outbox into 48:notes; the server must read it back as `high`. The next
+/// message (no flag) must be standard. Both are deleted again.
+#[tokio::test]
+#[ignore = "live: posts to 48:notes and deletes the messages afterwards"]
+async fn live_important_message_reads_back_as_high() {
+    let paths = session::Paths::new().unwrap();
+    let cfg = paths.load_config().unwrap();
+    let sess = session::stored_session(&cfg).unwrap().expect("signed in");
+    let client = Client::resume(sess).await.unwrap();
+    session::persist(&cfg, &client).await.unwrap();
+    let me = cfg.self_mri.clone().expect("self mri in config");
+    init_platform();
+    let window = AppWindow::new().unwrap();
+    let ui = UiHandle::new(window.as_weak());
+    let e = Engine::new(
+        client.clone(),
+        Store::open_in_memory().unwrap(),
+        cfg,
+        ui,
+        me,
+        "kelma live test".into(),
+    );
+    e.clone().handle(Cmd::SelectChat(NOTES.into())).await;
+
+    let stamp = teams_proto::time::now_ms();
+    let important = format!("kelma important live {stamp} a");
+    let standard = format!("kelma important live {stamp} b");
+    e.clone().handle(Cmd::SetImportant(true)).await;
+    e.clone()
+        .handle(Cmd::Send(important.clone(), String::new()))
+        .await;
+    e.clone()
+        .handle(Cmd::Send(standard.clone(), String::new()))
+        .await;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let page = client.messages(NOTES, None, 40).await.unwrap();
+    let find = |t: &str| page.messages.iter().find(|m| m.content.contains(t));
+    let (a, b) = (find(&important), find(&standard));
+    println!(
+        "important -> {:?}, standard -> {:?}",
+        a.map(|m| m.importance),
+        b.map(|m| m.importance)
+    );
+    for m in [a, b].into_iter().flatten() {
+        let _ = client.delete_message(NOTES, &m.id).await;
+    }
+    use teams_proto::delivery::Importance;
+    assert_eq!(
+        a.expect("important message").importance,
+        Importance::Important
+    );
+    assert_eq!(
+        b.expect("standard message").importance,
+        Importance::Standard
+    );
+}
