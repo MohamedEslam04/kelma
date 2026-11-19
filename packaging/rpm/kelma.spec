@@ -61,6 +61,10 @@ EOF
 
 %build
 export CARGO_HOME=%{_builddir}/cargo-home
+# No -debuginfo package is built (see debug_package above), and the default -Cdebuginfo=2 makes the
+# kelma crate (a lot of Slint-generated code) need more memory than a 7 GB CI runner has.
+export RUSTFLAGS="${RUSTFLAGS:-}"
+RUSTFLAGS="${RUSTFLAGS//-Cdebuginfo=2/-Cdebuginfo=0}"
 cargo build --release --frozen -p kelma
 
 %check
