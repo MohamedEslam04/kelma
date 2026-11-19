@@ -152,7 +152,7 @@ are the same as in `plans/chat.md`.
       `new_event::tests::a_series_goes_out_in_the_windows_zone`).
   - **Tester session.** `kelma-cli calendar tester invite <address> | status | accept-proposal | move | forward <address> | cancel | cleanup`
     runs the meeting checks of C2.1, C2.2 and C2.5 with one consenting tester, one step at a time.
-- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: needs test tenant (waits for the tester session; cancel, forward and moving a meeting mail the attendee; create, move and delete of private appointments pass live, see C2.1). Impact 4, effort 3.
+- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: needs test tenant (waits for the tester session; moving and forwarding a real meeting pass live with the user's personal account as the attendee; cancel and delete of that meeting wait until C2.5's proposal is in). Impact 4, effort 3.
   - **What.**
     - Edit sends an update.
     - Cancel meeting with a message, for one occurrence or the whole series.
@@ -166,6 +166,11 @@ are the same as in `plans/chat.md`.
     it (snapped to 15 minutes, across days) and dragging its bottom edge resizes it, asking first when it is a
     meeting with attendees. Tested offline end to end. Not run live (cancel and forward never are, per the
     live rules; the ignored `live_form_round_trip` covers create, move and delete of a private appointment).
+  - **Evidence (2026-11-19, live, the user's own accounts).** `kelma-cli calendar tester invite <personal
+    address>` created a Teams meeting (1 attendee, online, join link, start as sent). It arrived in the
+    personal mailbox with the right subject, time and join link; the attendee's Yes came back as `Accepted`.
+    `tester move` moved it 30 minutes (true) and Exchange reset the answer to `NotResponded`; `tester forward`
+    answered OK. The meeting is kept for C2.5.
 - [x] **C2.3 Scheduling assistant ("Scheduler").** Impact 4, effort 3.
   - **What.** A grid of attendees by time slot with busy, tentative and out-of-office shading, each attendee's time zone, suggested times, and room availability.
   - **How.** `POST /me/calendar/getSchedule` and `POST /me/findMeetingTimes`.
