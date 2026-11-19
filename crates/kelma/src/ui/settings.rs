@@ -9,9 +9,9 @@
 //! open, close, page, query, profile, theme, accent, density, font-step, font-scale, skin-tone,
 //! language, date-format, time-format, time-zone, startup, high-contrast, reduced-motion,
 //! larger-text, a11y, notify, pause, test-notification, privacy, unblock, priority-remove,
-//! speaker, mic, camera, all-devices, test-sound, mic-test, open-files, perm, switch-account,
-//! switch-org, add-account, remove-account, refresh-license, restart, sign-out, view-account,
-//! report-problem, check-updates, check-now, release-notes.
+//! speaker, mic, camera, noise-suppression, echo-cancellation, all-devices, test-sound, mic-test,
+//! open-files, perm, switch-account, switch-org, add-account, remove-account, refresh-license,
+//! restart, sign-out, view-account, report-problem, check-updates, check-now, release-notes.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
@@ -454,6 +454,8 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_mic(s(l.devices.microphone.clone().unwrap_or_default()));
     g.set_speaker(s(l.devices.speaker.clone().unwrap_or_default()));
     g.set_camera(s(l.devices.camera.clone().unwrap_or_default()));
+    g.set_noise_suppression(l.devices.noise_suppression);
+    g.set_echo_cancellation(l.devices.echo_cancellation);
     g.set_open_files(s(l.files.open_office_in.slug()));
     push_devices(w, c);
     push_perms(w, c);
@@ -1028,6 +1030,17 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             if name == "mic" && c.mic.is_some() {
                 stop_mic(w, &mut c);
             }
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "noise-suppression" | "echo-cancellation" => {
+            let mut c = shared.borrow_mut();
+            if name == "noise-suppression" {
+                c.local.devices.noise_suppression = bit(arg);
+            } else {
+                c.local.devices.echo_cancellation = bit(arg);
+            }
+            let r = c.local.save_devices();
             push_local(w, &c);
             saved(w, r);
         }

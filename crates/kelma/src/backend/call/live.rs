@@ -19,7 +19,7 @@ use super::{
 };
 use anyhow::Context;
 use calling::audio::{
-    AudioProcessor, Capture, Playback, echo_cancelled, spawn_capture_encoder,
+    AudioProcessor, Capture, Playback, ProcessingOptions, echo_cancelled, spawn_capture_encoder,
     spawn_decoder_playback,
 };
 use calling::invitation::{CallEvent, NgcPush, classify};
@@ -536,9 +536,23 @@ fn find_blob(v: &serde_json::Value) -> Option<SdpBlob> {
 }
 
 /// Echo cancellation runs unless `KELMA_NO_AEC` is set to anything but `0` (the GUI's
-/// `call join --no-aec`, for comparing both live).
-fn aec_wanted() -> bool {
-    aec_wanted_by(std::env::var_os("KELMA_NO_AEC").as_deref())
+/// `call join --no-aec`, for comparing both live) or the user turned it off in Settings ›
+/// Devices; noise suppression follows its own switch there.
+fn processing_wanted() -> ProcessingOptions {
+    let prefs = session::Paths::new()
+        .map(|p| crate::backend::settings::Local::load(&p.config_dir).devices)
+        .unwrap_or_default();
+    processing_from(&prefs, std::env::var_os("KELMA_NO_AEC").as_deref())
+}
+
+fn processing_from(
+    prefs: &devices::DevicePrefs,
+    no_aec: Option<&std::ffi::OsStr>,
+) -> ProcessingOptions {
+    ProcessingOptions {
+        echo_cancellation: prefs.echo_cancellation && aec_wanted_by(no_aec),
+        noise_suppression: prefs.noise_suppression,
+    }
 }
 
 fn aec_wanted_by(no_aec: Option<&std::ffi::OsStr>) -> bool {
@@ -547,17 +561,17 @@ fn aec_wanted_by(no_aec: Option<&std::ffi::OsStr>) -> bool {
 
 /// The microphone path of every call (meetings and adopted 1:1 calls), as `kelma-cli call join
 /// --mic --speaker` runs it: the capture through AEC3, noise suppression and AGC2, then Opus.
-/// With `aec`, the speaker must report each played frame to the returned reference (its delay
-/// to the microphone is estimated inside from the devices' measured latency).
+/// With either switch on, the speaker must report each played frame to the returned reference
+/// (its delay to the microphone is estimated inside from the devices' measured latency).
 fn mic_chain<S: calling::audio::FrameSource + 'static>(
     capture: S,
-    aec: bool,
+    options: ProcessingOptions,
 ) -> (
     mpsc::Receiver<OpusPacket>,
     Option<calling::audio::EchoReference>,
 ) {
-    if aec {
-        let (mic, reference) = echo_cancelled(capture, AudioProcessor::new());
+    if options.echo_cancellation || options.noise_suppression {
+        let (mic, reference) = echo_cancelled(capture, AudioProcessor::with_options(options));
         (spawn_capture_encoder(mic), Some(reference))
     } else {
         (spawn_capture_encoder(capture), None)
@@ -587,7 +601,7 @@ impl Audio {
                 return Err(anyhow::Error::from(e).context("microphone"));
             }
         };
-        let (mut encoded, reference) = mic_chain(capture, aec_wanted());
+        let (mut encoded, reference) = mic_chain(capture, processing_wanted());
         let out = match reference {
             Some(r) => Playback::start_with_tap(speaker, move |f| r.push(f)),
             None => Playback::start(speaker),
@@ -1004,16 +1018,43 @@ mod tests {
         assert!(!aec_wanted_by(Some(OsStr::new("1"))));
     }
 
+    #[test]
+    fn the_device_switches_shape_the_mic_processing() {
+        use std::ffi::OsStr;
+        let on = devices::DevicePrefs::default();
+        assert_eq!(processing_from(&on, None), ProcessingOptions::default());
+        // KELMA_NO_AEC still turns echo cancellation off, noise suppression stays.
+        let p = processing_from(&on, Some(OsStr::new("1")));
+        assert!(!p.echo_cancellation && p.noise_suppression);
+        let off = devices::DevicePrefs {
+            noise_suppression: false,
+            echo_cancellation: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            processing_from(&off, None),
+            ProcessingOptions {
+                echo_cancellation: false,
+                noise_suppression: false
+            }
+        );
+    }
+
     #[tokio::test]
     async fn the_mic_chain_runs_through_the_echo_canceller() {
         use calling::audio::{EchoReference, ToneSource};
         // With AEC the speaker gets a reference to feed; it accepts a played 20 ms frame.
-        let (mut packets, reference) = mic_chain(ToneSource::endless(440.0), true);
+        let (mut packets, reference) =
+            mic_chain(ToneSource::endless(440.0), ProcessingOptions::default());
         let reference: EchoReference = reference.expect("AEC stage in the chain");
         reference.push(&[0i16; calling::FRAME_SAMPLES]);
         assert!(packets.recv().await.is_some(), "the chain still encodes");
-        // The opt-out has no AEC stage and nothing to feed.
-        let (mut raw, none) = mic_chain(ToneSource::endless(440.0), false);
+        // With both switches off there is no processing stage and nothing to feed.
+        let off = ProcessingOptions {
+            echo_cancellation: false,
+            noise_suppression: false,
+        };
+        let (mut raw, none) = mic_chain(ToneSource::endless(440.0), off);
         assert!(none.is_none());
         assert!(raw.recv().await.is_some());
     }

@@ -501,6 +501,30 @@ fn autostart_switch_follows_and_writes_the_desktop_entry() {
     assert!(desktop.contains("--hidden"));
 }
 
+#[test]
+fn call_audio_switches_start_on_and_save_with_the_device_prefs() {
+    let home = Home::new("call-audio");
+    let dir = home.paths().config_dir;
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "devices");
+    assert!(checked(app, "Noise suppression"));
+    assert!(checked(app, "Echo cancellation"));
+    press(app, "Noise suppression");
+    assert!(!checked(app, "Noise suppression"));
+    let saved = Local::load(&dir);
+    assert!(!saved.devices.noise_suppression);
+    assert!(saved.devices.echo_cancellation);
+    press(app, "Echo cancellation");
+    assert!(!Local::load(&dir).devices.echo_cancellation);
+
+    // A new window over the same home shows the saved switches.
+    let again = window(Home(ui.home.0.clone()));
+    assert!(!store(&again.app).get_noise_suppression());
+    assert!(!store(&again.app).get_echo_cancellation());
+    std::mem::forget(again.home); // `ui.home` removes the directory
+}
+
 const FAKE_RELEASE_URL: &str = "https://github.com/MohamedEslam04/kelma/releases/tag/v999.0.0";
 
 /// A fake update check that counts its calls and answers `r` (never the network).

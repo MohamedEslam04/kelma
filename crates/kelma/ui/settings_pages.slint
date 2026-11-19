@@ -374,6 +374,21 @@ export component DevicesPage inherits VerticalLayout {
         }
     }
     SSection {
+        title: @tr("Call audio");
+        SSwitch {
+            label: @tr("Noise suppression");
+            hint: @tr("Removes background noise, like typing or a fan, from your microphone in calls.");
+            on: SettingsStore.noise-suppression;
+            toggled(on) => { SettingsStore.command("noise-suppression", on ? "1" : "0"); }
+        }
+        SSwitch {
+            label: @tr("Echo cancellation");
+            hint: @tr("Stops others from hearing themselves when you use speakers instead of a headset.");
+            on: SettingsStore.echo-cancellation;
+            toggled(on) => { SettingsStore.command("echo-cancellation", on ? "1" : "0"); }
+        }
+    }
+    SSection {
         title: @tr("Camera");
         hint: @tr("Preview, mirroring and low-light correction come with calls.");
         SRadio { group: @tr("Camera"); label: @tr("System default"); checked: SettingsStore.camera == ""; picked => { SettingsStore.command("camera", ""); } }

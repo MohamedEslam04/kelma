@@ -4,12 +4,29 @@ use crate::{AudioDevice, Camera, find_by_name};
 use serde::{Deserialize, Serialize};
 
 /// `None` means "system default". Each value is an [`AudioDevice::id`] (or [`Camera::bus`]).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// The two switches shape the call microphone and are on unless the user turned them off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DevicePrefs {
     pub microphone: Option<String>,
     pub speaker: Option<String>,
     pub camera: Option<String>,
+    /// Removes background noise from the microphone in calls.
+    pub noise_suppression: bool,
+    /// Removes the echo of what the speaker plays from the microphone in calls.
+    pub echo_cancellation: bool,
+}
+
+impl Default for DevicePrefs {
+    fn default() -> Self {
+        DevicePrefs {
+            microphone: None,
+            speaker: None,
+            camera: None,
+            noise_suppression: true,
+            echo_cancellation: true,
+        }
+    }
 }
 
 impl DevicePrefs {
@@ -65,11 +82,24 @@ mod tests {
     }
 
     #[test]
+    fn audio_processing_is_on_unless_turned_off() {
+        let p = DevicePrefs::default();
+        assert!(p.noise_suppression && p.echo_cancellation);
+        // A file saved before the switches existed keeps both on.
+        let old: DevicePrefs = serde_json::from_str(r#"{"microphone":"alsa:mic"}"#).unwrap();
+        assert!(old.noise_suppression && old.echo_cancellation);
+        let off: DevicePrefs = serde_json::from_str(r#"{"noise_suppression":false}"#).unwrap();
+        assert!(!off.noise_suppression && off.echo_cancellation);
+    }
+
+    #[test]
     fn round_trips_through_json_and_tolerates_missing_fields() {
         let p = DevicePrefs {
             microphone: Some("alsa:mic".into()),
             speaker: None,
             camera: Some("usb-0000:00:14.0-4".into()),
+            noise_suppression: false,
+            echo_cancellation: true,
         };
         let json = serde_json::to_string(&p).unwrap();
         assert_eq!(serde_json::from_str::<DevicePrefs>(&json).unwrap(), p);

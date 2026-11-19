@@ -920,6 +920,21 @@ msgstr "المعاينة والعكس وتصحيح الإضاءة المنخفض
 msgid "Show all devices"
 msgstr "إظهار كل الأجهزة"
 
+msgid "Call audio"
+msgstr "صوت المكالمات"
+
+msgid "Noise suppression"
+msgstr "كتم الضوضاء"
+
+msgid "Removes background noise, like typing or a fan, from your microphone in calls."
+msgstr "يزيل الضوضاء من حولك، مثل الكتابة على الكيبورد أو صوت المروحة، من الميكروفون في المكالمات."
+
+msgid "Echo cancellation"
+msgstr "إلغاء الصدى"
+
+msgid "Stops others from hearing themselves when you use speakers instead of a headset."
+msgstr "يمنع الآخرين من سماع صدى أصواتهم لما تستخدم السماعات الخارجية بدل الهيدسيت."
+
 msgid "Also list the raw sound card entries."
 msgstr "يعرض أيضًا مدخلات بطاقة الصوت الخام."
 
