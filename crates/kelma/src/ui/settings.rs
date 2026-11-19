@@ -3,8 +3,8 @@
 //! changes), saves local preferences, and turns Teams changes into dry runs.
 //!
 //! Nothing here talks to Teams. Reads go through the engine (`SettingsCmd::Load`); every Teams
-//! write is built as a `PlannedRequest`, logged and shown on the page, never sent, except my own
-//! status and work location from the profile menu, which the engine sets (`SettingsCmd::SetStatus`).
+//! write is built as a `PlannedRequest` and sent by the engine (`SettingsCmd::Apply`), which then
+//! reads the settings again. Without an engine (tests) a write stays a dry run, logged and shown.
 //!
 //! Commands from `SettingsStore.command(name, argument)`:
 //! open, close, page, query, profile, theme, accent, density, font-step, font-scale, skin-tone,
@@ -679,6 +679,18 @@ fn notice(w: &AppWindow, text: impl Into<SharedString>) {
 }
 
 /// Records a Teams write that kelma only plans, and shows it.
+/// Sends a Teams settings change through the engine (allowed on the user's own account since
+/// 2026-11-19); without an engine (tests, the window alone) it stays a dry run.
+fn write_or_plan(w: &AppWindow, c: &mut Ctl, req: teams_proto::user_settings::PlannedRequest) {
+    let Some(tx) = c.tx.clone() else {
+        dry_run(w, c, req);
+        return;
+    };
+    tracing::info!(request = %st::dry_run_text(&req).lines().next().unwrap_or_default(), "settings: sending to Teams");
+    let _ = tx.send(Cmd::Settings(SettingsCmd::Apply(req)));
+    notice(w, "Saving to Teams…");
+}
+
 fn dry_run(w: &AppWindow, c: &mut Ctl, req: teams_proto::user_settings::PlannedRequest) {
     let text = st::dry_run_text(&req);
     tracing::info!(request = %text, "settings: dry run, not sent to Teams");
@@ -1006,13 +1018,13 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 });
                 st::dry_run_pause(&base, &current, until)
             };
-            dry_run(w, &mut c, req);
+            write_or_plan(w, &mut c, req);
         }
         "test-notification" => {
             (shared.borrow().env.hooks.test_notification)();
             notice(w, "Sent a test notification to your desktop.");
         }
-        // --- Privacy (Teams: dry run) ---
+        // --- Privacy (Teams; a dry run without an engine) ---
         "privacy" | "unblock" | "priority-remove" => {
             let mut c = shared.borrow_mut();
             let Some(d) = c.server.as_ref().filter(|d| d.privacy.is_some()) else {
@@ -1034,7 +1046,7 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 "unblock" => st::dry_run_remove(&d.middle_tier, ContactList::Blocked, arg),
                 _ => st::dry_run_remove(&d.middle_tier, ContactList::Priority, arg),
             };
-            dry_run(w, &mut c, req);
+            write_or_plan(w, &mut c, req);
         }
         // --- Devices (local) ---
         "speaker" | "mic" | "camera" => {

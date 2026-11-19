@@ -194,7 +194,7 @@ export component PrivacyPage inherits VerticalLayout {
         Para { text: @tr("kelma sends no diagnostic data. Report a problem (in About) writes a redacted bundle on this computer."); }
     }
     if SettingsStore.privacy-status != "": Para { text: SettingsStore.privacy-status; }
-    DryRuns { }
+    if SettingsStore.dry-runs.length > 0: DryRuns { }
 }
 
 export component NotificationsPage inherits VerticalLayout {
@@ -234,7 +234,7 @@ export component NotificationsPage inherits VerticalLayout {
             picked(v) => { SettingsStore.command("notify", SettingsStore.j2(n.key, v)); }
         }
     }
-    DryRuns { }
+    if SettingsStore.dry-runs.length > 0: DryRuns { }
 }
 
 export component AppearancePage inherits VerticalLayout {

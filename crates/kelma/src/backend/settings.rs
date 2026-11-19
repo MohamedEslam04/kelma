@@ -1199,6 +1199,9 @@ pub enum SettingsCmd {
     SetWorkLocation(String),
     /// Sets my status message (until cleared); an empty text clears it.
     SetStatusNote(String),
+    /// Sends a Teams settings change (notifications, privacy, a contact list), then reads the
+    /// settings again.
+    Apply(teams_proto::user_settings::PlannedRequest),
     /// Read the Teams side of Settings and push it to the window.
     Load,
     /// "Refresh license and restart": redeem the refresh token again (new access tokens and a new
@@ -1225,6 +1228,27 @@ impl Engine {
             SettingsCmd::RefreshLicense => {
                 let r = self.refresh_license().await.map_err(|e| e.to_string());
                 self.ui.settings_license(r);
+            }
+            SettingsCmd::Apply(req) => {
+                let r = if self.offline.load(Ordering::Relaxed) {
+                    Err(anyhow::anyhow!("Not available offline."))
+                } else {
+                    self.client
+                        .send_planned(&req)
+                        .await
+                        .map_err(anyhow::Error::from)
+                };
+                match r {
+                    Ok(_) => self.ui.settings_notice("Saved to Teams.".into()),
+                    Err(e) => {
+                        tracing::warn!(%e, "settings write failed");
+                        self.ui
+                            .settings_notice(format!("Teams did not take the change: {e}"));
+                    }
+                }
+                let data = self.settings_read().await;
+                remember_notification_settings(data.notifications.clone());
+                self.ui.settings_server(data);
             }
             SettingsCmd::SetStatus(_)
             | SettingsCmd::SetWorkLocation(_)
