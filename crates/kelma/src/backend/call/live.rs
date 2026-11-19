@@ -10,8 +10,8 @@
 //! it, invitations and every other push to the ringing flows' subscriptions.
 //!
 //! Audio is the microphone through echo cancellation (AEC3, noise suppression, AGC2), fed by
-//! what the speaker plays, as `call join --mic --speaker` runs it. `KELMA_CALL_DUMP=<dir>` writes
-//! every raw calling push there.
+//! what the speaker plays, as `call join --mic --speaker` runs it (`KELMA_NO_AEC=1` turns it off,
+//! like `--no-aec`). `KELMA_CALL_DUMP=<dir>` writes every raw calling push there.
 
 use super::{
     CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
@@ -502,6 +502,32 @@ fn find_blob(v: &serde_json::Value) -> Option<SdpBlob> {
     }
 }
 
+/// Echo cancellation runs unless `KELMA_NO_AEC` is set to anything but `0` (the GUI's
+/// `call join --no-aec`, for comparing both live).
+fn aec_wanted() -> bool {
+    aec_wanted_by(std::env::var_os("KELMA_NO_AEC").as_deref())
+}
+
+fn aec_wanted_by(no_aec: Option<&std::ffi::OsStr>) -> bool {
+    no_aec.is_none_or(|v| v.is_empty() || v == "0")
+}
+
+/// The microphone path of every call (meetings and adopted 1:1 calls), as `kelma-cli call join
+/// --mic --speaker` runs it: the capture through AEC3, noise suppression and AGC2, then Opus.
+/// With `aec`, the speaker must report each played frame to the returned reference (its delay
+/// to the microphone is estimated inside from the devices' measured latency).
+fn mic_chain<S: calling::audio::FrameSource + 'static>(
+    capture: S,
+    aec: bool,
+) -> (mpsc::Receiver<OpusPacket>, Option<calling::audio::EchoReference>) {
+    if aec {
+        let (mic, reference) = echo_cancelled(capture, AudioProcessor::new());
+        (spawn_capture_encoder(mic), Some(reference))
+    } else {
+        (spawn_capture_encoder(capture), None)
+    }
+}
+
 /// The audio of one call: microphone to the current media sender, incoming packets to the
 /// speaker. Restartable for a device change; the media session can be swapped under it.
 struct Audio {
@@ -525,11 +551,13 @@ impl Audio {
                 return Err(anyhow::Error::from(e).context("microphone"));
             }
         };
-        let (mic, reference) = echo_cancelled(capture, AudioProcessor::new());
-        let out =
-            Playback::start_with_tap(speaker, move |f| reference.push(f)).context("speaker")?;
+        let (mut encoded, reference) = mic_chain(capture, aec_wanted());
+        let out = match reference {
+            Some(r) => Playback::start_with_tap(speaker, move |f| r.push(f)),
+            None => Playback::start(speaker),
+        }
+        .context("speaker")?;
         self.play_into(out);
-        let mut encoded = spawn_capture_encoder(mic);
         let (sender, muted) = (self.sender.clone(), self.muted.clone());
         self.send_task = Some(tokio::spawn(async move {
             while let Some(p) = encoded.recv().await {
@@ -930,6 +958,29 @@ impl Call {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn echo_cancellation_is_on_unless_opted_out() {
+        use std::ffi::OsStr;
+        assert!(aec_wanted_by(None));
+        assert!(aec_wanted_by(Some(OsStr::new(""))));
+        assert!(aec_wanted_by(Some(OsStr::new("0"))));
+        assert!(!aec_wanted_by(Some(OsStr::new("1"))));
+    }
+
+    #[tokio::test]
+    async fn the_mic_chain_runs_through_the_echo_canceller() {
+        use calling::audio::{EchoReference, ToneSource};
+        // With AEC the speaker gets a reference to feed; it accepts a played 20 ms frame.
+        let (mut packets, reference) = mic_chain(ToneSource::endless(440.0), true);
+        let reference: EchoReference = reference.expect("AEC stage in the chain");
+        reference.push(&[0i16; calling::FRAME_SAMPLES]);
+        assert!(packets.recv().await.is_some(), "the chain still encodes");
+        // The opt-out has no AEC stage and nothing to feed.
+        let (mut raw, none) = mic_chain(ToneSource::endless(440.0), false);
+        assert!(none.is_none());
+        assert!(raw.recv().await.is_some());
+    }
 
     #[test]
     fn a_dumped_push_is_its_url_and_body_in_arrival_order() {
