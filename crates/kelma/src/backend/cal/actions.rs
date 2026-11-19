@@ -305,8 +305,10 @@ impl Engine {
             CalCmd::Peek(id) => self.cal_peek(&id),
             CalCmd::OpenFull => self.cal_open_full().await,
             CalCmd::JoinEvent => {
-                if let Some(url) = self.cal_open_event().and_then(|e| e.join_url)
+                if let Some(e) = self.cal_open_event()
+                    && let Some(url) = e.join_url
                     && url.starts_with("https://")
+                    && !self.call_prejoin_link(&e.subject, &url)
                 {
                     let _ = crate::external::open(&url);
                 }
@@ -434,7 +436,9 @@ impl Engine {
             CalCmd::MeetNow(subject) => self.cal_meet_now(subject.trim()).await,
             CalCmd::JoinId { id, passcode } => match join_by_id_url(&id, &passcode) {
                 Some(url) => {
-                    let _ = crate::external::open(&url);
+                    if !self.call_prejoin_code(&id, &passcode) {
+                        let _ = crate::external::open(&url);
+                    }
                     self.ui.cal_modal("");
                 }
                 None => self

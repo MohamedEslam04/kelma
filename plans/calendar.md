@@ -256,6 +256,10 @@ are the same as in `plans/chat.md`.
     its link with Copy link and Join now; Join with an ID takes the ID and passcode and opens the Teams join
     page (it rejects an ID with odd characters). DEFERRED: needs test tenant (Meet now and meetings are never exercised on the
     work account).
+  - **Evidence (Join and Join with an ID, 2026-11-19).** UI built; live check pending with tester. With the native
+    call stack, the peek's Join, "Join Teams meeting" and "Join with an ID" open kelma's pre-join screen and join by
+    the meeting's link or by code (`backend/call.rs`, `ui_tests/call.rs`
+    `join_with_an_id_opens_the_prejoin_for_that_meeting`); without it they open the Teams web join page as before.
 - [ ] **C3.3 Share, Print, Calendar settings.** DEFERRED: needs test tenant (changing who can see the calendar is a real permission write; every other part is built and tested offline). Impact 2, effort 2.
   - **What.**
     - Share: calendar permissions (free/busy, titles, all details, edit, delegate).

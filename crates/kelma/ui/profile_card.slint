@@ -3,6 +3,8 @@
 import { Theme } from "theme.slint";
 import { PersonItem } from "types.slint";
 import { Avatar, IconButton } from "widgets.slint";
+import { DirectCallStore } from "call_incoming.slint";
+import { CallPersonButton } from "call_outgoing.slint";
 
 export component ProfileCard inherits Rectangle {
     in property <PersonItem> person;
@@ -112,6 +114,7 @@ export component ProfileCard inherits Rectangle {
                 Text { text: "Email"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 mail-touch := TouchArea { mouse-cursor: pointer; clicked => { root.send-email(root.email); } }
             }
+            if DirectCallStore.available && root.person.kind == "person" && !root.loading: CallPersonButton { mri: root.person.id; }
         }
     }
 }

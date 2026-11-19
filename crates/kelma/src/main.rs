@@ -105,6 +105,9 @@ fn demo_engine(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
         "Mohamed Eslam".into(),
     );
     engine.seed_activity(activity);
+    engine
+        .calls
+        .demo(std::env::var_os("KELMA_CALL_DEMO").is_some());
     Ok(engine)
 }
 
@@ -225,6 +228,11 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--report-problem") {
         return report_problem(&args[1..]);
+    }
+    if args.iter().any(|a| a == "--call-demo") {
+        // SAFETY: called at the start of main, before any other thread exists.
+        unsafe { std::env::set_var("KELMA_DEMO", "1") };
+        unsafe { std::env::set_var("KELMA_CALL_DEMO", "1") };
     }
     configure_fonts();
     tracing_subscriber::fmt()
@@ -355,6 +363,8 @@ fn main() -> anyhow::Result<()> {
     ui::install_calendar(&window, tx.clone());
     ui::install_apps(&window, tx.clone());
     ui::settings::install_system(&window, tx.clone());
+    #[cfg(feature = "calls")]
+    ui::call_direct::install(&window, tx.clone());
     ui::install_composer_apps(&window, tx.clone());
     {
         let tx = tx.clone();
@@ -411,6 +421,15 @@ fn main() -> anyhow::Result<()> {
         window.global::<EngageStore>().on_command(move |name, arg| {
             if let Some(c) = backend::EngageCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Engage(c));
+            }
+        });
+    }
+    ui::call::wire(&window);
+    {
+        let tx = tx.clone();
+        window.global::<CallStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::call::CallCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Call(c));
             }
         });
     }
