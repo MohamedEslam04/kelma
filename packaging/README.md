@@ -93,6 +93,21 @@ podman run --rm -v /data/kelma-src.git:/src.git:ro,Z -v $PWD/packaging/aur:/pkg:
 It takes about 30 minutes and several GB of memory (limit cargo with `CARGO_BUILD_JOBS` if the OOM killer steps in). The container's `makepkg` also confirms `.SRCINFO`
 (`makepkg --printsrcinfo | diff - .SRCINFO`, after undoing the `sed`).
 
+## CI
+
+`.github/workflows/packaging.yml` builds the RPM (Fedora container), the Flatpak (Flathub's
+`flatpak-github-actions` image, Freedesktop 26.08) and the AUR package (Arch container). It never
+runs on pull requests. It runs when started by hand (Actions tab), when `packaging/`, `Cargo.lock`
+or the workflow change on `main`, and on a push to any branch named `ci/packaging-*`. A manual run
+only works once the workflow is on the default branch, so to test a change to it from a branch:
+
+```sh
+git push origin HEAD:refs/heads/ci/packaging-test
+gh run watch "$(gh run list --workflow=packaging.yml --branch ci/packaging-test --limit 1 --json databaseId -q '.[0].databaseId')"
+gh run view <id> --log-failed        # when a job failed
+git push origin --delete ci/packaging-test
+```
+
 ## Verification status
 
 Last checked on 2026-11-19 at commit `d31bc90` (Fedora 44 host, Freedesktop 26.08, Arch container).
