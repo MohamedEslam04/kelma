@@ -663,7 +663,7 @@ impl EventSink {
 
 struct Shared {
     model: Mutex<CallModel>,
-    handle: Mutex<Option<Box<dyn CallHandle>>>,
+    handle: Mutex<Option<Arc<dyn CallHandle>>>,
     driver: Mutex<Arc<dyn CallDriver>>,
     generation: AtomicU64,
     ticking: AtomicBool,
@@ -719,7 +719,9 @@ impl Shared {
     }
 
     fn control(&self, c: Control) {
-        if let Some(h) = self.handle.lock().unwrap().as_ref() {
+        // Out of the lock: a driver may report (and end the call) from inside `control`.
+        let h = self.handle.lock().unwrap().clone();
+        if let Some(h) = h {
             h.control(c);
         }
     }
@@ -836,7 +838,7 @@ impl CallManager {
         };
         let handle = self.driver().join(target, opts, sink);
         if self.shared.model.lock().unwrap().phase.active() {
-            *self.shared.handle.lock().unwrap() = Some(handle);
+            *self.shared.handle.lock().unwrap() = Some(Arc::from(handle));
         }
     }
 
@@ -950,7 +952,7 @@ impl CallManager {
             shared: Arc::downgrade(&self.shared),
             generation,
         });
-        *self.shared.handle.lock().unwrap() = Some(handle);
+        *self.shared.handle.lock().unwrap() = Some(Arc::from(handle));
         self.shared.push();
         self.shared.tick();
         true
