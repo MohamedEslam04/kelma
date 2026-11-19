@@ -423,10 +423,7 @@ fn the_shared_tab_lists_files_and_links_filters_them_and_opens_one() {
             .collect()
     };
     let all = names(&h.app);
-    assert!(
-        all.iter().any(|n| n == "archive voice note.m4a"),
-        "{all:?}"
-    );
+    assert!(all.iter().any(|n| n == "archive voice note.m4a"), "{all:?}");
     assert!(!find_label(&h.app, "Upload").is_empty());
     assert!(!find_label(&h.app, "Filter by keyword").is_empty());
 
@@ -439,10 +436,7 @@ fn the_shared_tab_lists_files_and_links_filters_them_and_opens_one() {
     // Keyword filter.
     click(&labelled(&h.app, "Recent"));
     h.runner()(Cmd::Find(FindCmd::SharedKeyword("voice".into())));
-    assert_eq!(
-        names(&h.app),
-        vec!["archive voice note.m4a".to_string()]
-    );
+    assert_eq!(names(&h.app), vec!["archive voice note.m4a".to_string()]);
     h.runner()(Cmd::Find(FindCmd::SharedKeyword("zzz".into())));
     assert!(names(&h.app).is_empty());
     h.runner()(Cmd::Find(FindCmd::SharedKeyword(String::new())));
