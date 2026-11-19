@@ -5,6 +5,7 @@ import { Avatar, Icon, IconButton, Pill, SectionHeader } from "widgets.slint";
 import { ChannelMenu, ItemMenu, ListStore, OptionRow, SectionHead } from "lists.slint";
 import { CommunitiesSection } from "teams_page.slint";
 import { TeamsStore } from "teams_store.slint";
+import { PeopleStore } from "people.slint";
 
 component MenuItem inherits Rectangle {
     in property <string> label;
@@ -39,6 +40,20 @@ component ChatItem inherits Rectangle {
             presence: root.data.presence;
             size: 32px;
             y: (parent.height - 32px) / 2;
+            // Resting on a 1:1 chat's photo opens the person's hover card.
+            avatar-hover := TouchArea {
+                clicked => { root.clicked(); }
+            }
+            Timer {
+                interval: 600ms;
+                running: avatar-hover.has-hover && root.data.person != "";
+                triggered => {
+                    if !PeopleStore.card-open {
+                        PeopleStore.card-by-hover = true;
+                        PeopleStore.command("profile", root.data.person);
+                    }
+                }
+            }
         }
         VerticalLayout {
             alignment: center;

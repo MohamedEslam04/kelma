@@ -31,6 +31,8 @@ pub struct ChatData {
     pub channel: bool,
     /// The other person's availability in a 1:1 chat (`""`: no dot).
     pub presence: String,
+    /// The other person in a 1:1 chat (`""` otherwise), for the hover card.
+    pub person: String,
 }
 
 /// A chip above the composer.

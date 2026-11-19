@@ -18,6 +18,7 @@ export struct ChatRow {
     muted: bool,   // notifications are off (the item menu offers Unmute)
     channel: bool, // a channel (the item menu offers the channel items)
     presence: string, // the other person's availability in a 1:1 chat ("" draws no dot)
+    person: string,   // the other person in a 1:1 chat ("" otherwise), for the hover card
 }
 
 // Adaptive Card rows (plan 8.8). `kind`: text | fact | columns | image | actions | banner.

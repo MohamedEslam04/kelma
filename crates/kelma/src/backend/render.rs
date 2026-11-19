@@ -248,7 +248,12 @@ impl Engine {
                     .unwrap_or_default(),
                 _ => String::new(),
             };
+            let person = match r.kind {
+                ConvKind::OneOnOne => avatar_mri.clone().unwrap_or_default(),
+                _ => String::new(),
+            };
             let data = ChatData {
+                person,
                 presence,
                 mention,
                 group: r.kind == ConvKind::Group,

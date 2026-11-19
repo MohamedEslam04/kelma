@@ -3,6 +3,7 @@
 import { Theme } from "theme.slint";
 import { PersonItem } from "types.slint";
 import { Avatar, IconButton } from "widgets.slint";
+import { PeopleStore } from "people.slint";
 
 export component ParticipantsPanel inherits Rectangle {
     in property <[PersonItem]> members;
@@ -156,6 +157,16 @@ export component ParticipantsPanel inherits Rectangle {
                             }
                         }
                         member-hit := TouchArea { mouse-cursor: pointer; clicked => { root.open-profile(m.id); } }
+                        Timer {
+                            interval: 600ms;
+                            running: member-hit.has-hover;
+                            triggered => {
+                                if !PeopleStore.card-open {
+                                    PeopleStore.card-by-hover = true;
+                                    PeopleStore.command("profile", m.id);
+                                }
+                            }
+                        }
                     }
                 }
             }
