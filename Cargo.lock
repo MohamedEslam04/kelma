@@ -266,6 +266,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "appearance"
+version = "0.0.0"
+dependencies = [
+ "directories",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "zbus 5.19.0",
+]
+
+[[package]]
 name = "apps"
 version = "0.0.0"
 dependencies = [
@@ -3348,10 +3362,12 @@ name = "kelma-cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "appearance",
  "apps",
  "calendar",
  "devices",
  "diag",
+ "futures-util",
  "onedrive",
  "preview",
  "render",
@@ -5790,6 +5806,7 @@ dependencies = [
  "serde",
  "serde_json",
  "teams-proto",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 
@@ -6618,7 +6635,6 @@ dependencies = [
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
- "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -8201,7 +8217,6 @@ dependencies = [
  "rustix 1.1.6",
  "serde",
  "serde_repr",
- "tokio",
  "tracing",
  "uds_windows",
  "uuid",

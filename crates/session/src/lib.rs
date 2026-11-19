@@ -12,6 +12,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub mod window_state;
+
 const SERVICE: &str = "kelma";
 
 /// Errors from session persistence.

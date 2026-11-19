@@ -39,11 +39,13 @@
 //! kelma-cli preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F.png]
 //!                                 render a PDF or Office page to PNG (read-only; prints sizes, not names)
 //! kelma-cli devices [audio|cameras|test-sound|mic-level]  list sound devices and cameras; test-sound plays a tone, mic-level shows the mic level
+//! kelma-cli appearance [show|watch]  saved appearance, general and accessibility prefs, the desktop portal values and the resolved result (read-only)
 //! kelma-cli tray-demo [--step S|autostart <enable|disable|status>]  show the tray icon, unread badge and launcher badge for a few seconds; autostart writes the login entry
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
 mod accounts;
+mod appearance;
 mod apps;
 mod chatx;
 mod delivery;
@@ -520,6 +522,7 @@ async fn main() -> Result<()> {
         Some("accounts") => accounts::run(&paths, &args[1..]).await?,
         Some("web") => web::run(&paths, &args[1..]).await?,
         Some("devices") => devices::run(&args[1..])?,
+        Some("appearance") => appearance::run(&args[1..]).await?,
         Some("tray-demo") => tray::run(&args[1..])?,
         Some("logout") => {
             let cfg = paths.load_config()?;
