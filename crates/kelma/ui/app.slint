@@ -709,8 +709,6 @@ export component AppWindow inherits Window {
                             property <int> tick: root.scroll-tick;
                             property <int> d-tick: root.divider-tick;
                             property <int> a-tick: root.anchor-tick;
-                            // Where the first row sat on screen when older messages were asked for.
-                            property <length> anchor-at: 0px;
                             property <bool> anchoring: false;
                             // Stay pinned to the newest message while content grows (images loading).
                             property <bool> pinned: true;
@@ -729,8 +727,6 @@ export component AppWindow inherits Window {
                                 self.aligning = true;
                                 self.anchoring = true;
                                 self.pinned = false;
-                                // An estimate first; the anchor row's real position corrects it.
-                                self.content-y = min(0px, self.anchor-at - self.content-height * root.anchor-index / max(1, root.messages.length));
                             }
                             changed d-tick => {
                                 self.aligning = true;
@@ -747,21 +743,18 @@ export component AppWindow inherits Window {
                                 // list back down (the list shook when scrolling up).
                                 self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
                                 if self.content-y > -40px && self.content-height > self.visible-height + 40px && !self.pinned && root.messages.length > 0 && !root.loading-older && !self.aligning {
-                                    self.anchor-at = self.content-y;
                                     // Until the older page lands: one request per arrival at the top.
                                     self.aligning = true;
                                     root.load-older();
                                 }
                             }
-                                for m[i] in root.messages: MessageRow {
+                                for m in root.messages: MessageRow {
                                     m: m;
                                     max-bubble: min(720px, msg-list.width * 0.75);
                                     in-channel: root.current-is-channel && root.thread-root == "";
                                     select-mode: root.select-mode;
                                     changed y => {
-                                        if msg-list.anchoring && i == root.anchor-index {
-                                            msg-list.content-y = min(0px, msg-list.anchor-at - self.y);
-                                        } else if msg-list.aligning && !msg-list.anchoring && (m.new-above || m.flash) {
+                                        if msg-list.aligning && !msg-list.anchoring && (m.new-above || m.flash) {
                                             msg-list.content-y = min(0px, 24px - self.y);
                                         }
                                     }
@@ -836,13 +829,22 @@ export component AppWindow inherits Window {
                                 reject
                             }
                         }
+                        // Once the bigger list is laid out, the row that was first goes back to the
+                        // top of the view: from below, ensure-row-visible puts it there, measured
+                        // (rows that were never drawn only have an estimated height).
+                        Timer {
+                            interval: 30ms;
+                            running: msg-list.anchoring;
+                            triggered => {
+                                msg-list.anchoring = false;
+                                msg-list.content-y = min(0px, msg-list.visible-height - msg-list.content-height);
+                                msg-list.ensure-row-visible(root.anchor-index, ScrollBehavior.instant);
+                            }
+                        }
                         Timer {
                             interval: 700ms;
                             running: msg-list.aligning;
-                            triggered => {
-                                msg-list.aligning = false;
-                                msg-list.anchoring = false;
-                            }
+                            triggered => { msg-list.aligning = false; }
                         }
                         if !root.at-bottom && root.messages.length > 0 && !root.posts-mode: Rectangle {
                             z: 5;

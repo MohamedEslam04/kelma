@@ -330,6 +330,8 @@ impl WorkLocation {
         let code = v
             .as_u64()
             .or_else(|| match v.as_str()?.to_ascii_lowercase().as_str() {
+                "1" => Some(1),
+                "2" => Some(2),
                 "office" | "inoffice" => Some(1),
                 "remote" | "remoteoffice" | "home" => Some(2),
                 _ => None,
