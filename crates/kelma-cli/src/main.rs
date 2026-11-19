@@ -49,6 +49,7 @@ mod accounts;
 mod appearance;
 mod apps;
 mod call;
+mod card;
 mod chatx;
 mod delivery;
 mod devices;
@@ -936,6 +937,13 @@ async fn main() -> Result<()> {
         Some("translate") => {
             let (client, cfg) = connect(&paths).await?;
             let r = chatx::translate(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
+        Some("card") => {
+            let (client, cfg) = connect(&paths).await?;
+            let name = cfg.display_name.clone().unwrap_or_default();
+            let r = card::run(&client, &name, &args[1..]).await;
             session::persist(&cfg, &client).await?;
             r?;
         }

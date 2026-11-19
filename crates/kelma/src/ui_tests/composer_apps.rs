@@ -279,3 +279,73 @@ fn an_action_command_opens_its_form_and_records_the_target() {
     );
     assert!(p.log.borrow().iter().any(|l| l == "action 1.0.1"));
 }
+
+/// Picks the first ticket card in `chat`'s picker, as the user does.
+fn choose_ticket(p: &Picker) {
+    p.plus();
+    p.click("Find a ticket");
+    p.type_in_query("login");
+    p.click("TCK-101 Login fails");
+    assert_eq!(p.cards(), ["TCK-101 Login fails"]);
+}
+
+#[test]
+fn sending_posts_the_chosen_card_with_the_typed_text_and_clears_the_picker() {
+    let p = Picker::open(BACKEND);
+    choose_ticket(&p);
+    p.h.runner()(Cmd::Send("please look".into(), String::new()));
+
+    let queued = p.h.engine.outbox_items(BACKEND);
+    assert_eq!(queued.len(), 1, "one message holds the text and the card");
+    let item = &queued[0];
+    assert_eq!(item.kind, store::OutboxKind::Card);
+    assert!(item.html.contains("please look"), "{}", item.html);
+    let cards = teams_proto::card_send::cards_from_json(item.cards.as_deref().unwrap());
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].app_name, "Contoso Tickets");
+    assert_eq!(
+        cards[0].content_type,
+        "application/vnd.microsoft.card.adaptive"
+    );
+    assert_eq!(cards[0].content["type"], "AdaptiveCard");
+
+    assert!(
+        p.h.engine.composer_cards(BACKEND).is_empty(),
+        "the engine's draft cards are used up"
+    );
+    assert!(p.cards().is_empty(), "the picker shows no card any more");
+    let texts = message_texts(&p.h.app);
+    let last = texts.last().expect("the pending row");
+    assert!(
+        last.contains("please look") && last.contains("Contoso Tickets"),
+        "{last}"
+    );
+}
+
+#[test]
+fn a_card_alone_can_be_sent_and_another_chat_keeps_its_own_cards() {
+    let p = Picker::open(BACKEND);
+    choose_ticket(&p);
+    p.click("Close apps");
+    // Another chat sends without cards: the card of the first chat stays where it is.
+    p.h.select(NOTES);
+    p.h.runner()(Cmd::Send("just text".into(), String::new()));
+    let notes = p.h.engine.outbox_items(NOTES);
+    assert_eq!(notes.last().map(|i| i.kind), Some(store::OutboxKind::Text));
+    assert_eq!(p.h.engine.composer_cards(BACKEND).len(), 1);
+
+    p.h.select(BACKEND);
+    p.h.runner()(Cmd::Send(String::new(), String::new()));
+    let queued = p.h.engine.outbox_items(BACKEND);
+    assert_eq!(queued.len(), 1, "no text, still one message with the card");
+    assert_eq!(queued[0].kind, store::OutboxKind::Card);
+    assert_eq!(queued[0].html, "");
+    assert!(p.h.engine.composer_cards(BACKEND).is_empty());
+
+    // The next send has no card left to attach.
+    p.h.runner()(Cmd::Send("again".into(), String::new()));
+    let queued = p.h.engine.outbox_items(BACKEND);
+    assert_eq!(queued.len(), 2);
+    assert_eq!(queued[1].kind, store::OutboxKind::Text);
+    assert_eq!(queued[1].cards, None);
+}

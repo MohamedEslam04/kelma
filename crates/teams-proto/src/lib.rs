@@ -9,6 +9,7 @@ pub mod ams;
 pub mod auth;
 pub mod broker;
 pub mod card;
+pub mod card_send;
 pub mod cards;
 pub mod channel_files;
 pub mod chat_card;

@@ -650,6 +650,7 @@ fn item(id: &str, conv: &str, created: i64) -> OutboxItem {
         reply_to: None,
         mentions: None,
         importance: String::new(),
+        cards: None,
         kind: OutboxKind::Text,
         payload_path: None,
         created_ms: created,
@@ -682,9 +683,14 @@ fn outbox_enqueue_roundtrips_all_fields_and_orders_due_oldest_first() {
 #[test]
 fn every_outbox_kind_roundtrips() {
     let s = Store::open_in_memory().unwrap();
-    for (i, k) in [OutboxKind::Text, OutboxKind::Image, OutboxKind::File]
-        .into_iter()
-        .enumerate()
+    for (i, k) in [
+        OutboxKind::Text,
+        OutboxKind::Image,
+        OutboxKind::File,
+        OutboxKind::Card,
+    ]
+    .into_iter()
+    .enumerate()
     {
         let mut it = item(&format!("k{i}"), "c", i as i64);
         it.kind = k;
@@ -972,6 +978,70 @@ fn v4_database_gains_the_importance_column_with_the_standard_default() {
     let due = s.outbox_due().unwrap();
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].importance, "");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn outbox_keeps_the_cards_of_a_card_message_through_failure_and_retry() {
+    let s = Store::open_in_memory().unwrap();
+    let mut card = item("c", "c1", 1);
+    card.kind = OutboxKind::Card;
+    card.cards = Some(r#"[{"appId":"a","contentType":"x","content":{"n":1}}]"#.into());
+    s.enqueue(&card).unwrap();
+    s.enqueue(&item("t", "c1", 2)).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due[0], card);
+    assert_eq!(due[1].cards, None, "a plain message has no cards");
+    s.mark_sending("c").unwrap();
+    s.mark_failed("c", "403").unwrap();
+    s.retry("c").unwrap();
+    let again = s.outbox_for("c1").unwrap();
+    let c = again.iter().find(|x| x.client_message_id == "c").unwrap();
+    assert_eq!(c.kind, OutboxKind::Card);
+    assert_eq!(c.cards, card.cards);
+}
+
+#[test]
+fn v5_database_gains_the_cards_column_and_keeps_its_queued_messages() {
+    let dir = temp_db_dir("migrate-cards");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cache.db");
+    {
+        // A database exactly as the release before the card kind left it (v5), with a queued
+        // message and a failed file in it.
+        let conn = Connection::open(&path).unwrap();
+        for sql in &migrations::MIGRATIONS[..5] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 5).unwrap();
+        conn.execute(
+            "INSERT INTO outbox (client_message_id, conversation_id, html, kind, created_ms, \
+             attempts, state, importance) VALUES ('old', 'c', '<p>x</p>', 'text', 1, 0, 'queued', 'high')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO outbox (client_message_id, conversation_id, html, kind, payload_path, \
+             created_ms, attempts, state, last_error) \
+             VALUES ('file', 'c', '', 'file', '/x/a.pdf', 2, 1, 'failed', '403')",
+            [],
+        )
+        .unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].importance, "high", "older columns are kept");
+    assert_eq!(due[0].cards, None, "old rows have no cards");
+    let all = s.outbox_for("c").unwrap();
+    assert_eq!(all.len(), 2);
+    // The migrated database takes a card item.
+    let mut card = item("new", "c", 3);
+    card.kind = OutboxKind::Card;
+    card.cards = Some("[]".into());
+    s.enqueue(&card).unwrap();
+    assert_eq!(s.outbox_due().unwrap().len(), 2);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

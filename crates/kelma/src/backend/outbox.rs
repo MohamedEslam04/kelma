@@ -98,6 +98,20 @@ pub(super) fn row_from_outbox(item: &OutboxItem, me: &str, my_name: &str) -> Mes
         OutboxKind::Text => item.html.clone(),
         OutboxKind::Image => render::text_to_teams_html(&format!("🖼 {}", payload_name(item))),
         OutboxKind::File => render::text_to_teams_html(&format!("📎 {}", payload_name(item))),
+        // The typed text, then a line for each card (the real card is drawn from the echo).
+        OutboxKind::Card => {
+            let mut html = item.html.clone();
+            for card in teams_proto::card_send::cards_from_json(item.cards.as_deref().unwrap_or(""))
+            {
+                let name = if card.app_name.is_empty() {
+                    "App"
+                } else {
+                    &card.app_name
+                };
+                html.push_str(&render::text_to_teams_html(&format!("🗂 {name} card")));
+            }
+            html
+        }
     };
     MessageRow {
         id: format!("{PENDING_PREFIX}{}", item.client_message_id),
@@ -167,6 +181,7 @@ impl Engine {
             reply_to,
             mentions: None,
             importance: String::new(),
+            cards: None,
             kind,
             payload_path,
             created_ms: now,
@@ -313,6 +328,39 @@ impl Engine {
                         .await
                 }
             },
+            // A message with app cards from the composer's apps picker: the typed text is the
+            // body, `properties.cards` holds the cards. Mentions, a quote reply and the
+            // importance travel along; the same client message id on every retry.
+            OutboxKind::Card => {
+                let cards =
+                    teams_proto::card_send::cards_from_json(item.cards.as_deref().unwrap_or(""));
+                if cards.is_empty() {
+                    // Nothing to attach and nothing a retry could fix.
+                    return Err(teams_proto::Error::Protocol(
+                        "outbox card message has no cards".into(),
+                    ));
+                }
+                let mentions =
+                    super::mentions::from_property(item.mentions.as_deref().unwrap_or(""));
+                let delivery = if item.importance.is_empty() {
+                    teams_proto::delivery::Delivery::Standard
+                } else {
+                    teams_proto::delivery::Delivery::Important
+                };
+                self.client
+                    .send_card_message_as(
+                        target,
+                        &item.html,
+                        &cards,
+                        &self.my_name,
+                        subject,
+                        &mentions,
+                        item.reply_to.as_deref(),
+                        &delivery,
+                        cmid,
+                    )
+                    .await
+            }
             OutboxKind::Image => {
                 let (name, data) = read_payload(item)?;
                 let (w, h) = image::load_from_memory(&data)
@@ -359,6 +407,8 @@ impl Engine {
             let plain = render::plain_text(&render::parse_teams_html(&item.html));
             let preview = match item.kind {
                 OutboxKind::Text => format!("You: {plain}"),
+                OutboxKind::Card if plain.trim().is_empty() => "You: 🗂 Card".to_owned(),
+                OutboxKind::Card => format!("You: {plain}"),
                 _ => format!("You: 📎 {}", payload_name(item)),
             };
             let _ = st.touch_conversation(&chat, now_ms(), &preview, false);
@@ -389,6 +439,16 @@ impl Engine {
                 e.mark(|d| d.messages = true);
             }
         });
+    }
+
+    /// The outbox items of a chat, oldest first (tests of other modules).
+    #[cfg(test)]
+    pub(crate) fn outbox_items(&self, conv: &str) -> Vec<OutboxItem> {
+        self.store
+            .lock()
+            .unwrap()
+            .outbox_for(conv)
+            .unwrap_or_default()
     }
 
     /// Failed row "Retry".
@@ -441,6 +501,7 @@ mod tests {
             reply_to: None,
             mentions: None,
             importance: String::new(),
+            cards: None,
             kind,
             payload_path: None,
             created_ms: 100,
@@ -691,6 +752,67 @@ mod tests {
             .handle(crate::backend::Cmd::DiscardSend(format!("pending-{id}")))
             .await;
         assert!(outbox(&e).is_empty());
+    }
+
+    fn card_item(id: &str) -> OutboxItem {
+        let mut it = item(id, OutboxKind::Card);
+        it.conversation_id = "48:notes".into();
+        it.html = "<p>look</p>".into();
+        it.cards = Some(teams_proto::card_send::cards_to_json(&[
+            teams_proto::card_send::OutCard {
+                app_id: "app-1".into(),
+                app_name: "Contoso Tickets".into(),
+                content_type: "application/vnd.microsoft.card.adaptive".into(),
+                content: json!({"type": "AdaptiveCard", "body": []}),
+            },
+        ]));
+        it
+    }
+
+    #[test]
+    fn a_card_row_shows_the_text_and_a_line_for_each_card() {
+        let row = row_from_outbox(&card_item("5"), "8:me", "Me");
+        assert!(
+            row.content_html.starts_with("<p>look</p>"),
+            "{}",
+            row.content_html
+        );
+        assert!(
+            row.content_html.contains("Contoso Tickets card"),
+            "{}",
+            row.content_html
+        );
+        assert_eq!(row.id, "pending-5");
+    }
+
+    #[tokio::test]
+    async fn a_card_message_waits_offline_and_keeps_its_cards_and_id() {
+        let e = engine();
+        let queued = card_item("77");
+        e.store.lock().unwrap().enqueue(&queued).unwrap();
+        e.flush_outbox(false).await;
+        let q = outbox(&e);
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].kind, OutboxKind::Card);
+        assert_eq!(q[0].cards, queued.cards);
+        assert_eq!(q[0].client_message_id, "77", "a retry sends the same id");
+        assert_eq!(
+            q[0].state,
+            OutboxState::Queued,
+            "a network error is not a failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_card_item_without_cards_is_rejected_not_retried_forever() {
+        let e = engine();
+        let mut broken = card_item("78");
+        broken.cards = None;
+        let err = e.deliver(&broken).await.unwrap_err();
+        assert!(!err.is_transient());
+        assert!(matches!(Outcome::of(&err), Outcome::Rejected(_)));
+        broken.cards = Some("not json".into());
+        assert!(e.deliver(&broken).await.is_err());
     }
 
     /// Live check against the real account, only in 48:notes, and the messages are deleted again:

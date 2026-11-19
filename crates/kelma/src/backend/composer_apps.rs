@@ -7,9 +7,10 @@
 //! - An action command opens its task module link (`taskInfo.url`) in the browser. S3.5 will
 //!   route it to the web host instead; the crate is not a dependency of kelma yet.
 //!
-//! The draft's existing attachments are images and files that go through the outbox; cards have
-//! no outbox kind or wire call yet, so they are kept here, by chat (`take_cards`), until the
-//! send path learns to post them. In demo mode and in the tests the apps and results come from
+//! The draft's existing attachments are images and files that go through the outbox. Cards are
+//! kept here, by chat, until Send: `Engine::send` takes them (`take_composer_cards`) and queues
+//! one `OutboxKind::Card` message holding the typed text and every card (see
+//! `teams_proto::card_send`). In demo mode and in the tests the apps and results come from
 //! `fixtures`.
 
 mod card_preview;
@@ -90,8 +91,19 @@ fn parse_key(s: &str) -> Option<Key> {
     p.next().is_none().then_some(key)
 }
 
-/// A card waiting in a draft. The send path (not built yet) reads the card itself.
-#[allow(dead_code)]
+impl CardAttachment {
+    /// The card as the send path carries it.
+    pub(crate) fn out_card(&self) -> teams_proto::card_send::OutCard {
+        teams_proto::card_send::OutCard {
+            app_id: self.app_id.clone(),
+            app_name: self.app_name.clone(),
+            content_type: self.content_type.clone(),
+            content: self.content.clone(),
+        }
+    }
+}
+
+/// A card waiting in a draft.
 #[derive(Debug, Clone)]
 pub(crate) struct CardAttachment {
     pub app_id: String,
@@ -646,15 +658,38 @@ impl Engine {
         self.ca_push();
     }
 
-    /// Takes the cards out of a chat's draft, for the send path.
-    #[allow(dead_code)]
-    pub(crate) fn take_composer_cards(&self, conv: &str) -> Vec<CardAttachment> {
-        self.composer_apps
+    /// Takes the cards out of a chat's draft, for the send path, and clears them from the
+    /// picker.
+    pub(crate) fn take_composer_cards(self: &Arc<Self>, conv: &str) -> Vec<CardAttachment> {
+        let cards = self
+            .composer_apps
             .lock()
             .unwrap()
             .cards
             .remove(conv)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !cards.is_empty() {
+            self.ca_push();
+        }
+        cards
+    }
+
+    /// Puts cards back at the front of a chat's draft, when the message they were taken for
+    /// could not be queued.
+    pub(crate) fn restore_composer_cards(
+        self: &Arc<Self>,
+        conv: &str,
+        mut cards: Vec<CardAttachment>,
+    ) {
+        if cards.is_empty() {
+            return;
+        }
+        let mut s = self.composer_apps.lock().unwrap();
+        let list = s.cards.entry(conv.to_owned()).or_default();
+        cards.append(list);
+        *list = cards;
+        drop(s);
+        self.ca_push();
     }
 
     /// The cards in a chat's draft (tests).
