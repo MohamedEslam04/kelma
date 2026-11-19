@@ -1132,3 +1132,24 @@ msgstr "زر الرد يفتح المحادثة والمؤشر في مربع ا�
 
 msgid "Chat list width"
 msgstr "عرض قائمة المحادثات"
+
+msgid "Add a tab"
+msgstr "إضافة تبويب"
+
+msgid "Add a website tab"
+msgstr "إضافة موقع كتبويب"
+
+msgid "Everyone in the channel sees the tab, and Teams posts that you added it."
+msgstr "سيرى كل من في القناة التبويب، وسينشر Teams أنك أضفته."
+
+msgid "Tab name"
+msgstr "اسم التبويب"
+
+msgid "Docs"
+msgstr "المستندات"
+
+msgid "Address"
+msgstr "العنوان"
+
+msgid "Add"
+msgstr "إضافة"

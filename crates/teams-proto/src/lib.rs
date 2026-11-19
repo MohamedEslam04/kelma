@@ -12,6 +12,7 @@ pub mod card;
 pub mod card_send;
 pub mod cards;
 pub mod channel_files;
+pub mod channel_tabs;
 pub mod chat_card;
 pub mod chatsvc;
 pub mod client;

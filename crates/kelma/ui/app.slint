@@ -25,7 +25,7 @@ import { TeamsDialogs } from "teams_dialogs.slint";
 import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
-import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
+import { AddTabDialog, FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
 import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
 import { MediaStore, ImageViewer } from "media.slint";
 import { AppsStore } from "apps_store.slint";
@@ -668,6 +668,24 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                            // The channel's other tabs (empty for chats), then "+" Add a tab.
+                            for ct in FindStore.channel-tabs: ct-item := Rectangle {
+                                width: ct-label.preferred-width;
+                                accessible-role: AccessibleRole.tab;
+                                accessible-label: ct.name;
+                                VerticalLayout {
+                                    alignment: center;
+                                    ct-label := Text { text: ct.name; color: ct-touch.has-hover ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; }
+                                    Rectangle { height: 3px; }
+                                }
+                                ct-touch := TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("channel-tab-open", ct.url); } }
+                            }
+                            if root.thread-root == "" && root.current-is-channel: IconButton {
+                                icon: @image-url("icons/plus.svg");
+                                y: 14px;
+                                tooltip: @tr("Add a tab");
+                                clicked => { FindStore.tab-add-open = true; }
+                            }
                             if root.thread-root == "" && !root.current-is-channel: IconButton {
                                 icon: @image-url("icons/calendar.svg");
                                 y: 14px;
@@ -1152,6 +1170,17 @@ export component AppWindow inherits Window {
                 PeopleStore.leave-confirm = "";
             }
             cancel => { PeopleStore.leave-confirm = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && FindStore.tab-add-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { clicked => { FindStore.tab-add-open = false; } }
+        AddTabDialog {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
         }
     }
 

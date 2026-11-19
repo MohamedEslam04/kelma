@@ -330,6 +330,28 @@ impl Engine {
         self.push_shared();
     }
 
+    /// The Graph group id of the team a channel belongs to (looked up once per team).
+    pub(super) async fn channel_group(self: &Arc<Self>, channel: &str) -> Option<String> {
+        let team = self
+            .store
+            .lock()
+            .unwrap()
+            .conversation(channel)
+            .ok()
+            .flatten()
+            .and_then(|c| c.team_id)?;
+        let known = self.find.lock().unwrap().shared.groups.get(&team).cloned();
+        if known.is_some() {
+            return known;
+        }
+        let teams = self.client.teams_and_channels().await.ok()?;
+        let mut f = self.find.lock().unwrap();
+        for t in &teams {
+            f.shared.groups.insert(t.id.clone(), t.group_id.clone());
+        }
+        f.shared.groups.get(&team).cloned()
+    }
+
     /// The files of a channel's SharePoint folder (Graph `filesFolder`, then its children).
     async fn channel_folder_items(self: &Arc<Self>, channel: &str) -> Vec<Item> {
         let Some(team) = self

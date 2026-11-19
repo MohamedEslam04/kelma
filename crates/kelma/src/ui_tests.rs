@@ -1022,6 +1022,51 @@ fn older_messages_keep_the_view_in_place_and_load_once() {
     assert_eq!(*loads.borrow(), 1, "no cascade of loads once in place");
 }
 
+#[test]
+fn a_channel_shows_its_other_tabs_and_add_a_tab_sends_a_name_and_address() {
+    use crate::{ChannelTabItem, FindStore};
+    let app = app_with_messages(vec![]);
+    app.set_current_id("19:tests@thread.tacv2".into());
+    app.set_current_is_channel(true);
+    let tabs = vec![ChannelTabItem {
+        name: "Board".into(),
+        url: "https://tasks.office.com/board".into(),
+    }];
+    app.global::<FindStore>()
+        .set_channel_tabs(ModelRc::new(VecModel::from(tabs)));
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let l = log.clone();
+        app.global::<FindStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let board = find_label(&app, "Board");
+    assert!(!board.is_empty(), "the Board tab is in the header");
+    click(&board[0]);
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "channel-tab-open https://tasks.office.com/board"
+    );
+
+    find_label(&app, "Add a tab")[0].invoke_accessible_default_action();
+    assert!(app.global::<FindStore>().get_tab_add_open());
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    find_label(&app, "Tab name")[0].set_accessible_value("Docs");
+    find_label(&app, "Address")[0].set_accessible_value("example.com/docs");
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let add = find_label(&app, "Add")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+        .expect("the Add button");
+    click(&add);
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "channel-tab-add Docs\u{1f}example.com/docs"
+    );
+    assert!(!app.global::<FindStore>().get_tab_add_open());
+}
+
 // ---- failed sends (plans/chat.md 5.8) -----------------------------------
 
 fn outgoing(id: &str, text: &str, pending: bool, failed: bool) -> Msg {

@@ -28,7 +28,13 @@ export struct PickRow { id: string, title: string, subtitle: string }
 // One row of the Shared tab.
 export struct SharedRow { kind: string, name: string, ext: string, shared-by: string, date: string, url: string }
 
+// A channel tab beyond Posts and Files (Notes, a website, Planner, …).
+export struct ChannelTabItem { name: string, url: string }
+
 export global FindStore {
+    // The open channel's other tabs, and the "Add a tab" dialog.
+    in property <[ChannelTabItem]> channel-tabs;
+    in-out property <bool> tab-add-open: false;
     // --- Search page (Ctrl+Alt+E) ---
     in-out property <string> query;
     in-out property <string> tab: "all"; // all | messages | files | people | channels | chats | meetings
@@ -668,5 +674,102 @@ export component DetailsPane inherits Rectangle {
             Text { text: FindStore.shared-loading ? "Loading…" : "Nothing has been shared here yet"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
         }
         Rectangle { vertical-stretch: 1; }
+    }
+}
+
+// "Add a tab": a website with a name, added to the open channel for everyone in it.
+export component AddTabDialog inherits Rectangle {
+    in-out property <string> tab-name;
+    in-out property <string> tab-url;
+    width: 360px;
+    height: col.preferred-height;
+    border-radius: 8px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #000000a0;
+    accessible-role: groupbox;
+    accessible-label: @tr("Add a tab");
+    TouchArea { }
+    col := VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        Text { text: @tr("Add a website tab"); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; }
+        Text { text: @tr("Everyone in the channel sees the tab, and Teams posts that you added it."); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; wrap: word-wrap; }
+        Rectangle {
+            height: 34px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.main;
+            name-input := TextInput {
+                x: 10px;
+                width: parent.width - 20px;
+                height: parent.height;
+                text <=> root.tab-name;
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                single-line: true;
+                vertical-alignment: center;
+                accessible-role: text-input;
+                accessible-label: @tr("Tab name");
+            }
+            if root.tab-name == "": Text { x: 10px; text: @tr("Docs"); color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; height: parent.height; }
+        }
+        Rectangle {
+            height: 34px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.main;
+            url-input := TextInput {
+                x: 10px;
+                width: parent.width - 20px;
+                height: parent.height;
+                text <=> root.tab-url;
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                single-line: true;
+                vertical-alignment: center;
+                accessible-role: text-input;
+                accessible-label: @tr("Address");
+            }
+            if root.tab-url == "": Text { x: 10px; text: "https://"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; height: parent.height; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Rectangle {
+                width: 80px;
+                height: 32px;
+                border-radius: 4px;
+                background: cancel-touch.has-hover ? Theme.surface-hover : transparent;
+                border-width: 1px;
+                border-color: Theme.border;
+                accessible-role: button;
+                accessible-label: @tr("Cancel");
+                Text { text: @tr("Cancel"); color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                cancel-touch := TouchArea { mouse-cursor: pointer; clicked => { FindStore.tab-add-open = false; } }
+            }
+            Rectangle {
+                width: 80px;
+                height: 32px;
+                border-radius: 4px;
+                background: root.tab-name != "" && root.tab-url != "" ? Theme.accent-strong : Theme.surface-hover;
+                accessible-role: button;
+                accessible-label: @tr("Add");
+                accessible-enabled: root.tab-name != "" && root.tab-url != "";
+                Text { text: @tr("Add"); color: #ffffff; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                add-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    enabled: root.tab-name != "" && root.tab-url != "";
+                    clicked => {
+                        FindStore.command("channel-tab-add", root.tab-name + "\u{1f}" + root.tab-url);
+                        FindStore.tab-add-open = false;
+                    }
+                }
+            }
+        }
     }
 }

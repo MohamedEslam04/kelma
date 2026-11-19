@@ -344,6 +344,7 @@ impl Engine {
         tokio::spawn(async move {
             let _ = e.ensure_members(&conv).await;
             e.push_group_header(&conv);
+            e.load_channel_tabs(&conv).await;
             e.refresh_pins(&conv).await;
             e.refresh_horizons(&conv).await;
         });

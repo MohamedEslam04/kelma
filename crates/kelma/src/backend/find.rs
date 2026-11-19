@@ -53,6 +53,10 @@ pub enum FindCmd {
     FindPrev,
     FindNext,
     Tab(String),
+    /// A channel tab beyond Posts and Files: opens its address.
+    ChannelTabOpen(String),
+    /// "Add a tab": a website, as `name` U+001F `url`.
+    ChannelTabAdd(String),
     SharedFilter(String),
     SharedKeyword(String),
     SharedOpen(String),
@@ -88,6 +92,8 @@ impl FindCmd {
             "find-prev" => FindCmd::FindPrev,
             "find-next" => FindCmd::FindNext,
             "tab" => FindCmd::Tab(a),
+            "channel-tab-open" => FindCmd::ChannelTabOpen(a),
+            "channel-tab-add" => FindCmd::ChannelTabAdd(a),
             "shared-filter" => FindCmd::SharedFilter(a),
             "shared-keyword" => FindCmd::SharedKeyword(a),
             "shared-open" => FindCmd::SharedOpen(a),
@@ -369,6 +375,12 @@ impl Engine {
             FindCmd::FindPrev => self.chat_find_step(false).await,
             FindCmd::FindNext => self.chat_find_step(true).await,
             FindCmd::Tab(t) => self.shared_tab(&t).await,
+            FindCmd::ChannelTabOpen(url) => {
+                if url.starts_with("https://") {
+                    self.clone().handle(super::Cmd::OpenUrl(url)).await;
+                }
+            }
+            FindCmd::ChannelTabAdd(arg) => self.add_channel_tab(&arg).await?,
             FindCmd::SharedFilter(f) => self.shared_filter(&f),
             FindCmd::SharedKeyword(k) => self.shared_keyword(k),
             FindCmd::SharedOpen(url) => {

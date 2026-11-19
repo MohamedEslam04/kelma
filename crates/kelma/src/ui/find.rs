@@ -3,7 +3,7 @@
 
 use super::{UiHandle, img, model, rgb, styled};
 use crate::find_data::{HitData, PickData, SharedData};
-use crate::{AppWindow, FindStore, HitRow, PickRow, SharedRow};
+use crate::{AppWindow, ChannelTabItem, FindStore, HitRow, PickRow, SharedRow};
 use slint::{ComponentHandle, ModelRc};
 
 fn hit(d: HitData) -> HitRow {
@@ -114,6 +114,20 @@ impl UiHandle {
             }
             s.set_chat_find_count(count as i32);
             s.set_chat_find_index(index as i32);
+        });
+    }
+
+    /// The open channel's tabs beyond Posts and Files: (name, address).
+    pub fn channel_tabs(&self, tabs: Vec<(String, String)>) {
+        self.find_store(move |s| {
+            s.set_channel_tabs(slint::ModelRc::new(slint::VecModel::from(
+                tabs.into_iter()
+                    .map(|(name, url)| ChannelTabItem {
+                        name: name.into(),
+                        url: url.into(),
+                    })
+                    .collect::<Vec<_>>(),
+            )));
         });
     }
 
