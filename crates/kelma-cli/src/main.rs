@@ -32,6 +32,8 @@
 //! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
 //! kelma-cli accounts [tenants|use <label>|add <label>|remove <label>|org <tenant-id|home>]
 //!                                 several accounts and organizations (list and tenants are read-only)
+//! kelma-cli preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F.png]
+//!                                 render a PDF or Office page to PNG (read-only; prints sizes, not names)
 //! kelma-cli devices [audio|cameras|test-sound|mic-level]  list sound devices and cameras; test-sound plays a tone, mic-level shows the mic level
 //! kelma-cli logout                remove the stored refresh token
 //! ```
@@ -41,6 +43,7 @@ mod apps;
 mod chatx;
 mod devices;
 mod drive;
+mod preview_file;
 mod store;
 mod team;
 mod web;
@@ -919,6 +922,15 @@ async fn main() -> Result<()> {
             session::persist(&cfg, &client).await?;
             r?;
         }
+        Some("preview-file") if preview_file::is_offline(&args[1..]) => {
+            preview_file::offline(&args[1..])?
+        }
+        Some("preview-file") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = preview_file::run(&client, &args[1..]).await;
+            session::persist(&cfg, &client).await?;
+            r?;
+        }
         Some("store") => {
             let (client, cfg) = connect(&paths).await?;
             let r = store::run(&client, &args[1..]).await;
@@ -1070,6 +1082,7 @@ async fn main() -> Result<()> {
                    team <ls|discover|join|join-code|code|new|rm|edit|settings|archive|show|hide|channel|tag|members|community|storyline|sandbox|probe|raw>\n\
                    translate <languages|settings|message|channel>\n\
                    preview <url> [--image]\n\
+                   preview-file <path>|--find <ext>|--local <file> [--page N] [--width W] [--out F]\n\
                    store <bar|more|home|search|app|mine|org|settings|install|uninstall|update|pin|unpin|move|probe|bots|extensions|ext-query>\n\
                    tail"
             );
