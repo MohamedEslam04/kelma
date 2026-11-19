@@ -208,6 +208,10 @@ fn the_left_navigation_switches_sections() {
 
     d.click_label("Meetings");
     assert!(d.names()[0].contains(".mp4"));
+    assert!(
+        d.has_label("People") && d.has_label("Media"),
+        "Browse files by"
+    );
 
     d.click_label("Recycle bin");
     assert_eq!(d.store().get_section(), "bin");
@@ -657,6 +661,217 @@ fn the_picker_can_pick_a_file_for_other_features() {
     assert!(d.store().get_picker_rows().iter().any(|r| r.selected));
     d.click_label("Select");
     assert_eq!(d.store().get_dialog(), "");
+}
+
+#[test]
+fn home_shows_for_you_cards_that_open_their_file() {
+    let d = DriveHarness::open();
+    let titles = |d: &DriveHarness| -> Vec<String> {
+        d.store()
+            .get_cards()
+            .iter()
+            .map(|c| c.title.to_string())
+            .collect()
+    };
+    assert_eq!(
+        titles(&d),
+        ["Team offsite.pptx", "Budget 2026.xlsx", "Roadmap.docx"]
+    );
+    let first = d.store().get_cards().row_data(0).unwrap();
+    assert_eq!(first.reason, "Sara Hassan shared this in a Teams chat");
+    assert!(d.has_label("For you"), "the row has its heading");
+
+    d.click_label("For you Budget 2026.xlsx");
+    assert!(
+        d.log()
+            .contains(&"card-open card:b!demo/demo-budget".to_owned()),
+        "{:?}",
+        d.log()
+    );
+
+    // The card opened the workbook in the page viewer; close it again.
+    assert_eq!(d.store().get_dialog(), "preview");
+    d.click_label("Close");
+
+    // Typing a filter hides the cards, leaving the section does too.
+    d.click_label("Filter by name or person");
+    type_text(&d.h.app, "sara");
+    assert_eq!(d.store().get_cards().row_count(), 0);
+    d.click_label("My files");
+    assert_eq!(d.store().get_cards().row_count(), 0);
+    d.click_label("Home");
+    assert_eq!(titles(&d).len(), 3, "back on Home they return");
+}
+
+#[test]
+fn shared_by_you_lists_what_the_user_shared() {
+    let d = DriveHarness::open();
+    d.click_label("Shared by you");
+    assert_eq!(d.store().get_section(), "shared-by");
+    assert_eq!(d.crumbs(), ["Shared by you"]);
+    assert_eq!(d.names().len(), 3);
+    assert!(d.names().contains(&"Q4 plan.docx".to_owned()));
+    // The sharer is the user, so no "modified by" name is shown against each file.
+    assert_eq!(d.row("Q4 plan.docx").modified_by, "");
+    // The type pills narrow it like the other lists.
+    d.click_label("Word");
+    assert_eq!(d.names(), ["Q4 plan.docx"]);
+}
+
+#[test]
+fn people_lists_who_shared_and_opens_their_files() {
+    let d = DriveHarness::open();
+    d.click_label("People");
+    assert_eq!(d.store().get_section(), "people");
+    assert_eq!(d.crumbs(), ["People"]);
+    assert_eq!(
+        d.names(),
+        ["Sara Hassan", "Ahmed Ali"],
+        "newest share first"
+    );
+    assert_eq!(d.row("Sara Hassan").size, "2 items");
+    // People are not files: selecting one does nothing, so no toolbar of file actions.
+    d.click_label("Sara Hassan");
+    assert_eq!(d.store().get_sel_count(), 0);
+
+    d.double_click_label("Sara Hassan");
+    assert_eq!(d.store().get_section(), "person:Sara Hassan");
+    assert_eq!(d.crumbs(), ["People", "Sara Hassan"]);
+    assert_eq!(d.names(), ["Team offsite.pptx", "Price list.xlsx"]);
+    // Files are acted on like in any other list.
+    d.click_label("Price list.xlsx");
+    assert_eq!(d.store().get_sel_count(), 1);
+
+    d.click_label("Breadcrumb People");
+    assert_eq!(d.store().get_section(), "people");
+    assert_eq!(d.names().len(), 2);
+}
+
+#[test]
+fn media_lists_photos_and_videos_as_tiles() {
+    let d = DriveHarness::open();
+    d.click_label("Media");
+    assert_eq!(d.store().get_section(), "media");
+    assert_eq!(d.crumbs(), ["Media"]);
+    assert!(d.store().get_grid(), "Media starts as tiles");
+    assert_eq!(d.tiles(), 3);
+    let kinds: Vec<String> = d
+        .store()
+        .get_rows()
+        .iter()
+        .map(|r| r.kind.to_string())
+        .collect();
+    assert_eq!(kinds, ["image", "image", "video"]);
+}
+
+#[test]
+fn meetings_adds_the_channel_recordings_in_the_background() {
+    let d = DriveHarness::open();
+    d.click_label("Meetings");
+    // The command returned with My files' recordings; the channels arrive right after.
+    d.settle();
+    let names = d.names();
+    assert_eq!(names.len(), 3, "{names:?}");
+    assert_eq!(
+        d.row("Sprint review-20261110.mp4").location,
+        "Sales team \u{203a} General"
+    );
+    assert_eq!(d.row("Weekly sync-20261112.mp4").location, "Recordings");
+    assert!(
+        d.store().get_col_location(),
+        "the place column is always on"
+    );
+}
+
+#[test]
+fn the_new_menu_offers_visio_notebook_forms_and_link() {
+    let d = DriveHarness::open();
+    d.click_label("My files");
+
+    d.click_label("New");
+    d.click_label("Visio drawing");
+    assert!(d.log().contains(&"new-doc visio".to_owned()));
+
+    d.click_label("New");
+    d.click_label("OneNote notebook");
+    assert_eq!(d.store().get_dialog(), "prompt");
+    assert_eq!(d.store().get_prompt_text(), "Untitled notebook");
+    d.click_label("OK");
+    assert!(
+        d.log()
+            .contains(&"new-notebook Untitled notebook".to_owned())
+    );
+
+    d.click_label("New");
+    d.click_label("Forms survey");
+    assert!(d.log().contains(&"new-forms".to_owned()));
+    assert!(d.status().contains("Forms"), "{}", d.status());
+
+    // A link asks for a name and an address and sends both.
+    d.click_label("New");
+    d.click_label("Link");
+    assert_eq!(d.store().get_dialog(), "prompt");
+    assert_eq!(d.store().get_prompt_kind(), "new-link");
+    assert!(d.has_label("Web address"));
+    type_text(&d.h.app, "Wiki");
+    d.click_label("Web address");
+    // The address starts as "https://".
+    type_text(&d.h.app, "wiki.example/home");
+    d.click_label("OK");
+    assert!(
+        d.log()
+            .contains(&"new-link Wiki\nhttps://wiki.example/home".to_owned()),
+        "{:?}",
+        d.log()
+    );
+    assert_eq!(d.store().get_dialog(), "");
+}
+
+#[test]
+fn a_link_without_a_web_address_is_refused_before_anything_is_sent() {
+    let d = DriveHarness::open();
+    d.send("new-link", "Wiki\nnot a link");
+    assert!(d.status().contains("https://"), "{}", d.status());
+    d.send("new-link", "\nhttps://x.example");
+    assert!(d.status().contains("name"), "{}", d.status());
+}
+
+#[test]
+fn a_pdf_opens_page_by_page_inside_kelma() {
+    let d = DriveHarness::open();
+    d.double_click_label("Vendor contract.pdf");
+    let s = d.store();
+    assert_eq!(s.get_dialog(), "preview");
+    assert_eq!(s.get_preview_kind(), "pages");
+    assert_eq!((s.get_preview_page(), s.get_preview_pages()), (1, 3));
+    let img = s.get_preview_image();
+    assert!(
+        img.size().width >= 900,
+        "the page is drawn: {:?}",
+        img.size()
+    );
+    assert!(d.has_label("Page 1 of 3"));
+
+    d.click_label("Next page");
+    assert_eq!(d.store().get_preview_page(), 2);
+    d.click_label("Next page");
+    d.click_label("Next page");
+    assert_eq!(d.store().get_preview_page(), 3, "stops at the last page");
+    d.click_label("Previous page");
+    assert_eq!(d.store().get_preview_page(), 2);
+    assert!(d.log().contains(&"preview-page next".to_owned()));
+    assert!(d.log().contains(&"preview-page prev".to_owned()));
+    d.click_label("Close");
+    assert_eq!(d.store().get_dialog(), "");
+}
+
+#[test]
+fn an_office_file_previews_through_its_pdf_conversion() {
+    let d = DriveHarness::open();
+    d.double_click_label("Customer pitch.pptx");
+    assert_eq!(d.store().get_dialog(), "preview");
+    assert_eq!(d.store().get_preview_kind(), "pages");
+    assert!(d.store().get_preview_pages() >= 1);
 }
 
 #[test]

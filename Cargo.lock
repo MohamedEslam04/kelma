@@ -3347,6 +3347,7 @@ dependencies = [
  "notify-rust",
  "onedrive",
  "open",
+ "preview",
  "render",
  "reqwest",
  "rfd",

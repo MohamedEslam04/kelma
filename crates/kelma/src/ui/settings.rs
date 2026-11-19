@@ -21,8 +21,8 @@ use crate::{
     AppWindow, SAccount, SAppPerm, SDevice, SFind, SNotify, SOption, SOrg, SPerson, SToggle,
     SettingsStore, Theme,
 };
+use app_store::DevicePermission;
 use appearance::{Density, PortalChange, PortalSettings, Rgb, Theme as ThemeChoice};
-use apps::DevicePermission;
 use slint::{ComponentHandle, ModelRc, SharedString};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -121,7 +121,7 @@ impl SettingsEnv {
                         .show();
                 }),
                 open_url: Box::new(|u| {
-                    let _ = open::that_detached(u);
+                    let _ = crate::external::open(u);
                 }),
                 restart: Box::new(|| {
                     if let Ok(exe) = std::env::current_exe() {

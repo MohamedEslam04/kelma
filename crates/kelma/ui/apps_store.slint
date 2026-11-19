@@ -1,0 +1,214 @@
+// State shared between the Rust backend and the app screens: the app bar and flyout, the Store,
+// Planner and To Do, Workflows, OneNote and Lists. Everything a screen shows comes from one of the
+// globals below; every action goes out through the global's `command(name, argument)`. The command
+// names are listed in backend/appstore/cmd.rs. Nothing here writes to the work tenant: install,
+// uninstall and pin only show the request they would send.
+
+// One app in a card grid, the flyout or the Manage list.
+export struct AppCard {
+    id: string,
+    name: string,
+    developer: string,
+    blurb: string,
+    meta: string,
+    icon: image,
+    has-icon: bool,
+    letter: string,
+    color: color,
+    installed: bool,
+    agent: bool,
+    update: bool,
+    pinned: bool,
+}
+
+// A menu entry or a section key.
+export struct AppNav {
+    key: string,
+    label: string,
+    count: string,
+}
+
+// An app pinned on the rail that kelma has no screen of its own for.
+export struct RailApp {
+    id: string,
+    name: string,
+    letter: string,
+    color: color,
+    icon: image,
+    has-icon: bool,
+    view: string,
+    locked: bool,
+}
+
+// One permission an app asks for, with the user's local grant.
+export struct PermRow {
+    app-id: string,
+    app-name: string,
+    perm: string,
+    label: string,
+    allowed: bool,
+}
+
+// A generic list row: navigation entries, tasks, flows, runs, notebooks, sections, pages, lists.
+export struct AppRow {
+    id: string,
+    title: string,
+    subtitle: string,
+    meta: string,
+    badge: string,
+    tone: string, // "" | ok | bad | warn
+    done: bool,
+    selected: bool,
+    header: bool,
+}
+
+export struct BoardColumn {
+    title: string,
+    count: int,
+    cards: [AppRow],
+}
+
+export struct TableRow {
+    id: string,
+    cells: [string],
+}
+
+export global AppsStore {
+    // The views the app screens own (they cover the area right of the rail).
+    pure public function owns(view: string) -> bool {
+        view == "store" || view == "planner" || view == "workflows" || view == "onenote" || view == "lists" || view == "app"
+    }
+    // Ctrl+Shift+N: N from the key's text (Shift turns a digit into its US symbol), else 0.
+    pure public function shortcut-index(text: string) -> int {
+        (text == "1" || text == "!") ? 1
+        : (text == "2" || text == "@") ? 2
+        : (text == "3" || text == "#") ? 3
+        : (text == "4" || text == "$") ? 4
+        : (text == "5" || text == "%") ? 5
+        : (text == "6" || text == "^") ? 6
+        : (text == "7" || text == "&") ? 7
+        : (text == "8" || text == "*") ? 8
+        : (text == "9" || text == "(") ? 9
+        : 0
+    }
+    // --- the app bar ---
+    in property <[RailApp]> rail;
+    in-out property <bool> rail-collapsed;
+    in property <length> rail-width: root.rail-collapsed ? 52px : 68px;
+    // The pinned app that is open (the rail highlights it).
+    in property <string> active-app;
+    // Right click menu of a rail app: its id and where it opened (absolute y).
+    in-out property <string> menu-app;
+    in-out property <length> menu-y;
+    in-out property <bool> flyout-open;
+    in-out property <string> flyout-query;
+    in property <[AppCard]> flyout-apps;
+    in property <bool> flyout-loading;
+
+    // --- the Store ---
+    // home | results | category | app | manage | settings
+    in property <string> store-page: "home";
+    in property <string> store-title;
+    in property <string> store-status;
+    in-out property <string> store-query;
+    in property <[AppCard]> popular;
+    in property <[AppCard]> org-apps;
+    in property <[AppCard]> cards;
+    in property <[AppNav]> featured;
+    in property <[AppNav]> categories;
+    in property <string> scope-filter: "all"; // all | personal | chat | team | meeting
+    in property <string> kind-filter: "all"; // all | apps | agents
+    in property <bool> store-loading;
+    // The app page.
+    in property <string> app-id;
+    in property <string> app-name;
+    in property <string> app-developer;
+    in property <string> app-version;
+    in property <string> app-blurb;
+    in property <string> app-description;
+    in property <image> app-icon;
+    in property <bool> app-has-icon;
+    in property <string> app-letter;
+    in property <color> app-color;
+    in property <string> app-rating;
+    in property <string> app-price;
+    in property <string> app-cert;
+    in property <string> app-works-in;
+    in property <string> app-categories;
+    in property <[string]> app-rsc;
+    in property <[string]> app-device;
+    in property <[AppNav]> app-targets;
+    in property <bool> app-installed;
+    in property <bool> app-update;
+    in property <bool> app-pinned;
+    in property <bool> app-can-pin;
+    in property <bool> app-opens-here;
+    in property <string> app-privacy;
+    in property <string> app-terms;
+    in property <[image]> app-shots;
+    in property <int> app-shot-count;
+    in-out property <int> app-shot: 0;
+    // Add and Remove only show the request (never sent).
+    in-out property <string> install-title;
+    in-out property <string> install-request;
+    in-out property <string> install-link;
+    // Manage your apps.
+    in property <[AppCard]> manage;
+    in property <string> manage-note;
+    // Store settings.
+    in property <string> policy-text;
+    in property <[PermRow]> perms;
+    // The page of an app that kelma shows through the browser.
+    in property <string> host-name;
+    in property <string> host-blurb;
+    in property <string> host-link;
+    in property <[AppNav]> host-tabs;
+    callback command(string, string);
+}
+
+export global TasksStore {
+    in property <[AppRow]> nav;
+    in property <[AppRow]> tasks;
+    in property <[BoardColumn]> columns;
+    in property <string> title;
+    in property <string> mode: "list"; // list | board
+    in property <bool> can-board;
+    in property <string> summary;
+    in property <float> progress;
+    in property <string> status;
+    in property <bool> loading;
+    callback command(string, string);
+}
+
+export global FlowsStore {
+    in property <[AppRow]> flows;
+    in property <[AppRow]> runs;
+    in property <string> environment;
+    in property <string> selected-name;
+    in property <string> status;
+    in property <bool> loading;
+    callback command(string, string);
+}
+
+export global NotesStore {
+    in property <[AppRow]> notebooks;
+    in property <[AppRow]> sections;
+    in property <[AppRow]> pages;
+    in property <string> page-title;
+    in property <string> page-text;
+    in property <bool> can-open-web;
+    in property <string> status;
+    in property <bool> loading;
+    callback command(string, string);
+}
+
+export global ListsStore {
+    in property <[AppRow]> sites;
+    in property <[AppRow]> lists;
+    in property <[string]> columns;
+    in property <[TableRow]> items;
+    in property <string> title;
+    in property <string> status;
+    in property <bool> loading;
+    callback command(string, string);
+}

@@ -59,8 +59,12 @@ pub struct CalendarSettings {
     pub show_weekends: bool,
     /// Show week numbers in the toolbar, the mini calendar and the month view.
     pub week_numbers: bool,
-    /// A second time column in the day and week views, as a fixed UTC offset in minutes.
+    /// A second time column in the day and week views, as a fixed UTC offset in minutes. Older
+    /// configs only have this; it is shown until a zone is picked in `second_tz`.
     pub second_tz_min: Option<i32>,
+    /// The second time column's zone, a Windows or IANA name, so daylight saving moves it.
+    /// Wins over `second_tz_min`.
+    pub second_tz: Option<String>,
 }
 
 impl Default for CalendarSettings {
@@ -72,6 +76,7 @@ impl Default for CalendarSettings {
             show_weekends: true,
             week_numbers: false,
             second_tz_min: None,
+            second_tz: None,
         }
     }
 }
@@ -916,6 +921,10 @@ mod tests {
         .unwrap();
         assert_eq!(c.calendar_settings.first_day, 0);
         assert_eq!(c.calendar_settings.second_tz_min, Some(-300));
+        assert_eq!(
+            c.calendar_settings.second_tz, None,
+            "no zone yet: the fixed offset shows"
+        );
         assert!(c.calendar_settings.show_weekends);
 
         let mut c = c;

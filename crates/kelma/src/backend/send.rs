@@ -206,7 +206,7 @@ impl Engine {
             std::fs::write(&path, data)?;
             self.ui.banner(String::new());
         }
-        open::that_detached(&path)?;
+        crate::external::open(&path)?;
         Ok(())
     }
 

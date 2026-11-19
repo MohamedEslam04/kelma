@@ -4,6 +4,7 @@ mod backend;
 mod composer;
 mod data;
 mod demo;
+mod external;
 mod find_data;
 mod lists_data;
 mod markdown;
@@ -344,6 +345,7 @@ fn main() -> anyhow::Result<()> {
         });
     }
     ui::install_calendar(&window, tx.clone());
+    ui::install_apps(&window, tx.clone());
     ui::settings::install_system(&window, tx.clone());
     {
         let tx = tx.clone();

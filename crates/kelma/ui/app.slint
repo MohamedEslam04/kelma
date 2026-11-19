@@ -26,6 +26,9 @@ import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
 import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
+import { AppsStore } from "apps_store.slint";
+import { RailApps, AppsOverlays } from "apps_rail.slint";
+import { AppsHost } from "apps_host.slint";
 import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
 
 export { Theme } from "theme.slint";
@@ -37,8 +40,9 @@ export { ListStore, SectionRow, SectionChoice } from "lists.slint";
 export { ChannelStore, PostItem } from "channel_posts.slint";
 export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
-export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
-export { DriveStore, DriveRow, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
+export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
 export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
 
 export component AppWindow inherits Window {
@@ -242,6 +246,11 @@ export component AppWindow inherits Window {
                 PeopleStore.command("new-chat-open", "");
                 return accept;
             }
+            // Ctrl+Shift+1 to 9: the nth entry of the app bar.
+            if (event.modifiers.control && event.modifiers.shift && AppsStore.shortcut-index(event.text) > 0) {
+                AppsStore.command("shortcut", "" + AppsStore.shortcut-index(event.text));
+                return accept;
+            }
             reject
         }
         VerticalLayout {
@@ -307,12 +316,11 @@ export component AppWindow inherits Window {
         HorizontalLayout {
             // Left rail
             Rectangle {
-                width: 68px;
+                width: AppsStore.rail-width;
                 background: Theme.rail;
                 VerticalLayout {
                     padding-top: 8px;
                     spacing: 4px;
-                    alignment: start;
                     for item in [{key: "activity", label: "Activity", icon: @image-url("icons/activity.svg")}, {key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}, {key: "calendar", label: "Calendar", icon: @image-url("icons/calendar.svg")}, {key: "onedrive", label: "OneDrive", icon: @image-url("icons/cloud.svg")}]: ri := Rectangle {
                         property <int> badge-count: item.key == "activity" ? root.activity-unread : (item.key == "chat" ? root.chats-unread : 0);
                         height: 56px;
@@ -350,6 +358,7 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                    RailApps { view <=> root.view; }
                 }
             }
 
@@ -1091,6 +1100,22 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
     }
-    if root.login-state == "ready" && SettingsStore.open: SettingsPage { x: 68px; y: 48px; z: 60; width: root.width - 68px; height: root.height - 48px; }
+
+    // The app screens (Store, Planner, Workflows, OneNote, Lists, app pages) cover the area right
+    // of the rail while the view is one of theirs; the overlays hold the app bar's flyout, its
+    // right click menu and the install request dialog.
+    if root.login-state == "ready" && AppsStore.owns(root.view): AppsHost {
+        x: AppsStore.rail-width;
+        y: 48px + (CalStore.join-text != "" ? 40px : 0px);
+        width: root.width - AppsStore.rail-width;
+        height: root.height - self.y;
+        view: root.view;
+    }
+
+    if root.login-state == "ready": AppsOverlays {
+        width: root.width;
+        height: root.height;
+    }
+    if root.login-state == "ready" && SettingsStore.open: SettingsPage { x: AppsStore.rail-width; y: 48px; z: 60; width: root.width - AppsStore.rail-width; height: root.height - 48px; }
     if root.login-state == "ready" && SettingsStore.profile-open: ProfileMenu { z: 70; width: root.width; height: root.height; }
 }

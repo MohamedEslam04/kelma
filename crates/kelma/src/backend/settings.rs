@@ -11,11 +11,11 @@
 //!   run (`dry_run_*` below); nothing here sends one.
 
 use super::Engine;
+use app_store::{DevicePermission, Grants};
 use appearance::{
     AccessibilityPrefs, AppearancePrefs, AutoSwitch, DateFormat, GeneralPrefs, PortalSettings,
     ResolvedTheme, Rgb, TimeFormat,
 };
-use apps::{DevicePermission, Grants};
 use devices::DevicePrefs;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -1035,7 +1035,7 @@ impl Engine {
             c.tenants(),
             c.profiles(&me),
             c.get_presence(&me),
-            apps::installed_apps(c),
+            app_store::installed_apps(c),
         );
         let mut err = |what: &str, e: &dyn std::fmt::Display| {
             tracing::warn!(%e, "settings: could not read {what}");
@@ -1221,7 +1221,7 @@ mod tests {
         };
         let lk = look(&l, Some(&dark_portal));
         assert!(lk.dark && lk.reduced_motion && !lk.high_contrast);
-        assert!(!look(&l, None).dark, "no portal: light");
+        assert!(look(&l, None).dark, "no portal: dark, the built-in look");
         l.appearance.theme = Theme::Dark;
         l.appearance.set_font_scale(1.2);
         l.a11y.larger_text = true;
