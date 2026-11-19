@@ -1,0 +1,456 @@
+// The pages of Settings. Each one reads `SettingsStore` and reports changes through
+// `SettingsStore.command(name, argument)`; the Rust side saves local preferences and only plans
+// (dry run) the changes that belong to Teams.
+import { Theme } from "theme.slint";
+import { SettingsStore, SOption } from "settings_store.slint";
+import { SButton, SChoice, SChoiceRow, SField, SFont, SPersonRow, SRadio, SSection, SSwitch } from "settings_widgets.slint";
+
+component Para inherits Text {
+    color: Theme.fg-muted;
+    font-size: SFont.small;
+    wrap: word-wrap;
+    horizontal-alignment: Theme.start-align;
+}
+
+// The Teams changes that were only planned, so the user sees exactly what was not sent.
+component DryRuns inherits SSection {
+    title: @tr("Planned changes (not sent to Teams)");
+    hint: @tr("kelma does not change Teams settings yet. Each change is shown here as the request it would send.");
+    if SettingsStore.dry-runs.length == 0: Para { text: @tr("None yet."); }
+    for d[i] in SettingsStore.dry-runs: Rectangle {
+        height: dr.preferred-height + 12px;
+        border-radius: 4px;
+        background: Theme.surface;
+        accessible-role: text;
+        accessible-label: @tr("Planned request {}", i + 1);
+        accessible-description: d;
+        dr := Text {
+            x: 8px;
+            width: parent.width - 16px;
+            text: d;
+            color: Theme.fg-muted;
+            font-size: SFont.small;
+            font-family: "monospace";
+            wrap: word-wrap;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component GeneralPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("Language and region");
+        SChoiceRow {
+            label: @tr("App language");
+            hint: @tr("Now: {}. The main screens are translated; the rest stays in English for now.", SettingsStore.language-shown);
+            options: SettingsStore.languages;
+            value: SettingsStore.language;
+            picked(v) => { SettingsStore.language = v; SettingsStore.command("language", v); }
+        }
+        SChoiceRow {
+            label: @tr("Date format");
+            hint: @tr("Used for dates in the chat list and in OneDrive.");
+            options: [{v: "auto", l: @tr("Follow the language")}, {v: "dmy", l: "31/12/2026"}, {v: "mdy", l: "12/31/2026"}, {v: "ymd", l: "2026-12-31"}];
+            value: SettingsStore.date-format;
+            picked(v) => { SettingsStore.date-format = v; SettingsStore.command("date-format", v); }
+        }
+        SChoiceRow {
+            label: @tr("Time format");
+            hint: @tr("Used for times in the chat list, on messages and in OneDrive.");
+            options: [{v: "auto", l: @tr("Follow the language")}, {v: "h12", l: "1:30 PM"}, {v: "h24", l: "13:30"}];
+            value: SettingsStore.time-format;
+            picked(v) => { SettingsStore.time-format = v; SettingsStore.command("time-format", v); }
+        }
+        SField {
+            label: @tr("Time zone");
+            placeholder: @tr("System: {}", SettingsStore.system-time-zone);
+            initial: SettingsStore.time-zone;
+            committed(t) => { SettingsStore.command("time-zone", t); }
+        }
+        Para { text: @tr("An IANA name such as Africa/Cairo. Leave it empty to follow the system. Times are shown in the system zone for now: kelma does not use this choice yet."); }
+    }
+    SSection {
+        title: @tr("Translation");
+        Para { text: @tr("Translation preferences are a Teams account setting. kelma cannot change them yet."); }
+    }
+    SSection {
+        title: @tr("System");
+        for t in SettingsStore.startup: SSwitch {
+            label: t.label;
+            hint: t.hint;
+            on: t.on;
+            enabled: t.enabled;
+            toggled(on) => { SettingsStore.command("startup", SettingsStore.j2(t.key, on ? "1" : "0")); }
+        }
+    }
+}
+
+export component AccountsPage inherits VerticalLayout {
+    alignment: start;
+    // First, so the notice is seen right after a switch (and stays on screen in short windows).
+    if SettingsStore.restart-needed: SSection {
+        title: @tr("Restart needed");
+        hint: @tr("The change is saved. kelma uses it after a restart.");
+        SButton { label: @tr("Restart kelma"); primary: true; clicked => { SettingsStore.command("restart", ""); } }
+    }
+    SSection {
+        title: @tr("Accounts");
+        hint: @tr("The account kelma signs in with. Switching restarts kelma. Each account keeps its own chats on this computer.");
+        for a in SettingsStore.accounts: SRadio {
+            group: @tr("Account");
+            label: a.name != "" ? a.name : a.label;
+            detail: a.upn;
+            checked: a.active;
+            picked => { SettingsStore.command("switch-account", a.label); }
+        }
+    }
+    SSection {
+        title: @tr("Add an account");
+        hint: @tr("Pick a short name (letters, digits, - _ .), then restart kelma: it shows a code to sign in with, on this computer, for the new account. The accounts stay separate.");
+        new-account := SField {
+            label: @tr("Name for the new account");
+            placeholder: "work";
+        }
+        SButton {
+            label: @tr("Add account");
+            clicked => { SettingsStore.command("add-account", new-account.text); }
+        }
+    }
+    SSection {
+        title: @tr("Remove an account");
+        hint: @tr("Forgets the account's saved sign-in on this computer and takes it off the list. Nothing changes in Teams.");
+        for a in SettingsStore.accounts: SPersonRow {
+            name: a.name != "" ? a.name : a.label;
+            action: @tr("Remove");
+            act => { SettingsStore.confirm-remove = a.label; }
+        }
+        if SettingsStore.confirm-remove != "": VerticalLayout {
+            spacing: 6px;
+            Para { text: @tr("Remove \"{}\" from kelma on this computer? Its saved sign-in is deleted.", SettingsStore.confirm-remove); }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                SButton { label: @tr("Cancel removal"); clicked => { SettingsStore.confirm-remove = ""; } }
+                SButton { label: @tr("Yes, remove the account"); danger: true; clicked => { SettingsStore.command("remove-account", SettingsStore.confirm-remove); SettingsStore.confirm-remove = ""; } }
+            }
+        }
+    }
+    SSection {
+        title: @tr("Organizations");
+        hint: @tr("Organizations this account belongs to, as a member or a guest.");
+        if SettingsStore.orgs.length == 0: Para { text: @tr("No organization list yet."); }
+        for o in SettingsStore.orgs: SRadio {
+            group: @tr("Organization");
+            label: o.name;
+            detail: o.home ? @tr("Home organization") : @tr("Guest");
+            checked: o.active;
+            picked => { SettingsStore.command("switch-org", o.tenant); }
+        }
+    }
+    SSection {
+        title: @tr("License");
+        hint: @tr("Asks Microsoft for your sign-in and license details again, then restarts kelma. Use it after an admin changed your license or your organization's settings.");
+        SButton { label: @tr("Refresh license and restart"); clicked => { SettingsStore.command("refresh-license", ""); } }
+    }
+    if SettingsStore.accounts-status != "": Para { text: SettingsStore.accounts-status; }
+}
+
+export component PrivacyPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("Privacy");
+        hint: @tr("These are Teams settings.");
+        for t in SettingsStore.privacy: SSwitch {
+            label: t.label;
+            hint: t.hint;
+            on: t.on;
+            enabled: t.enabled;
+            toggled(on) => { SettingsStore.command("privacy", SettingsStore.j2(t.key, on ? "1" : "0")); }
+        }
+    }
+    SSection {
+        title: @tr("Blocked contacts");
+        hint: @tr("Blocked people cannot call you or see your presence.");
+        if SettingsStore.blocked.length == 0: Para { text: @tr("You have not blocked anyone."); }
+        for p in SettingsStore.blocked: SPersonRow {
+            name: p.name;
+            action: @tr("Unblock");
+            act => { SettingsStore.command("unblock", p.mri); }
+        }
+    }
+    SSection {
+        title: @tr("Priority access");
+        hint: @tr("People who can reach you when you are set to Do not disturb.");
+        if SettingsStore.priority.length == 0: Para { text: @tr("Nobody has priority access."); }
+        for p in SettingsStore.priority: SPersonRow {
+            name: p.name;
+            action: @tr("Remove");
+            act => { SettingsStore.command("priority-remove", p.mri); }
+        }
+    }
+    SSection {
+        title: @tr("Diagnostic data");
+        Para { text: @tr("kelma sends no diagnostic data. Report a problem (in About) writes a redacted bundle on this computer."); }
+    }
+    if SettingsStore.privacy-status != "": Para { text: SettingsStore.privacy-status; }
+    DryRuns { }
+}
+
+export component NotificationsPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("Notifications and activity");
+        SSwitch {
+            label: @tr("Pause notifications");
+            hint: @tr("No banners until you turn this off.");
+            on: SettingsStore.paused;
+            toggled(on) => { SettingsStore.command("pause", on ? "1" : "0"); }
+        }
+        SButton { label: @tr("Test notification"); clicked => { SettingsStore.command("test-notification", ""); } }
+    }
+    if SettingsStore.notify-status != "": Para { text: SettingsStore.notify-status; }
+    for n in SettingsStore.notify: VerticalLayout {
+        spacing: 4px;
+        padding-bottom: 10px;
+        if n.group != "": Text { text: n.group; color: Theme.fg; font-size: SFont.heading; font-weight: 600; }
+        Text { text: n.label; color: Theme.fg; font-size: SFont.body; }
+        SChoice {
+            group: n.label;
+            options: [{v: "banner", l: @tr("Banner and feed")}, {v: "feed", l: @tr("Only show in feed")}, {v: "off", l: @tr("Off")}];
+            value: n.value;
+            picked(v) => { SettingsStore.command("notify", SettingsStore.j2(n.key, v)); }
+        }
+    }
+    DryRuns { }
+}
+
+export component AppearancePage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("Theme");
+        SChoiceRow {
+            label: @tr("Theme");
+            hint: @tr("Now showing: {}.", SettingsStore.theme-shown);
+            options: [{v: "light", l: @tr("Light")}, {v: "dark", l: @tr("Dark")}, {v: "system", l: @tr("Use system setting")}];
+            value: SettingsStore.theme;
+            picked(v) => { SettingsStore.theme = v; SettingsStore.command("theme", v); }
+        }
+    }
+    SSection {
+        title: @tr("Accent colour");
+        hint: @tr("Now: {}.", SettingsStore.accent-shown);
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            for a in [{v: "", l: @tr("Desktop accent"), c: Theme.accent}, {v: "#5b5fc7", l: @tr("Purple"), c: #5b5fc7}, {v: "#0f6cbd", l: @tr("Blue"), c: #0f6cbd}, {v: "#038387", l: @tr("Teal"), c: #038387}, {v: "#107c10", l: @tr("Green"), c: #107c10}, {v: "#ca5010", l: @tr("Orange"), c: #ca5010}, {v: "#c239b3", l: @tr("Pink"), c: #c239b3}]: Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 16px;
+                border-width: SettingsStore.accent == a.v ? 3px : 1px;
+                border-color: SettingsStore.accent == a.v ? Theme.fg : Theme.border;
+                background: a.v == "" ? transparent : a.c;
+                accessible-role: radio-button;
+                accessible-label: @tr("Accent colour: {}", a.l);
+                accessible-checked: SettingsStore.accent == a.v;
+                accessible-action-default => { SettingsStore.accent = a.v; SettingsStore.command("accent", a.v); }
+                if a.v == "": Text { text: "A"; color: Theme.accent; font-size: SFont.body; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { mouse-cursor: pointer; clicked => { SettingsStore.accent = a.v; SettingsStore.command("accent", a.v); } }
+            }
+        }
+    }
+    SSection {
+        title: @tr("Layout");
+        SChoiceRow {
+            label: @tr("Message density");
+            options: [{v: "comfy", l: @tr("Comfy")}, {v: "compact", l: @tr("Compact")}];
+            value: SettingsStore.density;
+            picked(v) => { SettingsStore.density = v; SettingsStore.command("density", v); }
+        }
+    }
+    SSection {
+        title: @tr("Font size");
+        hint: @tr("Larger text in Accessibility adds to this.");
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            SButton { label: @tr("Smaller font"); clicked => { SettingsStore.command("font-step", "-1"); } }
+            Rectangle {
+                width: 70px;
+                accessible-role: text;
+                accessible-label: @tr("Current font size");
+                accessible-value: Math.round(SettingsStore.font-scale * 100) + "%";
+                Text { text: Math.round(SettingsStore.font-scale * 100) + "%"; color: Theme.fg; font-size: SFont.body; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            SButton { label: @tr("Larger font"); clicked => { SettingsStore.command("font-step", "1"); } }
+            SButton { label: @tr("Reset font size"); clicked => { SettingsStore.command("font-scale", "1"); } }
+        }
+        Text { text: "Preview: the quick brown fox. نص تجريبي."; color: Theme.fg; font-size: SFont.body; }
+    }
+    SSection {
+        title: @tr("Skin tone");
+        hint: @tr("Used for emoji in reactions and the composer.");
+        SChoice {
+            group: @tr("Skin tone");
+            options: [{v: "0", l: "👋"}, {v: "1", l: "👋🏻"}, {v: "2", l: "👋🏼"}, {v: "3", l: "👋🏽"}, {v: "4", l: "👋🏾"}, {v: "5", l: "👋🏿"}];
+            value: SettingsStore.skin-tone;
+            picked(v) => { SettingsStore.command("skin-tone", v); }
+        }
+    }
+}
+
+export component AccessibilityPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("Display");
+        hint: @tr("Now: {}.", SettingsStore.a11y-shown);
+        SChoiceRow {
+            label: @tr("High contrast");
+            options: [{v: "auto", l: @tr("Follow the system")}, {v: "on", l: @tr("On")}, {v: "off", l: @tr("Off")}];
+            value: SettingsStore.high-contrast;
+            picked(v) => { SettingsStore.high-contrast = v; SettingsStore.command("high-contrast", v); }
+        }
+        SChoiceRow {
+            label: @tr("Reduce motion");
+            options: [{v: "auto", l: @tr("Follow the system")}, {v: "on", l: @tr("On")}, {v: "off", l: @tr("Off")}];
+            value: SettingsStore.reduced-motion;
+            picked(v) => { SettingsStore.reduced-motion = v; SettingsStore.command("reduced-motion", v); }
+        }
+        SSwitch {
+            label: @tr("Larger text");
+            hint: @tr("Makes text a quarter bigger than the font size in Appearance.");
+            on: SettingsStore.larger-text;
+            toggled(on) => { SettingsStore.command("larger-text", on ? "1" : "0"); }
+        }
+    }
+    SSection {
+        title: @tr("Captions and meetings");
+        hint: @tr("Saved now; meetings and calls use them when they come to kelma.");
+        for t in SettingsStore.a11y-flags: SSwitch {
+            label: t.label;
+            hint: t.hint;
+            on: t.on;
+            enabled: t.enabled;
+            toggled(on) => { SettingsStore.command("a11y", SettingsStore.j2(t.key, on ? "1" : "0")); }
+        }
+    }
+}
+
+export component DevicesPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("Speaker");
+        SRadio { group: @tr("Speaker"); label: @tr("System default"); checked: SettingsStore.speaker == ""; picked => { SettingsStore.command("speaker", ""); } }
+        for d in SettingsStore.speakers: SRadio { group: @tr("Speaker"); label: d.name; detail: d.id; checked: SettingsStore.speaker == d.id; picked => { SettingsStore.command("speaker", d.id); } }
+        SButton { label: @tr("Play test sound"); clicked => { SettingsStore.command("test-sound", ""); } }
+    }
+    SSection {
+        title: @tr("Microphone");
+        SRadio { group: @tr("Microphone"); label: @tr("System default"); checked: SettingsStore.mic == ""; picked => { SettingsStore.command("mic", ""); } }
+        for d in SettingsStore.mics: SRadio { group: @tr("Microphone"); label: d.name; detail: d.id; checked: SettingsStore.mic == d.id; picked => { SettingsStore.command("mic", d.id); } }
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+            SButton {
+                label: SettingsStore.mic-testing ? @tr("Stop microphone test") : @tr("Test microphone");
+                clicked => { SettingsStore.command("mic-test", SettingsStore.mic-testing ? "0" : "1"); }
+            }
+            if SettingsStore.mic-testing: Rectangle {
+                width: 200px;
+                height: 8px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: Theme.surface;
+                accessible-role: progress-indicator;
+                accessible-label: @tr("Microphone level");
+                accessible-value: Math.round(SettingsStore.mic-level * 100) + "%";
+                Rectangle {
+                    x: 0;
+                    width: parent.width * clamp(SettingsStore.mic-level, 0, 1);
+                    border-radius: 4px;
+                    background: Theme.accent;
+                }
+            }
+        }
+    }
+    SSection {
+        title: @tr("Camera");
+        hint: @tr("Preview, mirroring and low-light correction come with calls.");
+        SRadio { group: @tr("Camera"); label: @tr("System default"); checked: SettingsStore.camera == ""; picked => { SettingsStore.command("camera", ""); } }
+        for d in SettingsStore.cameras: SRadio { group: @tr("Camera"); label: d.name; detail: d.id; checked: SettingsStore.camera == d.id; picked => { SettingsStore.command("camera", d.id); } }
+    }
+    SSwitch {
+        label: @tr("Show all devices");
+        hint: @tr("Also list the raw sound card entries.");
+        on: SettingsStore.all-devices;
+        toggled(on) => { SettingsStore.command("all-devices", on ? "1" : "0"); }
+    }
+    if SettingsStore.devices-status != "": Para { text: SettingsStore.devices-status; }
+}
+
+export component FilesPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("Files");
+        SChoiceRow {
+            label: @tr("Open Word, Excel and PowerPoint files in");
+            options: [{v: "browser", l: @tr("Browser")}, {v: "desktop", l: @tr("Desktop app")}, {v: "kelma", l: @tr("kelma preview")}];
+            value: SettingsStore.open-files;
+            picked(v) => { SettingsStore.open-files = v; SettingsStore.command("open-files", v); }
+        }
+    }
+    SSection {
+        title: @tr("Links");
+        Para { text: @tr("Links open in your default browser."); }
+    }
+}
+
+export component PermissionsPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("App permissions");
+        hint: @tr("What each app may use. Apps run in kelma's web host and ask for these first.");
+        if SettingsStore.app-perms.length == 0: Para { text: @tr("No app has asked for a permission."); }
+    }
+    for a in SettingsStore.app-perms: SSection {
+        title: a.name;
+        for p in a.perms: SSwitch {
+            label: a.name + ": " + p.label;
+            on: p.on;
+            toggled(on) => { SettingsStore.command("perm", SettingsStore.j3(a.app, p.key, on ? "1" : "0")); }
+        }
+    }
+    if SettingsStore.perms-status != "": Para { text: SettingsStore.perms-status; }
+}
+
+export component AboutPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: "kelma " + SettingsStore.version;
+        Para { text: @tr("A lightweight, unofficial Microsoft Teams client for Linux."); }
+    }
+    SSection {
+        title: @tr("Updates");
+        hint: @tr("Off by default. When on, kelma asks api.github.com for the latest release when it starts. The request has no cookies, no account and nothing about you. kelma never downloads or installs anything.");
+        SSwitch {
+            label: @tr("Check for updates");
+            on: SettingsStore.check-updates;
+            toggled(on) => { SettingsStore.command("check-updates", on ? "1" : "0"); }
+        }
+        if SettingsStore.check-updates: SButton {
+            label: @tr("Check now");
+            enabled: !SettingsStore.update-checking;
+            clicked => { SettingsStore.command("check-now", ""); }
+        }
+        if SettingsStore.update-status != "": Para { text: SettingsStore.update-status; }
+        if SettingsStore.update-available: SButton {
+            label: @tr("View release notes");
+            clicked => { SettingsStore.command("release-notes", ""); }
+        }
+    }
+    SSection {
+        title: @tr("Report a problem");
+        Para { text: @tr("Writes a bundle of logs with tokens, ids and addresses removed to your Downloads folder. Nothing is uploaded."); }
+        SButton { label: @tr("Report a problem"); clicked => { SettingsStore.command("report-problem", ""); } }
+    }
+}

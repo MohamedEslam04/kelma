@@ -1,0 +1,117 @@
+// The call window's side panels: People (the roster, with the lobby) and More (device settings).
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Avatar, Icon, IconButton } from "widgets.slint";
+import { CallStore, CallPerson } from "call_store.slint";
+import { DeviceSettings } from "call_widgets.slint";
+
+component PersonRow inherits Rectangle {
+    in property <CallPerson> p;
+    height: 44px;
+    accessible-role: list-item;
+    accessible-label: root.p.name;
+    accessible-description: (root.p.lobby ? "In lobby" : root.p.muted ? "Muted" : "Unmuted")
+        + (root.p.hand ? ", hand raised" : "")
+        + (root.p.role != "" ? ", " + root.p.role : "");
+    HorizontalLayout {
+        spacing: 10px;
+        Avatar {
+            initials: root.p.initials;
+            size: 30px;
+            y: 7px;
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.p.name + (root.p.me ? " (You)" : "");
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                overflow: elide;
+            }
+            if root.p.role == "organizer" || root.p.role == "presenter": Text {
+                text: root.p.role == "organizer" ? "Organizer" : "Presenter";
+                color: Theme.fg-subtle;
+                font-size: 11px * Theme.font-scale;
+            }
+        }
+        if root.p.hand: Icon {
+            source: @image-url("icons/hand.svg");
+            tint: Theme.accent;
+            y: 12px;
+        }
+        if !root.p.lobby: Icon {
+            source: root.p.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
+            tint: root.p.muted ? Theme.fg-subtle : Theme.fg;
+            y: 12px;
+        }
+    }
+}
+
+component PanelHeader inherits HorizontalLayout {
+    in property <string> title;
+    height: 32px;
+    Text {
+        text: root.title;
+        color: Theme.fg;
+        font-size: 15px * Theme.font-scale;
+        font-weight: 600;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    IconButton {
+        icon: @image-url("icons/close.svg");
+        tooltip: "Close " + root.title;
+        size: 28px;
+        clicked => { CallStore.panel = ""; }
+    }
+}
+
+export component PeoplePanel inherits Rectangle {
+    background: Theme.sidebar;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        PanelHeader { title: "People"; }
+        ScrollView {
+            VerticalLayout {
+                alignment: start;
+                spacing: 2px;
+                Text {
+                    text: "In this meeting (" + CallStore.in-call + ")";
+                    color: Theme.fg-muted;
+                    font-size: 12px * Theme.font-scale;
+                    font-weight: 600;
+                }
+                for p[i] in CallStore.people: VerticalLayout {
+                    if p.lobby && i == CallStore.in-call: Text {
+                        text: "Waiting in lobby (" + CallStore.in-lobby + ")";
+                        color: Theme.fg-muted;
+                        font-size: 12px * Theme.font-scale;
+                        font-weight: 600;
+                        height: 32px;
+                        vertical-alignment: bottom;
+                    }
+                    PersonRow { p: p; }
+                }
+            }
+        }
+    }
+}
+
+export component MorePanel inherits Rectangle {
+    background: Theme.sidebar;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 12px;
+        alignment: start;
+        PanelHeader { title: "Device settings"; }
+        DeviceSettings { prefix: "more"; }
+        Text {
+            text: "Echo cancellation, noise suppression and automatic gain are on.";
+            color: Theme.fg-subtle;
+            font-size: 12px * Theme.font-scale;
+            wrap: word-wrap;
+        }
+    }
+}

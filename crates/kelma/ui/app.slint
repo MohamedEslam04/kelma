@@ -14,11 +14,50 @@ import { SelectBar } from "select_bar.slint";
 import { LoginView } from "login.slint";
 import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
 import { ActivityView } from "activity.slint";
+import { PeopleStore } from "people.slint";
+import { NewChatPane } from "new_chat.slint";
+import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
+import { PinnedBanner } from "pinned_banner.slint";
+import { ProfileCard } from "profile_card.slint";
+import { TeamsStore } from "teams_store.slint";
+import { TeamsPage } from "teams_page.slint";
+import { TeamsDialogs } from "teams_dialogs.slint";
+import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
+import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
+import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
+import { FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
+import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
+import { MediaStore, ImageViewer } from "media.slint";
+import { AppsStore } from "apps_store.slint";
+import { RailApps, AppsOverlays } from "apps_rail.slint";
+import { AppsHost } from "apps_host.slint";
+import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
+import { EngageView, EngageStore } from "engage.slint";
+import { CallWindow, CallMini, CallStore } from "call_window.slint";
+import { DirectCallStore, CallIncoming } from "call_incoming.slint";
+import { CallOutgoing, CallHeaderButtons } from "call_outgoing.slint";
+import { ComposerAppsOverlay } from "composer_apps.slint";
 
 export { Theme } from "theme.slint";
-export { ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, Msg, ChannelRow, TeamRow } from "types.slint";
+export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, Msg, ChannelRow, TeamRow } from "types.slint";
 export { EmojiApi } from "composer.slint";
-export { CalStore, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell } from "calendar.slint";
+export { FormatApi, FormatEdit } from "composer_format.slint";
+export { ShortcutApi } from "shortcuts.slint";
+export { MentionApi } from "mention_picker.slint";
+export { PeopleStore } from "people.slint";
+export { ListStore, SectionRow, SectionChoice } from "lists.slint";
+export { ChannelStore, PostItem } from "channel_posts.slint";
+export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
+export { MediaStore } from "media.slint";
+export { EngageStore, EPost } from "engage.slint";
+export { CallStore, CallPerson } from "call_window.slint";
+export { DirectCallStore } from "call_incoming.slint";
+export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
+export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
+export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { ComposerApps, CaCommand, CaResult, CaCard } from "composer_apps.slint";
+export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
+export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
 
 export component AppWindow inherits Window {
     title: root.window-title;
@@ -28,7 +67,7 @@ export component AppWindow inherits Window {
     min-width: 900px;
     min-height: 560px;
     background: Theme.main;
-    default-font-size: 14px;
+    default-font-size: 14px * Theme.font-scale;
 
     // --- state set from Rust ---
     in property <string> login-state: "checking"; // checking | code | error | ready
@@ -38,8 +77,11 @@ export component AppWindow inherits Window {
     in property <string> me-initials;
     in property <bool> connected: true;
     in property <string> banner;
+    // An info notice (update available) instead of an error toast, with one action link.
+    in property <bool> banner-info: false;
+    in property <string> banner-action;
 
-    in-out property <string> view: "chat"; // chat | teams | activity | calendar
+    in-out property <string> view: "chat"; // chat | teams | activity | calendar | onedrive
     in-out property <string> filter: "all";
     in property <[ChatRow]> chats-favorites;
     in property <[ChatRow]> chats-main;
@@ -105,10 +147,19 @@ export component AppWindow inherits Window {
     out property <int> badge-total: root.activity-unread + root.chats-unread;
     out property <string> window-title: root.badge-total > 0 ? "(" + root.badge-total + ") kelma" : "kelma";
     in-out property <bool> enter-sends: true;
+    // Ctrl+. shows the shortcut list; Ctrl+Shift+X makes the composer taller (plan chat 5.9).
+    in-out property <bool> shortcuts-open: false;
+    in-out property <bool> composer-expanded: false;
+    in-out property <int> msg-focus-tick: 0;
+    // The composer's "Mark as important"; main.rs reads it when the message is sent.
+    in-out property <bool> important: false;
+    in-out property <bool> composer-focused;
     in-out property <int> skin-tone: 0;
     in property <[ComposerEmoji]> recent-emoji;
     in property <[PendingAttachment]> pending-attachments;
     in property <int> cursor-tick; // Rust bumps it to put the composer cursor at the end
+    // A channel's top level shows post cards (channel_posts.slint) instead of the flat list.
+    property <bool> posts-mode: root.current-is-channel && root.thread-root == "" && ChannelStore.active;
 
     // --- callbacks to Rust ---
     callback retry-login();
@@ -139,6 +190,7 @@ export component AppWindow inherits Window {
     callback remove-attachment(int);
     callback skin-tone-changed(int);
     callback dismiss-banner();
+    callback banner-action-clicked();
     callback picker-search(string);
     callback copy-link(string);
     callback toggle-save(string);
@@ -160,6 +212,8 @@ export component AppWindow inherits Window {
     callback jump-to-newest();
     callback retry-send(string);
     callback discard-send(string);
+    // The chat header's "Schedule a meeting": opens the calendar's new-event form with the chat's members.
+    callback schedule-meeting(string);
     callback activity-refresh();
     callback activity-select(string);
     callback activity-set-filter(string);
@@ -169,6 +223,10 @@ export component AppWindow inherits Window {
     callback activity-go-to();
     callback activity-reply(string);
     callback activity-settings();
+
+    // Group chat header: renaming in place (the pencil).
+    in-out property <bool> renaming: false;
+    in-out property <string> rename-text;
 
     // Rust bumps these counters to request a scroll to the bottom / composer focus.
     in-out property <int> scroll-tick;
@@ -186,7 +244,7 @@ export component AppWindow inherits Window {
         retry => { root.retry-login(); }
     }
 
-    if root.login-state == "ready": FocusScope {
+    if root.login-state == "ready": win-keys := FocusScope {
         // Shift+Esc marks every chat read, wherever the focus is. The Activity view handles it
         // itself (marks every Activity item read).
         capture-key-pressed(event) => {
@@ -194,7 +252,64 @@ export component AppWindow inherits Window {
                 root.mark-all-read();
                 return accept;
             }
+            // Alt+Q: collapse every section of the chat list.
+            if ((event.text == "Q" || event.text == "q") && event.modifiers.alt && !event.modifiers.shift) {
+                ListStore.command("collapse-all", "");
+                return accept;
+            }
+            // Ctrl+Alt+E: Search.
+            if ((event.text == "E" || event.text == "e") && event.modifiers.control && event.modifiers.alt) {
+                root.view = "search";
+                FindStore.focus-tick += 1;
+                return accept;
+            }
+            if (event.text == "," || event.text == "<") && event.modifiers.control && event.modifiers.shift { SettingsStore.show("general"); return accept; } // Ctrl+Shift+,: Settings.
+            // Alt+Shift+N: New chat.
+            if ((event.text == "N" || event.text == "n") && event.modifiers.alt && event.modifiers.shift) {
+                root.view = "chat";
+                PeopleStore.new-chat-open = true;
+                PeopleStore.command("new-chat-open", "");
+                return accept;
+            }
+            // Ctrl+Shift+1 to 9: the nth entry of the app bar. In the composer Ctrl+Shift+7 and 8
+            // are the numbered and bullet list (Teams), so they stay with the composer there.
+            if (event.modifiers.control && event.modifiers.shift && AppsStore.shortcut-index(event.text) > 0 && !(root.composer-focused && (AppsStore.shortcut-index(event.text) == 7 || AppsStore.shortcut-index(event.text) == 8))) {
+                AppsStore.command("shortcut", "" + AppsStore.shortcut-index(event.text));
+                return accept;
+            }
+            // The other Teams chords (plan chat 5.9); the mapping is in src/shortcuts.rs.
+            if ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift) != "" {
+                win-keys.run-shortcut(ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift));
+                return accept;
+            }
             reject
+        }
+        // Esc, when nothing else took it: closes the shortcut list, then the thread, then the reply.
+        key-pressed(event) => {
+            if event.text == Key.Escape && !event.modifiers.shift {
+                if root.shortcuts-open { root.shortcuts-open = false; return accept; }
+                if root.menu-open { root.menu-open = false; root.focus-tick += 1; return accept; }
+                if root.thread-root != "" { root.close-thread(); return accept; }
+                if root.reply-preview != "" { root.cancel-reply(); return accept; }
+            }
+            reject
+        }
+        function run-shortcut(a: string) {
+            if a == "shortcuts" { root.shortcuts-open = !root.shortcuts-open; }
+            if a == "goto" {
+                root.view = "search";
+                FindStore.command("search-tab", "chats");
+                FindStore.focus-tick += 1;
+            }
+            if a == "filter-box" { root.view = "chat"; search-input.focus(); }
+            if a == "filter-unread" { root.filter = root.filter == "unread" ? "all" : "unread"; root.set-filter(root.filter); }
+            if a == "filter-chats" { root.filter = root.filter == "chats" ? "all" : "chats"; root.set-filter(root.filter); }
+            if a == "filter-channels" { root.filter = root.filter == "channels" ? "all" : "channels"; root.set-filter(root.filter); }
+            if a == "filter-clear" { root.filter = "all"; root.set-filter("all"); }
+            if a == "focus-composer" { root.focus-tick += 1; }
+            if a == "focus-messages" { root.msg-focus-tick += 1; }
+            if a == "expand-composer" { root.composer-expanded = !root.composer-expanded; root.focus-tick += 1; }
+            if a == "attach-file" { root.attach-file(); }
         }
         VerticalLayout {
         // Top bar with search
@@ -209,7 +324,7 @@ export component AppWindow inherits Window {
                     width: 260px;
                     spacing: 8px;
                     Image { source: @image-url("icons/logo.svg"); colorize: Theme.accent; width: 22px; height: 22px; y: 13px; }
-                    Text { text: "kelma"; color: Theme.fg; font-size: 15px; font-weight: 600; vertical-alignment: center; }
+                    Text { text: "kelma"; color: Theme.fg; font-size: 15px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
                 }
                 Rectangle {
                     height: 32px;
@@ -218,7 +333,7 @@ export component AppWindow inherits Window {
                     max-width: 640px;
                     horizontal-stretch: 2;
                     border-radius: 4px;
-                    background: search-input.has-focus ? #1f1f1f : #292929;
+                    background: search-input.has-focus ? Theme.sidebar : Theme.surface;
                     border-width: 1px;
                     border-color: search-input.has-focus ? Theme.accent : Theme.border;
                     HorizontalLayout {
@@ -228,23 +343,29 @@ export component AppWindow inherits Window {
                         Icon { source: @image-url("icons/search.svg"); width: 16px; height: 16px; y: 8px; }
                         search-input := TextInput {
                             color: Theme.fg;
-                            font-size: 13px;
+                            font-size: 13px * Theme.font-scale;
                             vertical-alignment: center;
                             single-line: true;
                             edited => { root.search(self.text); }
+                            // Enter opens the Search page with this text.
+                            accepted => {
+                                FindStore.query = self.text;
+                                root.view = "search";
+                                FindStore.command("search", self.text);
+                            }
                         }
                     }
                     if search-input.text == "": Text {
                         x: 36px;
-                        text: "Search chats";
+                        text: @tr("Search chats");
                         color: Theme.fg-subtle;
-                        font-size: 13px;
+                        font-size: 13px * Theme.font-scale;
                         vertical-alignment: center;
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if !root.connected: Text { text: "Reconnecting…"; color: #ffb900; font-size: 12px; vertical-alignment: center; }
-                Avatar { initials: root.me-initials; size: 30px; y: 9px; }
+                if !root.connected: Text { text: @tr("Reconnecting…"); color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                Avatar { initials: root.me-initials; size: 30px; y: 9px; TouchArea { accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } mouse-cursor: pointer; clicked => { SettingsStore.open-profile(); } } }
             }
         }
 
@@ -253,13 +374,12 @@ export component AppWindow inherits Window {
         HorizontalLayout {
             // Left rail
             Rectangle {
-                width: 68px;
+                width: AppsStore.rail-width;
                 background: Theme.rail;
                 VerticalLayout {
                     padding-top: 8px;
                     spacing: 4px;
-                    alignment: start;
-                    for item in [{key: "activity", label: "Activity", icon: @image-url("icons/activity.svg")}, {key: "chat", label: "Chat", icon: @image-url("icons/chat.svg")}, {key: "teams", label: "Teams", icon: @image-url("icons/teams.svg")}, {key: "calendar", label: "Calendar", icon: @image-url("icons/calendar.svg")}]: ri := Rectangle {
+                    for item in [{key: "activity", label: @tr("Activity"), icon: @image-url("icons/activity.svg")}, {key: "chat", label: @tr("Chat"), icon: @image-url("icons/chat.svg")}, {key: "teams", label: @tr("Teams"), icon: @image-url("icons/teams.svg")}, {key: "calendar", label: @tr("Calendar"), icon: @image-url("icons/calendar.svg")}, {key: "onedrive", label: "OneDrive", icon: @image-url("icons/cloud.svg")}]: ri := Rectangle {
                         property <int> badge-count: item.key == "activity" ? root.activity-unread : (item.key == "chat" ? root.chats-unread : 0);
                         height: 56px;
                         Rectangle {
@@ -274,7 +394,7 @@ export component AppWindow inherits Window {
                             alignment: center;
                             spacing: 2px;
                             Icon { source: item.icon; tint: root.view == item.key || rt.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
-                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px; horizontal-alignment: center; }
+                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px * Theme.font-scale; horizontal-alignment: center; }
                         }
                         if ri.badge-count > 0: Rectangle {
                             x: parent.width / 2 + 2px;
@@ -284,24 +404,26 @@ export component AppWindow inherits Window {
                             border-radius: 8px;
                             background: Theme.unread-badge;
                             accessible-role: text;
-                            accessible-label: ri.badge-count + " unread";
-                            badge-text := Text { text: ri.badge-count > 99 ? "99+" : ri.badge-count; color: #ffffff; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            accessible-label: @tr("{} unread", ri.badge-count);
+                            badge-text := Text { text: ri.badge-count > 99 ? "99+" : ri.badge-count; color: #ffffff; font-size: 10px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         rt := TouchArea {
                             mouse-cursor: pointer;
                             clicked => {
                                 root.view = item.key;
                                 if item.key == "activity" { root.activity-refresh(); }
+                                if item.key == "onedrive" { DriveStore.command("enter", ""); }
                             }
                         }
                     }
+                    RailApps { view <=> root.view; }
                 }
             }
 
             // Sidebar
-            if root.view != "calendar": Sidebar {
-                visible: root.view != "activity";
-                width: root.view == "activity" ? 0px : 320px;
+            if root.view != "calendar" && root.view != "onedrive": Sidebar {
+                visible: root.view != "activity" && root.view != "search";
+                width: root.view == "activity" || root.view == "search" ? 0px : 320px;
                 max-height: 100000px;
                 view: root.view;
                 filter <=> root.filter;
@@ -312,18 +434,39 @@ export component AppWindow inherits Window {
                 current-id: root.current-id;
                 mark-unread(id) => { root.mark-chat-unread(id); }
                 mark-all-read => { root.mark-all-read(); }
-                select-chat(id) => { root.select-chat(id); }
-                select-channel(id, title) => { root.select-channel(id, title); }
+                leave-chat(id) => { PeopleStore.leave-confirm = id; }
+                new-chat => {
+                    PeopleStore.new-chat-open = true;
+                    PeopleStore.command("new-chat-open", "");
+                }
+                manage-teams => { TeamsStore.open = true; TeamsStore.command("open", ""); }
+                open-community(id) => { EngageStore.open = true; EngageStore.command("open", id); }
+                select-chat(id) => { FindStore.quick-open = false; root.select-chat(id); }
+                select-channel(id, title) => { FindStore.quick-open = false; root.select-channel(id, title); }
                 toggle-team(i) => { root.toggle-team(i); }
                 toggle-favorite(id) => { root.toggle-favorite(id); }
                 set-filter(f) => { root.set-filter(f); }
+                quick-view(kind) => { FindStore.command("quick", kind); }
             }
 
             if root.view == "calendar": CalendarView { horizontal-stretch: 1; }
+            if root.view == "onedrive": OneDriveView { horizontal-stretch: 1; }
 
             // Conversation
-            if root.view != "calendar": Rectangle {
+            if root.view != "calendar" && root.view != "onedrive": Rectangle {
                 background: Theme.main;
+                if root.view == "search": SearchView {
+                    z: 40;
+                    width: parent.width;
+                    height: parent.height;
+                    close => { root.view = "chat"; }
+                }
+                if FindStore.quick-open && root.view == "chat": QuickView {
+                    z: 18;
+                    width: parent.width;
+                    height: parent.height;
+                    close => { FindStore.quick-open = false; FindStore.command("quick-close", ""); }
+                }
                 if root.view == "activity": ActivityView {
                     z: 20;
                     width: parent.width;
@@ -351,26 +494,51 @@ export component AppWindow inherits Window {
                     notification-settings => { root.activity-settings(); }
                     dismiss-banner => { root.dismiss-banner(); }
                 }
+                if PeopleStore.new-chat-open && root.view != "activity": NewChatPane {
+                    z: 30;
+                    width: parent.width;
+                    height: parent.height;
+                    to: PeopleStore.new-chat-to;
+                    results: PeopleStore.new-chat-results;
+                    hint: PeopleStore.new-chat-hint;
+                    query(q) => { PeopleStore.command("new-chat-query", q); }
+                    add(id) => { PeopleStore.command("new-chat-add", id); }
+                    remove(id) => { PeopleStore.command("new-chat-remove", id); }
+                    name(n) => { PeopleStore.command("new-chat-name", n); }
+                    send(t) => { PeopleStore.command("new-chat-send", t); }
+                    close => {
+                        PeopleStore.new-chat-open = false;
+                        PeopleStore.command("new-chat-close", "");
+                    }
+                }
                 if root.current-id == "": VerticalLayout {
                     alignment: center;
-                    Image { source: @image-url("icons/chat.svg"); colorize: #3d3d3d; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
-                    Text { text: "Select a chat to start messaging"; color: Theme.fg-subtle; horizontal-alignment: center; }
+                    Image { source: @image-url("icons/chat.svg"); colorize: Theme.border; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
+                    Text { text: @tr("Select a chat to start messaging"); color: Theme.fg-subtle; horizontal-alignment: center; }
                 }
                 if root.banner != "": Rectangle {
                     z: 10;
                     x: (parent.width - self.width) / 2;
                     y: 70px;
-                    width: min(parent.width - 40px, banner-text.preferred-width + 60px);
+                    width: min(parent.width - 40px, banner-text.preferred-width + 60px + (root.banner-action != "" ? 110px : 0px));
                     height: 36px;
                     border-radius: 6px;
-                    background: #3b1f22;
+                    background: root.banner-info ? #1f2a3b : #3b1f22;
                     border-width: 1px;
-                    border-color: Theme.danger;
+                    border-color: root.banner-info ? Theme.accent : Theme.danger;
                     HorizontalLayout {
                         padding-left: 14px;
                         padding-right: 6px;
                         spacing: 8px;
-                        banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                        banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+                        if root.banner-action != "": Rectangle {
+                            width: 100px;
+                            accessible-role: button;
+                            accessible-label: root.banner-action;
+                            accessible-action-default => { root.banner-action-clicked(); }
+                            Text { text: root.banner-action; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.banner-action-clicked(); } }
+                        }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 6px; clicked => { root.dismiss-banner(); } }
                     }
                 }
@@ -392,29 +560,148 @@ export component AppWindow inherits Window {
                                 has-img: root.current-has-avatar;
                                 size: 36px;
                             }
-                            Text {
-                                text: root.thread-root != "" ? "Thread" : root.current-title;
+                            if !root.renaming || root.thread-root != "": Text {
+                                text: root.thread-root != "" ? @tr("Thread") : root.current-title;
                                 color: Theme.fg;
-                                font-size: 17px;
+                                font-size: 17px * Theme.font-scale;
                                 font-weight: 700;
                                 vertical-alignment: center;
                                 overflow: elide;
                                 horizontal-stretch: 0;
                             }
-                            for tab in (root.current-is-channel ? ["Posts", "Files"] : ["Chat", "Shared"]): VerticalLayout {
-                                alignment: center;
-                                Text { text: tab; color: tab == "Chat" || tab == "Posts" ? Theme.fg : Theme.fg-muted; font-size: 14px; font-weight: tab == "Chat" || tab == "Posts" ? 600 : 400; }
-                                Rectangle { height: 3px; border-radius: 1px; background: tab == "Chat" || tab == "Posts" ? Theme.accent : transparent; }
+                            if root.renaming && root.thread-root == "": Rectangle {
+                                y: 14px;
+                                height: 32px;
+                                width: 260px;
+                                horizontal-stretch: 0;
+                                border-radius: 4px;
+                                background: Theme.sidebar;
+                                border-width: 1px;
+                                border-color: Theme.accent;
+                                FocusScope {
+                                    capture-key-pressed(event) => {
+                                        if event.text == Key.Escape {
+                                            root.renaming = false;
+                                            return accept;
+                                        }
+                                        if event.text == Key.Return {
+                                            root.renaming = false;
+                                            PeopleStore.command("rename", rename-input.text);
+                                            return accept;
+                                        }
+                                        reject
+                                    }
+                                    rename-input := TextInput {
+                                        x: 10px;
+                                        width: parent.width - 20px;
+                                        text <=> root.rename-text;
+                                        color: Theme.fg;
+                                        font-size: 15px * Theme.font-scale;
+                                        single-line: true;
+                                        vertical-alignment: center;
+                                        accessible-role: text-input;
+                                        accessible-label: @tr("Group name");
+                                        init => { self.focus(); self.select-all(); }
+                                    }
+                                }
                             }
+                            if PeopleStore.header-group && root.thread-root == "" && !root.renaming: rename-btn := IconButton {
+                                icon: @image-url("icons/edit.svg");
+                                tooltip: @tr("Rename chat");
+                                size: 28px;
+                                y: 16px;
+                                clicked => {
+                                    root.rename-text = root.current-title;
+                                    root.renaming = true;
+                                }
+                            }
+                            for tab in (root.current-is-channel ? [{k: "posts", l: @tr("Posts")}, {k: "files", l: @tr("Files")}] : [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}]): tab-item := Rectangle {
+                                // The Shared (Files) tab replaces the conversation, see `FindStore`.
+                                property <bool> active: (FindStore.chat-tab == "shared") == (tab.k == "shared" || tab.k == "files");
+                                width: tab-label.preferred-width;
+                                accessible-role: AccessibleRole.tab;
+                                accessible-label: tab.l;
+                                accessible-checked: self.active;
+                                VerticalLayout {
+                                    alignment: center;
+                                    tab-label := Text { text: tab.l; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; font-weight: tab-item.active ? 600 : 400; }
+                                    Rectangle { height: 3px; border-radius: 1px; background: tab-item.active ? Theme.accent : transparent; }
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        FindStore.chat-tab = (tab.k == "shared" || tab.k == "files") ? "shared" : "chat";
+                                        FindStore.command("tab", FindStore.chat-tab);
+                                    }
+                                }
+                            }
+                            if root.thread-root == "" && !root.current-is-channel: IconButton {
+                                icon: @image-url("icons/calendar.svg");
+                                y: 14px;
+                                tooltip: @tr("Schedule a meeting");
+                                clicked => { root.schedule-meeting(root.current-id); }
+                            }
+                            if root.thread-root == "" && CallStore.is-meeting-chat(root.current-id): IconButton { icon: @image-url("icons/video.svg"); y: 14px; tooltip: "Join meeting"; clicked => { CallStore.command("join-chat", root.current-id); } }
                             Rectangle { horizontal-stretch: 1; }
+                            if root.thread-root == "" && !root.current-is-channel: CallHeaderButtons { chat-id: root.current-id; y: 14px; height: 32px; }
+                            if root.thread-root == "": IconButton {
+                                icon: @image-url("icons/search.svg");
+                                y: 14px;
+                                tooltip: root.current-is-channel ? @tr("Find in channel") : @tr("Find in chat");
+                                active: FindStore.chat-find-open;
+                                clicked => {
+                                    FindStore.chat-find-open = !FindStore.chat-find-open;
+                                    FindStore.chat-find-tick += 1;
+                                    FindStore.command(FindStore.chat-find-open ? "find-open" : "find-close", "");
+                                }
+                            }
+                            if root.thread-root == "": IconButton {
+                                icon: @image-url("icons/info.svg");
+                                y: 14px;
+                                tooltip: @tr("Open chat details");
+                                active: FindStore.details-open;
+                                clicked => {
+                                    FindStore.details-open = !FindStore.details-open;
+                                    FindStore.command("details", FindStore.details-open ? "open" : "close");
+                                }
+                            }
+                            if PeopleStore.header-group && root.thread-root == "": people-btn := Rectangle {
+                                width: people-count.preferred-width + 40px;
+                                height: 32px;
+                                y: 14px;
+                                horizontal-stretch: 0;
+                                border-radius: 4px;
+                                background: people-touch.has-hover || PeopleStore.participants-open ? Theme.surface-hover : transparent;
+                                accessible-role: button;
+                                accessible-label: @tr("Participants");
+                                Icon { source: @image-url("icons/people.svg"); x: 8px; y: 8px; width: 16px; height: 16px; tint: Theme.fg-muted; }
+                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                                people-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        PeopleStore.participants-open = true;
+                                        PeopleStore.command("participants-open", "");
+                                    }
+                                }
+                            }
                         }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                    }
+
+                    if FindStore.chat-find-open && root.thread-root == "": ChatFindBar { channel: root.current-is-channel; }
+
+                    if PeopleStore.pinned.length > 0 && root.thread-root == "": PinnedBanner {
+                        items: PeopleStore.pinned;
+                        index <=> PeopleStore.pinned-index;
+                        jump(id) => { PeopleStore.command("pin-jump", id); }
+                        unpin(id) => { PeopleStore.command("pin-unpin", id); }
                     }
 
                     // Messages
                     Rectangle {
                         vertical-stretch: 1;
                         msg-list := ListView {
+                            visible: !root.posts-mode;
                             property <int> tick: root.scroll-tick;
                             property <int> d-tick: root.divider-tick;
                             // Stay pinned to the newest message while content grows (images loading).
@@ -451,7 +738,7 @@ export component AppWindow inherits Window {
                                     in-channel: root.current-is-channel && root.thread-root == "";
                                     select-mode: root.select-mode;
                                     changed y => {
-                                        if msg-list.aligning && m.new-above {
+                                        if msg-list.aligning && (m.new-above || m.flash) {
                                             msg-list.content-y = min(0px, 24px - self.y);
                                         }
                                     }
@@ -470,21 +757,68 @@ export component AppWindow inherits Window {
                                         root.menu-x = x;
                                         root.menu-y = y;
                                         root.menu-open = true;
+                                        if root.current-is-channel { FindStore.command("menu-follow", m.id); }
                                     }
                                     toggle-select => { root.toggle-select(m.id); }
                                     retry-send => { root.retry-send(m.id); }
                                     discard-send => { root.discard-send(m.id); }
                                     open-url(u) => { root.open-url(u); }
                                     open-thread => { root.open-thread(m.id); }
-                                    open-image(u) => { root.open-url(u); }
+                                    profile(id) => {
+                                        if id != "" {
+                                            PeopleStore.command("profile", id);
+                                        }
+                                    }
                                 }
+                        }
+                        if root.posts-mode: ChannelPosts {
+                            width: parent.width;
+                            height: parent.height;
+                            z: 4;
+                            react(id, k) => { root.react(id, k); }
+                            edit(id) => { root.edit(id); }
+                            more-reactions(id, x, y) => {
+                                root.picker-msg-id = id;
+                                root.picker-x = x;
+                                root.picker-y = y;
+                                root.picker-open = true;
+                                root.picker-search("");
+                            }
+                            menu(m, x, y) => {
+                                root.menu-msg = m;
+                                root.menu-x = x;
+                                root.menu-y = y;
+                                root.menu-open = true;
+                            }
+                            open-url(u) => { root.open-url(u); }
+                            profile(id) => { if id != "" { PeopleStore.command("profile", id); } }
+                            open-thread(id) => { root.open-thread(id); }
+                            retry-send(id) => { root.retry-send(id); }
+                            discard-send(id) => { root.discard-send(id); }
+                        }
+                        // Alt+Shift+M lands here: the arrow keys, Page Up/Down, Home and End scroll the list.
+                        msg-scope := FocusScope {
+                            width: 0px;
+                            height: 0px;
+                            property <int> tick: root.msg-focus-tick;
+                            changed tick => { self.focus(); }
+                            key-pressed(event) => {
+                                if event.text == Key.UpArrow { msg-list.content-y = min(0px, msg-list.content-y + 48px); return accept; }
+                                if event.text == Key.DownArrow { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - 48px)); return accept; }
+                                if event.text == Key.PageUp { msg-list.content-y = min(0px, msg-list.content-y + msg-list.visible-height * 0.9); return accept; }
+                                if event.text == Key.PageDown { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - msg-list.visible-height * 0.9)); return accept; }
+                                if event.text == Key.Home { msg-list.content-y = 0px; return accept; }
+                                if event.text == Key.End { root.scroll-tick += 1; return accept; }
+                                if event.text == Key.Escape { root.focus-tick += 1; return accept; }
+                                reject
+                            }
                         }
                         Timer {
                             interval: 700ms;
                             running: msg-list.aligning;
                             triggered => { msg-list.aligning = false; }
                         }
-                        if !root.at-bottom && root.messages.length > 0: Rectangle {
+                        if !root.at-bottom && root.messages.length > 0 && !root.posts-mode: Rectangle {
                             z: 5;
                             x: (parent.width - self.width) / 2;
                             y: parent.height - self.height - 12px;
@@ -495,9 +829,9 @@ export component AppWindow inherits Window {
                             drop-shadow-blur: 8px;
                             drop-shadow-color: #00000080;
                             jump-text := Text {
-                                text: root.new-count > 0 ? "↓ Jump to newest · " + root.new-count : "↓ Jump to newest";
+                                text: root.new-count > 0 ? @tr("↓ Jump to newest · {}", root.new-count) : @tr("↓ Jump to newest");
                                 color: #ffffff;
-                                font-size: 12px;
+                                font-size: 12px * Theme.font-scale;
                                 font-weight: 600;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -517,13 +851,13 @@ export component AppWindow inherits Window {
                             x: (parent.width - 200px) / 2;
                             border-radius: 12px;
                             background: Theme.surface;
-                            Text { text: "Loading older messages…"; color: Theme.fg-muted; font-size: 12px; }
+                            Text { text: @tr("Loading older messages…"); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
                         }
                     }
 
                     if root.typing != "": HorizontalLayout {
                         padding-left: 24px;
-                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px; }
+                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
                     }
 
                     if root.select-mode: SelectBar {
@@ -541,8 +875,10 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    if root.posts-mode && ChannelStore.compose-open: AnnouncementBar { }
+
                     // Composer
-                    Composer {
+                    if !root.posts-mode || ChannelStore.compose-open: Composer {
                         vertical-stretch: 0;
                         current-is-channel: root.current-is-channel;
                         thread-root: root.thread-root;
@@ -553,6 +889,12 @@ export component AppWindow inherits Window {
                         post-subject <=> root.post-subject;
                         focus-tick <=> root.focus-tick;
                         enter-sends <=> root.enter-sends;
+                        expanded <=> root.composer-expanded;
+                        important <=> root.important;
+                        input-focus(f) => { root.composer-focused = f; }
+                        edit-last => {
+                            if ShortcutApi.last-own(root.messages) != "" { root.edit(ShortcutApi.last-own(root.messages)); }
+                        }
                         set-enter-sends(on) => { root.set-enter-sends(on); }
                         skin-tone <=> root.skin-tone;
                         recent-emoji: root.recent-emoji;
@@ -562,13 +904,39 @@ export component AppWindow inherits Window {
                         cursor-tick: root.cursor-tick;
                         emoji-used(e) => { root.emoji-used(e); }
                         skin-tone-changed(t) => { root.skin-tone-changed(t); }
-                        send(text) => { root.send(text); }
+                        send(text) => {
+                            if root.posts-mode && ChannelStore.announcement {
+                                ChannelStore.command("announce", root.post-subject + "\u{9}" + ChannelStore.headline + "\u{9}" + ChannelStore.theme + "\u{9}" + text);
+                            } else {
+                                root.send(text);
+                            }
+                            if root.posts-mode {
+                                ChannelStore.compose-open = false;
+                                ChannelStore.announcement = false;
+                                ChannelStore.headline = "";
+                            }
+                        }
                         typing-tick => { root.typing-tick(); }
                         draft-edited(text) => { root.draft-edited(text); }
                         cancel-reply => { root.cancel-reply(); }
                         attach-image => { root.attach-image(); }
                         attach-file => { root.attach-file(); }
+                        attach-cloud => { DriveStore.command("pick-begin", "attach"); }
                     }
+                }
+                // The Shared (Files) tab and the details pane sit below the 60px header.
+                if root.current-id != "" && FindStore.chat-tab == "shared" && root.view != "activity": SharedView {
+                    z: 8;
+                    y: 60px;
+                    width: parent.width;
+                    height: parent.height - 60px;
+                }
+                if root.current-id != "" && FindStore.details-open && root.thread-root == "" && root.view != "activity": DetailsPane {
+                    z: 9;
+                    x: parent.width - self.width;
+                    y: 60px;
+                    height: parent.height - 60px;
+                    title: root.current-title;
                 }
             }
         }
@@ -590,7 +958,18 @@ export component AppWindow inherits Window {
             y: max(8px, min(root.menu-y, root.height - self.height - 8px));
             mine: root.menu-msg.mine;
             saved: root.menu-msg.saved;
+            translate: root.menu-msg.translate;
+            translate-message => { root.menu-open = false; MediaStore.command("translate", root.menu-msg.id); }
+            see-original => { root.menu-open = false; MediaStore.command("original", root.menu-msg.id); }
             can-pin: !root.current-is-channel;
+            can-follow: root.current-is-channel && root.thread-root == "";
+            following: FindStore.menu-following;
+            // One follow path for channel posts: the same call as the post card's menu.
+            toggle-follow => {
+                root.menu-open = false;
+                ChannelStore.command(FindStore.menu-following ? "unfollow" : "follow-msg", root.menu-msg.id);
+                FindStore.menu-following = !FindStore.menu-following;
+            }
             reply => { root.menu-open = false; root.reply(root.menu-msg.id); }
             forward-one => {
                 root.menu-open = false;
@@ -612,6 +991,13 @@ export component AppWindow inherits Window {
             edit => { root.menu-open = false; root.edit(root.menu-msg.id); }
             delete => { root.menu-open = false; root.delete(root.menu-msg.id); }
         }
+    }
+
+    if root.login-state == "ready" && root.shortcuts-open: ShortcutsDialog {
+        z: 200;
+        width: root.width;
+        height: root.height;
+        close => { root.shortcuts-open = false; }
     }
 
     if root.login-state == "ready" && root.picker-open: Rectangle {
@@ -658,4 +1044,201 @@ export component AppWindow inherits Window {
             }
         }
     }
+
+    if root.login-state == "ready" && PeopleStore.participants-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    PeopleStore.participants-open = false;
+                }
+            }
+        }
+        ParticipantsPanel {
+            x: root.width - self.width - 16px;
+            y: 108px;
+            members: PeopleStore.members;
+            add-results: PeopleStore.add-results;
+            open-profile(id) => {
+                PeopleStore.participants-open = false;
+                PeopleStore.command("profile", id);
+            }
+            add-query(q) => { PeopleStore.command("add-query", q); }
+            add-pick(id) => { PeopleStore.command("add-pick", id); }
+            history-changed(on) => { PeopleStore.command("add-history", on ? "on" : "off"); }
+            leave => {
+                PeopleStore.participants-open = false;
+                PeopleStore.leave-confirm = root.current-id;
+            }
+            close => { PeopleStore.participants-open = false; }
+        }
+    }
+
+    if root.login-state == "ready" && PeopleStore.leave-confirm != "": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        LeaveConfirm {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            confirm => {
+                PeopleStore.command("leave", PeopleStore.leave-confirm);
+                PeopleStore.leave-confirm = "";
+            }
+            cancel => { PeopleStore.leave-confirm = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && PeopleStore.card-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    PeopleStore.card-open = false;
+                }
+            }
+        }
+        ProfileCard {
+            x: (root.width - self.width) / 2;
+            y: max(8px, min(160px, root.height - self.height - 8px));
+            person: PeopleStore.card;
+            loading: PeopleStore.card-loading;
+            email: PeopleStore.card-email;
+            work: PeopleStore.card-work;
+            location: PeopleStore.card-location;
+            local-time: PeopleStore.card-time;
+            copy-email => { PeopleStore.command("profile-copy-email", ""); }
+            chat(id) => {
+                PeopleStore.card-open = false;
+                PeopleStore.command("profile-chat", id);
+            }
+            send-email(e) => { root.open-url("mailto:" + e); }
+            close => { PeopleStore.card-open = false; }
+        }
+    }
+
+    if root.login-state == "ready" && ListStore.dialog == "leave-channel": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        LeaveChannelDialog {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+            confirm => {
+                ListStore.command("channel-leave", ListStore.dialog-target);
+                ListStore.dialog = "";
+            }
+            cancel => { ListStore.dialog = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && (ListStore.dialog == "new-section" || ListStore.dialog == "rename-section"): Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        SectionDialog {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+            confirm(name) => {
+                ListStore.command(ListStore.dialog, ListStore.dialog-target + "\u{9}" + name);
+                ListStore.dialog = "";
+            }
+            cancel => { ListStore.dialog = ""; }
+        }
+    }
+
+    // The OneDrive file picker, opened from the composer's "Attach cloud files" (the OneDrive view
+    // draws its own).
+    if root.login-state == "ready" && root.view != "onedrive" && DriveStore.dialog == "picker": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        DriveFilePicker {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            title: DriveStore.picker-title;
+            folders-only: DriveStore.picker-folders-only;
+            rows: DriveStore.picker-rows;
+            crumbs: DriveStore.picker-crumbs;
+            loading: DriveStore.picker-loading;
+            can-choose: DriveStore.picker-can-choose;
+            choose-label: @tr("Attach");
+            open(id) => { DriveStore.command("pick-open", id); }
+            crumb(i) => { DriveStore.command("pick-crumb", "" + i); }
+            pick(id) => { DriveStore.command("pick-select", id); }
+            choose => { DriveStore.command("pick-choose", ""); }
+            cancel => { DriveStore.dialog = ""; DriveStore.command("pick-cancel", ""); }
+        }
+    }
+    // Teams management: the "Your teams and channels" page covers the area right of the rail, and
+    // its dialogs cover the window (see teams_page.slint and teams_dialogs.slint).
+    if root.login-state == "ready" && TeamsStore.open: TeamsPage {
+        x: AppsStore.rail-width;
+        y: 48px;
+        z: 40;
+        width: root.width - AppsStore.rail-width;
+        height: root.height - 48px;
+        go(id, title) => {
+            TeamsStore.open = false;
+            root.view = "teams";
+            root.select-channel(id, title);
+        }
+    }
+    // Viva Engage: a community's read-only feed covers the area right of the rail.
+    if root.login-state == "ready" && EngageStore.open && (root.view == "chat" || root.view == "teams"): EngageView {
+        x: 68px;
+        y: 48px;
+        z: 41;
+        width: root.width - 68px;
+        height: root.height - 48px;
+    }
+    if root.login-state == "ready" && TeamsStore.dialog != "": TeamsDialogs {
+        z: 50;
+        width: root.width;
+        height: root.height;
+    }
+
+    // The app screens (Store, Planner, Workflows, OneNote, Lists, app pages) cover the area right
+    // of the rail while the view is one of theirs; the overlays hold the app bar's flyout, its
+    // right click menu and the install request dialog.
+    if root.login-state == "ready" && AppsStore.owns(root.view): AppsHost {
+        x: AppsStore.rail-width;
+        y: 48px + (CalStore.join-text != "" ? 40px : 0px);
+        width: root.width - AppsStore.rail-width;
+        height: root.height - self.y;
+        view: root.view;
+    }
+
+    if root.login-state == "ready": AppsOverlays {
+        width: root.width;
+        height: root.height;
+    }
+    if root.login-state == "ready" && SettingsStore.open: SettingsPage { x: AppsStore.rail-width; y: 48px; z: 60; width: root.width - AppsStore.rail-width; height: root.height - 48px; }
+    if root.login-state == "ready" && SettingsStore.profile-open: ProfileMenu { z: 70; width: root.width; height: root.height; }
+
+    // The call window (pre-join, meeting, call ended) covers the area right of the rail; while the meeting chat is open it is a floating bar.
+    if root.login-state == "ready" && CallStore.phase != "" && !CallStore.minimized: CallWindow { x: AppsStore.rail-width; y: 48px; z: 45; width: root.width - AppsStore.rail-width; height: root.height - 48px; open-chat => { CallStore.minimized = true; root.view = "chat"; root.select-chat(CallStore.chat-id); } }
+    if root.login-state == "ready" && CallStore.phase != "" && CallStore.minimized: CallMini { x: root.width - self.width - 16px; y: root.height - self.height - 16px; z: 45; }
+
+    // The full-size picture viewer (plan chat 9.5), above everything else.
+    if root.login-state == "ready" && MediaStore.viewer-open: ImageViewer {
+        z: 60;
+        width: root.width;
+        height: root.height;
+    }
+
+    // The composer's apps picker (the "+" button).
+    if root.login-state == "ready": ComposerAppsOverlay {
+        width: root.width;
+        height: root.height;
+    }
+    // 1:1 calls: the ringing screen of an outgoing call and the incoming-call toast, on top.
+    if root.login-state == "ready" && DirectCallStore.outgoing-open: CallOutgoing { z: 80; width: root.width; height: root.height; }
+    if root.login-state == "ready" && DirectCallStore.incoming-open: CallIncoming { z: 90; x: root.width - self.width - 20px; y: root.height - self.height - 20px; }
 }

@@ -87,7 +87,7 @@ fn user_from_row(r: &Row<'_>) -> rusqlite::Result<UserRow> {
 }
 
 const OUTBOX_COLS: &str = "client_message_id, conversation_id, html, subject, reply_to, kind, \
-                           payload_path, created_ms, attempts, state, last_error";
+                           payload_path, created_ms, attempts, state, last_error, mentions, importance, cards";
 
 fn draft_from_row(r: &Row<'_>) -> rusqlite::Result<Draft> {
     Ok(Draft {
@@ -113,6 +113,9 @@ fn outbox_from_row(r: &Row<'_>) -> Result<OutboxItem> {
         attempts: r.get(8)?,
         state: OutboxState::from_db(&state).ok_or(Error::UnknownOutbox(state))?,
         last_error: r.get(10)?,
+        mentions: r.get(11)?,
+        importance: r.get(12)?,
+        cards: r.get(13)?,
     })
 }
 
@@ -192,6 +195,22 @@ impl Store {
                 c.favorite,
                 c.read_horizon_ms
             ])?;
+        Ok(())
+    }
+
+    /// Forgets a conversation (after leaving a group chat): its row, cached messages, draft and
+    /// unread mark. Queued outbox items are left alone.
+    pub fn delete_conversation(&self, id: &str) -> Result<()> {
+        for sql in [
+            "DELETE FROM messages WHERE conversation_id = ?1",
+            "DELETE FROM drafts WHERE conversation_id = ?1",
+            "DELETE FROM conversations WHERE id = ?1",
+        ] {
+            self.conn.prepare_cached(sql)?.execute([id])?;
+        }
+        self.conn
+            .prepare_cached("DELETE FROM kv WHERE key = ?1")?
+            .execute([unread_mark_key(id)])?;
         Ok(())
     }
 
@@ -379,6 +398,37 @@ impl Store {
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         out.reverse();
+        Ok(out)
+    }
+
+    /// Messages (replies included, deleted ones not) whose HTML contains `needle`, newest first,
+    /// in one conversation or in all of them. SQLite's `LIKE` only folds ASCII case, so this is
+    /// a prefilter: the caller confirms the match on the plain text.
+    pub fn messages_containing(
+        &self,
+        conversation_id: Option<&str>,
+        needle: &str,
+        limit: usize,
+    ) -> Result<Vec<MessageRow>> {
+        let pattern = format!(
+            "%{}%",
+            needle
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {MSG_COLS} FROM messages \
+             WHERE deleted = 0 AND content_html LIKE ?1 ESCAPE '\\' \
+               AND (?2 IS NULL OR conversation_id = ?2) \
+             ORDER BY compose_ms DESC, id DESC LIMIT ?3"
+        ))?;
+        let out = stmt
+            .query_map(
+                params![pattern, conversation_id, limit_i64(limit)],
+                msg_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(out)
     }
 
@@ -673,8 +723,9 @@ impl Store {
         self.conn
             .prepare_cached(
                 "INSERT INTO outbox (client_message_id, conversation_id, html, subject, \
-                     reply_to, kind, payload_path, created_ms, attempts, state, last_error) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, NULL)",
+                     reply_to, kind, payload_path, created_ms, attempts, state, last_error, \
+                     mentions, importance, cards) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, NULL, ?10, ?11, ?12)",
             )?
             .execute(params![
                 item.client_message_id,
@@ -685,7 +736,10 @@ impl Store {
                 item.kind.as_db(),
                 item.payload_path,
                 item.created_ms,
-                OutboxState::Queued.as_db()
+                OutboxState::Queued.as_db(),
+                item.mentions,
+                item.importance,
+                item.cards
             ])?;
         Ok(())
     }

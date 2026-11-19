@@ -66,6 +66,25 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 | `properties.edittime` / `deletetime` | Edited / deleted markers ✅ |
 | `ThreadActivity/*`, `Event/Call` | System lines |
 
+### Delivery options (9.4)
+
+`crates/teams-proto/src/delivery.rs` (`kelma-cli deliver`). Sources: the Teams web client JS bundle
+(message serializer, composer and renderer); `properties.importance` was also known from
+better-teams and Maxim.
+
+| Option | Wire shape | Live status |
+|---|---|---|
+| Standard | `properties.importance` is `""` (web always sends it; kelma sends nothing, which reads the same) | ✅ default sends |
+| Important | `properties.importance: "high"`. Web shows a red "IMPORTANT!" label | ✅ sent to `48:notes` 2026-11-19 and read back through history as `high`. Whether Teams web draws the label still needs a person to look |
+| Urgent | `properties.importance: "urgent"`. The receiving web client repeats the notification until the message is acknowledged (its `ackUrgentMessage` runs once the reader has reacted to or seen it; an urgent message from the current user is never acked) | ✅ sent to `48:notes` 2026-11-19 and read back as `urgent`. The repeated notification is only seen by another recipient, so it was not observed |
+| Announcement | Channel posts only. `properties.title` is the headline and `properties.cards` (JSON *string*) holds one card `{appId:"announcement-card", cardClientId:"announcement-card-<id>", contentType:"application/vnd.microsoft.teams.messaging-announcementBanner", appName?, content}`. `content` is `{colorTheme:"<0..11>"}` for a coloured banner (the 12 palette entries, from periwinkle blue to ocean green) or `{imageData:{origImage:{src,id?}, croppedImage:{src,id?,imageWidth,imageHeight,imageAltText}, isTeamsIllustration?}}` for a picture (web crops to 1317x366). A picture is uploaded to AMS first and its object id goes in the top-level `amsreferences`. `messagetype` stays `RichText/Html` | ⚠️ unverified live (not posted to any channel). Shape taken from the web bundle only; covered by unit tests |
+
+Receive side: `properties.importance` is `""`, `"high"` or `"urgent"` (the numeric forms 2 and 3 also
+appear internally). The web client builds an announcement from `properties.title` plus the card
+above (it reads `colorTheme` from `imageData.colorTheme` first, then from the content). A message is
+only an announcement when it has the card; a title alone is not one. `model::Message` carries
+`importance` and `announcement`. Live read-back: `kelma-cli deliver show <conversation>`.
+
 ## Aggregator (CSA) ✅
 
 `GET teams.microsoft.com/api/csa/api/v1/teams/users/me?isPrefetch=false&enableMembershipSummary=true`,
@@ -91,6 +110,31 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
   1. `POST as-prod.asyncgw.teams.microsoft.com/v1/objects/` `{type:"pish/image", permissions:{<conv>:["read"]}, filename, sharingMode:"Inline"}` → `id`
   2. `PUT …/v1/objects/{id}/content/imgpsh` with the bytes
   3. Send `<img itemtype="http://schema.skype.com/AMSImage" src=".../views/imgo">` ✅ (self notes)
+- **Views of one object** (`GET …/v1/objects/<id>/views/<view>`, `teams_proto::images`) ✅ 2026-11-19 live, on images in the own notes chat:
+
+  | View | Answer |
+  |---|---|
+  | `imgpsh_fullsize` | the **original**: 2160x2880 JPEG, 993309 bytes (a 1732x1299 JPEG answered 132802 bytes). The Teams web viewer uses this one. Content type is right (`image/jpeg`, `image/png`) |
+  | `imgo` | what inline `<img src>` points at: a downscaled copy, 95308 bytes for the same 2160x2880 picture |
+  | `imgt1` | thumbnail, 23249 bytes for the same picture |
+  | `imgpsh` | HTTP 400 (it is the upload content name, not a view) |
+
+  `<img>` tags carry the object id twice (`itemid` and `id="x_<id>"`) and a display size in
+  `width`/`height`. The size can be a fraction (`383.0313014827018`) and its aspect ratio equals the
+  original's, so it is good for sizing a placeholder; only the original has the real pixel size.
+  Pasted images say `alt="image"`, forwarded ones `alt="Media"` or `"shared image"`. kelma tries
+  `imgpsh_fullsize`, then `imgo`.
+- **Token for AMS:** no bearer audience. The request carries the skypetoken twice, as
+  `Cookie: skypetoken_asm=<skypetoken>` and `X-Skypetoken: <skypetoken>` (what `Client::bytes` adds
+  for AMS hosts). The credential only goes to hosts in the AMS allow-list (`ams::is_ams_url`). The region of the object id
+  (`0-eus-d11-…` is `eus`, United States) matches the host in the tag (`us-api.asm.skype.com`);
+  the mapping for ids without a `src` (`ams_url_for_object`) is only checked for `eus`.
+- **OneDrive/SharePoint images** (an image attached as a file, `properties.files`): 🧪 not run live, the
+  own notes chat has no image file. kelma asks Graph first,
+  `GET graph.microsoft.com/v1.0/shares/u!<base64url of the file URL>/driveItem/content` with the
+  Graph bearer (the documented shares API; the redirect to the pre-authenticated download URL
+  drops the bearer), and falls back to the file URL with a bearer for the SharePoint host.
+  Images from any other host are fetched without any credential.
 - **Files** are not AMS: see [Files](#files--2026-11-18) below.
 
 ## Files ✅ 2026-11-18
@@ -113,7 +157,7 @@ carries `Files.ReadWrite.All`.
 Verified in self notes: a 55-byte file with an Arabic name, and a 5.5 MB file uploaded in two
 chunks. The sizes in OneDrive matched, and both came back as file cards. The invite step (step 3)
 is unit-tested only, because a live test would share a file with a colleague. Channel files live
-in the team's SharePoint site and are not supported: kelma says so instead of sending.
+in the team's SharePoint site, see "Chat list, channel posts and cards" below.
 
 ## Auth broker ✅ 2026-11-18
 
@@ -173,7 +217,13 @@ Browse (Graph):
 | `GET /me/drive/sharedWithMe` | Shared with you | ✅ 500 items, no paging link |
 | `POST /search/query` `{requests:[{entityTypes:["driveItem","listItem"], query:{queryString}, from, size, sortProperties?}]}` | search; `sortProperties:[{name:"lastModifiedDateTime",isDescending:true}]` is the recent fallback; `* AND NOT path:"<my site url>"` is the shared fallback | ✅ search and sorted search; the exclusion query is accepted (200, 50 hits) but its result was not compared with the real list |
 | `GET …/thumbnails` | small, medium and large URLs; `$expand=thumbnails` on listings gives them in one call | ✅ |
-| `GET /me/insights/used` | not used | ✅ answers |
+| `GET /me/insights/used?$orderby=LastUsed/LastAccessedDateTime desc&$top=n` | "For you": documents the user opened | ✅ 2026-11-19, pages with `@odata.nextLink`. Lists sites too (`resourceReference.type: microsoft.graph.siteItem`, `resourceVisualization.type: spsite`), which kelma drops from the cards |
+| `GET /me/insights/trending?$top=n` | "For you": trending around the user | ✅ 2026-11-19. Has `weight` and **no** `lastModifiedDateTime` in practice, although the docs show one |
+| `GET /me/insights/shared?$top=n` | "For you" shares, "Shared by you", People | ✅ 2026-11-19, 40 sampled: `sharingType` `Attachment` 32, `Link` 5, `Direct` 3; `sharingReference.type` `microsoft.graph.message` with a `webUrl` on `teams.microsoft.com` (34, a Teams chat) or `outlook.office.com` (3); `resourceReference.type` `microsoft.graph.driveItem` (37) or `microsoft.graph.fileAttachment` (3, mail attachments, no drive item). Lists shares **by** the user too: "Shared by you" is this list filtered on `lastShared.sharedBy.id` = the user's id (67 of 200) |
+| `GET /me?$select=id,displayName,mail,userPrincipalName` | tells the user's own shares apart | ✅ |
+| `POST /search/query` with `(FileType:jpg OR … OR FileType:mkv) AND path:"<my site url>"`, newest first | "Browse files by Media" | ✅ 50 hits per page, all in My files (`parentReference.driveId` = the user's drive); seen: mp4, png, webm |
+| `GET /me/joinedTeams?$select=id,displayName`, `GET /teams/{t}/channels?$select=id,displayName`, `GET /teams/{t}/channels/{c}/filesFolder`, `GET /drives/{d}/items/{folder}:/Recordings:/children` | Meetings: the channel libraries' `Recordings` folders (404 when a channel has none) | ✅ 1 channel recording found, plus 3 in My files. Two calls per channel. `/me/joinedTeams` refuses `$top` (400) |
+| `GET /me/onenote/notebooks?$select=id,displayName,links` | proves the Graph bearer reaches OneNote (`Notes.ReadWrite.All`) | ✅ 200 (0 notebooks) |
 
 A search hit is a `driveItem` (with `parentReference.driveId` and `id`) or a `listItem` whose file
 name is in `fields.fileLeafRef` and whose drive item is in `driveItem.id`. Remote items (shared
@@ -224,14 +274,70 @@ Recycle bin (SharePoint REST on `<tenant>-my.sharepoint.com`, `Accept: applicati
 
 Deleting a folder puts one folder entry (and, depending on timing, its children) in the bin.
 
-Around files: meeting recordings are the children of `Recordings` in My files (✅ 3 items). Sync is
+Around files: meeting recordings are the children of `Recordings` in My files (✅ 3 items) and in
+each channel's files folder (✅ 1, see Meetings above). Sync is
 a text (`onedrive::sync_help`) that points at the `onedrive` client and `rclone`.
+
+Which view uses which call (the OneDrive app of the rail, `crates/kelma/src/backend/drive.rs`):
+
+| View | Call | Notes |
+|---|---|---|
+| Home (Recent) | `browse::recent` (`/me/drive/recent`, Search when empty) | the type pills and the filter box work on this list on the client |
+| Shared, "Shared with you" | `browse::shared_with_me` (`/me/drive/sharedWithMe`) | a shared folder opens as its own root |
+| My files, folders | `browse::children` | breadcrumbs are kept on the client, each crumb is a (drive id, item id) |
+| Favorites | `browse::following` | the star on a row calls `follow` or `unfollow` |
+| Libraries, Quick access | `followed_sites` (joined teams as the fallback) and `site_drives` | the first drive of each site, at most 12 sites |
+| Recycle bin | `bin::recycle_bin`, `restore`, `delete_forever` | SharePoint REST on the `-my` host |
+| Meetings | `recordings` | the `Recordings` folder of My files |
+| Search | `browse::search` | `driveItem` and `listItem` hits |
+| Preview | `ops::download` for images, text and markdown; `ops::preview_url` for Office files and PDFs | the preview URL opens in the browser |
+
+"For you", "Shared by you", People, Media and the channel recordings (`crates/onedrive`, not yet
+wired in the UI; `kelma-cli drive for-you|shared-by-me|people|media|meetings`):
+
+| View | Call | Notes |
+|---|---|---|
+| Home, "For you" cards | `insights::for_you` (used, trending, shared) | shares with the user first, then used and trending, in turn, without duplicates; drive items only. Reason: "You frequently open this", "Trending around you", "<name> shared this in a Teams chat" (sharing reference on a Teams host) or "<name> shared this with you". `previewImageUrl` needs a SharePoint token: take thumbnails from `Insight::item` with `browse::thumbnails` |
+| Shared, "Shared by you" | `insights::shared_by_me` | `Insight::to_drive_item` gives the file list row |
+| Browse by People | `insights::people` | the shared insights grouped by `sharedBy`, newest first; falls back to `remoteItem.shared.sharedBy` (else `owner`) of `/me/drive/sharedWithMe` when the insights give nobody |
+| Browse by Media | `browse::media(from, size)` | Search over the user's own site, filtered to photo and video extensions |
+| Meetings | `around::meeting_recordings` | My files plus every channel's `Recordings`, each with its place (`My files` or `<team> › <channel>`) |
+
+The "New" menu's other items (`create::plan` gives the request, `create::create` sends it;
+`kelma-cli drive new <kind> … --dry-run` prints it without a session):
+
+| Item | Request | Status |
+|---|---|---|
+| Visio drawing | `PUT …/<parent>:/<name>.vsdx:/content` with a blank VSDX built in code (`package`: document, pages, one page) | 🧪 not created live (by instruction); the package is checked by unit tests. `drive selftest` creates one in its throwaway folder |
+| Link | `PUT …/<parent>:/<name>.url:/content` with `[InternetShortcut]\r\nURL=<url>\r\n` (what OneDrive's "Link" saves) | 🧪 not created live; in `drive selftest` |
+| OneNote notebook | `POST /me/onenote/notebooks` `{displayName}` on the Graph bearer; the answer's `links.oneNoteWebUrl.href` opens it | 🧪 not created live. Graph places the notebook in the user's notebooks, not in the open folder |
+| Forms survey | none: Forms has no API for this client, so kelma opens `https://forms.office.com/` | n/a |
+
+O0.1 note: these calls were confirmed read-only with `kelma-cli drive shape <graph path> [n]`, which
+prints an answer's structure with every value redacted (URLs reduced to their host, the tenant label
+hidden). The internal endpoints of the Teams web OneDrive app itself were still not captured in a
+browser; the Graph calls above answer for every view, so none is needed today.
 
 Pitfalls found live:
 - A `reqwest` error message contains the request URL, and upload session and monitor URLs carry a
   temporary `tempauth` token. kelma strips the URL from those errors.
 - Uploads and the recycle bin call sometimes ran past the client's 60 s timeout during the live runs.
   Retrying worked.
+
+## Search, quick views and shared files (`teams_proto::search`, `views`) 2026-11-19
+
+Live checks ran with `kelma-cli find …` (counts and shapes only). Message content was never printed.
+
+| Call | Notes | Live |
+|---|---|---|
+| `POST substrate.office.com/searchservice/api/v2/query` `entityType:"Message"`, `contentSources:["Teams"]`, `query.queryString:"NOT (isClientSoftDeleted:TRUE) AND (<text>)"` plus ` AND clientthreadid:<conv>`, ` AND …FromSkypeInternalId_String:<mri>`, ` AND sent>=YYYY-MM-DD`; `from`/`size` page it | headers `x-anchormailbox: Oid:<oid>@<tenant>`, `Origin`/`Referer: https://teams.microsoft.com`, `X-ClientType: MicrosoftTeams`, `X-ClientScenario: TeamsSearch`. Answer `EntitySets[0].ResultSets[0]{Total, MoreResultsAvailable, Results[]}`; each result has `HitHighlightedSummary` (no highlight markup came back for the queries tried, so kelma bolds the words itself), `Source{ClientConversationId, ClientThreadId, DateTimeSent, ConversationTopic, ChannelName, TeamName, From.EmailAddress.Name, MentionsPreview.IsMentioned, Extensions{…ParentMessageId, …FromSkypeInternalId, …ThreadType}}` | ✅ |
+| Message id of a hit | `ClientConversationId` is `<conv>;messageid=<id>` but that id is **not** the message's. For chat messages and channel posts the message id is `Extensions.…ParentMessageId` (a misleading name; it equals `DateTimeSent` in ms). For a channel reply both name the thread root, and the reply's own id equals `DateTimeSent` in ms (3 fractional digits; some rows have 2, so kelma looks for the nearest reply within 1.5 s). `ThreadType`: `chat`, `topic` (channel), `space`, `meeting`, `streamofnotes` (Notes) | ✅ every hit of 10 found in the chat service |
+| `mentions:<oid without dashes>` as the query text | the messages that @mention you; `MentionsPreview.IsMentioned` was true for all 50 of the first page | ✅ |
+| Substrate `File`, `Chat` and `TeamsChannel` entities | `File` answers `500` for this account, `Chat` and `TeamsChannel` answered 0 results. kelma searches files through Graph search (`onedrive::search`) and chats and channels from the local cache | ❌ not used |
+| `GET chat/v1/users/ME/conversations/48:threads/messages?view=msnp24Equivalent\|supportsMessageProperties&pageSize=N&startTime=1` | rows with `properties.activity{activityType:"threads", activityReason: author \| channelFollow \| deleted, sourceThreadId, sourceReplyChainId (the root post), sourceThreadTopic, activityContext.followType: ImplicitFollow}`. Replying to a post in the sandbox channel added an `author` row with `ImplicitFollow` within seconds. The newest row per thread decides; `deleted` means not followed | ✅ read |
+| Follow: `PUT …/conversations/<channel>/messages/<root>/properties?name=emotions` `{"emotions":{"key":"follow","value":"0"}}` (follow) or `"1"` (unfollow); `DELETE` with `{"emotions":{"key":"follow"}}` clears it | the post then carries a `follow` emotion with the value (read back from the message properties). Because it is stored as an emotion, kelma hides the key `follow` from the reaction chips. **Not confirmed**: `48:threads` did not change within 30 s of an explicit follow or unfollow, so whether Teams' Followed threads view reads this flag was not seen (the Teams UI was not used) | 🧪 |
+| `GET substrate.office.com/AllFiles/api/users('OID:<oid>@<tenant>')/AllShared?ThreadId=<conv>&ItemTypes=File&ItemTypes=Link&PageSize=50` | header `x-anchormailbox`. `Items[]{ItemType: File \| Link, FileData{FileName, FileUrl, FileExtension, WebUrl}, WeblinkData{Title, WebUrl}, SharedByDisplayName, SharedByMRIId, SharedDateTime, TeamsMessageId, ParentMessageId, ThreadId}`, plus `HasMoreItems` and `Bookmark` (paging not used). `48:notes` returned 5 files and 22 links; the sandbox channel returned none | ✅ |
+| `GET graph/v1.0/teams/<group id>/channels/<channel id>/filesFolder` | the channel's SharePoint folder: `id`, `parentReference.driveId`, `folder.childCount`. Its children are listed with `onedrive::children` | ✅ (the sandbox folder is empty) |
 
 ## Real-time (trouter) ✅
 
@@ -252,3 +358,217 @@ Pitfalls found live:
    resyncs. This was verified by freezing the process for 3 minutes: a message sent during the
    freeze was in the cache after resume, and a message sent after resume arrived live. Token expiry
    uses wall-clock time, because a monotonic clock stops during suspend.
+
+## Built-in apps, read only (`planner`, `workflows`, `onenote`, `lists`) 2026-11-19
+
+`kelma-cli tasks | flows | onenote | lists` run these. All calls are GETs. The tenant is a work
+tenant, so nothing was created, edited or run. Probed live with the auth broker.
+
+| App | Call | Live |
+|---|---|---|
+| To Do | Graph `GET /me/todo/lists`, `/me/todo/lists/{id}/tasks` (`dueDateTime` is a `dateTimeTimeZone`, read as UTC) | ✅ 200, 1 list, 0 tasks |
+| Planner | Graph `GET /me/planner/tasks`, `/me/planner/plans`, `/groups/{id}/planner/plans`, `/planner/plans/{id}/{tasks,buckets}` | ✅ 200, but 0 tasks and 0 plans, so only the shapes from the Graph docs back the parsers |
+| Planner, `tasks.office.com` token | `/taskAPI/beta/me/{tasks,lists}`, `/taskAPI/v1.0/me/plans` → 404, `/api/v1/me/tasks` → 503 | ❌ 3 attempts, no usable path. kelma uses Graph instead. `/me/planner/favoritePlans` and `rosterPlans` → 400 |
+| Workflows | `GET https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments?api-version=2016-11-01`, `…/environments/{env}/flows?…`, `…/flows/{flow}/runs?…&$top=N` | ✅ 200: 1 environment, 4 flows, runs with `status`, `startTime`, `endTime`, `trigger.name` |
+| OneNote | Graph `GET /me/onenote/notebooks`, `/groups/{id}/onenote/notebooks`, then the `sectionsUrl`, `sectionGroupsUrl`, `pagesUrl` and `contentUrl` links each object carries; `/pages/{id}/content` answers HTML, not JSON | ✅ notebooks: 0 personal, 2 in the teams' groups. Both notebooks have 0 sections and 0 section groups, so sections, pages and page content were **not** checked live |
+| OneNote, `onenote.com` token | `GET https://www.onenote.com/api/v1.0/me/notes/{notebooks,sections,pages}` | ✅ 200, empty. Graph covers the same data, so it is not used |
+| Lists | Graph `GET /groups/{id}/sites/root`, `/sites/{id}/lists?$select=…`, `/sites/{id}/lists/{id}/columns`, `/sites/{id}/lists/{id}/items?expand=fields&$top=100` | ✅ 2 team sites; each has only the Documents library (no user lists). Columns and items of a library were read and parsed |
+
+**Audience hosts.** The token audience is not always the API host. `Audience::Flow` mints for
+`service.flow.microsoft.com` (no DNS record) and serves from `api.flow.microsoft.com`;
+`Audience::OneNote` mints for `onenote.com` and serves from `www.onenote.com`. `request_as` now
+accepts those two API hosts as well, and still refuses every other host.
+
+**Team notebooks.** A team's notebook lives under its Microsoft 365 group, so `/me/onenote`
+alone finds none. Sections can sit in nested section groups, so kelma follows `sectionGroupsUrl`
+up to 4 levels.
+
+## Teams and channels (`teams_proto::teams`, `tags`, `engage`) 2026-11-19
+
+Code: `crates/teams-proto/src/{teams,tags,engage}.rs`, CLI `kelma-cli team …`. Plan:
+`plans/teams-and-channels.md` (T0.1 to T3.1).
+
+**How T0.1 was done without a browser.** The web client's JavaScript is public. The shell
+`https://teams.microsoft.com/v2/` (fetched with a desktop user agent) lists `runtime-<hash>.js`,
+which maps lazy chunk ids to a name and a hash (`a.un`, `a.uh`). The chunk
+`services-teams-and-channels-<hash>.js` (22 KB) holds every middle-tier teams and channels call
+(url, method, headers); `services-people-targeting` holds the tag calls. Bodies came from the same
+chunks and from the open-source clients, then each call was run against a test team. The GraphQL
+layer of the web client maps to these calls: for example `showChannel` is two property writes and
+`editChannel` is a `PATCH`.
+
+Legend: ✅ run live against the test team (the only team the writes touched), 🧪 body and parser
+unit-tested only (not run), ❌ failed live.
+
+`MT` = `regionGtms.middleTier` (`https://teams.microsoft.com/api/mt/<region>`), same auth as the
+profile calls. Team and channel ids go in the path percent-encoded. `CSA` = the aggregator.
+`chat` = the chat service. `TID` = team thread id (`19:…@thread.tacv2`, also the id of its General
+channel), `GID` = the AAD group id (`teamSiteInformation.groupId`).
+
+### T1.1 List
+| Call | Notes | Live |
+|---|---|---|
+| `GET CSA/api/v3/teams/users/me?isPrefetch=false&enableMembershipSummary=true&supportsAdditionalSystemGeneratedFolders=true&supportsSliceItems=true&enableEngageCommunities=false` | `teams[]{id, displayName, description, accessType (3 public), isTenantWide, isFavorite (= shown), isCollapsed, isArchived, isDeleted, memberRoleString (Admin/User/Guest), teamSiteInformation.groupId, membershipSummary{totalMemberCount, adminRoleCount, botCount}, smtpAddress, teamSettings, teamGuestSettings, channels[]}`. `channels[]{id, displayName, channelType (0 standard, 1 private), isShared, isGeneral, isFavorite (= shown), isPinned, isMuted, isArchived, isDeleted, isMember, isModerator, memberRoleString, interest, creationTime, parentTeamId}`. `totalMemberCount` counts the 3 bots every team has, so kelma subtracts `botCount`. Channels carry no description and no substrate group id. Pending invites are not in this answer | ✅ |
+
+### T1.2 Discover and join
+| Call | Notes | Live |
+|---|---|---|
+| `GET MT/beta/teams/suggested?accessType=<n>&enableFallback=true` | `accessType` None 0, Private 1, Secret 2, Public 3. `{type, value:[{groupId, displayName, description, accessType:"Public", membersCount, relevantMembers[{smtpAddress}]}]}` | ✅ lists |
+| `GET MT/beta/teams/find?keywords=<k>&accessType=<n>&enableKeywordSearch=false&top=100&skipToken=` | same shape. Returned 0 for a one-letter keyword | ✅ lists |
+| `POST MT/beta/teams/joinRequest/<GID>` | join a public team, or ask to join a private one | 🧪 (rule: no joins of real teams) |
+| `POST MT/beta/teams/cancelJoinRequest/<GID>` | | 🧪 |
+| `POST MT/beta/teams/joinByCode?restrictJoinToPublicTeam=<bool>` | body is the code as a JSON string (`"abc1234"`). `{"joinCode":…}` answers `400 Invalid joinCode`. With `restrictJoinToPublicTeam=false` the service answered `400 restrictJoinToPublicTeam query parameter must be set to true` for a private team's code; with `true` it answered `JoinTeamInfo{value{accessType, description, displayName, isTeamOwnerApprovalRequired, …}}`. Tried only with the test team's own code (already a member). kelma's join dialog always sends `true`, the only value that worked live | ✅ (own code) |
+| `GET/PUT/DELETE MT/beta/teams/<TID>/joinCode` | GET: `204` without a code, else the plain-text code. PUT makes a new code and answers it as plain text. DELETE removes it | ✅ |
+
+### T1.3 Show, hide, pin
+| Call | Notes | Live |
+|---|---|---|
+| Hide a standard channel | `PUT chat/v1/threads/<channel>/members/<me>` `{"expiration":<now s + 14 days>,"interest":"NotInterested"}`, **then** `PUT chat/v1/users/ME/conversations/<channel>/properties?name=favorite` `{"favorite":"false"}`. Sending `favorite` first does nothing | ✅ CSA `isFavorite` flipped |
+| Show again | `{"expiration":0,"interest":"Interested"}` then `{"favorite":"true"}` | ✅ |
+| Private and shared channels | only the `favorite` property. General: also `isGeneralChannelFavorite` | ✅ private; General 🧪 |
+| Hide or show a team | `PUT chat/v1/users/ME/conversations/<TID>/properties?name=favorite` | ✅ |
+| `GET/POST/DELETE CSA/api/v1/teams/users/me/pinnedChannels` | GET `{orderVersion, pinChannelOrder[]}`. POST `{"newlyPinnedChannels":[id]}`, DELETE `{"channelIdsToUnpin":[id]}`, with `if-match: <orderVersion>` (retry once on 412) | ✅ pin, list, unpin |
+| `PUT/DELETE MT/beta/teams/<channelId>/setDefaultChannel` | "Show for everyone automatically" (the channel id sits where the team id usually goes). Thread property `favDefault` flips `False`/`True` | ✅ |
+| Leave a team | `PUT MT/beta/teams/<TID>/members` `{groupId, userMri:<me>, updateType:"Left"}` (same call as removing a member) | 🧪 |
+
+### T2.1 Create a channel
+| Call | Notes | Live |
+|---|---|---|
+| Standard: `POST MT/beta/teams/<TID>/channels` | `{displayName, description, groupId:<GID>, channelType:"Standard"}`; `chatModality:"Conversational"` makes a threaded-chat channel (`PostReply` is posts). Answer `{value:{objectId:<channel id>}}` | ✅ both layouts |
+| Private or shared: `POST https://teams.microsoft.com/fabric/<geo>/templates/api/teams/<GID>/channels?forceSync=false` | token audience `https://templates.teams.microsoft.com` (new `Audience::Templates`, only sent to `teams.microsoft.com/fabric/…`), header `X-AnchorMailbox: OID:<my oid>@<tenant id>`. Body `{spaceThreadId:<TID>, displayName, description, channelType:"Private"\|"Shared", sharedWithParentTeam:false}`. The answer has `groupId:"OID:<substrate guid>@<tenant>"`, `hostTeamId`, `hostTenantId`, `chatModalityType`, `createdTime` but **not the thread id**, so kelma finds the new channel in the list by name | ✅ private; shared 🧪 |
+| `<geo>` | the last segment of the middle-tier URL without its `-NN` (`…/mt/emea` gives `emea`) | ✅ |
+
+### T2.2 Edit, delete, archive, moderation
+| Call | Notes | Live |
+|---|---|---|
+| Edit a standard channel `PATCH MT/beta/teams/<TID>/channels/<c>` | `{displayName?, description?}` | ✅ |
+| Edit a private channel `PATCH …/fabric/<geo>/templates/api/teams/<GID>/channels/OID:<substrateGroupId>@<tenant>?forceSync=false` | same body. The substrate id is `properties.substrateGroupId` of `GET chat/v1/threads/<channel>` | ✅ |
+| Delete a standard channel `DELETE MT/beta/teams/<TID>/channels/<c>` | body `{id, hostTeamId, isGeneral:false}`. Restorable | ✅ |
+| Delete a private channel | `DELETE` the fabric path above | ✅ (it does not appear in the deleted list) |
+| Restore `PATCH MT/beta/teams/<TID>/channels/<c>/restore` | no body | ✅ |
+| Deleted or archived list `PUT MT/beta/teams/<TID>/allchannels` | `{"Channels":[{"Type":"standard","State":["deleted"]},{"Type":"private",…},{"Type":"shared",…}]}` answers `[{objectId, displayName, description, groupId, channelState, createdDateTime, deleteTime (ms as string)}]` | ✅ |
+| Archive `POST MT/beta/teams/<TID>/channels/<c>/archive` | ❌ `404` (also with the group id, an unencoded channel id and a body). The web client's own flag is the thread property: `PUT chat/v1/threads/<channel>/properties?name=archivalLevel` `{"archivalLevel":"Topic"}` archives (CSA `isArchived` turns true), `"None"` unarchives (an empty string is refused). Right after archiving a private channel the unarchive answered one transient `500`, then worked | ✅ property route |
+| Moderation (who posts, replies, pins; bots; connectors) | thread property `channelSettings`: `PUT chat/v1/threads/<channel>/properties?name=channelSettings` `{"channelSettings":"{\"channelPostPermissions\":\"Moderators\",\"allowReplies\":\"Everyone\",\"allowPinPosts\":\"Everyone\",\"allowBotsPost\":true,\"allowConnectorsPost\":true}"}` (a JSON **string**). Read it back from `properties.channelSettings` of `GET chat/v1/threads/<channel>`. `PATCH …/channels/<c>` with `channelSettings` answers `500 updateChannelContract cannot be null`. Values: `Everyone`, `Moderators`. The service stores it; enforcement was not tried with a second account | ✅ stored and read back (standard and private) |
+
+### T2.3 Members
+| Call | Notes | Live |
+|---|---|---|
+| Roster `GET chat/v1/threads/<TID or channel>/members?view=msnp24Equivalent&pageSize=100&selectMemberRoles=Admin\|User\|Guest` | `{members:[{id (mri), role:"Admin"\|"User"\|"Guest"}], totalMemberCount}`. Bots have `28:` ids. `GET …/threads/<id>` alone lists only the first member | ✅ |
+| Add or change role `PUT MT/beta/teams/<TID>/bulkUpdateRoledMembers?allowAsyncAddition=true` | `{users:[{mri, role: 0 member, 1 guest, 2 owner}], groupId:<GID>}` | ✅ add (member). Role to owner and back answered `200`; the roster did not show the owner within 4 s and the owner count was not re-read before reverting, so 2 = owner comes from the open-source clients |
+| Remove or leave `PUT MT/beta/teams/<TID>/members` | `{groupId, userMri, updateType:"Left"}` | 🧪 |
+| Private channel members `POST fabric …/channels/OID:<substrate>@<tenant>/users?forceSync=false` | `{users:[{id:"OID:<user oid>@<tenant>", role: 1 member, 2 owner}]}`; `DELETE …/users/OID:<oid>@<tenant>?forceSync=false` | 🧪 (would notify a colleague) |
+| Pending requests | `POST MT/beta/teams/findJoinRequests` (owner view of join requests). Nine read-only tries against the test team failed: the body must be a `FindJoinRequestsContext` object (a JSON array answers `400 Cannot deserialize … FindJoinRequestsContext`), and an object with `groupList` as ids, as `{groupId}` objects, with `skipToken`, or wrapped in `findJoinRequestsContext` all answer `500 groupList cannot be null`. The property that holds the groups is not named `groupList` at the top level; not found | ❌ body unknown |
+| Guests | `joinRequestAdminAction`, `…/inviteAndAddGuest` exist in the web client; not wired | not done |
+
+### T2.4 Tags (CSA `teams/<TID>/tags`)
+| Call | Notes | Live |
+|---|---|---|
+| List `GET CSA/api/v1/teams/<TID>/tags?tagType=Team&includeTeamTagSettings=true` | array of `{tagId, tagName, tagDescription, memberCount, memberIds[], currentMemberIsPartOfTag, scheduledMembers, tagType:"team", version}` | ✅ |
+| All teams `GET CSA/api/v1/teams/users/me/teams/tagCards?tagType=Team&pageSize=500` | `{continuationToken, teamTagCards:[{teamId, teamName, tagCards[]}]}` | ✅ |
+| Create `POST CSA/api/v1/teams/<TID>/tags` | `{tagName, tagDescription, memberIds:[mri], showInSection:false}`; the answer is the tag | ✅ |
+| Rename `PATCH CSA/api/v2/teams/<TID>/tags/<id>` | **v2**, `if-match: <version>`, `{tagName?, tagDescription?}`. On v1 it answers `400 Unexpected character … '{'` | ✅ |
+| Delete `DELETE CSA/api/v1/teams/<TID>/tags/<id>` | | ✅ |
+| Members `GET …/tags/<id>/members?pageSize=200` | `{members:[{memberId}], totalMembersCount}` | ✅ |
+| Add people `POST …/memberTags?tagType=Team&action=add` | `{memberIds, tagNames}` (by tag **name**) | ✅ (myself) |
+| Remove people `POST …/memberTags?tagType=Team&action=delete` | `{memberIds, tagIds}`. Removing the last member deletes the tag | ✅ |
+| Mention | mri `tag:<tagId>`, `mentionType:"tag"` (`Tag::mention`, see `mentions.rs`) | 🧪 |
+
+### T2.5 Channel email address
+`GET MT/beta/channels/<c>/email` answers `404` until an address exists, then
+`{allowedSenders:{allowedSenderType:"members"}, emailAddressDetails:{emailId:"<id>.<tenant domain>@amer.teams.ms"}}`.
+`POST` creates it (`{"allowedSenderType":"Anyone"}`) and answers that object. `PUT` changes who may
+write (`Anyone`, `Members`, `Domains` with `allowedDomains:[…]`; other names answer `500 Error
+converting value`) and answers empty. `DELETE` removes it. ✅ all four.
+
+### T2.6 / T2.7 Team
+| Call | Notes | Live |
+|---|---|---|
+| Name check `POST MT/beta/teams/validateNaming` | `{displayName, displayNamePrefix:null, displayNameSuffix:null, mailNicknamePrefix:null, mailNicknameSuffix:null, groupId:null}` gives `{value:{mailNickname}}` | ✅ |
+| Create `POST MT/beta/teams/create` | `{displayName, description, accessType:1, isTenantWide:false, validationRequired:false}` gives `{value:{siteInfo:{groupId}, skypeThreadId, …}}`. Public is `accessType:3`. "From a group, team or template" is not wired (`createTeamFromTemplate`, `migrateGroup`, `clone` exist) | ✅ private |
+| Edit `PATCH MT/beta/teams/<TID>` | `{displayName?, description?, isDiscoverable?}` gives `true`. Needs the thread id (a group id answers `400 Invalid thread id`). An empty body answers `400 Request should have atleast one of the properties set` | ✅ |
+| Settings `PATCH MT/beta/teams/<TID>/teamSettings` | `{"spaceAdminSettings":"<JSON string>"}` where the string is a partial `{"userSettings":{…},"guestSettings":{…}}` merged into the stored settings. Keys are the stored ones: `createTopic`, `updateTopic`, `deleteTopic`, `editEnabled`, `deleteEnabled`, `giphyEnabled`, `giphyRating`, `teamMention`, `channelMention`, `installApp`, `uploadCustomApp`, `createPrivateSpace`, … (the GraphQL names such as `createAndUpdateChannel` answer `AdminSettingsParseFailed`). Read: `GET chat/v1/threads/<TID>` → `properties.spaceAdminSettings` (JSON string) | ✅ set and read back |
+| Archive `POST MT/beta/teams/<TID>/archive` (`/unarchive`) | ❌ `500 ArchiveUnarchiveEnqueuePsOperationFailed`, with and without `setSpoSiteReadOnlyForMembers`, on a team minutes old and again later. The thread property `archivalLevel` = `Space` flips CSA `isArchived` for the team (`None` back), but that is only the chat-level flag and does not archive the Microsoft 365 group | ❌ middle tier; property ✅ |
+| Delete `DELETE MT/beta/teams/<TID>/delete` | | 🧪 (the test team stays) |
+| Discoverable, picture, retention labels, renew | `PUT teams/<t>/discoverable`, `POST teams/<t>/profilepicture?threadId=`, `GET teams/<t>/retentionlabels`, `POST teams/<t>/renew` exist in the web client; not wired (`isDiscoverable` also goes through the team `PATCH`) | not done |
+
+### T2.8 Channel notifications
+Write: `PUT chat/v1/users/ME/conversations/<channel>/properties?name=channelNotificationSettings`
+`{"channelNotificationSettings":"{\"allNewPosts\":\"On\",\"dskNotif\":\"On\",\"includeReplies\":true}"}`
+(JSON string; `On` + `dskNotif` = banner and feed, `On` = feed, `Off` = off). Read it back from
+`properties.channelNotificationSettings` of `GET chat/v1/users/ME/conversations/<channel>?view=msnp24Equivalent`
+(also `isfollowed`). ✅ all three levels. The batch read on `uis.teams.microsoft.com` needs one more
+audience and was not needed. Muting a channel uses the chat `alerts` property of `actions.rs`.
+
+### T2.9 Storyline, T3.1 Communities (Viva Engage, `Audience::Yammer`, `https://api.yammer.com/api/v1`)
+| Call | Notes | Live |
+|---|---|---|
+| `GET groups.json?mine=1` | communities: `{id, name, full_name, description, privacy, company_group, stats{members, last_message_at}, web_url}` | ✅ 1 community (the company-wide one) |
+| `GET messages/in_group/<id>.json?limit=<n>&older_than=<id>` | `{messages:[{id, thread_id, sender_id, replied_to_id, created_at ("2026/09/20 08:53:00 +0000"), body{plain, rich}, liked_by{count}, attachments[], web_url}], references:[users and threads], meta}`; sender names come from `references` | ✅ |
+| Storyline post `POST messages.json` | ⚠️ body `{"body":"…","is_storyline_post":true}` is a guess the Engage client never uses; with no `group_id` it may land in All Company. Do not send. The real call is GraphQL `createUserWallMessage` on `engage.cloud.microsoft/graphql`, with `isDraft` for an unpublished draft: see `docs/research/storyline.md` | ⛔ |
+| `engageCommunities[]` in the CSA v3 list | empty for this account, so the web client's own list is not used | ✅ |
+
+Communities are read-only in kelma; replying or reacting is not wired.
+
+### Test team
+The writes ran against one private team created by `kelma-cli team sandbox create`; its ids live
+outside the repo (`KELMA_SANDBOX_FILE`). One colleague was added to it, as a member. Everything
+else created for the tests (channels, tags, addresses) was removed again except one standard
+channel named "tests". The CLI refuses to write anywhere else: every write targets the sandbox
+unless `--team <thread id> --group <group id>` is given, and a channel id must belong to that team.
+
+## Chat list, channel posts and cards (plan 8.1 to 8.8) 2026-11-19
+
+Code: `crates/teams-proto/src/{sections,channel_files,posts,chat_card}.rs`, the engine side in
+`crates/kelma/src/backend/{lists,channels}.rs`. Legend as above; the sandbox is the private test
+team of "Test team" (channel `tests`), plus the notes chat.
+
+### Chat list sections (8.1)
+| Call | Notes | Live |
+|---|---|---|
+| `GET CSA/api/v1/teams/users/me/conversationFolders?supportsAdditionalSystemGeneratedFolders=true&supportsSliceItems=true` | `{conversationFolders[], conversationFolderOrder[], folderHierarchyVersion, migratedPinnedToFavorites, supportedSlicesMetadata}`. A folder is `{id (guid), name, folderType, sortType, isExpanded, isDeleted, version, createdTime, conversationFolderItems[]}`; an item is `{conversationId, threadType (chat, meeting, space, topic, streamofnotes), createdTime, lastUpdatedTime}`. `folderType` is `Favorites`, `UserCreated`, or a system folder (`RecentChats`, `TeamsAndChannels`, `MeetingChats`, `MutedChats`, `QuickViews`, `EngageCommunities`) which holds no items of its own. `conversationFolderOrder` lists every folder id in display order. `v2` answers the same under `conversationFolderResponse` | ✅ 5 own sections, Favorites with 9 items |
+| `POST` / `PUT /<id>` / `DELETE` / `DELETE /<id>` / `PATCH batchUpdateExpandedState` on the same URL | create, update (rename, items), delete items, delete a section, open or close sections. The web client's `services-chat` and its CSA transport define them, but the request bodies are built by its GraphQL layer (`createConversationFolder`, `moveItemToConversationFolder`, `reorderConversationFolders` mutations), which is not in the public chunks | not run: a probe would have changed the real account's sections |
+
+kelma reads the sections and keeps its own changes locally (sections it creates, moves, hidden chats,
+list options) in the store's key/value table under `lists`. A local move wins over what Teams has.
+Writing the sections back needs a capture of the web client's mutation requests (DevTools), see
+the plan item.
+
+### Chat item menu and list state (8.2, 8.3)
+- Mute: `PUT chat/v1/users/ME/conversations/<id>/properties?name=alerts` (`teams_proto::actions::set_muted`, from 5.x). The state is read from the aggregator: `chats[].members[].isMuted` of our own member entry (`ChatMeta::muted_by`), channels from `isMuted`.
+- Hide: `unpinnedTime` property (`set_hidden`); kelma also keeps a local "hidden until a newer message".
+- Meeting chats: `chats[].chatType` is `meeting` and the chat service kind is the meeting thread (`ConvKind::Meeting`).
+- Chat link: `https://teams.microsoft.com/l/chat/<id>/0`. Channel link: `https://teams.microsoft.com/l/channel/<id>/<name>?groupId=<group>&tenantId=<tenant>`.
+
+### Channel menu (8.5)
+Reuses the T1.3 and T2.8 calls (`set_channel_shown`, `set_channel_notifications`,
+`channel_notifications`, `remove_private_channel_member`). Hidden channels come from
+`teams[].channels[].isFavorite == false`.
+
+### Files in channels and attached cloud files (8.6, 8.7)
+| Call | Notes | Live |
+|---|---|---|
+| `GET graph/v1.0/teams/<groupId>/channels/<channelId>/filesFolder` | drive item of the channel's folder: `id`, `name`, `parentReference.driveId`. `groupId` is `teamSiteInformation.groupId` of the CSA v3 list | ✅ sandbox |
+| `PUT graph/v1.0/drives/<driveId>/items/<folderId>:/<name>:/content?@microsoft.graph.conflictBehavior=rename` | up to 4 MB; larger files use `createUploadSession` on the same path. Then `GET drives/<d>/items/<id>?$select=id,name,webUrl,sharepointIds` and a message with `properties.files` as for a chat | ✅ a 25-byte file posted to the sandbox channel, read back as a file card, then the post and the drive item were deleted |
+| Attach a cloud file | `GET drives/<d>/items/<id>?$select=…`, then in a chat `POST drives/<d>/items/<id>/invite` for the other members (any drive, not only `me`), then the same message | ✅ an existing OneDrive file posted to the notes chat, then deleted. The invite is unit-tested only (it would share with a colleague) |
+| Picker | `GET me/drive/recent`, `GET me/drive/sharedWithMe` (as in `onedrive::browse`), My files and the team libraries | ✅ |
+
+Not verified: that a second account opens a channel file. The folder is the one all channel members
+already see.
+
+### Channel posts (8.4)
+| Call | Notes | Live |
+|---|---|---|
+| Announcement | `POST …/conversations/<channel>/messages` through `delivery::Delivery::Announcement` (`send_message_delivery`): `properties.title` = the headline, `properties.cards` = a JSON **string** of one card `{appId:"announcement-card", cardClientId, contentType:"application/vnd.microsoft.teams.messaging-announcementBanner", content:{colorTheme:"<0..11>"}}`, and `properties.subject`. kelma offers five colors (theme 0, 1, 2, 3 and 5). The theme palette of Teams was not captured, so the banner is drawn in an approximate color | ✅ stored and read back with title, theme and subject, parsed by `delivery::parse_announcement`. How Teams draws the banner was not seen |
+| Follow a thread | `PUT chat/v1/users/ME/conversations/<channel>/rcmetadata/<root id>` `{"f": 1}` (0 unfollows). `{"f": true}` answers `400 Unexpected character`. Read back with `POST …/getrcmetadata` `{"rootMessageIds":[<root>]}` → `rcMetadataList[].rcMetadata.f` | ✅ 1 then 0 |
+| Also send to channel | not found in the web client's public JavaScript (no property or call by that name), so kelma does not offer it | not built |
+| Pin a post | the web client reads pinned posts; the write call was not captured | not built |
+
+### Adaptive cards (8.8)
+`teams_proto::chat_card` turns the card JSON into a flat list of rows (text with size, weight,
+color and subtle; fact rows; column sets with auto/stretch/weighted cells; images; action buttons;
+container `style` as a band color on its rows; the announcement banner). `Action.OpenUrl` opens the
+browser, every other action is drawn disabled. The raw attachments are stored with the message (key
+`c` of the stored extras), so cards are drawn from the structure and the flattened text stays the
+preview.
+
+Docs synced to commit 09fe5c2 ("feat(kelma): chat list sections and menus, channel post cards, cloud attach and adaptive cards (chat 8.1 to 8.8)", 2026-11-19)

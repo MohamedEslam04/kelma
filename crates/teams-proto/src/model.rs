@@ -42,6 +42,18 @@ pub struct Message {
     pub subject: Option<String>,
     /// People, channels, teams and tags this message mentions.
     pub mentions: Vec<crate::mentions::Mention>,
+    /// The card attachments (`[{contentType, content}]`) as JSON, when they can be drawn as a
+    /// structured card (see [`crate::chat_card`]).
+    pub card: Option<String>,
+    /// Delivery importance (`properties.importance`): Standard, Important or Urgent.
+    pub importance: crate::delivery::Importance,
+    /// Headline and banner of a channel announcement, if the message is one.
+    pub announcement: Option<crate::delivery::Announcement>,
+    /// `properties.languageStamp` (`languages=de:100;length:82;&detector=Bling`): the language
+    /// Teams detected in the message, which decides the Translate link.
+    pub language_stamp: Option<String>,
+    /// The link preview cards the sender attached (`properties.links`), see [`crate::urlpreview`].
+    pub links: Vec<crate::urlpreview::LinkPreview>,
 }
 
 impl Message {
@@ -162,6 +174,18 @@ fn message_content(v: &Value, props: Option<&Value>) -> String {
     raw.to_string()
 }
 
+/// The card attachments of a message as JSON, if there is something to draw.
+fn message_card(v: &Value, props: Option<&Value>) -> Option<String> {
+    let attachments = json_or_string(props.and_then(|p| p.get("cards"))).or_else(|| {
+        let raw = str_field(v, "content")?;
+        raw.contains("<Swift b64=")
+            .then(|| crate::chat_card::swift_attachments(raw))
+            .flatten()
+    })?;
+    (!crate::chat_card::rows_for_attachments(&attachments, "").is_empty())
+        .then(|| attachments.to_string())
+}
+
 /// Builds a [`Message`] from a chat-service message object (REST history or trouter resource).
 ///
 /// `fallback_conversation` is used when the object carries no conversation link.
@@ -218,6 +242,17 @@ pub fn message_from_json(v: &Value, fallback_conversation: &str) -> Option<Messa
             .filter(|s| !s.is_empty())
             .map(str::to_owned),
         mentions: crate::mentions::parse_mentions(props),
+        card: message_card(v, props),
+        importance: crate::delivery::Importance::from_properties(props),
+        announcement: crate::delivery::parse_announcement(props),
+        language_stamp: props
+            .and_then(|p| str_field(p, "languageStamp"))
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
+        links: props
+            .and_then(|p| p.get("links"))
+            .map(crate::urlpreview::parse_links_property)
+            .unwrap_or_default(),
     })
 }
 
@@ -440,7 +475,7 @@ mod tests {
             "content": "<p>تمام 👍</p>",
             "properties": {
                 "emotions": "[{\"key\":\"like\",\"users\":[{\"mri\":\"8:orgid:aaa\",\"time\":1,\"value\":\"1\"}]},{\"key\":\"heart\",\"users\":[]}]",
-                "files": "[{\"fileName\":\"velents-docs-demo.mp4\",\"fileType\":\"mp4\",\"objectUrl\":\"https://x.sharepoint.com/a.mp4\",\"fileInfo\":{\"shareUrl\":\"https://x.sharepoint.com/:v:/g/a\"}}]",
+                "files": "[{\"fileName\":\"contoso-docs-demo.mp4\",\"fileType\":\"mp4\",\"objectUrl\":\"https://x.sharepoint.com/a.mp4\",\"fileInfo\":{\"shareUrl\":\"https://x.sharepoint.com/:v:/g/a\"}}]",
                 "edittime": "1795001090000"
             }
         })
@@ -464,9 +499,59 @@ mod tests {
                 users: vec!["8:orgid:aaa".into()]
             }]
         );
-        assert_eq!(m.files[0].name, "velents-docs-demo.mp4");
+        assert_eq!(m.files[0].name, "contoso-docs-demo.mp4");
         assert_eq!(m.files[0].url, "https://x.sharepoint.com/:v:/g/a");
         assert!(m.is_chat_content());
+    }
+
+    #[test]
+    fn message_carries_language_stamp_and_link_previews() {
+        let plain = message_from_json(&msg_json(), "").unwrap();
+        assert_eq!(plain.language_stamp, None);
+        assert!(plain.links.is_empty());
+
+        let mut v = msg_json();
+        v["properties"]["languageStamp"] = json!("languages=de:100;length:82;&detector=Bling");
+        v["properties"]["links"] = json!(
+            r#"[{"@type":"http://schema.skype.com/HyperLink","url":"https://www.rust-lang.org/","preview":{"previewurl":"https://urlp.asm.skype.com/v1/url/image/Thumbnail?url=x","title":"Rust","description":"A language"},"previewenabled":true}]"#
+        );
+        let m = message_from_json(&v, "").unwrap();
+        assert_eq!(
+            m.language_stamp.as_deref(),
+            Some("languages=de:100;length:82;&detector=Bling")
+        );
+        assert_eq!(m.links.len(), 1);
+        assert_eq!(m.links[0].title.as_deref(), Some("Rust"));
+        assert_eq!(m.links[0].url, "https://www.rust-lang.org/");
+    }
+
+    #[test]
+    fn message_carries_importance_and_announcement() {
+        use crate::delivery::Importance;
+        let plain = message_from_json(&msg_json(), "").unwrap();
+        assert_eq!(plain.importance, Importance::Standard);
+        assert!(plain.announcement.is_none());
+
+        let mut v = msg_json();
+        v["properties"]["importance"] = json!("urgent");
+        assert_eq!(
+            message_from_json(&v, "").unwrap().importance,
+            Importance::Urgent
+        );
+        v["properties"]["importance"] = json!("high");
+        assert_eq!(
+            message_from_json(&v, "").unwrap().importance,
+            Importance::Important
+        );
+
+        v["properties"]["title"] = json!("Town hall");
+        v["properties"]["cards"] = json!(
+            r#"[{"appId":"announcement-card","contentType":"application/vnd.microsoft.teams.messaging-announcementBanner","content":{"colorTheme":"3"}}]"#
+        );
+        let m = message_from_json(&v, "").unwrap();
+        let a = m.announcement.unwrap();
+        assert_eq!(a.title, "Town hall");
+        assert_eq!(a.color_theme.as_deref(), Some("3"));
     }
 
     #[test]
@@ -577,5 +662,29 @@ mod tests {
         assert_eq!(c("0;1800;0").unread_bookmark, None);
         let none = conversation_from_json(&serde_json::json!({"id": "19:b@thread.v2"})).unwrap();
         assert_eq!(none.unread_bookmark, None);
+    }
+
+    #[test]
+    fn cards_and_the_announcement_headline_are_kept_for_drawing() {
+        let mut v = msg_json();
+        v["content"] = json!("<p>body</p>");
+        v["properties"] = json!({
+            "title": "Release 2.4",
+            "cards": "[{\"contentType\":\"application/vnd.microsoft.teams.messaging-announcementBanner\",\"content\":{\"imageData\":{\"colorTheme\":\"green\"}}}]"
+        });
+        let m = message_from_json(&v, "19:abc@thread.tacv2").unwrap();
+        assert_eq!(
+            m.announcement.as_ref().map(|a| a.title.as_str()),
+            Some("Release 2.4")
+        );
+        let card: Value = serde_json::from_str(m.card.as_deref().unwrap()).unwrap();
+        let rows = crate::chat_card::rows_for_attachments(&card, "Release 2.4");
+        assert_eq!(rows[0].kind, crate::chat_card::Kind::Banner);
+        // A plain message has neither, and a voice-message card is not drawn as a card.
+        let plain = message_from_json(&msg_json(), "19:abc@thread.v2").unwrap();
+        assert!(plain.card.is_none() && plain.announcement.is_none());
+        let mut voice = msg_json();
+        voice["properties"] = json!({"cards": [{"contentType": "application/vnd.microsoft.card.audio", "content": {"media": [{"url": "https://x"}]}}]});
+        assert!(message_from_json(&voice, "c").unwrap().card.is_none());
     }
 }

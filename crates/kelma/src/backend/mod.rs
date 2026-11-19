@@ -16,13 +16,31 @@ use teams_proto::Client;
 
 mod actions;
 mod activity;
+pub(crate) mod appstore;
 mod attach;
 mod cal;
+pub(crate) mod call;
+#[cfg(feature = "calls")]
+pub(crate) mod call_direct;
+mod channels;
+pub(crate) mod composer_apps;
 mod drafts;
+pub(crate) mod drive;
+pub(crate) mod engage;
+mod find;
+mod lists;
 mod live;
+mod manage;
+mod media;
+mod mentions;
 mod outbox;
+mod people;
+#[cfg(test)]
+mod people_live;
 mod render;
 mod send;
+pub(crate) mod settings;
+mod shared;
 mod sync;
 mod unread;
 mod util;
@@ -30,9 +48,33 @@ mod util;
 pub use activity::ActivityCmd;
 #[cfg(test)]
 pub(crate) use activity::{State as ActivityState, row_data as activity_row_data};
-pub use cal::{CalCmd, CalData};
+pub use appstore::AppsCmd;
 #[cfg(test)]
-pub use cal::{Ctx, build, parse_view};
+pub use cal::{
+    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, ProposalRow, SuggestRow, build, filter_opts,
+    parse_view, peek_data, room_rows, sched_rows,
+};
+pub use cal::{
+    CalCmd, CalData, DetailData, FormFields, FormOpen, Panels, PeekData, PermRow, RoomsPush,
+    SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, share_roles, slot_for_pick,
+    slot_minutes,
+};
+#[cfg(feature = "calls")]
+pub use call_direct::CallCmd as DirectCallCmd;
+pub use channels::ChannelCmd;
+pub use composer_apps::ComposerAppsCmd;
+pub use drive::DriveCmd;
+pub use engage::EngageCmd;
+pub use find::FindCmd;
+pub use lists::ListsCmd;
+pub use manage::{
+    CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
+    SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
+};
+pub use media::MediaCmd;
+#[cfg(test)]
+pub(crate) use media::decode_for_test;
+pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
 #[derive(Debug, Clone)]
@@ -59,6 +101,8 @@ pub enum Cmd {
     AttachFile,
     CopyLink(String),
     ToggleSave(String),
+    /// The composer's "Mark as important" state, sent right before the message it applies to.
+    SetImportant(bool),
     Pin(String),
     /// Message menu "Mark as unread": the chat turns unread from this message on.
     MarkUnread(String),
@@ -82,6 +126,24 @@ pub enum Cmd {
     MarkAllRead,
     Calendar(CalCmd),
     Activity(ActivityCmd),
+    Find(FindCmd),
+    People(PeopleCmd),
+    Teams(TeamsCmd),
+    Settings(settings::SettingsCmd),
+    Drive(DriveCmd),
+    /// Viva Engage: a community's read-only feed (plan S3.2).
+    Engage(EngageCmd),
+    /// The chat list: sections, item menu, options, channel menu (plan 8.1 to 8.3, 8.5).
+    Lists(ListsCmd),
+    /// The channel Posts tab (plan 8.4).
+    Channels(ChannelCmd),
+    /// The image viewer, Translate and link previews (plan 9.5 to 9.7).
+    Media(MediaCmd),
+    Apps(AppsCmd),
+    /// The call window (pre-join, meeting controls, call ended).
+    Call(call::CallCmd),
+    /// The composer's "+" apps picker (plan S3.6).
+    ComposerApps(ComposerAppsCmd),
     SetEnterSends(bool),
     /// The composer text changed.
     DraftEdited(String),
@@ -95,6 +157,9 @@ pub enum Cmd {
     /// A file dropped on the window.
     AddFile(std::path::PathBuf),
     RemoveAttachment(usize),
+    /// 1:1 calls: the incoming toast and the outgoing ringing screen.
+    #[cfg(feature = "calls")]
+    DirectCall(DirectCallCmd),
 }
 
 #[derive(Default)]
@@ -132,6 +197,8 @@ struct View {
     at_bottom: bool,
     /// New messages that arrived while scrolled up; shown on the jump button.
     new_count: usize,
+    /// "Mark as important" is on for the next message (set by the composer just before a send).
+    important: bool,
     /// Latest composer text of the current chat as the engine knows it.
     draft_text: String,
     /// `draft_text` (or the reply target) changed since it was last written to the store.
@@ -170,6 +237,21 @@ pub struct Engine {
     view: Mutex<View>,
     dirty: Mutex<Dirty>,
     activity: Mutex<activity::State>,
+    people: Mutex<people::State>,
+    find: Mutex<find::State>,
+    manage: Mutex<manage::State>,
+    drive: Mutex<drive::Drive>,
+    engage: Mutex<engage::State>,
+    lists: Mutex<lists::State>,
+    channels: Mutex<channels::State>,
+    media: Mutex<media::State>,
+    apps: Mutex<appstore::Apps>,
+    /// The active call or meeting and the calling signalling.
+    pub(crate) calls: call::CallManager,
+    /// 1:1 calls: the incoming toast and the outgoing ringing screen.
+    #[cfg(feature = "calls")]
+    direct_calls: call_direct::Calls,
+    composer_apps: Mutex<composer_apps::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
     /// Reactor MRIs whose profile fetch was already started (tooltip names).
@@ -201,6 +283,7 @@ impl Engine {
         my_name: String,
     ) -> Arc<Engine> {
         Arc::new(Engine {
+            calls: call::CallManager::new(ui.clone(), client.clone(), my_name.clone()),
             client,
             store: Mutex::new(store),
             cal: cal::CalState::new(&cfg),
@@ -209,6 +292,7 @@ impl Engine {
             me,
             my_name,
             view: Mutex::new(View {
+                collapsed_teams: crate::window_state::collapsed_teams(),
                 filter: "all".into(),
                 limit: PAGE,
                 at_bottom: true,
@@ -220,6 +304,18 @@ impl Engine {
                 ..Default::default()
             }),
             activity: Mutex::new(activity::State::default()),
+            people: Mutex::new(people::State::default()),
+            find: Mutex::new(find::State::default()),
+            manage: Mutex::new(manage::State::default()),
+            drive: Mutex::new(drive::Drive::default()),
+            engage: Mutex::new(engage::State::default()),
+            lists: Mutex::new(lists::State::default()),
+            channels: Mutex::new(channels::State::default()),
+            media: Mutex::new(media::State::default()),
+            apps: Mutex::new(appstore::Apps::default()),
+            #[cfg(feature = "calls")]
+            direct_calls: call_direct::Calls::default(),
+            composer_apps: Mutex::new(composer_apps::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
             name_requests: Mutex::new(HashSet::new()),
@@ -241,6 +337,10 @@ impl Engine {
         self.offline.store(true, Ordering::Relaxed);
         self.start_calendar_offline();
         self.push_prefs();
+        self.start_people();
+        self.start_apps();
+        #[cfg(feature = "calls")]
+        self.start_calls_demo();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
     }
@@ -248,6 +348,13 @@ impl Engine {
     /// Starts background loops: render, live events, periodic token persistence.
     pub fn start(self: &Arc<Self>) {
         self.push_prefs();
+        self.start_people();
+        self.start_apps();
+        self.start_manage();
+        self.calls.start();
+        #[cfg(feature = "calls")]
+        self.start_calls();
+        self.start_notify_prefs();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -288,6 +395,10 @@ impl Engine {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
             Cmd::Flush => self.flush_draft(),
+            // In order with the Send that follows it.
+            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
+            // Selection and view changes run in order with the command that follows them.
+            Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             cmd => {
                 tokio::spawn(self.clone().handle(cmd));
             }
@@ -315,6 +426,7 @@ impl Engine {
                 {
                     v.collapsed_teams.insert(id);
                 }
+                crate::window_state::remember_collapsed_teams(&v.collapsed_teams);
                 drop(v);
                 self.mark(|d| d.teams = true);
             }
@@ -323,6 +435,7 @@ impl Engine {
                 let fav = st.conversation(&id)?.map(|c| c.favorite).unwrap_or(false);
                 st.set_favorite(&id, !fav)?;
                 drop(st);
+                self.lists_clear_assign(&id);
                 self.mark(|d| d.chats = true);
             }
             Cmd::SetFilter(f) => {
@@ -369,6 +482,7 @@ impl Engine {
                 let row = self.store.lock().unwrap().message(&id)?;
                 if let Some(r) = row.filter(|r| r.sender_mri == self.me) {
                     let text = ::render::plain_text(&::render::parse_teams_html(&r.content_html));
+                    let text = self.restore_edit_mentions(&r, text);
                     self.ui
                         .reply_bar(String::new(), text.chars().take(120).collect(), true);
                     self.ui.set_draft(text);
@@ -400,11 +514,13 @@ impl Engine {
             Cmd::OpenUrl(url) => {
                 if let Some(media) = url.strip_prefix("kelma-media:") {
                     self.play_media(media).await?;
+                } else if let Some(chip) = url.strip_prefix("kelma-file:") {
+                    self.open_file_chip(chip).await;
                 } else if url.starts_with("https://")
                     || url.starts_with("http://")
                     || url.starts_with("mailto:")
                 {
-                    let _ = open::that_detached(&url);
+                    let _ = crate::external::open(&url);
                 }
             }
             Cmd::OpenThread(root) => {
@@ -455,6 +571,7 @@ impl Engine {
             Cmd::AttachFile => self.attach_file().await?,
             Cmd::CopyLink(id) => self.copy_link(&id)?,
             Cmd::ToggleSave(id) => self.toggle_save(&id).await?,
+            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
             Cmd::Pin(id) => self.pin(&id).await?,
             Cmd::MarkUnread(id) => self.mark_unread_from(&id).await?,
             Cmd::ForwardBegin(id) => self.forward_begin(id)?,
@@ -480,6 +597,21 @@ impl Engine {
             Cmd::MarkAllRead => self.mark_all_read().await?,
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
             Cmd::Activity(c) => self.activity_cmd(c).await?,
+            // Boxed: a search result opens a chat through `handle` again.
+            Cmd::Find(c) => Box::pin(self.find_cmd(c)).await?,
+            Cmd::People(c) => self.people_cmd(c).await?,
+            Cmd::Teams(c) => self.manage_cmd(c).await?,
+            Cmd::Drive(c) => self.drive_cmd(c).await?,
+            Cmd::Settings(c) => self.settings_cmd(c).await?,
+            Cmd::Engage(c) => self.engage_cmd(c).await?,
+            Cmd::Lists(c) => self.lists_cmd(c).await?,
+            Cmd::Channels(c) => self.channel_cmd(c).await?,
+            Cmd::Media(c) => self.media_cmd(c).await?,
+            Cmd::Apps(c) => self.apps_cmd(c).await?,
+            Cmd::Call(c) => self.call_cmd(c).await?,
+            #[cfg(feature = "calls")]
+            Cmd::DirectCall(c) => self.direct_call_cmd(c).await?,
+            Cmd::ComposerApps(c) => self.composer_apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,
             Cmd::RemoveAttachment(i) => self.remove_attachment(i),
@@ -526,7 +658,7 @@ impl Engine {
             return;
         }
         let cfg = self.cfg.lock().unwrap().clone();
-        let saved = session::Paths::new().and_then(|p| p.save_config(&cfg));
+        let saved = session::Paths::new().and_then(|p| p.save_app_prefs(&cfg));
         if let Err(err) = saved {
             tracing::warn!(%err, "saving config failed");
         }

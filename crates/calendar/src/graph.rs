@@ -77,6 +77,29 @@ pub(crate) async fn graph(
     .await
 }
 
+/// A Graph write described but not sent, so a `--dry-run` can print it and a UI can confirm
+/// it. `path` is under `https://graph.microsoft.com/v1.0`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphRequest {
+    pub method: Method,
+    pub path: String,
+    pub body: Option<Value>,
+}
+
+impl GraphRequest {
+    /// Sends it; an empty answer is `Value::Null`.
+    pub async fn send(&self, client: &Client, context: &'static str) -> Result<Value> {
+        graph(
+            client,
+            context,
+            self.method.clone(),
+            &self.path,
+            self.body.as_ref(),
+        )
+        .await
+    }
+}
+
 /// `{"dateTime": "2026-12-18T10:00:00", "timeZone": "UTC"}`
 pub(crate) fn date_time(wall: &str, tz: &str) -> Value {
     serde_json::json!({"dateTime": wall, "timeZone": tz})

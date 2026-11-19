@@ -648,6 +648,9 @@ fn item(id: &str, conv: &str, created: i64) -> OutboxItem {
         html: format!("<p>{id}</p>"),
         subject: None,
         reply_to: None,
+        mentions: None,
+        importance: String::new(),
+        cards: None,
         kind: OutboxKind::Text,
         payload_path: None,
         created_ms: created,
@@ -680,9 +683,14 @@ fn outbox_enqueue_roundtrips_all_fields_and_orders_due_oldest_first() {
 #[test]
 fn every_outbox_kind_roundtrips() {
     let s = Store::open_in_memory().unwrap();
-    for (i, k) in [OutboxKind::Text, OutboxKind::Image, OutboxKind::File]
-        .into_iter()
-        .enumerate()
+    for (i, k) in [
+        OutboxKind::Text,
+        OutboxKind::Image,
+        OutboxKind::File,
+        OutboxKind::Card,
+    ]
+    .into_iter()
+    .enumerate()
     {
         let mut it = item(&format!("k{i}"), "c", i as i64);
         it.kind = k;
@@ -913,4 +921,187 @@ fn v2_database_gains_the_saved_table() {
     s.save_message(&saved("c", "1", 1)).unwrap();
     assert_eq!(s.saved_messages().unwrap().len(), 1);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn outbox_keeps_the_mentions_property_and_old_rows_have_none() {
+    let s = Store::open_in_memory().unwrap();
+    let mut with = item("m", "c1", 1);
+    with.mentions = Some(r#"[{"itemid":0}]"#.into());
+    s.enqueue(&with).unwrap();
+    s.enqueue(&item("p", "c1", 2)).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due[0].mentions.as_deref(), Some(r#"[{"itemid":0}]"#));
+    assert_eq!(due[1].mentions, None);
+}
+
+#[test]
+fn outbox_keeps_the_importance_through_failure_and_retry() {
+    let s = Store::open_in_memory().unwrap();
+    let mut important = item("i", "c1", 1);
+    important.importance = "high".into();
+    s.enqueue(&important).unwrap();
+    s.enqueue(&item("p", "c1", 2)).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due[0].importance, "high");
+    assert_eq!(due[1].importance, "", "standard stays standard");
+    // A refusal, a retry and a requeue keep it: the same item is sent again the same way.
+    s.mark_failed("i", "no").unwrap();
+    s.retry("i").unwrap();
+    s.mark_sending("i").unwrap();
+    s.requeue("i").unwrap();
+    let again = s.outbox_for("c1").unwrap();
+    let i = again.iter().find(|x| x.client_message_id == "i").unwrap();
+    assert_eq!(i.importance, "high");
+}
+
+#[test]
+fn v4_database_gains_the_importance_column_with_the_standard_default() {
+    let dir = temp_db_dir("migrate-importance");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cache.db");
+    {
+        let conn = Connection::open(&path).unwrap();
+        for sql in &migrations::MIGRATIONS[..4] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 4).unwrap();
+        conn.execute(
+            "INSERT INTO outbox (client_message_id, conversation_id, html, kind, created_ms, \
+             attempts, state) VALUES ('old', 'c', '<p>x</p>', 'text', 1, 0, 'queued')",
+            [],
+        )
+        .unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].importance, "");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn outbox_keeps_the_cards_of_a_card_message_through_failure_and_retry() {
+    let s = Store::open_in_memory().unwrap();
+    let mut card = item("c", "c1", 1);
+    card.kind = OutboxKind::Card;
+    card.cards = Some(r#"[{"appId":"a","contentType":"x","content":{"n":1}}]"#.into());
+    s.enqueue(&card).unwrap();
+    s.enqueue(&item("t", "c1", 2)).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due[0], card);
+    assert_eq!(due[1].cards, None, "a plain message has no cards");
+    s.mark_sending("c").unwrap();
+    s.mark_failed("c", "403").unwrap();
+    s.retry("c").unwrap();
+    let again = s.outbox_for("c1").unwrap();
+    let c = again.iter().find(|x| x.client_message_id == "c").unwrap();
+    assert_eq!(c.kind, OutboxKind::Card);
+    assert_eq!(c.cards, card.cards);
+}
+
+#[test]
+fn v5_database_gains_the_cards_column_and_keeps_its_queued_messages() {
+    let dir = temp_db_dir("migrate-cards");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cache.db");
+    {
+        // A database exactly as the release before the card kind left it (v5), with a queued
+        // message and a failed file in it.
+        let conn = Connection::open(&path).unwrap();
+        for sql in &migrations::MIGRATIONS[..5] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 5).unwrap();
+        conn.execute(
+            "INSERT INTO outbox (client_message_id, conversation_id, html, kind, created_ms, \
+             attempts, state, importance) VALUES ('old', 'c', '<p>x</p>', 'text', 1, 0, 'queued', 'high')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO outbox (client_message_id, conversation_id, html, kind, payload_path, \
+             created_ms, attempts, state, last_error) \
+             VALUES ('file', 'c', '', 'file', '/x/a.pdf', 2, 1, 'failed', '403')",
+            [],
+        )
+        .unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    let due = s.outbox_due().unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].importance, "high", "older columns are kept");
+    assert_eq!(due[0].cards, None, "old rows have no cards");
+    let all = s.outbox_for("c").unwrap();
+    assert_eq!(all.len(), 2);
+    // The migrated database takes a card item.
+    let mut card = item("new", "c", 3);
+    card.kind = OutboxKind::Card;
+    card.cards = Some("[]".into());
+    s.enqueue(&card).unwrap();
+    assert_eq!(s.outbox_due().unwrap().len(), 2);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn delete_conversation_forgets_the_chat_its_messages_and_draft_only() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_conversation(&conv("g", ConvKind::Group, "Group", 5))
+        .unwrap();
+    s.upsert_conversation(&conv("h", ConvKind::Group, "Other", 4))
+        .unwrap();
+    s.upsert_message(&msg("1", "g", 1)).unwrap();
+    s.upsert_message(&msg("2", "h", 2)).unwrap();
+    s.set_draft("g", "half", None).unwrap();
+    s.delete_conversation("g").unwrap();
+    assert!(s.conversation("g").unwrap().is_none());
+    assert!(s.message("1").unwrap().is_none());
+    assert!(s.draft("g").unwrap().is_none());
+    assert!(s.conversation("h").unwrap().is_some());
+    assert!(s.message("2").unwrap().is_some());
+}
+
+#[test]
+fn messages_containing_finds_text_in_one_chat_or_all_of_them() {
+    let s = Store::open_in_memory().unwrap();
+    let mut a = msg("1", "c1", 10);
+    a.content_html = "<p>Quarterly Report 100%_done</p>".into();
+    let mut b = msg("2", "c2", 20);
+    b.content_html = "<p>the quarterly plan</p>".into();
+    let mut reply = msg("3", "c1", 30);
+    reply.parent_id = Some("1".into());
+    reply.content_html = "<p>re: quarterly</p>".into();
+    let mut gone = msg("4", "c1", 40);
+    gone.deleted = true;
+    gone.content_html = "<p>quarterly secret</p>".into();
+    for m in [&a, &b, &reply, &gone] {
+        s.upsert_message(m).unwrap();
+    }
+    let ids = |rows: Vec<MessageRow>| rows.into_iter().map(|m| m.id).collect::<Vec<_>>();
+    // Case-insensitive, newest first, replies included, deleted rows left out.
+    assert_eq!(
+        ids(s.messages_containing(None, "QUARTERLY", 10).unwrap()),
+        ["3", "2", "1"]
+    );
+    assert_eq!(
+        ids(s.messages_containing(Some("c1"), "quarterly", 10).unwrap()),
+        ["3", "1"]
+    );
+    assert_eq!(
+        ids(s.messages_containing(None, "quarterly", 1).unwrap()),
+        ["3"]
+    );
+    // LIKE wildcards in the needle are plain characters.
+    assert_eq!(
+        ids(s.messages_containing(None, "100%_d", 10).unwrap()),
+        ["1"]
+    );
+    assert_eq!(s.messages_containing(None, "%", 10).unwrap().len(), 1);
+    assert!(
+        s.messages_containing(None, "nothing", 10)
+            .unwrap()
+            .is_empty()
+    );
 }

@@ -18,6 +18,27 @@ use store::Store;
 use teams_proto::Client;
 
 mod activity;
+mod appstore;
+mod call;
+#[cfg(feature = "calls")]
+mod call_direct;
+mod channels;
+mod composer_apps;
+mod drive;
+mod engage;
+mod find;
+mod format;
+mod format_live;
+mod global_search;
+mod language;
+mod lists;
+mod media;
+mod people;
+mod saved;
+mod settings;
+mod shortcuts;
+mod teams;
+mod window_state;
 
 type Log = Rc<RefCell<Vec<String>>>;
 
@@ -666,7 +687,9 @@ fn send_button_sends_draft() {
     let app = app_with_messages(vec![]);
     let sent = record_send(&app);
     app.set_draft(SharedString::from("from button"));
+    // The composer's buttons, not the header's (find and details sit at the header's right edge).
     let send = ElementHandle::find_by_element_id(&app, "IconButton::touch")
+        .filter(|e| e.absolute_position().y > 400.0)
         .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
         .unwrap();
     send.mock_single_click(PointerEventButton::Left);
@@ -694,7 +717,7 @@ fn toolbar_emoji_picker_and_attach_buttons() {
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 5, "emoji, image, file, more, send");
+    assert_eq!(tb.len(), 6, "emoji, image, file, more, apps, send");
 
     tb[1].mock_single_click(PointerEventButton::Left);
     tb[2].mock_single_click(PointerEventButton::Left);
@@ -904,7 +927,8 @@ fn chat_list_menus_fire_mark_unread_and_mark_all_read() {
 
     // The "…" button of the list offers Mark all as read.
     let more = ElementHandle::find_by_element_id(&app, "IconButton::touch")
-        .find(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
+        .filter(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
+        .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
         .expect("list menu button");
     more.mock_single_click(PointerEventButton::Left);
     let all = find_label(&app, "Mark all as read");

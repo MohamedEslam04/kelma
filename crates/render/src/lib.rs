@@ -5,12 +5,18 @@
 //! the other way for the composer.
 
 mod compose;
+pub mod edit;
 mod markdown_out;
 mod parse;
+mod rich;
 
-pub use compose::{reply_html, text_to_teams_html};
+pub use compose::{reply_html, reply_quote_html, text_to_teams_html};
 pub use markdown_out::markdown_to_teams_html;
 pub use parse::parse_teams_html;
+pub use rich::{
+    ListItem, RichBlock, RichDoc, RichList, RichTable, TableCell, markdown_to_composer_html,
+    markdown_to_rich, parse_rich_html,
+};
 
 use unicode_bidi::BidiClass;
 
@@ -21,6 +27,13 @@ pub enum Dir {
     Rtl,
 }
 
+/// Teams composer font sizes (`xx-small` / `x-large`; normal is `None`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontSize {
+    Small,
+    Large,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Style {
     pub bold: bool,
@@ -28,6 +41,13 @@ pub struct Style {
     pub underline: bool,
     pub strike: bool,
     pub code: bool,
+    /// Text color as lowercase `#rrggbb`. Only set by [`parse_rich_html`].
+    pub color: Option<String>,
+    /// Highlight (background) color as lowercase `#rrggbb`. Only set by
+    /// [`parse_rich_html`].
+    pub highlight: Option<String>,
+    /// Only set by [`parse_rich_html`].
+    pub size: Option<FontSize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

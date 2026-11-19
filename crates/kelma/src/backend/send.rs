@@ -1,6 +1,7 @@
 //! Outgoing actions: send/edit/delete, reactions, attachments and media playback.
 
 use super::Engine;
+use super::mentions;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use store::OutboxKind;
@@ -13,6 +14,8 @@ impl Engine {
         subject: String,
     ) -> anyhow::Result<()> {
         let text = text.trim().to_string();
+        // The importance applies to this one message (and never to an edit or a chip).
+        let important = std::mem::take(&mut self.view.lock().unwrap().important);
         let editing_now = self.view.lock().unwrap().editing.is_some();
         // Chips go first, each as its own outbox item (an image or a file card), then the text.
         if !editing_now && let Err(err) = self.queue_attachments() {
@@ -25,11 +28,32 @@ impl Engine {
             self.flush_outbox(false).await;
             return Err(err);
         }
-        if text.is_empty() {
+        // The cards chosen in the apps picker go in the message of this send: the typed text is
+        // its body. They come back to the picker if the message cannot be queued.
+        let current = self
+            .view
+            .lock()
+            .unwrap()
+            .current
+            .clone()
+            .unwrap_or_default();
+        let cards = if editing_now {
+            Vec::new()
+        } else {
+            self.take_composer_cards(&current)
+        };
+        if text.is_empty() && cards.is_empty() {
             // Nothing but attachments (or nothing at all).
             self.flush_outbox(false).await;
             return Ok(());
         }
+        // The @Name tokens the user picked become mention spans; the entries are used up.
+        let prepared = {
+            let mut p = self.people.lock().unwrap();
+            let prepared = mentions::prepare(&text, &p.entries);
+            p.entries.clear();
+            prepared
+        };
         let (target, reply, editing) = {
             let mut v = self.view.lock().unwrap();
             (
@@ -40,16 +64,33 @@ impl Engine {
         };
         self.ui.reply_bar(String::new(), String::new(), false);
         let Some(target) = target else {
+            self.restore_composer_cards(&current, cards);
             return Ok(());
         };
         if let Some(id) = editing {
             // The composer shows the draft that was there before the edit again.
             let draft = self.view.lock().unwrap().draft_text.clone();
             self.ui.set_draft(draft);
-            let html = render::text_to_teams_html(&text);
-            self.client
-                .edit_message(&target, &id, &html, &self.my_name)
-                .await?;
+            let html = mentions::finish(
+                &render::markdown_to_composer_html(&prepared.text),
+                &prepared,
+            );
+            if prepared.mentions.is_empty() {
+                self.client
+                    .edit_message(&target, &id, &html, &self.my_name)
+                    .await?;
+            } else {
+                // An edit replaces the message properties, so the mentions are sent again.
+                self.client
+                    .edit_message_with_mentions(
+                        &target,
+                        &id,
+                        &html,
+                        &self.my_name,
+                        &prepared.mentions,
+                    )
+                    .await?;
+            }
             let st = self.store.lock().unwrap();
             if let Some(mut r) = st.message(&id)? {
                 r.content_html = html;
@@ -67,27 +108,24 @@ impl Engine {
                         .chars()
                         .take(200)
                         .collect();
-                render::reply_html(
+                // The composer's source is Markdown-style (plan chat 5.4): the quote block is
+                // followed by the converted body.
+                let mut quote = render::reply_quote_html(
                     &r.id,
                     &r.sender_mri,
                     &r.sender_name,
                     r.compose_ms,
                     &preview,
-                    &text,
-                )
+                );
+                quote.push_str(&render::markdown_to_composer_html(&prepared.text));
+                quote
             }
-            None => render::text_to_teams_html(&text),
+            None => render::markdown_to_composer_html(&prepared.text),
         };
+        let html = mentions::finish(&html, &prepared);
         // The draft is sent: forget it. It comes back if the message cannot even be queued.
-        let current = self
-            .view
-            .lock()
-            .unwrap()
-            .current
-            .clone()
-            .unwrap_or_default();
         self.clear_draft(&current);
-        let item = self.new_outbox_item(
+        let mut item = self.new_outbox_item(
             target,
             OutboxKind::Text,
             html,
@@ -98,8 +136,23 @@ impl Engine {
             }),
             None,
         );
+        item.mentions = mentions::property(&prepared);
+        if important {
+            item.importance = teams_proto::delivery::Importance::Important.wire().into();
+        }
+        if !cards.is_empty() {
+            // One message holds the typed text and every card, as in Teams, where the card
+            // chosen from an extension is attached to the message being written.
+            item.kind = OutboxKind::Card;
+            let out: Vec<_> = cards.iter().map(|c| c.out_card()).collect();
+            item.cards = Some(teams_proto::card_send::cards_to_json(&out));
+            if text.is_empty() && item.reply_to.is_none() {
+                item.html.clear();
+            }
+        }
         self.ui.clear_subject();
         if let Err(err) = self.enqueue(item) {
+            self.restore_composer_cards(&current, cards);
             self.ui.set_draft(text.clone());
             self.view.lock().unwrap().draft_text = text;
             self.schedule_draft_save();
@@ -183,7 +236,7 @@ impl Engine {
             std::fs::write(&path, data)?;
             self.ui.banner(String::new());
         }
-        open::that_detached(&path)?;
+        crate::external::open(&path)?;
         Ok(())
     }
 

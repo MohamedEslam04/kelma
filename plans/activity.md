@@ -35,7 +35,8 @@ the rail.
     - "Go to chat" or "Go to channel" opens it in Chat.
   - **How.** Reuse the chat message view in a compact mode.
 - [x] **A1.4 Mark all as read** (Shift+Esc) and per-item mark as read or unread.
-- [ ] **A1.5 Notification settings link** that opens the notification settings (chat plan 9.1).
+- [x] **A1.5 Notification settings link** that opens the notification settings (chat plan 9.1).
+  - **Evidence.** 2026-11-19: Activity "…" › Notification settings opens Settings on Notifications and activity (`ui/settings.rs` handles `activity-settings` with `SettingsStore.show("notifications")`, replacing the old "coming with Settings" banner). Verified: `activity_notification_settings_entry_opens_the_notifications_page` clicks the real menu. Tests: `cargo test -p kelma settings`.
 - [x] **A1.6 Search in Activity.**
 - [x] **A1.7 Badge sync.** The rail badge and tray count equal the unread Activity count plus unread chats, like Teams.
 

@@ -1,0 +1,44 @@
+# Flatpak
+
+`io.github.mohamedeslam04.kelma.yml` builds kelma against the Freedesktop 26.08 runtime with the
+`rust-stable` SDK extension.
+
+## Permissions
+
+| Permission | Why |
+|---|---|
+| `--share=network` | Teams, Graph and OneDrive |
+| `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | window system |
+| `--device=dri` | optional GPU renderer (`KELMA_RENDERER=femtovg`) |
+| `--socket=pulseaudio`, `--filesystem=xdg-run/pipewire-0` | audio and PipeWire for the future meeting host |
+| `--talk-name=org.freedesktop.Notifications` | desktop notifications |
+| `--talk-name=org.freedesktop.secrets` | the refresh token is kept in the Secret Service |
+| `--filesystem=xdg-download` | saved attachments and problem reports |
+
+The file chooser, open-URI, camera and screen-cast portals need no permission.
+
+## Build
+
+The sandbox has no network during the build, so the crates are vendored from `Cargo.lock`.
+`build.sh` does all of it: it generates `cargo-sources.json` (git-ignored) with
+`flatpak-cargo-generator.py` from `flatpak/flatpak-builder-tools` (pinned to a commit), then runs
+`flatpak-builder` (or the `org.flatpak.Builder` Flatpak) and pulls in the runtime, SDK and
+`rust-stable` extension when they are missing.
+
+```sh
+packaging/flatpak/build.sh /data/kelma-flatpak --install   # work dir on a disk with free space
+flatpak run io.github.mohamedeslam04.kelma
+```
+
+By hand, from this folder:
+
+```sh
+flatpak install flathub org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08 \
+  org.freedesktop.Sdk.Extension.rust-stable//26.08
+python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json
+flatpak-builder --user --install --force-clean --state-dir=/data/kelma-flatpak/state \
+  /data/kelma-flatpak/build-dir io.github.mohamedeslam04.kelma.yml
+```
+
+Keep the build directory outside the source tree: the manifest copies the whole repository.
+Check the metadata with `appstreamcli validate --no-net io.github.mohamedeslam04.kelma.metainfo.xml`.

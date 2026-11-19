@@ -15,9 +15,9 @@ component MenuEntry inherits Rectangle {
         padding-left: 12px;
         padding-right: 12px;
         spacing: 16px;
-        Text { text: root.label; color: Theme.fg; font-size: 13px; vertical-alignment: center; }
+        Text { text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
         Rectangle { horizontal-stretch: 1; }
-        Text { text: root.hint; color: Theme.fg-subtle; font-size: 11px; vertical-alignment: center; }
+        Text { text: root.hint; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: center; }
     }
     t := TouchArea { mouse-cursor: pointer; clicked => { root.activated(); } }
 }
@@ -31,7 +31,7 @@ component ActivityItem inherits Rectangle {
     property <length> menu-y;
     height: 76px;
     border-radius: 4px;
-    background: root.selected ? Theme.selected : (touch.has-hover ? #262626 : transparent);
+    background: root.selected ? Theme.selected : (touch.has-hover ? Theme.surface-hover : transparent);
     accessible-role: list-item;
     accessible-label: root.data.title + (root.data.unread ? ", unread" : "");
     accessible-item-selected: root.selected;
@@ -57,10 +57,10 @@ component ActivityItem inherits Rectangle {
                 width: 20px;
                 height: 20px;
                 border-radius: 10px;
-                background: #1f1f1f;
+                background: Theme.sidebar;
                 border-width: 1px;
                 border-color: Theme.border;
-                Text { text: root.data.badge; color: Theme.mention; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: root.data.badge; color: Theme.mention; font-size: 11px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
             }
         }
         VerticalLayout {
@@ -71,22 +71,22 @@ component ActivityItem inherits Rectangle {
                 Text {
                     text: root.data.title;
                     color: Theme.fg;
-                    font-size: 14px;
+                    font-size: 14px * Theme.font-scale;
                     font-weight: root.data.unread ? 700 : 400;
                     overflow: elide;
                     horizontal-stretch: 1;
                 }
-                Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px; horizontal-stretch: 0; vertical-alignment: center; }
+                Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-stretch: 0; vertical-alignment: center; }
             }
             Text {
                 text: root.data.preview;
                 color: root.data.unread ? Theme.fg : Theme.fg-subtle;
                 font-weight: root.data.unread ? 600 : 400;
-                font-size: 12px;
+                font-size: 12px * Theme.font-scale;
                 overflow: elide;
                 horizontal-alignment: root.data.rtl-preview ? right : left;
             }
-            Text { text: root.data.location; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+            Text { text: root.data.location; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
         }
         if root.data.unread: Rectangle {
             width: 8px;
@@ -115,7 +115,7 @@ component ActivityItem inherits Rectangle {
         width: 190px;
         height: 36px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 4px;
             border-width: 1px;
             border-color: Theme.border;
@@ -154,7 +154,6 @@ component PreviewList inherits Rectangle {
                     m: m;
                     max-bubble: min(720px, pv.width * 0.8);
                     open-url(u) => { root.open-url(u); }
-                    open-image(u) => { root.open-url(u); }
                 }
             }
         }
@@ -234,7 +233,7 @@ export component ActivityView inherits Rectangle {
                         height: 56px;
                         padding-left: 16px;
                         padding-right: 12px;
-                        Text { text: "Activity"; color: Theme.fg; font-size: 20px; font-weight: 700; vertical-alignment: center; }
+                        Text { text: "Activity"; color: Theme.fg; font-size: 20px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
                         more := IconButton {
                             icon: @image-url("icons/more.svg");
@@ -246,7 +245,7 @@ export component ActivityView inherits Rectangle {
                     Rectangle {
                         height: 32px;
                         border-radius: 4px;
-                        background: search-input.has-focus ? #1f1f1f : #292929;
+                        background: search-input.has-focus ? Theme.sidebar : Theme.surface;
                         border-width: 1px;
                         border-color: search-input.has-focus ? Theme.accent : Theme.border;
                         HorizontalLayout {
@@ -256,7 +255,7 @@ export component ActivityView inherits Rectangle {
                             Icon { source: @image-url("icons/search.svg"); width: 16px; height: 16px; y: 8px; }
                             search-input := TextInput {
                                 color: Theme.fg;
-                                font-size: 13px;
+                                font-size: 13px * Theme.font-scale;
                                 vertical-alignment: center;
                                 single-line: true;
                                 accessible-label: "Search activity";
@@ -267,7 +266,7 @@ export component ActivityView inherits Rectangle {
                             x: 36px;
                             text: "Search activity";
                             color: Theme.fg-subtle;
-                            font-size: 13px;
+                            font-size: 13px * Theme.font-scale;
                             vertical-alignment: center;
                         }
                     }
@@ -282,7 +281,7 @@ export component ActivityView inherits Rectangle {
                         f-mentions := Pill { label: "@Mentions"; active: root.filter == "mentions"; clicked => { root.toggle-filter("mentions"); } }
                         f-tags := Pill { label: "Tag mentions"; active: root.filter == "tags"; clicked => { root.toggle-filter("tags"); } }
                     }
-                    Rectangle { height: 1px; background: #2b2b2b; }
+                    Rectangle { height: 1px; background: Theme.border; }
 
                     if root.banner != "": Rectangle {
                         height: 34px;
@@ -291,7 +290,7 @@ export component ActivityView inherits Rectangle {
                             padding-left: 12px;
                             padding-right: 6px;
                             spacing: 8px;
-                            Text { text: root.banner; color: #ffffff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                            Text { text: root.banner; color: #ffffff; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
                             IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 5px; clicked => { root.dismiss-banner(); } }
                         }
                     }
@@ -313,7 +312,7 @@ export component ActivityView inherits Rectangle {
                         if root.items.length == 0: Text {
                             text: root.filter == "all" && search-input.text == "" ? "No activity yet" : "Nothing matches";
                             color: Theme.fg-subtle;
-                            font-size: 13px;
+                            font-size: 13px * Theme.font-scale;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                         }
@@ -327,7 +326,7 @@ export component ActivityView inherits Rectangle {
                 background: Theme.main;
                 if root.selected-id == "": VerticalLayout {
                     alignment: center;
-                    Image { source: @image-url("icons/activity.svg"); colorize: #3d3d3d; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
+                    Image { source: @image-url("icons/activity.svg"); colorize: Theme.border; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
                     Text { text: "Select an item to preview it"; color: Theme.fg-subtle; horizontal-alignment: center; }
                 }
                 if root.selected-id != "": VerticalLayout {
@@ -341,8 +340,8 @@ export component ActivityView inherits Rectangle {
                             VerticalLayout {
                                 alignment: center;
                                 horizontal-stretch: 1;
-                                Text { text: root.preview-title; color: Theme.fg; font-size: 16px; font-weight: 700; overflow: elide; }
-                                Text { text: root.preview-location; color: Theme.fg-muted; font-size: 12px; overflow: elide; }
+                                Text { text: root.preview-title; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; overflow: elide; }
+                                Text { text: root.preview-location; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
                             }
                             go := Rectangle {
                                 width: go-text.preferred-width + 28px;
@@ -355,14 +354,14 @@ export component ActivityView inherits Rectangle {
                                 go-text := Text {
                                     text: root.preview-is-channel ? "Go to channel" : "Go to chat";
                                     color: Theme.fg;
-                                    font-size: 12px;
+                                    font-size: 12px * Theme.font-scale;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                 }
                                 go-touch := TouchArea { mouse-cursor: pointer; clicked => { root.go-to(); } }
                             }
                         }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
                     }
 
                     Rectangle {
@@ -390,7 +389,7 @@ export component ActivityView inherits Rectangle {
                             Rectangle {
                                 horizontal-stretch: 1;
                                 border-radius: 4px;
-                                background: #292929;
+                                background: Theme.surface;
                                 border-width: 1px;
                                 border-color: reply-input.has-focus ? Theme.accent : Theme.border;
                                 HorizontalLayout {
@@ -399,7 +398,7 @@ export component ActivityView inherits Rectangle {
                                     reply-input := TextInput {
                                         text <=> root.reply-text;
                                         color: Theme.fg;
-                                        font-size: 13px;
+                                        font-size: 13px * Theme.font-scale;
                                         vertical-alignment: center;
                                         single-line: true;
                                         accessible-label: "Reply in thread";
@@ -410,7 +409,7 @@ export component ActivityView inherits Rectangle {
                                     x: 10px;
                                     text: "Reply in thread";
                                     color: Theme.fg-subtle;
-                                    font-size: 13px;
+                                    font-size: 13px * Theme.font-scale;
                                     vertical-alignment: center;
                                 }
                             }
@@ -433,7 +432,7 @@ export component ActivityView inherits Rectangle {
         width: 250px;
         height: 70px;
         Rectangle {
-            background: #2b2b2b;
+            background: Theme.surface;
             border-radius: 4px;
             border-width: 1px;
             border-color: Theme.border;

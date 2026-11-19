@@ -28,7 +28,7 @@ component MenuItem inherits Rectangle {
         Text {
             text: root.label;
             color: root.danger ? Theme.danger : Theme.fg;
-            font-size: 13px;
+            font-size: 13px * Theme.font-scale;
             vertical-alignment: center;
             horizontal-stretch: 1;
         }
@@ -50,6 +50,14 @@ export component MessageMenu inherits Rectangle {
     in property <bool> saved;
     // Pinning for everyone is a chat feature; channel posts use another endpoint.
     in property <bool> can-pin: true;
+    // A channel post can be followed (replies to it show in Followed threads).
+    in property <bool> can-follow: false;
+    in property <bool> following: false;
+    // Translation state of the message (`Msg.translate`).
+    in property <string> translate: "";
+    callback toggle-follow();
+    callback translate-message();
+    callback see-original();
     callback reply();
     callback forward-one();
     callback forward-many();
@@ -57,6 +65,7 @@ export component MessageMenu inherits Rectangle {
     callback toggle-save();
     callback pin();
     callback mark-unread();
+    callback follow();
     callback edit();
     callback delete();
 
@@ -66,28 +75,49 @@ export component MessageMenu inherits Rectangle {
     width: 240px;
     height: items.preferred-height + 12px;
     border-radius: 6px;
-    background: #2b2b2b;
+    background: Theme.surface;
     border-width: 1px;
     border-color: Theme.border;
     drop-shadow-blur: 12px;
     drop-shadow-color: #00000090;
 
+    // Teams' letter shortcuts: R reply, F forward, S save, P pin, U mark as unread.
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.modifiers.control || event.modifiers.alt || event.modifiers.meta { return reject; }
+            if event.text == "r" || event.text == "R" { root.reply(); return accept; }
+            if event.text == "f" || event.text == "F" { root.forward-one(); return accept; }
+            if (event.text == "s" || event.text == "S") && !root.mine { root.toggle-save(); return accept; }
+            if (event.text == "p" || event.text == "P") && root.can-pin { root.pin(); return accept; }
+            if event.text == "u" || event.text == "U" { root.mark-unread(); return accept; }
+            reject
+        }
+    }
+
     items := VerticalLayout {
         padding: 6px;
         spacing: 0px;
-        MenuItem { label: "Reply with quote"; icon: @image-url("icons/quote.svg"); clicked => { root.reply(); } }
-        MenuItem { label: "Forward"; icon: @image-url("icons/forward.svg"); chevron: true; clicked => { root.forward-open = !root.forward-open; } }
-        if root.forward-open: MenuItem { label: "This message"; indent: true; clicked => { root.forward-one(); } }
-        if root.forward-open: MenuItem { label: "Multiple messages"; indent: true; clicked => { root.forward-many(); } }
-        MenuItem { label: "Copy message link"; icon: @image-url("icons/link.svg"); clicked => { root.copy-link(); } }
+        MenuItem { label: @tr("Reply with quote"); icon: @image-url("icons/quote.svg"); clicked => { root.reply(); } }
+        MenuItem { label: @tr("Forward"); icon: @image-url("icons/forward.svg"); chevron: true; clicked => { root.forward-open = !root.forward-open; } }
+        if root.forward-open: MenuItem { label: @tr("This message"); indent: true; clicked => { root.forward-one(); } }
+        if root.forward-open: MenuItem { label: @tr("Multiple messages"); indent: true; clicked => { root.forward-many(); } }
+        MenuItem { label: @tr("Copy message link"); icon: @image-url("icons/link.svg"); clicked => { root.copy-link(); } }
         if !root.mine: MenuItem {
-            label: root.saved ? "Unsave this message" : "Save this message";
+            label: root.saved ? @tr("Unsave this message") : @tr("Save this message");
             icon: @image-url("icons/star.svg");
             clicked => { root.toggle-save(); }
         }
-        if root.can-pin: MenuItem { label: "Pin for everyone"; icon: @image-url("icons/pin.svg"); clicked => { root.pin(); } }
-        MenuItem { label: "Mark as unread"; icon: @image-url("icons/unread.svg"); clicked => { root.mark-unread(); } }
-        if root.mine: MenuItem { label: "Edit"; icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
-        if root.mine: MenuItem { label: "Delete"; icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }
+        if root.can-pin: MenuItem { label: @tr("Pin for everyone"); icon: @image-url("icons/pin.svg"); clicked => { root.pin(); } }
+        if root.can-follow: MenuItem {
+            label: root.following ? @tr("Unfollow thread") : @tr("Follow thread");
+            icon: @image-url("icons/thread.svg");
+            clicked => { root.toggle-follow(); }
+        }
+        if root.translate == "shown": MenuItem { label: @tr("See original"); icon: @image-url("icons/translate.svg"); clicked => { root.see-original(); } }
+        if root.translate != "" && root.translate != "shown" && root.translate != "busy": MenuItem { label: @tr("Translate"); icon: @image-url("icons/translate.svg"); clicked => { root.translate-message(); } }
+        MenuItem { label: @tr("Mark as unread"); icon: @image-url("icons/unread.svg"); clicked => { root.mark-unread(); } }
+        if root.mine: MenuItem { label: @tr("Edit"); icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
+        if root.mine: MenuItem { label: @tr("Delete"); icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }
     }
 }

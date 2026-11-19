@@ -30,6 +30,8 @@ pub enum DocKind {
     PowerPoint,
     Markdown,
     Text,
+    /// A blank Visio drawing (opens in Visio for the web).
+    Visio,
 }
 
 impl DocKind {
@@ -40,6 +42,7 @@ impl DocKind {
             DocKind::PowerPoint => "pptx",
             DocKind::Markdown => "md",
             DocKind::Text => "txt",
+            DocKind::Visio => "vsdx",
         }
     }
 
@@ -51,6 +54,7 @@ impl DocKind {
             DocKind::PowerPoint => "Presentation.pptx",
             DocKind::Markdown => "Document.md",
             DocKind::Text => "Document.txt",
+            DocKind::Visio => "Drawing.vsdx",
         }
     }
 
@@ -70,6 +74,7 @@ impl DocKind {
             DocKind::Word => docx(),
             DocKind::Excel => xlsx(),
             DocKind::PowerPoint => pptx(),
+            DocKind::Visio => vsdx(),
             DocKind::Markdown | DocKind::Text => Vec::new(),
         }
     }
@@ -311,6 +316,91 @@ fn pptx() -> Vec<u8> {
     ])
 }
 
+const NS_V: &str = "http://schemas.microsoft.com/office/visio/2012/main";
+const REL_V: &str = "http://schemas.microsoft.com/visio/2010/relationships";
+
+/// A `.rels` part with Visio relationship types: `(id, type suffix, target)`.
+fn visio_rels(items: &[(&str, &str, &str)]) -> Vec<u8> {
+    let mut s = format!("<Relationships xmlns=\"{REL_NS}\">");
+    for (id, ty, target) in items {
+        s.push_str(&format!(
+            "<Relationship Id=\"{id}\" Type=\"{REL_V}/{ty}\" Target=\"{target}\"/>"
+        ));
+    }
+    s.push_str("</Relationships>");
+    xml(s)
+}
+
+/// A blank Visio drawing (VSDX, Visio 2013 format): document, one page list and one empty
+/// page of US Letter size.
+fn vsdx() -> Vec<u8> {
+    let ct = |kind: &str| format!("application/vnd.ms-visio.{kind}+xml");
+    let (main, pages, page) = (ct("drawing.main"), ct("pages"), ct("page"));
+    package(vec![
+        (
+            "[Content_Types].xml",
+            content_types(&[
+                ("/visio/document.xml", &main),
+                ("/visio/pages/pages.xml", &pages),
+                ("/visio/pages/page1.xml", &page),
+            ]),
+        ),
+        (
+            "_rels/.rels",
+            visio_rels(&[("rId1", "document", "visio/document.xml")]),
+        ),
+        (
+            "visio/document.xml",
+            xml(format!(
+                "<VisioDocument xmlns=\"{NS_V}\" xmlns:r=\"{NS_R}\" xml:space=\"preserve\">\
+                 <DocumentSettings TopPage=\"0\" DefaultTextStyle=\"0\" DefaultLineStyle=\"0\" \
+                 DefaultFillStyle=\"0\" DefaultGuideStyle=\"0\"/>\
+                 <StyleSheets><StyleSheet ID=\"0\" NameU=\"No Style\" Name=\"No Style\"/></StyleSheets>\
+                 </VisioDocument>"
+            )),
+        ),
+        (
+            "visio/_rels/document.xml.rels",
+            visio_rels(&[("rId1", "pages", "pages/pages.xml")]),
+        ),
+        (
+            "visio/pages/pages.xml",
+            xml(format!(
+                "<Pages xmlns=\"{NS_V}\" xmlns:r=\"{NS_R}\" xml:space=\"preserve\">\
+                 <Page ID=\"0\" NameU=\"Page-1\" Name=\"Page-1\"><PageSheet>\
+                 <Cell N=\"PageWidth\" V=\"8.5\"/><Cell N=\"PageHeight\" V=\"11\"/>\
+                 </PageSheet><Rel r:id=\"rId1\"/></Page></Pages>"
+            )),
+        ),
+        (
+            "visio/pages/_rels/pages.xml.rels",
+            visio_rels(&[("rId1", "page", "page1.xml")]),
+        ),
+        (
+            "visio/pages/page1.xml",
+            xml(format!(
+                "<PageContents xmlns=\"{NS_V}\" xmlns:r=\"{NS_R}\" xml:space=\"preserve\"/>"
+            )),
+        ),
+    ])
+}
+
+/// An Internet shortcut (`.url`) that opens `url`: what OneDrive's "New > Link" saves.
+pub fn link_file(url: &str) -> Vec<u8> {
+    // One line per key; a line break inside the URL would inject a key.
+    let url: String = url.chars().filter(|c| !c.is_control()).collect();
+    format!("[InternetShortcut]\r\nURL={url}\r\n").into_bytes()
+}
+
+/// `name` as a `.url` file name.
+pub fn link_file_name(name: &str) -> String {
+    if name.to_ascii_lowercase().ends_with(".url") {
+        name.to_owned()
+    } else {
+        format!("{name}.url")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +481,43 @@ mod tests {
                 "ppt/theme/theme1.xml",
             ],
         );
+    }
+
+    #[test]
+    fn blank_visio_is_a_complete_package() {
+        let v = DocKind::Visio.blank();
+        check_package(
+            &v,
+            &[
+                "_rels/.rels",
+                "visio/document.xml",
+                "visio/_rels/document.xml.rels",
+                "visio/pages/pages.xml",
+                "visio/pages/_rels/pages.xml.rels",
+                "visio/pages/page1.xml",
+            ],
+        );
+        let e = unzip(&v);
+        let part = |n: &str| e.iter().find(|(p, _)| p == n).unwrap().1.clone();
+        assert!(part("[Content_Types].xml").contains("application/vnd.ms-visio.drawing.main+xml"));
+        assert!(part("_rels/.rels").contains("/visio/2010/relationships/document"));
+        assert!(part("visio/pages/pages.xml").contains("r:id=\"rId1\""));
+        assert_eq!(DocKind::Visio.default_name(), "Drawing.vsdx");
+        assert_eq!(DocKind::Visio.file_name("Flow"), "Flow.vsdx");
+    }
+
+    #[test]
+    fn link_files_are_internet_shortcuts() {
+        assert_eq!(
+            link_file("https://example.com/a?b=1"),
+            b"[InternetShortcut]\r\nURL=https://example.com/a?b=1\r\n"
+        );
+        assert_eq!(
+            link_file("https://x.test/\r\nIconFile=evil"),
+            b"[InternetShortcut]\r\nURL=https://x.test/IconFile=evil\r\n"
+        );
+        assert_eq!(link_file_name("Docs"), "Docs.url");
+        assert_eq!(link_file_name("Docs.URL"), "Docs.URL");
     }
 
     #[test]

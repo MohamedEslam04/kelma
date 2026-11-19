@@ -1,0 +1,61 @@
+// The call window's state, filled by `src/ui/call.rs` from the backend's CallManager
+// (`src/backend/call.rs`). Commands go back through `command(name, argument)`.
+
+export struct CallPerson {
+    name: string,
+    initials: string,
+    muted: bool,
+    hand: bool,
+    // Waiting in the lobby.
+    lobby: bool,
+    // Us.
+    me: bool,
+    // organizer | presenter | attendee | "".
+    role: string,
+}
+
+export global CallStore {
+    // "" (no call) | prejoin | connecting | lobby | connected | reconnecting | ended
+    in property <string> phase;
+    // meeting | direct
+    in property <string> kind: "meeting";
+    in property <string> title;
+    in property <string> my-name;
+    in property <string> my-initials;
+    in property <string> timer: "00:00";
+    in property <bool> muted;
+    in property <bool> hand;
+    // The pre-join microphone switch.
+    in property <bool> prejoin-mic: true;
+    // Shown only when the call state says the meeting is recorded.
+    in property <bool> recording;
+    in property <string> error;
+    // Why the call ended (the call-ended screen).
+    in property <string> ended;
+    // The meeting chat's conversation id, when known.
+    in property <string> chat-id;
+    in property <bool> can-rejoin;
+    // In the call first, then the lobby.
+    in property <[CallPerson]> people;
+    in property <int> in-call;
+    in property <int> in-lobby;
+    in property <[string]> mics;
+    in property <int> mic;
+    in property <[string]> speakers;
+    in property <int> speaker;
+    // The side panel: "" | people | more.
+    in-out property <string> panel;
+    // The open dropdown or card: "" | devices | a device picker's key.
+    in-out property <string> menu;
+    // The call shrinks to a floating bar while the meeting chat is open.
+    in-out property <bool> minimized;
+    // (name, argument): join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
+    // leave, close, rejoin, dismiss-error. See `backend/call.rs` `CallCmd::parse`.
+    callback command(string, string);
+    // The conversation is a meeting's chat (its header shows Join).
+    pure callback is-meeting-chat(string) -> bool;
+
+    public pure function in-call-phase() -> bool {
+        return phase == "connecting" || phase == "lobby" || phase == "connected" || phase == "reconnecting";
+    }
+}

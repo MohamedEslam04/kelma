@@ -95,6 +95,9 @@ pub fn wire(window: &AppWindow) {
     api.on_suggest(|text: SharedString, cursor, t| suggest(&text, cursor, t));
     api.on_insert(|text: SharedString, cursor, ins: SharedString| insert(&text, cursor, &ins));
     api.on_complete(|text: SharedString, cursor, ins: SharedString| complete(&text, cursor, &ins));
+    crate::mention::wire(window);
+    crate::composer_format::wire(window);
+    crate::shortcuts::wire(window);
 }
 
 #[cfg(test)]

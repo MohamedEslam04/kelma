@@ -1,0 +1,672 @@
+// Finding things (plan chat 7.1, 7.2, 7.4, 7.5, 7.6): the Search page, the quick views (Mentions and
+// Followed threads), the Find in chat bar, the Shared tab and the chat details pane. Rust fills the
+// properties; the UI sends `command(name, argument)`.
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
+
+// One row of the Search page or a quick view.
+export struct HitRow {
+    id: string,
+    kind: string,        // message | file | person | channel | chat | meeting | thread
+    section: string,     // non-empty: the first row of a section of the All tab
+    title: string,
+    subtitle: string,
+    snippet: styled-text,
+    snippet-plain: string,
+    time: string,
+    initials: string,
+    color: color,
+    avatar: image,
+    has-avatar: bool,
+    rtl: bool,
+}
+
+// A suggestion of the "In" and "Person" filters.
+export struct PickRow { id: string, title: string, subtitle: string }
+
+// One row of the Shared tab.
+export struct SharedRow { kind: string, name: string, ext: string, shared-by: string, date: string, url: string }
+
+export global FindStore {
+    // --- Search page (Ctrl+Alt+E) ---
+    in-out property <string> query;
+    in-out property <string> tab: "all"; // all | messages | files | people | channels | chats | meetings
+    in property <[HitRow]> results;
+    in property <bool> searching;
+    in property <bool> searched;         // a search ran (shows the empty state when it found nothing)
+    in property <bool> more;             // more messages can be loaded
+    in property <string> filter-in;      // label of the chosen chat or channel
+    in property <string> filter-person;
+    in property <string> filter-date;    // "", "Past 24 hours", "Past week", "Past month"
+    in-out property <string> filter-editor; // "" | in | person | date
+    in property <[PickRow]> picks;
+    in-out property <int> focus-tick;
+
+    // --- Quick views ---
+    in-out property <bool> quick-open: false;
+    in property <string> quick-kind;     // mentions | saved | followed
+    in property <[HitRow]> quick-rows;
+    in property <bool> quick-loading;
+    in property <bool> quick-more;
+
+    // --- Find in chat ---
+    in-out property <bool> chat-find-open: false;
+    in-out property <string> chat-find-query;
+    in property <int> chat-find-count;
+    in property <int> chat-find-index;   // 1-based, in time order; 0 when there is no match
+    in-out property <int> chat-find-tick;
+
+    // --- Shared tab and details pane ---
+    in-out property <string> chat-tab: "chat"; // chat | shared
+    in property <[SharedRow]> shared;
+    in property <[SharedRow]> recent;
+    in property <bool> shared-loading;
+    in-out property <string> shared-filter: "recent"; // recent | files | links
+    in-out property <bool> details-open: false;
+
+    // The open message menu's thread is followed.
+    in property <bool> menu-following;
+
+    // (name, argument). Names: search, search-tab, editor, pick-query, pick, filter-clear, date, open,
+    // more, close-search, quick, quick-close, unfollow, find-open, find-close, find-query, find-prev,
+    // find-next, tab, shared-filter, shared-keyword, shared-open, shared-upload, details, follow,
+    // unfollow-msg, menu-follow, people-profile.
+    callback command(string, string);
+}
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    callback clicked();
+    callback cleared();
+    height: 30px;
+    width: chip-row.preferred-width;
+    border-radius: 15px;
+    border-width: 1px;
+    border-color: root.value != "" ? Theme.accent : Theme.border;
+    background: root.value != "" ? #3b3d6b : (t.has-hover ? Theme.surface-hover : transparent);
+    accessible-role: button;
+    accessible-label: root.value != "" ? root.label + ": " + root.value : root.label;
+    t := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    chip-row := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: root.value != "" ? 4px : 12px;
+        spacing: 6px;
+        Text { text: root.value != "" ? root.label + ": " + root.value : root.label; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+        if root.value != "": IconButton {
+            icon: @image-url("icons/close.svg");
+            tooltip: "Clear " + root.label;
+            size: 22px;
+            y: 4px;
+            clicked => { root.cleared(); }
+        }
+    }
+}
+
+component HitItem inherits Rectangle {
+    in property <HitRow> data;
+    callback clicked();
+    callback secondary();
+    in property <string> secondary-label;
+    height: (root.data.section != "" ? 30px : 0px) + 74px;
+    VerticalLayout {
+        if root.data.section != "": Text {
+            height: 30px;
+            text: root.data.section;
+            color: Theme.fg-muted;
+            font-size: 13px * Theme.font-scale;
+            font-weight: 700;
+            vertical-alignment: bottom;
+        }
+        row := Rectangle {
+            height: 74px;
+            border-radius: 4px;
+            background: touch.has-hover ? Theme.surface-hover : transparent;
+            accessible-role: list-item;
+            accessible-label: root.data.title;
+            accessible-description: root.data.snippet-plain + " · " + root.data.subtitle;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 12px;
+                Avatar {
+                    y: (parent.height - 36px) / 2;
+                    initials: root.data.initials;
+                    tone: root.data.color;
+                    img: root.data.avatar;
+                    has-img: root.data.has-avatar;
+                    size: 36px;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.data.title; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 600; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-stretch: 0; vertical-alignment: center; }
+                    }
+                    if root.data.snippet-plain != "": Rectangle {
+                        height: 18px;
+                        clip: true;
+                        StyledText {
+                            width: parent.width;
+                            text: root.data.snippet;
+                            default-color: Theme.fg-muted;
+                            default-font-size: 12px * Theme.font-scale;
+                            horizontal-alignment: root.data.rtl ? right : left;
+                        }
+                    }
+                    Text { text: root.data.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
+                }
+                if root.secondary-label != "": Rectangle { width: 82px; horizontal-stretch: 0; }
+            }
+            touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+            // After the row's own TouchArea, so it gets its clicks.
+            if root.secondary-label != "": Rectangle {
+                x: parent.width - self.width - 12px;
+                y: (parent.height - self.height) / 2;
+                width: 74px;
+                height: 28px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: sec.has-hover ? Theme.surface-hover : transparent;
+                accessible-role: button;
+                accessible-label: root.secondary-label;
+                Text { text: root.secondary-label; color: Theme.fg; font-size: 12px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                sec := TouchArea { mouse-cursor: pointer; clicked => { root.secondary(); } }
+            }
+        }
+    }
+}
+
+component PickEditor inherits Rectangle {
+    in property <string> placeholder;
+    in property <[PickRow]> picks;
+    callback query(string);
+    callback pick(string);
+    height: 44px + min(6, root.picks.length) * 44px;
+    background: Theme.sidebar;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        Rectangle {
+            height: 44px;
+            pick-input := TextInput {
+                x: 12px;
+                width: parent.width - 24px;
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                single-line: true;
+                vertical-alignment: center;
+                accessible-role: text-input;
+                accessible-label: root.placeholder;
+                edited => { root.query(self.text); }
+                init => { self.focus(); }
+            }
+            if pick-input.text == "": Text { x: 12px; text: root.placeholder; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+        }
+        for p in root.picks: Rectangle {
+            height: 44px;
+            background: pt.has-hover ? Theme.surface-hover : transparent;
+            accessible-role: list-item;
+            accessible-label: p.title;
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                alignment: center;
+                Text { text: p.title; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+                if p.subtitle != "": Text { text: p.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
+            }
+            pt := TouchArea { mouse-cursor: pointer; clicked => { root.pick(p.id); } }
+        }
+    }
+}
+
+// The Search page: query box, result tabs, filters and the results.
+export component SearchView inherits Rectangle {
+    background: Theme.main;
+    callback close();
+    VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 16px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 10px;
+            height: 40px;
+            IconButton { icon: @image-url("icons/back.svg"); tooltip: "Back to chat"; y: 4px; clicked => { root.close(); } }
+            Rectangle {
+                border-radius: 4px;
+                background: Theme.sidebar;
+                border-width: 1px;
+                border-color: query-input.has-focus ? Theme.accent : Theme.border;
+                max-width: 720px;
+                FocusScope {
+                    capture-key-pressed(event) => {
+                        if event.text == Key.Escape {
+                            root.close();
+                            return accept;
+                        }
+                        reject
+                    }
+                    // Ctrl+Alt+E again puts the cursor back in the box.
+                    property <int> tick: FindStore.focus-tick;
+                    changed tick => { query-input.focus(); query-input.select-all(); }
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    Icon { source: @image-url("icons/search.svg"); width: 16px; height: 16px; y: 12px; }
+                    query-input := TextInput {
+                        text <=> FindStore.query;
+                        color: Theme.fg;
+                        font-size: 14px * Theme.font-scale;
+                        single-line: true;
+                        vertical-alignment: center;
+                        accessible-role: text-input;
+                        accessible-label: "Search";
+                        accepted => { FindStore.command("search", self.text); }
+                        init => { self.focus(); }
+                        changed text => {
+                            if self.text == "" { FindStore.command("search", ""); }
+                        }
+                    }
+                    if FindStore.query != "": IconButton {
+                        icon: @image-url("icons/close.svg");
+                        tooltip: "Clear search";
+                        size: 24px;
+                        y: 8px;
+                        clicked => { FindStore.query = ""; query-input.focus(); }
+                    }
+                }
+                }
+                if query-input.text == "": Text { x: 40px; text: "Search messages, files, people and chats"; color: Theme.fg-subtle; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            height: 28px;
+            for t in [{key: "all", label: "All"}, {key: "messages", label: "Messages"}, {key: "files", label: "Files"}, {key: "people", label: "People"}, {key: "channels", label: "Channels"}, {key: "chats", label: "Group chats"}, {key: "meetings", label: "Meetings"}]: Pill {
+                label: t.label;
+                active: FindStore.tab == t.key;
+                clicked => { FindStore.tab = t.key; FindStore.command("search-tab", t.key); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            height: 30px;
+            Chip { label: "In"; value: FindStore.filter-in; clicked => { FindStore.filter-editor = FindStore.filter-editor == "in" ? "" : "in"; FindStore.command("editor", FindStore.filter-editor); } cleared => { FindStore.command("filter-clear", "in"); } }
+            Chip { label: "Person"; value: FindStore.filter-person; clicked => { FindStore.filter-editor = FindStore.filter-editor == "person" ? "" : "person"; FindStore.command("editor", FindStore.filter-editor); } cleared => { FindStore.command("filter-clear", "person"); } }
+            Chip { label: "Date"; value: FindStore.filter-date; clicked => { FindStore.filter-editor = FindStore.filter-editor == "date" ? "" : "date"; FindStore.command("editor", FindStore.filter-editor); } cleared => { FindStore.command("filter-clear", "date"); } }
+        }
+        if FindStore.filter-editor == "in" || FindStore.filter-editor == "person": HorizontalLayout {
+            alignment: start;
+            PickEditor {
+                width: 360px;
+                placeholder: FindStore.filter-editor == "in" ? "Search chats and channels" : "Search people";
+                picks: FindStore.picks;
+                query(q) => { FindStore.command("pick-query", q); }
+                pick(id) => { FindStore.command("pick", id); }
+            }
+        }
+        if FindStore.filter-editor == "date": HorizontalLayout {
+            alignment: start;
+            Rectangle {
+                width: 220px;
+                height: 4 * 40px;
+                background: Theme.sidebar;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Theme.border;
+                VerticalLayout {
+                    for d in [{key: "", label: "Any time"}, {key: "24h", label: "Past 24 hours"}, {key: "7d", label: "Past week"}, {key: "30d", label: "Past month"}]: Rectangle {
+                        height: 40px;
+                        background: dt.has-hover ? Theme.surface-hover : transparent;
+                        accessible-role: button;
+                        accessible-label: d.label;
+                        Text { x: 12px; text: d.label; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                        dt := TouchArea { mouse-cursor: pointer; clicked => { FindStore.filter-editor = ""; FindStore.command("date", d.key); } }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                ListView {
+                    for r in FindStore.results: HitItem {
+                        data: r;
+                        clicked => { FindStore.command("open", r.id); }
+                    }
+                }
+                if FindStore.more && !FindStore.searching: Rectangle {
+                    height: 44px;
+                    Pill { label: FindStore.tab == "all" || FindStore.tab == "messages" ? "Show more messages" : "Show more results"; x: 12px; y: 8px; clicked => { FindStore.command("more", ""); } }
+                }
+            }
+            if FindStore.searching && FindStore.results.length == 0: Text {
+                text: "Searching…";
+                color: Theme.fg-muted;
+                font-size: 14px * Theme.font-scale;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if !FindStore.searching && FindStore.searched && FindStore.results.length == 0: VerticalLayout {
+                alignment: center;
+                spacing: 6px;
+                Text { text: "We couldn't find any results"; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; }
+                Text { text: "Check your spelling or try different keywords."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; }
+            }
+            if !FindStore.searched && !FindStore.searching: Text {
+                text: "Type a word or phrase and press Enter";
+                color: Theme.fg-subtle;
+                font-size: 13px * Theme.font-scale;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// Quick views: Mentions, Saved and Followed threads.
+export component QuickView inherits Rectangle {
+    background: Theme.main;
+    callback close();
+    VerticalLayout {
+        Rectangle {
+            height: 60px;
+            background: Theme.sidebar;
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 16px;
+                spacing: 12px;
+                Text {
+                    text: FindStore.quick-kind == "mentions" ? "Mentions" : (FindStore.quick-kind == "saved" ? "Saved" : "Followed threads");
+                    color: Theme.fg;
+                    font-size: 17px * Theme.font-scale;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; y: 14px; clicked => { root.close(); } }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                ListView {
+                    for r in FindStore.quick-rows: HitItem {
+                        data: r;
+                        secondary-label: FindStore.quick-kind == "followed" ? "Unfollow" : (FindStore.quick-kind == "saved" ? "Unsave" : "");
+                        clicked => { FindStore.command("open", r.id); }
+                        secondary => { FindStore.command(FindStore.quick-kind == "saved" ? "unsave" : "unfollow", r.id); }
+                    }
+                }
+                if FindStore.quick-more && !FindStore.quick-loading: Rectangle {
+                    height: 44px;
+                    Pill { label: "Show more"; x: 12px; y: 8px; clicked => { FindStore.command("more", ""); } }
+                }
+            }
+            if FindStore.quick-loading && FindStore.quick-rows.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if !FindStore.quick-loading && FindStore.quick-rows.length == 0: VerticalLayout {
+                alignment: center;
+                spacing: 6px;
+                Text { text: FindStore.quick-kind == "mentions" ? "No one has mentioned you yet" : (FindStore.quick-kind == "saved" ? "No saved messages" : "You are not following any threads"); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; }
+                if FindStore.quick-kind == "saved": Text { text: "Choose Save this message in a message's \"…\" menu."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; }
+                if FindStore.quick-kind == "followed": Text { text: "Follow a channel post from its \"…\" menu."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; }
+            }
+        }
+    }
+}
+
+// The bar above the conversation: Find in chat, Find in channel.
+export component ChatFindBar inherits Rectangle {
+    in property <bool> channel;
+    height: 44px;
+    background: Theme.sidebar;
+    VerticalLayout {
+        HorizontalLayout {
+            padding-left: 20px;
+            padding-right: 16px;
+            spacing: 8px;
+            Rectangle {
+                y: 6px;
+                height: 32px;
+                max-width: 420px;
+                border-radius: 4px;
+                background: Theme.sidebar;
+                border-width: 1px;
+                border-color: find-input.has-focus ? Theme.accent : Theme.border;
+                FocusScope {
+                    capture-key-pressed(event) => {
+                        if event.text == Key.Escape {
+                            FindStore.command("find-close", "");
+                            return accept;
+                        }
+                        if event.text == Key.Return {
+                            FindStore.command(event.modifiers.shift ? "find-next" : "find-prev", "");
+                            return accept;
+                        }
+                        reject
+                    }
+                    find-input := TextInput {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        text <=> FindStore.chat-find-query;
+                        color: Theme.fg;
+                        font-size: 13px * Theme.font-scale;
+                        single-line: true;
+                        vertical-alignment: center;
+                        accessible-role: text-input;
+                        accessible-label: root.channel ? "Find in channel" : "Find in chat";
+                        edited => { FindStore.command("find-query", self.text); }
+                        init => { self.focus(); }
+                    }
+                }
+                if find-input.text == "": Text { x: 10px; text: root.channel ? "Find in channel" : "Find in chat"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+            }
+            Text {
+                horizontal-stretch: 0;
+                vertical-alignment: center;
+                color: Theme.fg-muted;
+                font-size: 12px * Theme.font-scale;
+                text: FindStore.chat-find-query == "" ? "" : (FindStore.chat-find-count == 0 ? "No results" : FindStore.chat-find-index + " of " + FindStore.chat-find-count);
+                accessible-role: text;
+                accessible-label: self.text;
+            }
+            IconButton { icon: @image-url("icons/chevron-down.svg"); tooltip: "Previous match"; y: 6px; size: 32px; clicked => { FindStore.command("find-prev", ""); } }
+            IconButton { icon: @image-url("icons/chevron-down.svg"); tooltip: "Next match"; y: 6px; size: 32px; clicked => { FindStore.command("find-next", ""); } }
+            IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close find"; y: 6px; size: 32px; clicked => { FindStore.command("find-close", ""); } }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+    }
+    // Refocus the box when the header button is pressed again.
+    changed-tick := Rectangle {
+        width: 0px;
+        height: 0px;
+        property <int> tick: FindStore.chat-find-tick;
+        changed tick => { find-input.focus(); }
+    }
+}
+
+component SharedLine inherits Rectangle {
+    in property <SharedRow> data;
+    in property <bool> compact: false;
+    callback open();
+    height: root.compact ? 48px : 44px;
+    background: t.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: list-item;
+    accessible-label: root.data.name;
+    accessible-description: root.data.shared-by + " · " + root.data.date;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            y: (parent.height - 28px) / 2;
+            border-radius: 3px;
+            background: root.data.kind == "link" ? #2d3a5f : #ffffff;
+            if root.data.kind == "link": Icon { source: @image-url("icons/link.svg"); tint: #ffffff; width: 16px; height: 16px; }
+            if root.data.kind != "link": Text { text: root.data.ext; color: #141414; font-size: 9px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        VerticalLayout {
+            alignment: center;
+            Text { text: root.data.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
+            if root.compact: Text { text: root.data.shared-by + " · " + root.data.date; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
+        }
+        if !root.compact: Text { width: 140px; horizontal-stretch: 0; text: root.data.date; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+        if !root.compact: Text { width: 160px; horizontal-stretch: 0; text: root.data.shared-by; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+    }
+    t := TouchArea { mouse-cursor: pointer; clicked => { root.open(); } }
+}
+
+// The "Shared" tab of a chat or channel (the "Files" tab of a channel).
+export component SharedView inherits Rectangle {
+    background: Theme.main;
+    VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 12px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 6px;
+            height: 30px;
+            for f in [{key: "recent", label: "Recent"}, {key: "files", label: "Files"}, {key: "links", label: "Links"}]: Pill {
+                label: f.label;
+                active: FindStore.shared-filter == f.key;
+                clicked => { FindStore.shared-filter = f.key; FindStore.command("shared-filter", f.key); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: 240px;
+                height: 30px;
+                horizontal-stretch: 0;
+                border-radius: 4px;
+                background: Theme.sidebar;
+                border-width: 1px;
+                border-color: kw-input.has-focus ? Theme.accent : Theme.border;
+                kw-input := TextInput {
+                    x: 10px;
+                    width: parent.width - 20px;
+                    color: Theme.fg;
+                    font-size: 12px * Theme.font-scale;
+                    single-line: true;
+                    vertical-alignment: center;
+                    accessible-role: text-input;
+                    accessible-label: "Filter by keyword";
+                    edited => { FindStore.command("shared-keyword", self.text); }
+                }
+                if kw-input.text == "": Text { x: 10px; text: "Filter by keyword"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+            }
+            Rectangle {
+                width: 84px;
+                height: 30px;
+                horizontal-stretch: 0;
+                border-radius: 4px;
+                background: up.has-hover ? Theme.accent : Theme.accent-strong;
+                accessible-role: button;
+                accessible-label: "Upload";
+                Text { text: "Upload"; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                up := TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("shared-upload", ""); } }
+            }
+            Rectangle {
+                width: 112px;
+                height: 30px;
+                horizontal-stretch: 0;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: od.has-hover ? Theme.surface-hover : transparent;
+                accessible-role: button;
+                accessible-label: "Upload from OneDrive";
+                Text { text: "From OneDrive"; color: Theme.fg; font-size: 12px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                od := TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("shared-onedrive", ""); } }
+            }
+        }
+        HorizontalLayout {
+            padding-left: 52px;
+            padding-right: 12px;
+            spacing: 12px;
+            height: 24px;
+            Text { text: "Name"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
+            Text { width: 140px; horizontal-stretch: 0; text: "Date shared"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
+            Text { width: 160px; horizontal-stretch: 0; text: "Shared by"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        Rectangle {
+            vertical-stretch: 1;
+            ListView {
+                for s in FindStore.shared: SharedLine {
+                    data: s;
+                    open => { FindStore.command("shared-open", s.url); }
+                }
+            }
+            if FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if !FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Nothing has been shared here yet"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+}
+
+// The right panel "In this chat": the recent shared items and "See all".
+export component DetailsPane inherits Rectangle {
+    in property <string> title;
+    width: 320px;
+    background: Theme.sidebar;
+    border-width: 1px;
+    border-color: Theme.border;
+    accessible-role: groupbox;
+    accessible-label: "In this chat";
+    VerticalLayout {
+        Rectangle {
+            height: 52px;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 8px;
+                Text { text: "In this chat"; color: Theme.fg; font-size: 15px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close details"; y: 10px; clicked => { FindStore.details-open = false; FindStore.command("details", "close"); } }
+            }
+        }
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            height: 20px;
+            Text { text: root.title; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
+        }
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            height: 40px;
+            Text { text: "Shared"; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: see-text.preferred-width + 8px;
+                horizontal-stretch: 0;
+                accessible-role: button;
+                accessible-label: "See all";
+                see-text := Text { text: "See all"; color: Theme.accent; font-size: 12px * Theme.font-scale; vertical-alignment: center; horizontal-alignment: center; }
+                TouchArea { mouse-cursor: pointer; clicked => { FindStore.chat-tab = "shared"; FindStore.command("tab", "shared"); } }
+            }
+        }
+        for s in FindStore.recent: SharedLine {
+            data: s;
+            compact: true;
+            open => { FindStore.command("shared-open", s.url); }
+        }
+        if FindStore.recent.length == 0: HorizontalLayout {
+            padding-left: 16px;
+            height: 32px;
+            Text { text: FindStore.shared-loading ? "Loading…" : "Nothing has been shared here yet"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}

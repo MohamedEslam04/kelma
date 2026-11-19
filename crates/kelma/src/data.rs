@@ -21,6 +21,14 @@ pub struct ChatData {
     pub favorite: bool,
     /// `preview` is an unsent draft, not the last message.
     pub draft: bool,
+    /// An unread message mentions me (the list shows "@").
+    pub mention: bool,
+    /// A group chat, which can be left from the item menu.
+    pub group: bool,
+    /// Notifications are off for this chat or channel.
+    pub muted: bool,
+    /// A channel (its item menu has the channel items).
+    pub channel: bool,
 }
 
 /// A chip above the composer.
@@ -34,9 +42,24 @@ pub struct AttachmentData {
 #[derive(Clone)]
 pub struct ImgData {
     pub url: String,
+    /// Position and size of the cell in the message's image grid.
+    pub x: f32,
+    pub y: f32,
     pub w: f32,
     pub h: f32,
+    /// `k` on the last cell when `k` more images are not shown.
+    pub overflow: usize,
     pub pixels: Option<Pixels>,
+}
+
+/// A link preview card.
+#[derive(Clone)]
+pub struct LinkData {
+    pub url: String,
+    pub title: String,
+    pub description: String,
+    pub domain: String,
+    pub thumb: Option<Pixels>,
 }
 
 #[derive(Clone)]
@@ -87,6 +110,59 @@ pub struct MsgData {
     pub failed: bool,
     /// The "New messages" divider is drawn above this row.
     pub new_above: bool,
+    /// MRI of the sender (opens the profile card).
+    pub sender_id: String,
+    /// The message @mentions me or everyone.
+    pub mentions_me: bool,
+    /// On my newest message: `""`, `"sent"` or `"seen"`.
+    pub receipt: String,
+    /// Who has seen it (`"seen"` only).
+    pub receipt_names: String,
+    /// The row a jump from the pinned banner landed on.
+    pub flash: bool,
+    /// An Adaptive Card drawn like Teams does; empty when the message has none.
+    pub card: Vec<crate::lists_data::CardRowData>,
+    /// Headline of an announcement post.
+    pub headline: String,
+    /// `""`, `"high"` or `"urgent"`: the red label above the text.
+    pub importance: String,
+    /// Size of the image grid.
+    pub grid_w: f32,
+    pub grid_h: f32,
+    /// Translation state, see `Msg.translate`.
+    pub translate: &'static str,
+    pub translate_from: String,
+    pub links: Vec<LinkData>,
+}
+
+/// A person, or a team, channel or "everyone" entry, in a people list.
+#[derive(Clone, Default)]
+pub struct PersonData {
+    pub id: String,
+    pub name: String,
+    pub subtitle: String,
+    pub avatar: Option<Pixels>,
+    /// `person`, `team`, `channel` or `everyone`.
+    pub kind: &'static str,
+}
+
+/// One pinned message of the open chat.
+#[derive(Clone, Default)]
+pub struct PinnedData {
+    pub id: String,
+    pub sender: String,
+    pub preview: String,
+}
+
+/// What the profile card shows.
+#[derive(Clone, Default)]
+pub struct CardData {
+    pub person: PersonData,
+    pub loading: bool,
+    pub email: String,
+    pub work: String,
+    pub location: String,
+    pub time: String,
 }
 
 /// A forward target: an existing chat or channel.
@@ -118,7 +194,8 @@ pub struct TeamData {
     pub initials: String,
     pub color: u32,
     pub expanded: bool,
-    pub channels: Vec<(String, String, bool)>,
+    /// `(id, name, unread, hidden)`.
+    pub channels: Vec<(String, String, bool, bool)>,
 }
 
 #[derive(Clone, Default)]

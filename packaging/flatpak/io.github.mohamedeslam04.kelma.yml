@@ -1,0 +1,59 @@
+# Flatpak manifest for kelma. See packaging/flatpak/README.md for how to build it.
+app-id: io.github.mohamedeslam04.kelma
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: kelma
+
+finish-args:
+  # Teams chat, push channel, Graph and OneDrive.
+  - --share=network
+  # Window system: Wayland first, X11 as the fallback. --share=ipc is needed by X11 (MIT-SHM).
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # GPU renderer (KELMA_RENDERER=femtovg). The default software renderer works without it.
+  - --device=dri
+  # Audio through PipeWire's PulseAudio socket, plus PipeWire itself for the meeting host
+  # (camera, screen share and low-latency audio go through the portals and this socket).
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0
+  # Desktop notifications.
+  - --talk-name=org.freedesktop.Notifications
+  # The refresh token lives in the Secret Service (GNOME Keyring or KWallet).
+  - --talk-name=org.freedesktop.secrets
+  # Portals (file chooser, open URI, camera, screencast) need no extra permission:
+  # xdg-desktop-portal is always reachable from the sandbox. Attachments and problem reports
+  # are saved to the Downloads folder.
+  - --filesystem=xdg-download
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/kelma/cargo
+    CARGO_NET_OFFLINE: 'true'
+    # One compile job: the build host and CI runners are short on memory.
+    CARGO_BUILD_JOBS: '1'
+
+modules:
+  - name: kelma
+    buildsystem: simple
+    build-commands:
+      - cargo --offline build --release --locked -p kelma
+      - install -Dm755 target/release/kelma /app/bin/kelma
+      - install -Dm644 packaging/kelma.desktop /app/share/applications/${FLATPAK_ID}.desktop
+      - desktop-file-edit --set-icon=${FLATPAK_ID} /app/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm644 packaging/kelma.svg /app/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
+      - install -Dm644 packaging/flatpak/${FLATPAK_ID}.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+    sources:
+      # For a local build. Flathub would use a git source pinned to a tag instead:
+      #   - type: git
+      #     url: https://github.com/MohamedEslam04/kelma.git
+      #     tag: v0.1.0
+      - type: dir
+        path: ../..
+        skip: [target, .git, .claude]
+      # Vendored crates, generated from Cargo.lock (see README.md in this folder).
+      - cargo-sources.json

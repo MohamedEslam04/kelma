@@ -116,6 +116,8 @@ pub enum OutboxKind {
     Text,
     Image,
     File,
+    /// A message that carries app cards (`OutboxItem::cards`) and the typed text (`html`).
+    Card,
 }
 
 impl OutboxKind {
@@ -124,6 +126,7 @@ impl OutboxKind {
             OutboxKind::Text => "text",
             OutboxKind::Image => "image",
             OutboxKind::File => "file",
+            OutboxKind::Card => "card",
         }
     }
 
@@ -132,6 +135,7 @@ impl OutboxKind {
             "text" => OutboxKind::Text,
             "image" => OutboxKind::Image,
             "file" => OutboxKind::File,
+            "card" => OutboxKind::Card,
             _ => return None,
         })
     }
@@ -174,6 +178,12 @@ pub struct OutboxItem {
     /// For a quote reply, the `qtdMsgs` property naming the quoted message (the quote block
     /// itself is in `html`); `None` for a plain message.
     pub reply_to: Option<String>,
+    /// The `properties.mentions` value (a JSON array string) when the text mentions people.
+    pub mentions: Option<String>,
+    /// `properties.importance` to send: `""` (standard) or `"high"` (important).
+    pub importance: String,
+    /// For a `Card` item, the cards to attach: a JSON array string, kept as the sender wrote it.
+    pub cards: Option<String>,
     pub kind: OutboxKind,
     /// Local file to upload for `Image` and `File` items.
     pub payload_path: Option<String>,

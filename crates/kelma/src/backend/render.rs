@@ -5,11 +5,10 @@ use super::outbox::{PENDING_PREFIX, row_from_outbox};
 use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
-    ChatData, FileData, HeaderData, ImgData, MsgData, Pixels, ReactData, Scroll, TeamData,
-    color_for, initials,
+    ChatData, FileData, HeaderData, MsgData, Pixels, ReactData, Scroll, TeamData, color_for,
+    initials,
 };
 use crate::markdown::{reaction_emoji, render_blocks};
-use chrono::{Local, TimeZone};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -24,6 +23,8 @@ pub(super) struct MsgMarks<'a> {
     pub failed: Option<&'a HashSet<String>>,
     /// Index (among the non-control rows) where the unread divider sits.
     pub divider: Option<usize>,
+    /// My newest message and its read receipt: `(id, "sent" | "seen", names)`.
+    pub receipt: Option<&'a (String, String, String)>,
 }
 
 impl Engine {
@@ -124,7 +125,7 @@ impl Engine {
         None
     }
 
-    fn inline_image(self: &Arc<Self>, url: &str) -> Option<Pixels> {
+    pub(super) fn inline_image(self: &Arc<Self>, url: &str) -> Option<Pixels> {
         let mut cache = self.images.lock().unwrap();
         if let Some(p) = cache.get(url) {
             return p.clone();
@@ -189,6 +190,7 @@ impl Engine {
             .into_iter()
             .map(|d| (d.conversation_id, d.text))
             .collect();
+        let ov = self.lists_overlay();
         let mut rows = {
             let st = self.store.lock().unwrap();
             if search.trim().is_empty() {
@@ -207,13 +209,21 @@ impl Engine {
         if filter == "drafts" {
             rows.retain(|r| drafts.contains_key(&r.id));
         }
+        if filter == "meetings" {
+            rows.retain(|r| r.kind == ConvKind::Meeting);
+        }
         let mut fav = vec![];
         let mut main = vec![];
         let mut chans = vec![];
+        let mut by_section: HashMap<String, Vec<ChatData>> = HashMap::new();
         for r in rows {
             if r.kind == ConvKind::Channel && r.last_activity_ms == 0 {
                 continue;
             }
+            if ov.is_hidden(&r.id, r.last_activity_ms) {
+                continue;
+            }
+            let placement = ov.placement(&r.id, r.favorite);
             let avatar_mri = match r.kind {
                 ConvKind::OneOnOne => self.other_member(&r.id),
                 ConvKind::Notes => Some(self.me.clone()),
@@ -225,7 +235,13 @@ impl Engine {
             };
             let draft = drafts.get(&r.id);
             let preview_text = draft.unwrap_or(&r.last_preview);
+            let unread = r.unread
+                && (current.as_deref() != Some(r.id.as_str())
+                    || keep_unread.as_deref() == Some(r.id.as_str()));
+            let mention = unread && self.has_unread_mention(&r.id, r.read_horizon_ms);
             let data = ChatData {
+                mention,
+                group: r.kind == ConvKind::Group,
                 draft: draft.is_some(),
                 initials: initials(&r.title),
                 color: color_for(&r.id),
@@ -234,20 +250,24 @@ impl Engine {
                 rtl_preview: render::base_direction(preview_text) == render::Dir::Rtl,
                 preview: preview_text.replace('\n', " ").chars().take(120).collect(),
                 time: chat_time(r.last_activity_ms),
-                unread: r.unread
-                    && (current.as_deref() != Some(r.id.as_str())
-                        || keep_unread.as_deref() == Some(r.id.as_str())),
-                favorite: r.favorite,
-                section: if r.favorite {
-                    "favorites"
-                } else if r.kind == ConvKind::Channel {
-                    "channels"
-                } else {
-                    "chats"
+                unread,
+                favorite: placement == super::lists::Placement::Favorites,
+                muted: ov.is_muted(&r.id),
+                channel: r.kind == ConvKind::Channel,
+                section: match &placement {
+                    super::lists::Placement::Favorites => "favorites",
+                    _ if r.kind == ConvKind::Channel && !ov.combined() => "channels",
+                    _ => "chats",
                 },
                 id: r.id,
                 title,
             };
+            if let super::lists::Placement::Section(id) = placement {
+                let mut data = data;
+                data.section = "section";
+                by_section.entry(id).or_default().push(data);
+                continue;
+            }
             match data.section {
                 "favorites" => fav.push(data),
                 "channels" => chans.push(data),
@@ -255,6 +275,7 @@ impl Engine {
             }
         }
         self.ui.chats(fav, main, chans);
+        self.push_sections(by_section);
     }
 
     fn render_teams(self: &Arc<Self>) {
@@ -262,8 +283,12 @@ impl Engine {
             let v = self.view.lock().unwrap();
             (v.teams_order.clone(), v.collapsed_teams.clone())
         };
+        // Teams and channels the user hid on the management page stay out of the list; pinned
+        // channels come first.
+        let (hidden, pinned) = (self.hidden_ids(), self.pinned_ids());
         let st = self.store.lock().unwrap();
         let mut teams = st.teams().unwrap_or_default();
+        teams.retain(|t| !hidden.contains(&t.id));
         teams.sort_by_key(|t| order.iter().position(|o| o == &t.id).unwrap_or(usize::MAX));
         // ToggleTeam(index) refers to this order.
         self.view.lock().unwrap().teams_order = teams.iter().map(|t| t.id.clone()).collect();
@@ -271,14 +296,24 @@ impl Engine {
             .into_iter()
             .map(|t| {
                 let mut channels = st.channels(&t.id).unwrap_or_default();
-                channels.sort_by_key(|c| (c.title != "General", c.title.to_lowercase()));
+                channels.retain(|c| !hidden.contains(&c.id));
+                channels.sort_by_key(|c| {
+                    (
+                        c.title != "General",
+                        !pinned.contains(&c.id),
+                        c.title.to_lowercase(),
+                    )
+                });
                 TeamData {
                     initials: initials(&t.name),
                     color: color_for(&t.id),
                     expanded: !collapsed.contains(&t.id),
                     channels: channels
                         .into_iter()
-                        .map(|c| (c.id, c.title, c.unread))
+                        .map(|c| {
+                            let hidden = self.lists_channel_hidden(&c.id);
+                            (c.id, c.title, c.unread, hidden)
+                        })
                         .collect(),
                     id: t.id,
                     name: t.name,
@@ -314,6 +349,7 @@ impl Engine {
             ),
             None => (title_override.clone(), ConvKind::Group),
         };
+        self.push_group_header(&id);
         let avatar_mri = match kind {
             ConvKind::OneOnOne => self.other_member(&id),
             ConvKind::Notes => Some(self.me.clone()),
@@ -419,7 +455,12 @@ impl Engine {
         } else {
             None
         };
-        let out = self.build_msgs(
+        let receipt = if thread.is_none() {
+            self.receipt_mark(&conv, &visible)
+        } else {
+            None
+        };
+        let mut out = self.build_msgs(
             &rows,
             is_channel,
             &thread,
@@ -429,11 +470,21 @@ impl Engine {
                 selected: &selected,
                 failed: Some(&failed),
                 divider,
+                receipt: receipt.as_ref(),
             },
         );
+        if is_channel && thread.is_none() {
+            self.render_posts(&conv, &rows, &out);
+        } else {
+            self.ui.posts_inactive();
+        }
+        // A jump from the pinned banner scrolls to its row like the unread divider does.
+        let jump = self.take_jump(&mut out);
         let mode = {
             let mut v = self.view.lock().unwrap();
-            let mode = if !scroll {
+            let mode = if let Some(i) = jump {
+                Scroll::Divider(i)
+            } else if !scroll {
                 Scroll::Keep
             } else if let Some(i) =
                 divider.filter(|_| v.opening && open_at_divider(v.open_at, divider))
@@ -447,7 +498,9 @@ impl Engine {
             if scroll && v.loaded {
                 v.opening = false;
             }
-            if let Scroll::Divider(i) = mode {
+            if let Scroll::Divider(i) = mode
+                && jump.is_none()
+            {
                 v.new_count = unread_after(&info, i);
                 self.ui.new_count(v.new_count);
             }
@@ -470,6 +523,7 @@ impl Engine {
         let selected = marks.selected;
         let failed = marks.failed.unwrap_or(&none);
         let divider = marks.divider;
+        let receipt = marks.receipt;
         let visible: Vec<&MessageRow> = rows
             .iter()
             .filter(|r| !r.message_type.starts_with("Control/"))
@@ -480,8 +534,18 @@ impl Engine {
             let system = system_text(r);
             let props: Value =
                 serde_json::from_str(&r.reactions_json).unwrap_or_else(|_| json!({}));
-            let parsed = render_blocks(&render::parse_teams_html(&r.content_html));
             let mine = r.sender_mri == self.me;
+            let shown = self.translated_html(&r.id);
+            let html = shown.as_deref().unwrap_or(&r.content_html);
+            let mut parsed = render_blocks(&render::parse_teams_html(html));
+            // Headings, tables and colors (the plan's 5.4): the richer model draws the body.
+            crate::markdown::upgrade_rich(&mut parsed, html);
+            let headline = props
+                .get("t")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let card = self.card_rows(&props, &headline);
             let new_day = prev.is_none_or(|p| !same_day(p.compose_ms, r.compose_ms));
             let show_header = new_day
                 || divider == Some(i)
@@ -506,7 +570,8 @@ impl Engine {
                                 key,
                             })
                         })
-                        .filter(|r| r.count > 0)
+                        // `follow` (a followed thread) is stored as an emotion but is not a reaction.
+                        .filter(|r| r.count > 0 && r.key != "follow")
                         .collect()
                 })
                 .unwrap_or_default();
@@ -531,25 +596,15 @@ impl Engine {
                         .collect()
                 })
                 .unwrap_or_default();
-            let images = parsed
-                .images
-                .iter()
-                .map(|(url, w, h)| {
-                    let pixels = self.inline_image(url);
-                    // Real pixel size once decoded; the HTML attributes are only a hint.
-                    let (w, h) = match &pixels {
-                        Some(p) => (p.width() as f32, p.height() as f32),
-                        None => (w.unwrap_or(320) as f32, h.unwrap_or(200) as f32),
-                    };
-                    let scale = (420.0 / w.max(1.0)).min(320.0 / h.max(1.0)).min(1.0);
-                    ImgData {
-                        pixels,
-                        url: url.clone(),
-                        w: w * scale,
-                        h: h * scale,
-                    }
-                })
-                .collect();
+            let (images, grid_w, grid_h) = self.grid_images(&parsed.images);
+            let has_text = !r.deleted && system.is_none() && !parsed.plain.trim().is_empty();
+            let tr = self.translate_view(
+                &r.id,
+                props.get("g").and_then(Value::as_str),
+                mine,
+                has_text,
+            );
+            let links = self.link_cards(&props);
             let sender = if r.sender_name.is_empty() {
                 self.store
                     .lock()
@@ -573,10 +628,8 @@ impl Engine {
                 },
                 sender,
                 mine,
-                time: Local
-                    .timestamp_millis_opt(r.compose_ms)
-                    .single()
-                    .map(|t| t.format("%H:%M").to_string())
+                time: appearance::formats::local(r.compose_ms)
+                    .map(|t| t.format(appearance::formats::time_pattern()).to_string())
                     .unwrap_or_default(),
                 day: if new_day {
                     day_label(r.compose_ms)
@@ -610,6 +663,29 @@ impl Engine {
                 selected: selected.contains(&r.id),
                 failed: failed.contains(&r.id),
                 new_above: divider == Some(i),
+                sender_id: r.sender_mri.clone(),
+                mentions_me: super::mentions::mentions_me(&props, &self.me),
+                receipt: receipt
+                    .filter(|x| x.0 == r.id)
+                    .map(|x| x.1.clone())
+                    .unwrap_or_default(),
+                receipt_names: receipt
+                    .filter(|x| x.0 == r.id)
+                    .map(|x| x.2.clone())
+                    .unwrap_or_default(),
+                flash: false,
+                card,
+                headline,
+                importance: props
+                    .get("i")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                grid_w,
+                grid_h,
+                translate: tr.state,
+                translate_from: tr.from,
+                links,
             });
             prev = Some(r);
         }

@@ -1,0 +1,23 @@
+[package]
+name = "webhost"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Web host for kelma: a Chromium --app window driven over CDP, with a TeamsJS host shim"
+publish = false
+
+[dependencies]
+futures-util = "0.3.34"
+libc = "0.2.191"
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt", "macros", "sync", "time", "process", "fs"] }
+tokio-tungstenite = "0.30.0"
+tracing = "0.1.44"
+url = "2.5.8"
+uuid = { version = "1.29.3", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }

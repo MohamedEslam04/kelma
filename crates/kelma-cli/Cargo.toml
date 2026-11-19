@@ -9,14 +9,22 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.104"
+appearance = { version = "0.0.0", path = "../appearance" }
+app_store = { package = "apps", version = "0.0.0", path = "../apps" }
+devices = { version = "0.0.0", path = "../devices" }
+diag = { version = "0.0.0", path = "../diag" }
 calling = { version = "0.0.0", path = "../calling" }
 calendar = { version = "0.0.0", path = "../calendar" }
 render = { version = "0.0.0", path = "../render" }
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 reqwest = "0.13.5"
 serde_json = "1.0.154"
 onedrive = { version = "0.0.0", path = "../onedrive" }
+preview = { version = "0.0.0", path = "../preview" }
 session = { version = "0.0.0", path = "../session" }
 teams-proto = { version = "0.0.0", path = "../teams-proto" }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "signal"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tray = { version = "0.0.0", path = "../tray" }
 url = "2.5.8"
+webhost = { version = "0.0.0", path = "../webhost" }

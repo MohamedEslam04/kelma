@@ -106,6 +106,15 @@ pub(crate) const MIGRATIONS: &[&str] = &[
          PRIMARY KEY (conversation_id, message_id)
      );
      CREATE INDEX idx_saved_ms ON saved_messages(saved_ms);",
+    // v4: the mentions property of a queued message (a JSON array string), so an @mention
+    // survives the outbox like a quote reply's `reply_to` does.
+    "ALTER TABLE outbox ADD COLUMN mentions TEXT;",
+    // v5: the delivery importance of a queued message (`""` standard, `"high"` important), so
+    // "Mark as important" survives the outbox and a retry sends it the same way.
+    "ALTER TABLE outbox ADD COLUMN importance TEXT NOT NULL DEFAULT '';",
+    // v6: the app cards of a queued `card` message (a JSON array string), so a card chosen in
+    // the composer's apps picker survives the outbox and a retry sends the same cards.
+    "ALTER TABLE outbox ADD COLUMN cards TEXT;",
 ];
 
 pub(crate) fn run(conn: &mut Connection) -> Result<()> {

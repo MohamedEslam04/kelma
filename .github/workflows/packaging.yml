@@ -1,0 +1,75 @@
+# Optional packaging builds. They are slow, so they never run on pull requests: start them by
+# hand from the Actions tab, or they run when packaging/ changes on main. Pushing a branch named
+# ci/packaging-* also runs them, which tests changes before the workflow reaches main (a manual
+# run needs the workflow on the default branch).
+name: Packaging
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'ci/packaging-*']
+    paths: ['packaging/**', 'Cargo.lock', '.github/workflows/packaging.yml']
+
+jobs:
+  rpm:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Tools
+        run: dnf -y install rpm-build git cargo rust gcc gcc-c++ cmake pkgconf-pkg-config desktop-file-utils tar xz 'pkgconfig(alsa)' 'pkgconfig(fontconfig)' 'pkgconfig(xkbcommon)' 'pkgconfig(dbus-1)'
+      - uses: actions/checkout@v4
+      - name: Build the RPM
+        run: |
+          git config --global --add safe.directory "$PWD"
+          top=$PWD/rpmtop; v=0.1.0
+          mkdir -p "$top"/{SOURCES,BUILD,RPMS,SRPMS,BUILDROOT}
+          git archive --prefix=kelma-$v/ -o "$top/SOURCES/kelma-$v.tar.gz" HEAD
+          cargo vendor --locked vendor-dir/vendor
+          tar -C vendor-dir -c vendor | xz -T0 > "$top/SOURCES/kelma-$v-vendor.tar.xz"
+          rpmbuild -bb --define "_topdir $top" packaging/rpm/kelma.spec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kelma-rpm
+          path: rpmtop/RPMS/**/*.rpm
+
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate cargo-sources.json
+        run: |
+          # The image sets PYTHONPATH to /app/lib/python3.13/site-packages, so pip believes aiohttp is
+          # installed already and skips it, then `python3 -I` ignores that path and fails.
+          unset PYTHONPATH
+          python3 -m venv /tmp/gen
+          /tmp/gen/bin/pip -q install 'aiohttp>=3.9.5,<4' 'PyYAML>=6.0.2,<7' 'tomlkit>=0.13.3,<1'
+          curl -fsSL -o /tmp/gen/flatpak-cargo-generator.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/9d86d336a39b9af38b86f114b6ce5820fe260f91/cargo/flatpak-cargo-generator.py
+          /tmp/gen/bin/python3 -I /tmp/gen/flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: kelma.flatpak
+          manifest-path: packaging/flatpak/io.github.mohamedeslam04.kelma.yml
+          cache-key: flatpak-${{ hashFiles('Cargo.lock') }}
+
+  aur:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git rust cmake alsa-lib fontconfig libxkbcommon libxkbcommon-x11 dbus wayland libx11 libxcursor libxi libxrender libglvnd namcap
+      - uses: actions/checkout@v4
+      - name: Build the package (makepkg refuses to run as root)
+        run: |
+          useradd -m builder
+          git config --global --add safe.directory "$PWD"
+          cp -r packaging/aur /home/builder/aur && chown -R builder /home/builder/aur
+          # Build the checked-out commit instead of the default branch of the upstream URL.
+          git clone --bare . /home/builder/kelma.git && chown -R builder /home/builder/kelma.git
+          sed -i 's|git+${url}.git|git+file:///home/builder/kelma.git|' /home/builder/aur/PKGBUILD
+          su builder -c 'cd ~/aur && git config --global --add safe.directory "*" && makepkg --printsrcinfo > /tmp/srcinfo && makepkg -f --noconfirm'
+      - name: .SRCINFO is current
+        run: diff <(sed 's|file:///home/builder/kelma.git|https://github.com/MohamedEslam04/kelma.git|' /tmp/srcinfo) packaging/aur/.SRCINFO
+        shell: bash

@@ -1,9 +1,8 @@
 //! Calendar settings that live in the mailbox (work hours, time zone) and the work location
 //! pin (C3.3, C3.4).
 //!
-//! Graph's `/me/mailboxSettings` needs `MailboxSettings.Read`, which the token lacks, so the
-//! settings come from the Outlook REST API on `outlook.office.com`, which the same token
-//! audience grants.
+//! Graph's `/me/mailboxSettings` answers for this client, so the settings come from there;
+//! Outlook REST (403) and `getSchedule`'s own work hours are the fallbacks.
 
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -16,6 +15,9 @@ use crate::range::Weekday;
 
 pub const MAILBOX_SETTINGS_URL: &str = "https://outlook.office.com/api/v2.0/me/MailboxSettings";
 
+/// Graph's mailbox settings, read with the Graph token (it answers for this client).
+pub const GRAPH_MAILBOX_SETTINGS_PATH: &str = "/me/mailboxSettings";
+
 /// The days and hours I work, in `time_zone`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorkingHours {
@@ -24,6 +26,8 @@ pub struct WorkingHours {
     pub start_min: u32,
     pub end_min: u32,
     pub time_zone: String,
+    /// The zone's rules when Graph sends a `customTimeZone` instead of a name.
+    pub custom_zone: Option<crate::tz::CustomZone>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -80,7 +84,59 @@ pub fn parse_working_hours(hours: &Value) -> WorkingHours {
             Value::String(s) => s.clone(),
             other => ci_str(other, "Name"),
         },
+        custom_zone: crate::tz::parse_custom_zone(zone),
     }
+}
+
+/// The stretches of `from_ms..to_ms` (UTC) inside these work hours, read in the hours' own
+/// zone (a Windows or IANA name, or the custom zone; UTC when neither is known). Each day's
+/// hours are placed on that day's local date, so daylight saving moves them as it should.
+pub fn work_intervals(hours: &WorkingHours, from_ms: i64, to_ms: i64) -> Vec<(i64, i64)> {
+    const DAY: i64 = 86_400_000;
+    let zone = crate::tz::Zone::new(&hours.time_zone, hours.custom_zone.as_ref());
+    if hours.days.is_empty() || hours.end_min == hours.start_min || to_ms <= from_ms {
+        return vec![];
+    }
+    let mut out = Vec::new();
+    let mut day = zone.local_date(from_ms).add_days(-1);
+    let last = zone.local_date(to_ms).add_days(1);
+    while day <= last {
+        if hours.days.contains(&day.weekday()) {
+            let midnight = day.midnight_ms();
+            let start = zone.wall_to_utc(midnight + i64::from(hours.start_min) * 60_000);
+            // Hours that end at or before they start run past midnight.
+            let end_wall = if hours.end_min > hours.start_min {
+                midnight + i64::from(hours.end_min) * 60_000
+            } else {
+                midnight + DAY + i64::from(hours.end_min) * 60_000
+            };
+            let (s, e) = (start.max(from_ms), zone.wall_to_utc(end_wall).min(to_ms));
+            if s < e {
+                out.push((s, e));
+            }
+        }
+        day = day.add_days(1);
+    }
+    out
+}
+
+/// One flag per Scheduler slot (`slots` slots of `interval_minutes` from `start_ms`): whether
+/// the slot starts inside these work hours. This shades each attendee's row by their own hours.
+pub fn work_slots(
+    hours: &WorkingHours,
+    start_ms: i64,
+    interval_minutes: u32,
+    slots: usize,
+) -> Vec<bool> {
+    let step = i64::from(interval_minutes) * 60_000;
+    let end = start_ms + step * slots as i64;
+    let spans = work_intervals(hours, start_ms, end);
+    (0..slots as i64)
+        .map(|i| {
+            let at = start_ms + i * step;
+            spans.iter().any(|&(s, e)| at >= s && at < e)
+        })
+        .collect()
 }
 
 pub fn parse_mailbox_settings(v: &Value) -> MailboxSettings {
@@ -138,11 +194,27 @@ pub async fn categories(client: &Client) -> Result<Vec<Category>> {
 
 /// Work hours and time zone, and the display formats when the mailbox lets us read them.
 ///
-/// Outlook REST's `/me/MailboxSettings` answers 403 for this client (it asks for
-/// `MailboxSettings.Read`), so on a 403 the work hours and time zone come from the
-/// `workingHours` that Graph `getSchedule` returns for my own address, and the formats stay
-/// empty.
+/// Graph `GET /me/mailboxSettings` answers for this client (checked live on 2026-11-19), so it
+/// goes first. Outlook REST's `/me/MailboxSettings` answers 403 (it asks for
+/// `MailboxSettings.Read`); it stays as the second try. When both fail the work hours and time
+/// zone come from the `workingHours` that Graph `getSchedule` returns for my own address, and
+/// the formats stay empty.
 pub async fn mailbox_settings(client: &Client) -> Result<MailboxSettings> {
+    let (status, text) = send_raw(
+        client,
+        &Audience::Graph,
+        Method::GET,
+        &format!("{}{GRAPH_MAILBOX_SETTINGS_PATH}", crate::graph::GRAPH),
+        None,
+    )
+    .await?;
+    if (200..300).contains(&status) {
+        return Ok(parse_mailbox_settings(&parse(
+            "mailbox settings",
+            status,
+            &text,
+        )?));
+    }
     let (status, text) = send_raw(
         client,
         &Audience::Outlook,
@@ -185,6 +257,54 @@ pub async fn mailbox_settings(client: &Client) -> Result<MailboxSettings> {
         working_hours: hours,
         ..MailboxSettings::default()
     })
+}
+
+/// A time zone the mailbox offers, for a time zone picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimeZoneInfo {
+    /// The zone's id: a Windows name, or an IANA name when asked for IANA.
+    pub alias: String,
+    pub display_name: String,
+}
+
+/// Reads `GET /me/outlook/supportedTimeZones`: `{"value": [{"alias", "displayName"}]}`.
+pub fn parse_time_zones(v: &Value) -> Vec<TimeZoneInfo> {
+    ci(v, "value")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|z| {
+                    let alias = ci_str(z, "alias");
+                    (!alias.is_empty()).then(|| TimeZoneInfo {
+                        display_name: ci_str(z, "displayName"),
+                        alias,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn time_zones_path(iana: bool) -> &'static str {
+    if iana {
+        "/me/outlook/supportedTimeZones(TimeZoneStandard=microsoft.graph.timeZoneStandard'Iana')"
+    } else {
+        "/me/outlook/supportedTimeZones"
+    }
+}
+
+/// The zones a second-time-zone picker can offer, in Windows names (`iana: false`, 143 live)
+/// or IANA names (`iana: true`, 553 live).
+pub async fn supported_time_zones(client: &Client, iana: bool) -> Result<Vec<TimeZoneInfo>> {
+    let v = graph(
+        client,
+        "supported time zones",
+        Method::GET,
+        time_zones_path(iana),
+        None,
+    )
+    .await?;
+    Ok(parse_time_zones(&v))
 }
 
 /// Where I am working on a day.
@@ -350,6 +470,97 @@ mod tests {
             (480, 960)
         );
         assert_eq!(s.working_hours.time_zone, "UTC");
+    }
+
+    fn ms(s: &str) -> i64 {
+        parse_iso_ms(s).unwrap()
+    }
+
+    fn hours(zone: Value) -> WorkingHours {
+        parse_working_hours(&json!({"daysOfWeek": ["monday", "tuesday"],
+            "startTime": "09:00:00.0000000", "endTime": "17:00:00.0000000", "timeZone": zone}))
+    }
+
+    #[test]
+    fn work_intervals_in_a_named_zone() {
+        // Tokyo is UTC+9: Monday 2026-11-16 09:00-17:00 local is Monday 00:00-08:00 UTC.
+        let h = hours(json!({"name": "Tokyo Standard Time"}));
+        let from = ms("2026-11-15T00:00:00Z");
+        let to = ms("2026-11-22T00:00:00Z");
+        assert_eq!(
+            work_intervals(&h, from, to),
+            [
+                (ms("2026-11-16T00:00:00Z"), ms("2026-11-16T08:00:00Z")),
+                (ms("2026-11-17T00:00:00Z"), ms("2026-11-17T08:00:00Z")),
+            ]
+        );
+        // Clipped to the window.
+        assert_eq!(
+            work_intervals(&h, ms("2026-11-16T06:00:00Z"), ms("2026-11-16T12:00:00Z")),
+            [(ms("2026-11-16T06:00:00Z"), ms("2026-11-16T08:00:00Z"))]
+        );
+    }
+
+    #[test]
+    fn work_intervals_with_a_custom_zone_and_daylight_saving() {
+        let h = hours(json!({"@odata.type": "#microsoft.graph.customTimeZone",
+            "bias": 480, "name": "Customized Time Zone",
+            "standardOffset": {"time": "02:00:00.0000000", "dayOccurrence": 1,
+                "dayOfWeek": "sunday", "month": 11, "year": 0},
+            "daylightOffset": {"daylightBias": -60, "time": "02:00:00.0000000",
+                "dayOccurrence": 2, "dayOfWeek": "sunday", "month": 3, "year": 0}}));
+        assert!(h.custom_zone.is_some());
+        assert_eq!(h.time_zone, "Customized Time Zone");
+        // Monday 2026-07-06 in PDT (-7) and Monday 2026-11-16 in PST (-8).
+        assert_eq!(
+            work_intervals(&h, ms("2026-07-06T00:00:00Z"), ms("2026-07-07T00:00:00Z")),
+            [(ms("2026-07-06T16:00:00Z"), ms("2026-07-07T00:00:00Z"))]
+        );
+        assert_eq!(
+            work_intervals(&h, ms("2026-11-16T00:00:00Z"), ms("2026-11-18T00:00:00Z")),
+            [
+                (ms("2026-11-16T17:00:00Z"), ms("2026-11-17T01:00:00Z")),
+                (ms("2026-11-17T17:00:00Z"), ms("2026-11-18T00:00:00Z")),
+            ]
+        );
+    }
+
+    #[test]
+    fn work_slots_shade_each_slot() {
+        // Cairo is UTC+2 in November 2026: 09:00-17:00 local is 07:00-15:00 UTC.
+        let h = hours(json!({"name": "Egypt Standard Time"}));
+        let start = ms("2026-11-16T06:00:00Z");
+        let slots = work_slots(&h, start, 60, 10);
+        assert_eq!(
+            slots,
+            [false, true, true, true, true, true, true, true, true, false]
+        );
+        // An unknown zone reads as UTC; no work days means no work slots.
+        let utc = hours(json!({"name": "Somewhere Else"}));
+        assert_eq!(
+            work_slots(&utc, ms("2026-11-16T08:00:00Z"), 60, 2),
+            [false, true]
+        );
+        assert_eq!(
+            work_slots(&WorkingHours::default(), start, 30, 3),
+            [false; 3]
+        );
+    }
+
+    #[test]
+    fn parses_supported_time_zones() {
+        let z = parse_time_zones(&json!({"value": [
+            {"alias": "Egypt Standard Time", "displayName": "(UTC+02:00) Cairo"},
+            {"alias": "", "displayName": "skipped"}]}));
+        assert_eq!(
+            z,
+            [TimeZoneInfo {
+                alias: "Egypt Standard Time".into(),
+                display_name: "(UTC+02:00) Cairo".into()
+            }]
+        );
+        assert!(time_zones_path(true).ends_with("timeZoneStandard'Iana')"));
+        assert_eq!(time_zones_path(false), "/me/outlook/supportedTimeZones");
     }
 
     #[test]

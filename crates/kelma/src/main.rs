@@ -2,13 +2,24 @@
 
 mod backend;
 mod composer;
+mod composer_format;
 mod data;
 mod demo;
+mod external;
+mod find_data;
+mod language;
+mod lists_data;
 mod markdown;
+mod media_data;
+mod mention;
 mod reactions;
+mod shortcuts;
+mod tray_wiring;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
+mod update_check;
+mod window_state;
 
 slint::include_modules!();
 
@@ -94,6 +105,9 @@ fn demo_engine(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
         "Mohamed Eslam".into(),
     );
     engine.seed_activity(activity);
+    engine
+        .calls
+        .demo(std::env::var_os("KELMA_CALL_DEMO").is_some());
     Ok(engine)
 }
 
@@ -129,7 +143,7 @@ async fn sign_in(ui: &UiHandle) -> anyhow::Result<Arc<Engine>> {
     cfg.self_mri = Some(me.clone());
     cfg.display_name = Some(my_name.clone());
     paths.save_config(&cfg)?;
-    let store = store::Store::open(&paths.db_path())?;
+    let store = store::Store::open(&paths.db_path_for(&cfg))?;
     ui.ready(data::initials(&my_name));
     Ok(Engine::new(client, store, cfg, ui.clone(), me, my_name))
 }
@@ -191,7 +205,35 @@ fn configure_fonts() {
     }
 }
 
+/// `kelma --report-problem [--log FILE] [--out PATH]`: writes the local, redacted problem
+/// bundle (nothing is uploaded), prints where it is and shows a desktop notification. It runs
+/// before any window exists so it works even when the UI is what is broken.
+fn report_problem(args: &[String]) -> anyhow::Result<()> {
+    let paths = session::Paths::new()?;
+    let out = diag::report_from_args(&paths, env!("CARGO_PKG_VERSION"), args)?;
+    println!("Wrote {}", out.display());
+    let _ = notify_rust::Notification::new()
+        .appname("kelma")
+        .summary("Problem report saved")
+        .body(&format!(
+            "{}\nStored on this computer only. Tokens and ids are redacted.",
+            out.display()
+        ))
+        .icon("dialog-information")
+        .show();
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--report-problem") {
+        return report_problem(&args[1..]);
+    }
+    if args.iter().any(|a| a == "--call-demo") {
+        // SAFETY: called at the start of main, before any other thread exists.
+        unsafe { std::env::set_var("KELMA_DEMO", "1") };
+        unsafe { std::env::set_var("KELMA_CALL_DEMO", "1") };
+    }
     configure_fonts();
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -207,7 +249,8 @@ fn main() -> anyhow::Result<()> {
         .backend_name("winit".into())
         .renderer_name(renderer)
         .select()?;
-    let _ = slint::set_xdg_app_id("kelma");
+    // Inside Flatpak the desktop file is named after the app id, so the window must use it.
+    let _ = slint::set_xdg_app_id(std::env::var("FLATPAK_ID").unwrap_or_else(|_| "kelma".into()));
 
     let window = AppWindow::new()?;
     composer::wire(&window);
@@ -293,9 +336,6 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_activity_reply, |t| Cmd::Activity(ActivityCmd::Reply(
         t.into()
     )));
-    cmd!(on_activity_settings, || Cmd::Activity(
-        ActivityCmd::Settings
-    ));
     cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
     cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
     cmd!(on_emoji_used, |e| Cmd::EmojiUsed(e.into()));
@@ -314,14 +354,90 @@ fn main() -> anyhow::Result<()> {
                 .upgrade()
                 .map(|w| w.get_post_subject().to_string())
                 .unwrap_or_default();
+            if weak.upgrade().is_some_and(|w| w.get_important()) {
+                let _ = tx.send(Cmd::SetImportant(true));
+            }
             let _ = tx.send(Cmd::Send(text.into(), subject));
+        });
+    }
+    ui::install_calendar(&window, tx.clone());
+    ui::install_apps(&window, tx.clone());
+    ui::settings::install_system(&window, tx.clone());
+    #[cfg(feature = "calls")]
+    ui::call_direct::install(&window, tx.clone());
+    ui::install_composer_apps(&window, tx.clone());
+    {
+        let tx = tx.clone();
+        window.global::<FindStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::FindCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Find(c));
+            }
         });
     }
     {
         let tx = tx.clone();
-        window.global::<CalStore>().on_command(move |name, arg| {
-            if let Some(c) = backend::CalCmd::parse(&name, &arg) {
-                let _ = tx.send(Cmd::Calendar(c));
+        window.global::<PeopleStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::PeopleCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::People(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<ListStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::ListsCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Lists(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window
+            .global::<ChannelStore>()
+            .on_command(move |name, arg| {
+                if let Some(c) = backend::ChannelCmd::parse(&name, &arg) {
+                    let _ = tx.send(Cmd::Channels(c));
+                }
+            });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<TeamsStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::TeamsCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Teams(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<MediaStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::MediaCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Media(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<EngageStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::EngageCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Engage(c));
+            }
+        });
+    }
+    ui::call::wire(&window);
+    {
+        let tx = tx.clone();
+        window.global::<CallStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::call::CallCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Call(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<DriveStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::DriveCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Drive(c));
             }
         });
     }
@@ -330,6 +446,8 @@ fn main() -> anyhow::Result<()> {
         window.on_dismiss_banner(move || {
             if let Some(w) = weak.upgrade() {
                 w.set_banner(slint::SharedString::new());
+                w.set_banner_action(slint::SharedString::new());
+                w.set_banner_info(false);
             }
         });
     }
@@ -349,9 +467,16 @@ fn main() -> anyhow::Result<()> {
     {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
         let tx = tx.clone();
+        let weak = window.as_weak();
         window.window().on_winit_window_event(move |_, event| {
             if let WindowEvent::DroppedFile(path) = event {
-                let _ = tx.send(Cmd::AddFile(path.clone()));
+                // On the OneDrive view a drop uploads; elsewhere it attaches to the message.
+                let on_drive = weak.upgrade().is_some_and(|w| w.get_view() == "onedrive");
+                let _ = tx.send(if on_drive {
+                    Cmd::Drive(backend::DriveCmd::Drop(path.clone()))
+                } else {
+                    Cmd::AddFile(path.clone())
+                });
             }
             EventResult::Propagate
         });
@@ -378,12 +503,22 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Saved size, position, last chat and collapsed teams; demo mode neither restores nor saves.
+    let _window_state_timers = window_state::install(
+        &window,
+        std::env::var_os("KELMA_DEMO").is_none(),
+        tx.clone(),
+    );
+    let hidden = args.iter().any(|a| a == "--hidden");
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()?;
     rt.spawn(app_main(ui, rx, focus));
-    window.run()?;
+    // Tray, close-to-tray and the event loop (stays up with the window hidden).
+    tray_wiring::run(&window, hidden)?;
+    window_state::finish(&window);
     // Give the engine a moment to write a draft typed just before closing.
     let _ = tx.send(Cmd::Flush);
     std::thread::sleep(std::time::Duration::from_millis(100));

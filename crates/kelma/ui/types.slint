@@ -13,6 +13,33 @@ export struct ChatRow {
     rtl-preview: bool,
     favorite: bool,
     draft: bool, // preview is an unsent draft
+    mention: bool, // an unread message mentions me
+    group: bool,   // a group chat (the item menu offers Leave)
+    muted: bool,   // notifications are off (the item menu offers Unmute)
+    channel: bool, // a channel (the item menu offers the channel items)
+}
+
+// Adaptive Card rows (plan 8.8). `kind`: text | fact | columns | image | actions | banner.
+// `band`: "" | emphasis | good | attention | warning | accent. `tone`: default | dark | light |
+// accent | good | warning | attention.
+export struct CardCell { text: styled-text, plain: string, stretch: float, size: length, bold: bool, tone: string, img: image, has-img: bool }
+export struct CardButton { title: string, url: string }
+export struct CardRow {
+    kind: string,
+    text: styled-text,
+    plain: string,
+    label: string,
+    size: length,
+    bold: bool,
+    subtle: bool,
+    tone: string,
+    band: string,
+    cells: [CardCell],
+    buttons: [CardButton],
+    img: image,
+    has-img: bool,
+    img-w: length,
+    img-h: length,
 }
 
 export struct ReactionItem { key: string, emoji: string, count: int, mine: bool, names: string }
@@ -26,7 +53,10 @@ export struct Edited { text: string, cursor: int }
 // An attachment waiting in the composer (pasted image, dropped or picked file).
 export struct PendingAttachment { name: string, detail: string, is-image: bool, preview: image, has-preview: bool }
 export struct FileItem { name: string, url: string, ext: string }
-export struct ImageItem { url: string, img: image, loaded: bool, w: length, h: length }
+// One cell of a message's image grid (x, y, w, h place it; `overflow` is the "+K more" of the last cell).
+export struct ImageItem { url: string, img: image, loaded: bool, x: length, y: length, w: length, h: length, overflow: int }
+// A link preview card under a message (plan chat 9.7).
+export struct LinkCard { url: string, title: string, description: string, domain: string, thumb: image, has-thumb: bool }
 
 export struct Msg {
     id: string,
@@ -57,9 +87,37 @@ export struct Msg {
     selected: bool,        // ticked in multi-select mode
     failed: bool,          // could not be sent: show Retry and Delete
     new-above: bool,       // draw the "New messages" divider above this row
+    sender-id: string,     // MRI of the sender, for the profile card
+    mentions-me: bool,     // the message @mentions me (or everyone)
+    receipt: string,       // on my newest message: "" | "sent" | "seen"
+    receipt-names: string, // who has seen it
+    flash: bool,           // the row a jump (pinned banner) landed on
+    card: [CardRow],       // an Adaptive Card drawn like Teams does (empty: show the text body)
+    headline: string,      // headline of an announcement post
+    importance: string,    // "" | "high" | "urgent": a red IMPORTANT! or URGENT! label
+    grid-w: length,        // size of the image grid
+    grid-h: length,
+    translate: string,     // "" | "can" (menu only) | "offer" (link too) | "busy" | "shown" | "failed"
+    translate-from: string, // language name shown with "See original"
+    links: [LinkCard],     // preview cards of the links in the message
 }
 
-export struct ChannelRow { id: string, name: string, unread: bool }
+// A person (or, for the @mention picker, a team, channel or "Everyone" entry) in a people list.
+export struct PersonItem {
+    id: string,
+    name: string,
+    subtitle: string,
+    initials: string,
+    color: color,
+    avatar: image,
+    has-avatar: bool,
+    kind: string, // "person" | "team" | "channel" | "everyone"
+}
+
+// One pinned message of the open chat, for the banner.
+export struct PinnedItem { id: string, sender: string, preview: string }
+
+export struct ChannelRow { id: string, name: string, unread: bool, hidden: bool }
 export struct TeamRow { id: string, name: string, initials: string, color: color, expanded: bool, channels: [ChannelRow] }
 
 export struct ActivityRow {

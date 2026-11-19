@@ -1,0 +1,23 @@
+[package]
+name = "tray"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kelma tray: StatusNotifierItem tray icon with unread badge, Unity launcher badge and XDG autostart"
+publish = false
+
+[dependencies]
+# Pure Rust StatusNotifierItem over zbus; no system library. Uses the `async-io` runtime feature
+# because slint enables `ksni/async-io` and ksni refuses `tokio` and `async-io` together.
+# Receiver is Clone and Sync, so the UI can hand clones of `events()` to any thread.
+crossbeam-channel = "0.5.17"
+ksni = { version = "0.3.7", default-features = false, features = ["async-io"] }
+tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
+# Same major as ksni's zbus, so one copy is built. Used for the Unity LauncherEntry signal.
+# async-io, not tokio: ksni drives zbus from its own async-io executor, and the tokio feature makes
+# zbus panic there ("no reactor running"). async-io has its own reactor, so it also works inside tokio.
+zbus = { version = "5.19.0", default-features = false, features = ["async-io"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

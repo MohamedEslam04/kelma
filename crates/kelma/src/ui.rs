@@ -1,13 +1,18 @@
 //! UI-thread side: turns view data into Slint models.
 
 mod cal;
+pub use appstore::wire as install_apps;
+#[cfg(test)]
+pub use cal::read_form as read_form_for_test;
+pub use cal::wire as install_calendar;
+pub use composer_apps::wire as install_composer_apps;
 
 use crate::data::{
     AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
 };
 use crate::reactions;
 use crate::{
-    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, Msg,
+    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard, Msg,
     PendingAttachment, ReactionItem, Recipient, TeamRow,
 };
 use slint::{
@@ -17,6 +22,20 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(crate) mod activity;
+pub(crate) mod appstore;
+pub(crate) mod call;
+#[cfg(feature = "calls")]
+pub(crate) mod call_direct;
+mod channels;
+mod composer_apps;
+pub(crate) mod drive;
+mod engage;
+mod find;
+mod lists;
+mod media;
+mod people;
+pub(crate) mod settings;
+mod teams;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
@@ -54,6 +73,10 @@ fn chat_row(c: ChatData) -> ChatRow {
         rtl_preview: c.rtl_preview,
         favorite: c.favorite,
         draft: c.draft,
+        mention: c.mention,
+        group: c.group,
+        muted: c.muted,
+        channel: c.channel,
     }
 }
 
@@ -92,8 +115,11 @@ fn msg(m: MsgData) -> Msg {
                         url: i.url.into(),
                         img: image,
                         loaded,
+                        x: i.x,
+                        y: i.y,
                         w: i.w,
                         h: i.h,
+                        overflow: i.overflow as i32,
                     }
                 })
                 .collect(),
@@ -126,6 +152,34 @@ fn msg(m: MsgData) -> Msg {
         selected: m.selected,
         failed: m.failed,
         new_above: m.new_above,
+        sender_id: m.sender_id.into(),
+        mentions_me: m.mentions_me,
+        receipt: m.receipt.into(),
+        receipt_names: m.receipt_names.into(),
+        flash: m.flash,
+        card: channels::card_rows(m.card),
+        headline: m.headline.into(),
+        importance: m.importance.into(),
+        grid_w: m.grid_w,
+        grid_h: m.grid_h,
+        translate: m.translate.into(),
+        translate_from: m.translate_from.into(),
+        links: model(
+            m.links
+                .into_iter()
+                .map(|l| {
+                    let (thumb, has_thumb) = img(&l.thumb);
+                    LinkCard {
+                        url: l.url.into(),
+                        title: l.title.into(),
+                        description: l.description.into(),
+                        domain: l.domain.into(),
+                        thumb,
+                        has_thumb,
+                    }
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -213,6 +267,8 @@ impl UiHandle {
     pub fn banner(&self, text: String) {
         self.run(move |w| {
             let shown: SharedString = text.into();
+            w.set_banner_action(SharedString::new());
+            w.set_banner_info(false);
             w.set_banner(shown.clone());
             let weak = w.as_weak();
             slint::Timer::single_shot(std::time::Duration::from_secs(8), move || {
@@ -350,10 +406,11 @@ impl UiHandle {
                         channels: model(
                             t.channels
                                 .into_iter()
-                                .map(|(id, name, unread)| ChannelRow {
+                                .map(|(id, name, unread, hidden)| ChannelRow {
                                     id: id.into(),
                                     name: name.into(),
                                     unread,
+                                    hidden,
                                 })
                                 .collect(),
                         ),

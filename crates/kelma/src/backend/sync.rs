@@ -13,6 +13,8 @@ impl Engine {
     pub async fn sync(self: &Arc<Self>) -> anyhow::Result<()> {
         let convs = self.client.conversations(0, 200).await?;
         let snap = self.client.snapshot().await.unwrap_or_default();
+        self.remember_members(&snap.chats);
+        self.lists_note_chats(&snap.chats);
         let meta: HashMap<&str, &teams_proto::csa::ChatMeta> =
             snap.chats.iter().map(|c| (c.id.as_str(), c)).collect();
         let mut channel_info: HashMap<String, (String, String, String)> = HashMap::new();
@@ -158,6 +160,9 @@ impl Engine {
             d.chats = true;
             d.teams = true;
         });
+        // Sections, channel visibility and notification state come from other aggregator calls.
+        let e = self.clone();
+        tokio::spawn(async move { e.lists_refresh().await });
         // If a conversation is open, refresh its newest page.
         let cur = self.view.lock().unwrap().current.clone();
         if let Some(id) = cur {
@@ -234,6 +239,8 @@ impl Engine {
         // Shows the chat's stored draft and reply target (or clears the reply bar).
         self.restore_draft(&id);
         self.push_attachments();
+        self.on_chat_opened(&id);
+        self.find_chat_opened(&id);
         self.mark(|d| {
             d.header = true;
             d.messages = true;
@@ -252,6 +259,7 @@ impl Engine {
             d.scroll = true;
             d.chats = true;
         });
+        self.prefetch_threads(&id);
         Ok(())
     }
 

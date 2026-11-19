@@ -28,6 +28,8 @@ pub struct ChatMeta {
     pub title: Option<String>,
     pub is_one_on_one: bool,
     pub members: Vec<String>,
+    /// MRIs of the members who muted the chat (the `isMuted` flag of each member).
+    pub muted_by: Vec<String>,
     pub hidden: bool,
 }
 
@@ -109,6 +111,18 @@ pub fn parse_snapshot(v: &Value) -> Snapshot {
                             .and_then(Value::as_array)
                             .map(|m| m.iter().filter_map(|x| s(x, "mri")).collect())
                             .unwrap_or_default(),
+                        muted_by: c
+                            .get("members")
+                            .and_then(Value::as_array)
+                            .map(|m| {
+                                m.iter()
+                                    .filter(|x| {
+                                        x.get("isMuted").and_then(Value::as_bool) == Some(true)
+                                    })
+                                    .filter_map(|x| s(x, "mri"))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
                         // `hidden` is true for many active 1:1 chats, so it is not a visibility flag;
                         // deleted conversations are the ones to drop.
                         hidden: c
@@ -141,7 +155,7 @@ mod tests {
     fn parses_teams_and_chats() {
         let snap = parse_snapshot(&json!({
             "teams": [
-                {"id": "19:t1@thread.tacv2", "displayName": "Velents Technologies Inc.", "channels": [
+                {"id": "19:t1@thread.tacv2", "displayName": "Contoso Ltd.", "channels": [
                     {"id": "19:t1@thread.tacv2", "displayName": "General", "isGeneral": true},
                     {"id": "19:c2@thread.tacv2", "displayName": "tech only"},
                     {"id": "19:c3@thread.tacv2", "displayName": "old", "isDeleted": true}
@@ -149,7 +163,7 @@ mod tests {
                 {"id": "19:arch@thread.tacv2", "displayName": "Archived", "isArchived": true, "channels": []}
             ],
             "chats": [
-                {"id": "19:g@thread.v2", "title": "Morning Standup", "isOneOnOne": false, "members": [{"mri": "8:orgid:a"}, {"mri": "8:orgid:b"}]},
+                {"id": "19:g@thread.v2", "title": "Morning Standup", "isOneOnOne": false, "members": [{"mri": "8:orgid:a"}, {"mri": "8:orgid:b", "isMuted": true}]},
                 {"id": "19:a_b@unq.gbl.spaces", "title": "", "isOneOnOne": true, "hidden": true, "members": [{"mri": "8:orgid:a"}]},
                 {"id": "19:gone@thread.v2", "isConversationDeleted": true}
             ]
@@ -166,6 +180,8 @@ mod tests {
         );
         assert!(snap.chats[2].hidden);
         assert_eq!(snap.chats[0].members, vec!["8:orgid:a", "8:orgid:b"]);
+        assert_eq!(snap.chats[0].muted_by, vec!["8:orgid:b"]);
+        assert!(snap.chats[1].muted_by.is_empty());
     }
 
     #[test]

@@ -30,6 +30,9 @@ pub enum Audience {
     SharePoint(String),
     /// `api.yammer.com`: Communities / Viva Engage.
     Yammer,
+    /// The Viva Engage web app's own token (`https://www.yammer.com`), sent to the Engage
+    /// GraphQL host `engage.cloud.microsoft` (storyline settings and posts).
+    Engage,
     /// `service.flow.microsoft.com`: Workflows.
     Flow,
     /// `tasks.office.com`: Planner.
@@ -42,11 +45,18 @@ pub enum Audience {
     Loki,
     /// `teams.microsoft.com` itself (region and authorization APIs).
     Teams,
+    /// `templates.teams.microsoft.com`: the provisioning service behind private channels and
+    /// channel members. Its token goes to `teams.microsoft.com/fabric/…`, not to its own host.
+    Templates,
+    /// A Teams app's own resource for app single sign-on, usually `api://<domain>/<app id>` (the
+    /// `webApplicationInfo.resource` of its manifest). Build it with [`Audience::app`]. Its
+    /// tokens are handed to the app (see `webhost`), never sent by kelma, so it owns no host.
+    App(String),
 }
 
 impl Audience {
     /// Every fixed audience (SharePoint is per host and not listed).
-    pub const FIXED: [Audience; 14] = [
+    pub const FIXED: [Audience; 16] = [
         Audience::Spaces,
         Audience::Csa,
         Audience::Presence,
@@ -55,12 +65,14 @@ impl Audience {
         Audience::Sydney,
         Audience::Outlook,
         Audience::Yammer,
+        Audience::Engage,
         Audience::Flow,
         Audience::Tasks,
         Audience::OneNote,
         Audience::Ic3,
         Audience::Loki,
         Audience::Teams,
+        Audience::Templates,
     ];
 
     /// Resource URL used in the token request scope.
@@ -75,12 +87,15 @@ impl Audience {
             Audience::Outlook => "https://outlook.office.com".into(),
             Audience::SharePoint(host) => format!("https://{host}"),
             Audience::Yammer => "https://api.yammer.com".into(),
+            Audience::Engage => "https://www.yammer.com".into(),
             Audience::Flow => "https://service.flow.microsoft.com".into(),
             Audience::Tasks => "https://tasks.office.com".into(),
             Audience::OneNote => "https://onenote.com".into(),
             Audience::Ic3 => "https://ic3.teams.office.com".into(),
             Audience::Loki => "https://loki.delve.office.com".into(),
             Audience::Teams => "https://teams.microsoft.com".into(),
+            Audience::Templates => "https://templates.teams.microsoft.com".into(),
+            Audience::App(resource) => resource.clone(),
         }
     }
 
@@ -92,6 +107,26 @@ impl Audience {
             return None;
         }
         Some(Audience::SharePoint(host))
+    }
+
+    /// The audience for an app resource, or `None` when `resource` is not a single plain
+    /// `api://` or `https://` resource. It goes into the token request's scope as it is, so
+    /// whitespace (another scope), query, fragment, escapes and a trailing `/` or `/.default`
+    /// are refused. Which app may get which resource is decided by the caller.
+    pub fn app(resource: &str) -> Option<Audience> {
+        let rest = resource
+            .strip_prefix("api://")
+            .or_else(|| resource.strip_prefix("https://"))?;
+        let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '/' | ':');
+        if rest.is_empty()
+            || !rest.chars().all(plain)
+            || rest.ends_with('/')
+            || rest.ends_with("/.default")
+            || rest.starts_with('/')
+        {
+            return None;
+        }
+        Some(Audience::App(resource.to_string()))
     }
 
     /// Cache key: the resource URL.
@@ -112,10 +147,15 @@ pub struct TokenCache {
 impl TokenCache {
     /// A token for `aud` that is still valid at `now` plus [`MARGIN`].
     pub fn get(&self, aud: &Audience, now: SystemTime) -> Option<String> {
+        self.entry(aud, now).map(|(t, _)| t)
+    }
+
+    /// [`TokenCache::get`] with the token's wall-clock expiry.
+    pub fn entry(&self, aud: &Audience, now: SystemTime) -> Option<(String, SystemTime)> {
         self.entries
             .get(&aud.key())
             .filter(|(_, exp)| *exp > now + MARGIN)
-            .map(|(t, _)| t.clone())
+            .cloned()
     }
 
     /// Stores a token for `aud` that expires `expires_in_s` seconds after `now`.
@@ -142,6 +182,21 @@ impl TokenCache {
     /// True when nothing is cached.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+/// An access token for an app resource with its wall-clock expiry.
+#[derive(Clone)]
+pub struct AppToken {
+    pub access_token: String,
+    pub expires_at: SystemTime,
+}
+
+impl std::fmt::Debug for AppToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppToken")
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
     }
 }
 
@@ -207,6 +262,74 @@ mod tests {
         );
         c.invalidate(&Audience::Graph);
         assert_eq!(c.len(), 0);
+    }
+
+    #[test]
+    fn app_resources_are_used_as_given_in_the_scope() {
+        for r in [
+            "api://app.contoso.com/0d5e1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+            "api://app.contoso.com/botid-0d5e1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+            "api://0d5e1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+            "api://localhost:53000/0d5e1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+            "https://graph.microsoft.com",
+        ] {
+            let aud = Audience::app(r).unwrap_or_else(|| panic!("{r}"));
+            assert_eq!(aud, Audience::App(r.into()));
+            assert_eq!(aud.resource(), r);
+            assert_eq!(
+                crate::client_info::scope_for(&aud.resource()),
+                format!("{r}/.default openid profile offline_access")
+            );
+        }
+    }
+
+    #[test]
+    fn app_resources_cannot_smuggle_scopes_or_odd_urls() {
+        for r in [
+            "",
+            "api://",
+            "https://",
+            "api://x.com/a b",
+            "api://x.com/a https://graph.microsoft.com/.default",
+            "api://x.com/a\nb",
+            "api://x.com/a?b=1",
+            "api://x.com/a#b",
+            "api://x.com/a%20b",
+            "api://x.com/a/.default",
+            "api://x.com/a/",
+            "http://x.com",
+            "javascript:alert(1)",
+            "x.com/a",
+        ] {
+            assert_eq!(Audience::app(r), None, "{r:?}");
+        }
+    }
+
+    #[test]
+    fn app_tokens_are_cached_per_resource_with_their_expiry() {
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let a = Audience::app("api://a.contoso.com/1").unwrap();
+        let b = Audience::app("api://b.contoso.com/1").unwrap();
+        let mut c = TokenCache::default();
+        c.put(&a, "A".into(), t0, 3600);
+        assert_eq!(c.get(&a, t0).as_deref(), Some("A"));
+        assert_eq!(c.get(&b, t0), None);
+        assert_eq!(
+            c.entry(&a, t0),
+            Some(("A".to_string(), t0 + Duration::from_secs(3600)))
+        );
+        assert_eq!(c.entry(&a, t0 + Duration::from_secs(3600 - 300)), None);
+        c.put(&b, "B".into(), t0, 60);
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn app_token_debug_hides_the_token() {
+        let t = AppToken {
+            access_token: "SECRET".into(),
+            expires_at: SystemTime::UNIX_EPOCH,
+        };
+        assert!(!format!("{t:?}").contains("SECRET"));
     }
 
     #[test]
