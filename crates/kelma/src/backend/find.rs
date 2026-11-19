@@ -10,9 +10,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use store::{ConvFilter, ConvKind, ConversationRow, MessageRow};
+use teams_proto::global_search::Paging;
 use teams_proto::search::{MessageHit, SearchFilters, mentions_query};
 use teams_proto::time::now_ms;
 use teams_proto::views::FollowedThread;
+
+mod global;
 
 /// Messages asked from the server per page.
 const PAGE: u32 = 25;
@@ -240,6 +243,8 @@ pub(super) struct State {
     hits: Vec<Hit>,
     msg_from: u32,
     more: bool,
+    /// Next page of Files, People and Meetings (the global search), see `global`.
+    global_more: Paging,
     searched: bool,
     // Quick views.
     quick: Option<&'static str>,
@@ -519,7 +524,8 @@ impl Engine {
                 rows_for(f.tab, Self::filters_active(&f), &f.hits),
                 terms_of(&f.query),
                 f.searched,
-                f.more && matches!(f.tab, Tab::Messages | Tab::All),
+                (f.more && matches!(f.tab, Tab::Messages | Tab::All))
+                    || global::tab_has_more(f.tab, &f.global_more),
             )
         };
         let rows: Vec<HitData> = rows
@@ -553,6 +559,7 @@ impl Engine {
             f.seq += 1;
             f.msg_from = 0;
             f.more = false;
+            f.global_more = Paging::default();
             (
                 f.query.clone(),
                 f.seq,
@@ -597,13 +604,13 @@ impl Engine {
             return;
         }
         let want_messages = matches!(tab, Tab::All | Tab::Messages);
-        let want_others = !filtered && matches!(tab, Tab::All | Tab::People | Tab::Files);
         let remote_filters = SearchFilters {
             in_thread: in_conv.as_ref().map(|(id, _)| id.clone()),
             from_mri: person.as_ref().map(|(m, _)| m.clone()),
             since_day: (date != Date::Any).then(|| day_of(since)),
         };
-        let (msgs, people, files) = tokio::join!(
+        // Files, people and meetings come from the global search, whichever tab is open.
+        let (msgs, others) = tokio::join!(
             async {
                 if want_messages {
                     self.client
@@ -615,17 +622,10 @@ impl Engine {
                 }
             },
             async {
-                if want_others && matches!(tab, Tab::All | Tab::People) {
-                    self.client.search_people(&self.me, &q).await.ok()
-                } else {
+                if filtered {
                     None
-                }
-            },
-            async {
-                if want_others && matches!(tab, Tab::All | Tab::Files) {
-                    onedrive::search(&self.client, &q).await.ok()
                 } else {
-                    None
+                    Some(self.others_first(&q).await)
                 }
             }
         );
@@ -645,39 +645,8 @@ impl Engine {
                     .collect();
                 merge_messages(&mut f.hits, hits);
             }
-            if let Some(p) = people {
-                f.hits.retain(|h| h.kind != "person");
-                f.hits.extend(p.into_iter().take(10).map(|p| {
-                    Hit {
-                        kind: "person",
-                        mri: p.mri,
-                        name: p.display_name,
-                        place: [p.job_title, p.email]
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<_>>()
-                            .join(" · "),
-                        ..Default::default()
-                    }
-                }));
-            }
-            if let Some(items) = files {
-                f.hits.retain(|h| h.kind != "file");
-                f.hits
-                    .extend(items.into_iter().filter(|i| !i.is_folder).map(|i| {
-                        Hit {
-                            kind: "file",
-                            name: i.name,
-                            place: [i.modified_by, i.parent_path]
-                                .into_iter()
-                                .filter(|s| !s.is_empty())
-                                .collect::<Vec<_>>()
-                                .join(" · "),
-                            time_ms: i.modified_ms,
-                            url: i.web_url,
-                            ..Default::default()
-                        }
-                    }));
+            if let Some(o) = others {
+                global::store_others(&mut f, o);
             }
         }
         self.push_search(false);
@@ -746,6 +715,10 @@ impl Engine {
         let quick = self.find.lock().unwrap().quick;
         if let Some(kind) = quick {
             return self.quick_more(kind).await;
+        }
+        let tab = self.find.lock().unwrap().tab;
+        if let Some(kind) = global::kind_of_tab(tab) {
+            return self.global_more(kind).await;
         }
         let (q, from, seq, in_conv, person, date) = {
             let f = self.find.lock().unwrap();
@@ -928,6 +901,8 @@ impl Engine {
             "person" => {
                 self.people_cmd(super::PeopleCmd::Profile(h.mri)).await?;
             }
+            // A calendar event (it has no chat): the calendar on its day.
+            "meeting" if h.conv.is_empty() => self.open_event(h.time_ms).await,
             _ => {
                 self.ui.show_view("chat");
                 if let Err(err) = self.open_conversation(&h.conv).await {

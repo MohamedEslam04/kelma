@@ -53,7 +53,11 @@ export component MessageMenu inherits Rectangle {
     // A channel post can be followed (replies to it show in Followed threads).
     in property <bool> can-follow: false;
     in property <bool> following: false;
+    // Translation state of the message (`Msg.translate`).
+    in property <string> translate: "";
     callback toggle-follow();
+    callback translate-message();
+    callback see-original();
     callback reply();
     callback forward-one();
     callback forward-many();
@@ -96,6 +100,8 @@ export component MessageMenu inherits Rectangle {
             icon: @image-url("icons/thread.svg");
             clicked => { root.toggle-follow(); }
         }
+        if root.translate == "shown": MenuItem { label: "See original"; icon: @image-url("icons/translate.svg"); clicked => { root.see-original(); } }
+        if root.translate != "" && root.translate != "shown" && root.translate != "busy": MenuItem { label: "Translate"; icon: @image-url("icons/translate.svg"); clicked => { root.translate-message(); } }
         MenuItem { label: "Mark as unread"; icon: @image-url("icons/unread.svg"); clicked => { root.mark-unread(); } }
         if root.mine: MenuItem { label: "Edit"; icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
         if root.mine: MenuItem { label: "Delete"; icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }

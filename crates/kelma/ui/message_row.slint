@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Msg } from "types.slint";
 import { Avatar, FileCard, Icon, IconButton, ReactionChip } from "widgets.slint";
 import { CardView } from "card_view.slint";
+import { LinkCardView, MediaStore } from "media.slint";
 
 export component MessageRow inherits TouchArea {
     in property <Msg> m;
@@ -20,7 +21,6 @@ export component MessageRow inherits TouchArea {
     callback toggle-select();
     callback open-url(string);
     callback open-thread();
-    callback open-image(string);
     callback retry-send();
     callback discard-send();
     // Click on the avatar or the sender's name: open the profile card (sender MRI).
@@ -167,15 +167,71 @@ export component MessageRow inherits TouchArea {
                         link-clicked(url) => { root.open-url(url); }
                     }
 
-                    for im in root.m.images: Rectangle {
-                        width: im.w;
-                        height: im.h;
-                        border-radius: 4px;
-                        background: #1f1f1f;
-                        clip: true;
-                        if im.loaded: Image { source: im.img; width: parent.width; height: parent.height; image-fit: contain; }
-                        if !im.loaded: Text { text: "Loading image…"; color: Theme.fg-subtle; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { mouse-cursor: pointer; clicked => { root.open-image(im.url); } }
+                    // Several pictures form a grid (plan 9.5); clicking one opens the viewer.
+                    if root.m.images.length > 0: Rectangle {
+                        width: root.m.grid-w;
+                        height: root.m.grid-h;
+                        for im[i] in root.m.images: Rectangle {
+                            x: im.x;
+                            y: im.y;
+                            width: im.w;
+                            height: im.h;
+                            border-radius: 4px;
+                            background: #1f1f1f;
+                            clip: true;
+                            if im.loaded: Image { source: im.img; width: parent.width; height: parent.height; image-fit: cover; }
+                            if !im.loaded: Text { text: "Loading image…"; color: Theme.fg-subtle; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                            if im.overflow > 0: Rectangle {
+                                background: #000000a0;
+                                Text { text: "+" + im.overflow; color: #ffffff; font-size: 22px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button;
+                                accessible-label: "Open image " + (i + 1);
+                                accessible-action-default => { MediaStore.command("image", root.m.id + "|" + im.url); }
+                                clicked => { MediaStore.command("image", root.m.id + "|" + im.url); }
+                            }
+                        }
+                    }
+
+                    // Translate (plan 9.6): a link under a message in another language, "See original" after.
+                    if root.m.translate == "offer" || root.m.translate == "busy" || root.m.translate == "shown" || root.m.translate == "failed": HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        height: 18px;
+                        if root.m.translate == "busy": Text { text: "Translating…"; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                        if root.m.translate == "shown": Text { text: "Translated from " + root.m.translate-from; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; }
+                        if root.m.translate == "failed": Text { text: "Could not translate"; color: Theme.danger; font-size: 12px; vertical-alignment: center; }
+                        if root.m.translate != "busy" && root.m.translate != "shown": Rectangle {
+                            width: tr-link.preferred-width;
+                            tr-link := Text { text: root.m.translate == "failed" ? "Retry" : "Translate"; color: Theme.accent; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button;
+                                accessible-label: root.m.translate == "failed" ? "Retry translation" : "Translate message";
+                                accessible-action-default => { MediaStore.command("translate", root.m.id); }
+                                clicked => { MediaStore.command("translate", root.m.id); }
+                            }
+                        }
+                        if root.m.translate == "shown": Rectangle {
+                            width: orig-link.preferred-width;
+                            orig-link := Text { text: "See original"; color: Theme.accent; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button;
+                                accessible-label: "See original";
+                                accessible-action-default => { MediaStore.command("original", root.m.id); }
+                                clicked => { MediaStore.command("original", root.m.id); }
+                            }
+                        }
+                    }
+
+                    // Link preview cards (plan 9.7).
+                    for c in root.m.links: LinkCardView {
+                        c: c;
+                        min-width: min(420px, root.max-bubble - 28px);
+                        open(u) => { root.open-url(u); }
                     }
 
                     for f in root.m.files: FileCard {

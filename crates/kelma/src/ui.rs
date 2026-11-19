@@ -10,7 +10,7 @@ use crate::data::{
 };
 use crate::reactions;
 use crate::{
-    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, Msg,
+    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard, Msg,
     PendingAttachment, ReactionItem, Recipient, TeamRow,
 };
 use slint::{
@@ -24,6 +24,7 @@ mod channels;
 pub(crate) mod drive;
 mod find;
 mod lists;
+mod media;
 mod people;
 mod teams;
 
@@ -105,8 +106,11 @@ fn msg(m: MsgData) -> Msg {
                         url: i.url.into(),
                         img: image,
                         loaded,
+                        x: i.x,
+                        y: i.y,
                         w: i.w,
                         h: i.h,
+                        overflow: i.overflow as i32,
                     }
                 })
                 .collect(),
@@ -146,6 +150,26 @@ fn msg(m: MsgData) -> Msg {
         flash: m.flash,
         card: channels::card_rows(m.card),
         headline: m.headline.into(),
+        grid_w: m.grid_w,
+        grid_h: m.grid_h,
+        translate: m.translate.into(),
+        translate_from: m.translate_from.into(),
+        links: model(
+            m.links
+                .into_iter()
+                .map(|l| {
+                    let (thumb, has_thumb) = img(&l.thumb);
+                    LinkCard {
+                        url: l.url.into(),
+                        title: l.title.into(),
+                        description: l.description.into(),
+                        domain: l.domain.into(),
+                        thumb,
+                        has_thumb,
+                    }
+                })
+                .collect(),
+        ),
     }
 }
 

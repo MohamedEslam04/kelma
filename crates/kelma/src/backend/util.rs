@@ -26,6 +26,8 @@ fn props_json(m: &Message) -> String {
         "m": super::mentions::store_value(&m.mentions),
         "c": m.card,
         "t": m.announcement.as_ref().map(|a| a.title.as_str()),
+        "g": super::media::language_of(m.language_stamp.as_deref()),
+        "l": super::media::links_json(&m.links),
     })
     .to_string()
 }
