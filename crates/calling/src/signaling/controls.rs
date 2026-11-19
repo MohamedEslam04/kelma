@@ -12,6 +12,12 @@
 //!   rusty-teams `signaling.rs` `raise_hand`/`lower_hands` (MIT), mautrix-teams `calls.go`
 //!   `SetHandRaised` (facts only).
 //!
+//! - **Reactions** (like, heart, applause, laugh, surprised) are a message, not a state: `POST
+//!   sendMessage` with one `Reaction` item in `messageContent`. No sequence number and no
+//!   `removeState` follow: the reaction floats and goes. Facts: rusty-teams
+//!   `crates/calling/src/reaction.rs` `reaction_message` and `signaling.rs` `send_reaction` (MIT);
+//!   no other reference sends one. UNVERIFIED live (no meetings tonight).
+//!
 //! Each operation goes to the conversation's link of the same name, else to
 //! `<controller>/<name>` (mautrix-teams addresses them that way).
 //!
@@ -59,6 +65,99 @@ pub fn remove_state_body(s: &CallSession, sequence: u64, state_ids: &[String]) -
         "scope": "specified",
         "stateIds": state_ids,
     })
+}
+
+/// A live meeting reaction, as Teams names it on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reaction {
+    Like,
+    Heart,
+    Applause,
+    Laugh,
+    Surprised,
+}
+
+impl Reaction {
+    pub const ALL: [Reaction; 5] = [
+        Reaction::Like,
+        Reaction::Heart,
+        Reaction::Applause,
+        Reaction::Laugh,
+        Reaction::Surprised,
+    ];
+
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Reaction::Like => "like",
+            Reaction::Heart => "heart",
+            Reaction::Applause => "applause",
+            Reaction::Laugh => "laugh",
+            Reaction::Surprised => "surprised",
+        }
+    }
+
+    /// The reaction a UI command names (`love` is taken for `heart`, as the Teams button says).
+    pub fn parse(name: &str) -> Option<Reaction> {
+        Some(match name {
+            "like" => Reaction::Like,
+            "heart" | "love" => Reaction::Heart,
+            "applause" => Reaction::Applause,
+            "laugh" => Reaction::Laugh,
+            "surprised" => Reaction::Surprised,
+            _ => return None,
+        })
+    }
+
+    /// Hand-shaped reactions carry a skin tone (rusty-teams sends 2, the default yellow);
+    /// the others carry none.
+    fn skin_tone(self) -> Value {
+        match self {
+            Reaction::Like | Reaction::Applause => json!(2),
+            _ => Value::Null,
+        }
+    }
+}
+
+/// `POST sendMessage`: a reaction everyone in the meeting sees float up. `operation_id` and
+/// `value_id` are fresh UUIDs per send ([`reaction_request`] makes them).
+pub fn reaction_body(
+    s: &CallSession,
+    reaction: Reaction,
+    operation_id: &str,
+    value_id: &str,
+) -> Value {
+    json!({
+        "from": s.me.wire(),
+        "messageContent": [{
+            "operationId": operation_id,
+            "type": "Reaction",
+            "scope": "all",
+            "to": [],
+            "payload": {
+                "values": [{
+                    "id": value_id,
+                    "name": reaction.wire_name(),
+                    "count": 1,
+                    "attributes": {"skinTone": reaction.skin_tone()},
+                }],
+            },
+        }],
+    })
+}
+
+/// The `sendMessage` request for one reaction: the conversation's link, else
+/// `<controller>/sendMessage`.
+pub fn reaction_request(
+    s: &CallSession,
+    links: &Links,
+    controller: &str,
+    reaction: Reaction,
+) -> (String, Value) {
+    let id = || uuid::Uuid::new_v4().to_string();
+    (
+        control_url(links, controller, "sendMessage"),
+        reaction_body(s, reaction, &id(), &id()),
+    )
 }
 
 /// What `publishState` answered for a raised hand.
@@ -170,5 +269,80 @@ impl Controls {
             control_url(links, controller, "removeState"),
             remove_state_body(s, self.state_sequence, &[id]),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::signaling::{CallbackLinks, LocalEndpoint};
+
+    const CONTROLLER: &str =
+        "https://api.flightproxy.skype.com/api/v2/cp/conv-example.conv.skype.com/conv/AAAA?i=1";
+
+    fn session() -> CallSession {
+        CallSession {
+            me: LocalEndpoint {
+                mri: "8:orgid:00000000-0000-0000-0000-0000000000b2".into(),
+                display_name: "Self Example".into(),
+                endpoint_id: "sess-1".into(),
+                participant_id: "part-1".into(),
+                language_id: "en-US".into(),
+            },
+            callbacks: CallbackLinks::new("https://trouter.example.invalid/v4/f/AbCd/", "sess-1"),
+            chain_id: "chain-1".into(),
+            media_leg_id: "LEG1".into(),
+        }
+    }
+
+    #[test]
+    fn a_reaction_is_one_reaction_item_sent_to_everyone() {
+        let s = session();
+        let b = reaction_body(&s, Reaction::Applause, "op-1", "val-1");
+        assert_eq!(b["from"], s.me.wire());
+        let item = &b["messageContent"][0];
+        assert_eq!(b["messageContent"].as_array().unwrap().len(), 1);
+        assert_eq!(item["operationId"], "op-1");
+        assert_eq!(item["type"], "Reaction");
+        assert_eq!(item["scope"], "all");
+        assert_eq!(item["to"], json!([]));
+        let v = &item["payload"]["values"][0];
+        assert_eq!(v["id"], "val-1");
+        assert_eq!(v["name"], "applause");
+        assert_eq!(v["count"], 1);
+        assert_eq!(v["attributes"]["skinTone"], 2);
+        let heart = reaction_body(&s, Reaction::Heart, "o", "v");
+        assert_eq!(
+            heart["messageContent"][0]["payload"]["values"][0]["attributes"]["skinTone"],
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn the_reaction_goes_to_the_send_message_link_with_fresh_ids() {
+        let s = session();
+        let mut links = Links::default();
+        let (url, a) = reaction_request(&s, &links, CONTROLLER, Reaction::Like);
+        assert_eq!(url, insert_path(CONTROLLER, "/sendMessage"));
+        let (_, b) = reaction_request(&s, &links, CONTROLLER, Reaction::Like);
+        assert_ne!(
+            a["messageContent"][0]["operationId"], b["messageContent"][0]["operationId"],
+            "each send is a new operation"
+        );
+        links.0.insert(
+            "sendMessage".into(),
+            "https://conv.example.invalid/send".into(),
+        );
+        let (url, _) = reaction_request(&s, &links, CONTROLLER, Reaction::Like);
+        assert_eq!(url, "https://conv.example.invalid/send");
+    }
+
+    #[test]
+    fn reaction_names_round_trip_and_love_means_heart() {
+        for r in Reaction::ALL {
+            assert_eq!(Reaction::parse(r.wire_name()), Some(r));
+        }
+        assert_eq!(Reaction::parse("love"), Some(Reaction::Heart));
+        assert_eq!(Reaction::parse("wave"), None);
     }
 }

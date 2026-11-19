@@ -365,6 +365,8 @@ fn main() -> anyhow::Result<()> {
     ui::settings::install_system(&window, tx.clone());
     #[cfg(feature = "calls")]
     ui::call_direct::install(&window, tx.clone());
+    #[cfg(feature = "calls")]
+    ui::calls_page::install(&window, tx.clone());
     ui::install_composer_apps(&window, tx.clone());
     {
         let tx = tx.clone();

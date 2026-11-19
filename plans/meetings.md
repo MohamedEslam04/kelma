@@ -178,6 +178,10 @@ Everything Teams web has, inside a kelma-owned window. Each item is "verify it w
   says so (UNVERIFIED shape). It owns the one calling trouter and hands invitations to the 1:1 ringing
   flows, which hand connected calls back through `CallManager::adopt`. Reactions, spotlight, admitting from
   the lobby, captions and recording control are not built. DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). participants, mute and unmute, raise hand, reactions, spotlight, admit from the lobby, captions, and recording start and stop (bot commands to the roster URL).
+  - **Reactions request (2026-11-19, `feat/calls-page`, unverified live).** `calling::signaling::controls::reaction_request`
+    builds `POST sendMessage` with one `Reaction` item (`like`, `heart`, `applause`, `laugh`, `surprised`; skin tone 2
+    on like and applause), fresh operation and value ids, no sequence number and no `removeState` (facts: rusty-teams
+    `reaction.rs`, MIT). The React button is not wired yet.
 - [ ] **M5.4 Switch the default launcher to Native** DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). once M5.1–M5.3 pass. ChromiumWindow stays for breakout rooms, Whiteboard, PowerPoint Live and apps.
 
 ## Order
