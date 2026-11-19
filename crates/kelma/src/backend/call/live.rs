@@ -1034,7 +1034,7 @@ impl Call {
     ) {
         match m {
             ShareMsg::Picked(Ok(Some(capture))) => {
-                match self.share.start(capture, &self.media, tx) {
+                match self.share.start(*capture, &self.media, tx) {
                     Ok(()) => self.tell_share(true, sink).await,
                     Err(e) => {
                         tracing::warn!(%e, "screen share not started");

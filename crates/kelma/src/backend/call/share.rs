@@ -50,7 +50,7 @@ pub fn media_options() -> MediaOptions {
 /// What the share tasks report to the call loop.
 pub enum ShareMsg {
     /// The picker closed: a capture, `None` when cancelled, or why it failed.
-    Picked(Result<Option<ScreenCapture>, String>),
+    Picked(Result<Option<Box<ScreenCapture>>, String>),
     /// The capture ended on its own (the user stopped it from the desktop's indicator).
     Ended,
 }
@@ -84,6 +84,7 @@ impl Share {
         tokio::spawn(async move {
             let r = pick(ShareKind::Any, CaptureSettings::default())
                 .await
+                .map(|c| c.map(Box::new))
                 .map_err(|e| e.to_string());
             let _ = tx.send(ShareMsg::Picked(r));
         });
