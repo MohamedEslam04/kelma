@@ -15,7 +15,7 @@ export component SelectBar inherits Rectangle {
         padding-right: 20px;
         spacing: 10px;
         Text {
-            text: root.count + " of " + root.max + " selected";
+            text: @tr("{} of {} selected", root.count, root.max);
             color: Theme.fg;
             font-size: 13px * Theme.font-scale;
             vertical-alignment: center;
@@ -27,7 +27,7 @@ export component SelectBar inherits Rectangle {
             y: 8px;
             border-radius: 4px;
             background: cancel-touch.has-hover ? Theme.surface-hover : transparent;
-            Text { text: "Cancel"; color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            Text { text: @tr("Cancel"); color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
             cancel-touch := TouchArea { mouse-cursor: pointer; clicked => { root.cancel(); } }
         }
         Rectangle {
@@ -38,8 +38,8 @@ export component SelectBar inherits Rectangle {
             background: Theme.accent-strong;
             opacity: root.count > 0 ? 1.0 : 0.5;
             accessible-role: button;
-            accessible-label: "Forward selected";
-            Text { text: "Forward"; color: #ffffff; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            accessible-label: @tr("Forward selected");
+            Text { text: @tr("Forward"); color: #ffffff; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
             forward-touch := TouchArea {
                 enabled: root.count > 0;
                 mouse-cursor: pointer;

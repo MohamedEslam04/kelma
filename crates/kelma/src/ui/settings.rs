@@ -384,9 +384,10 @@ fn apply_look(w: &AppWindow, c: &Ctl) {
 }
 
 /// Hands the general preferences to what reads them outside Settings: the date and time helpers
-/// and the tray's close-to-tray decision.
+/// and the tray's close-to-tray decision, plus the interface language (translation and direction).
 fn apply_general(g: &appearance::GeneralPrefs) {
     appearance::formats::set_from(g);
+    crate::language::apply(g);
     crate::tray_wiring::set_keep_running(g.keep_running_on_close);
 }
 
