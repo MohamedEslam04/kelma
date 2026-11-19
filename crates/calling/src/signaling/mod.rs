@@ -10,6 +10,7 @@ pub mod callbacks;
 pub mod controls;
 pub mod endpoints;
 pub mod meeting;
+pub mod recorder;
 pub mod roster;
 pub mod video;
 

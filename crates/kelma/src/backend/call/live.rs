@@ -14,6 +14,7 @@
 //! like `--no-aec`). `KELMA_CALL_DUMP=<dir>` writes every raw calling push there.
 
 use super::share::{self, Share, ShareMsg};
+use super::bots::Bots;
 use super::{
     CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
     Link, Person, Phase, live_phase, recording_state,
@@ -437,8 +438,10 @@ async fn join_meeting(
         }
     };
     let mut roster = Roster::default();
+    let mut bots = Bots::new(target.thread_id.clone(), true);
     if let Some(snapshot) = roster_snapshot(&conv.raw) {
         roster.apply_snapshot(snapshot);
+        bots.roster(snapshot);
     }
     let mut answered = false;
     if let Some(ans) = find_blob(&conv.raw) {
@@ -465,6 +468,7 @@ async fn join_meeting(
         keep_alive: None,
         link: Link::New,
         share: Share::default(),
+        bots,
     };
     Ok((call, events, pushes))
 }
@@ -513,6 +517,7 @@ pub fn adopt(
             keep_alive: None,
             link: Link::Connected,
             share: Share::default(),
+            bots: Bots::new(None, false),
         };
         call.start_keep_alive(None);
         call.run(events, pushes, opts, sink, rx, vec![]).await;
@@ -737,6 +742,8 @@ struct Call {
     keep_alive: Option<JoinHandle<()>>,
     link: Link,
     share: Share,
+    /// Captions, recording and transcription (the recorder bot).
+    bots: Bots,
 }
 
 impl Call {
@@ -811,7 +818,17 @@ impl Call {
             }
             // Handled by the run loop (`share_control`), which owns the picker's channel.
             Control::Share(_) | Control::Leave => {}
+            Control::Captions(_) | Control::Recording(_) | Control::Transcription(_) => {
+                self.bots.ask(&c);
+                self.step_bots(sink).await;
+            }
         }
+    }
+
+    /// Lets the recorder bot's side send what it can now.
+    async fn step_bots(&mut self, sink: &EventSink) {
+        let (s, links, controller) = (&self.s, &self.links, self.controller.as_str());
+        self.bots.step(&self.ngc, s, links, controller, sink).await;
     }
 
     /// The rest of `call join`: audio, then controls, media state and callbacks until the call
@@ -915,13 +932,27 @@ impl Call {
                             tracing::info!(code = r.code, sub = r.sub_code, "call ended by the service");
                             break Some(self.ended_text());
                         }
-                        CallEvent::RosterUpdate(delta) => roster_changed = self.roster.apply(&delta),
+                        CallEvent::RosterUpdate(delta) => {
+                            roster_changed = self.roster.apply(&delta);
+                            self.bots.roster(&delta);
+                            self.step_bots(&sink).await;
+                        }
                         CallEvent::ConversationUpdate(body) => {
                             if let Some(snapshot) = roster_snapshot(&body) {
                                 roster_changed = self.roster.apply_snapshot(snapshot);
+                                self.bots.roster(snapshot);
                             }
                             if let Some(on) = recording_state(&body) {
                                 sink.send(Event::Recording(on));
+                            }
+                            for ev in self.bots.conversation(&body) {
+                                sink.send(ev);
+                            }
+                            self.step_bots(&sink).await;
+                        }
+                        CallEvent::Other { event, body, .. } if event == "addParticipantFailure" => {
+                            for ev in self.bots.bot_refused(&body) {
+                                sink.send(ev);
                             }
                         }
                         CallEvent::MediaAcknowledgement { links } => self.links.0.extend(links.0),

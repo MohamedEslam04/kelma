@@ -13,6 +13,7 @@
 //! - [`audio`]: microphone/speaker I/O and the Opus codec.
 //! - [`video`]: video we send (screen share; the camera later): frames, H.264, the portal.
 //! - [`history`]: call history from the `48:calllogs` system thread.
+//! - [`captions`]: live caption text from the media data channel.
 //!
 //! Protocol sources: rusty-teams `crates/calling` and eisbaw/ost `src/calling` (MIT, code may be
 //! reused with attribution); mautrix-teams `pkg/msteams/calls.go` (AGPL) and teams-lite
@@ -20,6 +21,7 @@
 //! `docs/research/open-source.md` §3.15.
 
 pub mod audio;
+pub mod captions;
 pub mod error;
 pub mod history;
 pub mod incoming;
