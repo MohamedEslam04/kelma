@@ -187,22 +187,38 @@ code was copied from either.
    audio transport (`teamsmedia/sdp.go` `answerSDP`). rusty-teams rewrites the directions of the
    answers it gets so its own sending is not stopped (`hold.rs` `keep_media_running`).
 
-What kelma does with this (`calling::video`, `calling::media`, `signaling::bodies`):
+What kelma does with this (`calling::video`, `calling::media`, `calling::signaling::video`,
+`kelma/src/backend/call/share.rs`):
 
+- **Opt-in**: the sharing line is offered only with `KELMA_SCREEN_SHARE=1`, so the audio-only
+  offer verified above stays the default until a live run confirms the media servers take it.
 - A `MediaSession` built with `MediaOptions::video = [VideoRole::ApplicationSharing]` registers
-  H.264 (constrained baseline, `packetization-mode=1`) and offers one sendrecv video line
-  labelled `applicationsharing-video`. It answers a media server's re-offer with audio plus the
-  first sharing line, bundled on the audio transport (the line's own ICE credentials are replaced
-  by the audio line's before webrtc-rs reads them). A `sendonly` sharing line is read as
-  `sendrecv`, so our sender stays able to send, and answered `recvonly` on the wire.
-  `VideoRole::MainVideo` is the seam for the camera (same path, `main-video` label).
-- Meeting: start/stop is `UpdateMediaDescriptions` (`sendonly` + label, tag `;ss_1`).
-  1:1: start/stop is a `mediaNegotiation` re-offer with `ScreenSharer`.
-- Capture: the ScreenCast portal (`ashpd`), the PipeWire node read by a `gst-launch-1.0
-  pipewiresrc` child (the portal's fd is its stdin) as raw I420, encoded in-process by OpenH264.
+  H.264 (`packetization-mode=1`, constrained baseline as `42c01f` at payload type 107 and
+  `42e01f` at 108: webrtc-rs pairs H.264 by the first two bytes of `profile-level-id`, and the
+  media servers write `42C0..` where browsers write `42e0..`) and offers one sendrecv video line
+  labelled `applicationsharing-video` (the label comes from the track's stream id). It answers a
+  media server's re-offer with audio plus the first sharing line, bundled on the audio transport
+  (the line's own ICE credentials and candidates are replaced by the audio line's before
+  webrtc-rs reads them). A `sendonly` sharing line is read as `sendrecv`, so our sender stays
+  able to send, and answered `recvonly` on the wire (the direction the offer allows).
+  `VideoRole::MainVideo` is the seam for the camera: same encoder, same `VideoSender`, the
+  first `main-video` line.
+- Meeting: start/stop is `UpdateMediaDescriptions` (`sendonly` + label, tag `;ss_1`), on the
+  `updateMediaDescriptions` link, else `{callLeg}/updateMediaDescriptions`.
+  1:1: start/stop is a `mediaNegotiation` re-offer with `ScreenSharer`, the sharing line
+  `sendonly` (stop: `inactive`).
+- A `controlVideoStreaming` callback with `KeyFrame=1` forces a keyframe; otherwise one goes out
+  every 2 s.
+- Capture: the ScreenCast portal (`ashpd`, monitors and windows, cursor embedded), the PipeWire
+  node read by a `gst-launch-1.0 pipewiresrc` child (the portal's fd is its stdin) as raw I420
+  at up to 1280x720 (the media server's answer allows `max-fs=3600`) and 15 frames a second,
+  encoded in-process by OpenH264 at 1.5 Mbit/s (screen-content mode). Runtime needs GStreamer's
+  PipeWire plugin (`pipewire-gstreamer` on Fedora). The capture spike:
+  `cargo run -p calling --example screencast -- 5 /tmp/share.h264`, then `ffprobe` the file.
 
 UNVERIFIED (each needs a live run with the official client watching): that the media server
-accepts kelma's join offer with a sharing line but no `main-video` line; that a sharing line
+accepts kelma's join offer with a sharing line but no `main-video` line; that a browser peer of a
+1:1 call binds our `42c01f` track when it answers `42e01f`; that a sharing line
 answered `recvonly` can then be flipped to sending by `UpdateMediaDescriptions`; that the media
 server forwards a share without `updateParticipantProperties`; whether `controlVideoStreaming`
 must be waited for before the first keyframe; the 1:1 re-offer's answer path.
