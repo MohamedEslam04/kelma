@@ -14,12 +14,12 @@
 //! what the speaker plays, as `call join --mic --speaker` runs it (`KELMA_NO_AEC=1` turns it off,
 //! like `--no-aec`). `KELMA_CALL_DUMP=<dir>` writes every raw calling push there.
 
+use super::bots::Bots;
 use super::camera::{self, Camera, CameraMsg};
 use super::share::{self, Share, ShareMsg};
-use super::bots::Bots;
 use super::{
-    CallDriver, CallHandle, Caption, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
-    Link, Person, Phase, live_phase, recording_state,
+    CallDriver, CallHandle, Caption, Control, Device, Devices, Event, EventSink, JoinOptions,
+    JoinTarget, Link, Person, Phase, live_phase, recording_state,
 };
 use anyhow::Context;
 use calling::audio::{
@@ -1444,7 +1444,9 @@ impl Call {
                 if self.ice.is_empty() {
                     self.ice = self.hub.ice_servers(&self.ngc.endpoints().region).await;
                 }
-                match MediaSession::with_options(self.ice.clone(), media_options(self.meeting)).await {
+                match MediaSession::with_options(self.ice.clone(), media_options(self.meeting))
+                    .await
+                {
                     Ok((fresh, ev)) => match fresh.accept_offer(&sdp).await {
                         Ok(ans) => {
                             let old = std::mem::replace(&mut self.media, fresh);
@@ -1645,7 +1647,10 @@ mod tests {
         hub.route(push("sess-3"));
         assert!(shown.try_recv().unwrap().url.contains("sess-1"));
         assert!(shown.try_recv().is_err());
-        assert!(held.try_recv().unwrap().url.contains("sess-2"), "the held call's own");
+        assert!(
+            held.try_recv().unwrap().url.contains("sess-2"),
+            "the held call's own"
+        );
         assert!(unmatched.try_recv().unwrap().url.contains("sess-3"));
         // One call ending leaves the other routed.
         hub.remove_session("sess-1");

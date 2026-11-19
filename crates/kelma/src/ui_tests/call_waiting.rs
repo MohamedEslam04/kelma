@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::backend::call::{CallCmd, Event, FakeDriver};
-use crate::backend::call_direct::{is_direct_chat, CallCmd as DirectCmd, IncomingState};
+use crate::backend::call_direct::{CallCmd as DirectCmd, IncomingState, is_direct_chat};
 use crate::{CallStore, DirectCallStore};
 use i_slint_backend_testing::AccessibleRole;
 

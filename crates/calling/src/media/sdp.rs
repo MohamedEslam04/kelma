@@ -354,9 +354,16 @@ fn sctp_from_teams(
         m.port
     )];
     let rtp_only = |l: &str| {
-        ["a=rtpmap:", "a=fmtp:", "a=rtcp", "a=x-", "a=label:", "a=ssrc"]
-            .iter()
-            .any(|p| l.starts_with(p))
+        [
+            "a=rtpmap:",
+            "a=fmtp:",
+            "a=rtcp",
+            "a=x-",
+            "a=label:",
+            "a=ssrc",
+        ]
+        .iter()
+        .any(|p| l.starts_with(p))
             || DIRECTIONS.iter().any(|d| l.strip_prefix("a=") == Some(*d))
     };
     for line in &section[1..] {
@@ -371,7 +378,10 @@ fn sctp_from_teams(
     if !section.iter().any(|l| attr(l, "sctp-port").is_some()) {
         out.push(format!("a=sctp-port:{SCTP_PORT}"));
     }
-    if !section.iter().any(|l| attr(l, "max-message-size").is_some()) {
+    if !section
+        .iter()
+        .any(|l| attr(l, "max-message-size").is_some())
+    {
         out.push(format!("a=max-message-size:{SCTP_MAX_MESSAGE_SIZE}"));
     }
     out

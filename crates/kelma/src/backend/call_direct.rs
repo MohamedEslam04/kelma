@@ -1465,14 +1465,23 @@ mod tests {
     #[test]
     fn the_waiting_beep_is_two_short_quiet_beeps_then_a_long_rest() {
         assert_ne!(waiting_sample(BEEP / 2 + 7), 0, "first beep");
-        assert_ne!(waiting_sample(SECOND_BEEP_AT + BEEP / 2 + 7), 0, "second beep");
+        assert_ne!(
+            waiting_sample(SECOND_BEEP_AT + BEEP / 2 + 7),
+            0,
+            "second beep"
+        );
         assert_eq!(waiting_sample(BEEP + 10), 0, "gap");
         assert_eq!(waiting_sample(RING_RATE), 0, "rest");
         assert_eq!(waiting_sample(0), 0, "starts from silence");
         assert_eq!(waiting_sample(77), waiting_sample(WAIT_CYCLE + 77));
-        let peak = (0..WAIT_CYCLE).map(|n| waiting_sample(n).unsigned_abs()).max();
+        let peak = (0..WAIT_CYCLE)
+            .map(|n| waiting_sample(n).unsigned_abs())
+            .max();
         let ring = (0..RING_CYCLE).map(|n| ring_sample(n).unsigned_abs()).max();
-        assert!(peak < ring, "quieter than the ringtone: {peak:?} < {ring:?}");
+        assert!(
+            peak < ring,
+            "quieter than the ringtone: {peak:?} < {ring:?}"
+        );
         // Under a second of sound in every four.
         let loud = (0..WAIT_CYCLE).filter(|n| waiting_sample(*n) != 0).count() as u64;
         assert!(loud < RING_RATE / 2, "{loud}");

@@ -149,7 +149,13 @@ pub fn gstreamer_args(source: &CameraSource, size: (u32, u32), fps: u32) -> Vec<
     let mut args: Vec<String> = vec!["-q".into()];
     match source {
         CameraSource::Portal => args.extend(
-            ["pipewiresrc", "fd=0", "do-timestamp=true", "always-copy=true"].map(String::from),
+            [
+                "pipewiresrc",
+                "fd=0",
+                "do-timestamp=true",
+                "always-copy=true",
+            ]
+            .map(String::from),
         ),
         CameraSource::V4l2(device) => {
             args.extend(["v4l2src".into(), format!("device={device}")]);
@@ -188,7 +194,10 @@ mod tests {
         let args = gstreamer_args(&CameraSource::Portal, (640, 360), 15);
         assert_eq!(args[..3], ["-q", "pipewiresrc", "fd=0"]);
         assert!(!args.iter().any(|a| a.starts_with("path=")));
-        assert!(args.iter().any(|a| a.contains("width=640,height=360,framerate=15/1")));
+        assert!(
+            args.iter()
+                .any(|a| a.contains("width=640,height=360,framerate=15/1"))
+        );
         assert_eq!(args.last().map(String::as_str), Some("sync=false"));
     }
 

@@ -161,12 +161,7 @@ fn call_person(p: Person, images: &HashMap<String, Image>, video: bool) -> CallP
 /// person heard now (UNVERIFIED: the main-video line is assumed to carry the active speaker
 /// until sources are mapped to people), else the first other person in the call.
 fn video_owner(people: &[Person]) -> Option<usize> {
-    let others = || {
-        people
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| !p.me && !p.lobby)
-    };
+    let others = || people.iter().enumerate().filter(|(_, p)| !p.me && !p.lobby);
     others()
         .find(|(_, p)| p.speaking)
         .or_else(|| others().next())
@@ -231,9 +226,7 @@ impl UiHandle {
         // The pixels are copied here, off the UI thread; an `Image` itself is not `Send`.
         let pixels = frame.and_then(|f| {
             let (w, h) = (u32::try_from(f.width).ok()?, u32::try_from(f.height).ok()?);
-            Some(slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(
-                &f.data, w, h,
-            ))
+            Some(slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&f.data, w, h))
         });
         self.run(move |w| {
             let s = w.global::<CallStore>();

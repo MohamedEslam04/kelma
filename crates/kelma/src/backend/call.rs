@@ -26,11 +26,11 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "calls")]
 mod bots;
 #[cfg(feature = "calls")]
+pub(crate) mod camera;
+#[cfg(feature = "calls")]
 pub(crate) mod live;
 #[cfg(feature = "calls")]
 pub(crate) mod share;
-#[cfg(feature = "calls")]
-pub(crate) mod camera;
 
 /// What kind of call the window shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,7 +227,10 @@ pub enum Event {
     },
     /// Whether the call can send our camera now, and whether it is on.
     #[cfg(any(test, feature = "calls"))]
-    Camera { available: bool, on: bool },
+    Camera {
+        available: bool,
+        on: bool,
+    },
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.

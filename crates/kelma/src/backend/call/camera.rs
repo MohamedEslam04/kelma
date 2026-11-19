@@ -63,9 +63,11 @@ fn v4l2_device() -> Option<String> {
     if let Some(d) = std::env::var_os("KELMA_CAMERA_DEVICE").filter(|d| !d.is_empty()) {
         return Some(d.to_string_lossy().into_owned());
     }
-    let chosen = session::Paths::new()
-        .ok()
-        .and_then(|p| crate::backend::settings::Local::load(&p.config_dir).devices.camera);
+    let chosen = session::Paths::new().ok().and_then(|p| {
+        crate::backend::settings::Local::load(&p.config_dir)
+            .devices
+            .camera
+    });
     let cameras = devices::cameras().unwrap_or_default();
     device_for(&cameras, chosen.as_deref())
 }
@@ -252,7 +254,8 @@ pub async fn tell_meeting(
         .video_mid(ROLE)
         .await
         .ok_or_else(|| anyhow::anyhow!("the video line has no mid"))?;
-    let url = share::update_link(links).ok_or_else(|| anyhow::anyhow!("no updateMediaDescriptions"))?;
+    let url =
+        share::update_link(links).ok_or_else(|| anyhow::anyhow!("no updateMediaDescriptions"))?;
     let mut with = links.clone();
     with.0.insert("updateMediaDescriptions".into(), url);
     let tag = negotiation_tag(s, ROLE, on);
@@ -331,12 +334,15 @@ mod tests {
 
     #[test]
     fn the_v4l2_fallback_uses_the_camera_chosen_in_settings() {
-        let list = [
-            cam("/dev/video0", "usb-1"),
-            cam("/dev/video2", "usb-2"),
-        ];
-        assert_eq!(device_for(&list, Some("usb-2")).as_deref(), Some("/dev/video2"));
-        assert_eq!(device_for(&list, Some("gone")).as_deref(), Some("/dev/video0"));
+        let list = [cam("/dev/video0", "usb-1"), cam("/dev/video2", "usb-2")];
+        assert_eq!(
+            device_for(&list, Some("usb-2")).as_deref(),
+            Some("/dev/video2")
+        );
+        assert_eq!(
+            device_for(&list, Some("gone")).as_deref(),
+            Some("/dev/video0")
+        );
         assert_eq!(device_for(&list, None).as_deref(), Some("/dev/video0"));
         assert_eq!(device_for(&[], Some("usb-2")), None);
     }

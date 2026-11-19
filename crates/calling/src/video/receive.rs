@@ -32,7 +32,9 @@ pub fn carries_keyframe(payload: &[u8]) -> bool {
     let key = |t: u8| t == 5 || t == 7;
     match payload.first().map(|b| b & 0x1f) {
         Some(STAP_A) => stap_units(payload).iter().any(|u| key(u[0] & 0x1f)),
-        Some(FU_A) => payload.get(1).is_some_and(|h| h & 0x80 != 0 && key(h & 0x1f)),
+        Some(FU_A) => payload
+            .get(1)
+            .is_some_and(|h| h & 0x80 != 0 && key(h & 0x1f)),
         Some(t) => key(t),
         None => false,
     }

@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use calling::video::receive::{carries_keyframe, H264Depacketizer, VideoPacket};
-use calling::video::{i420_to_rgb, step_for, I420Frame};
+use calling::video::receive::{H264Depacketizer, VideoPacket, carries_keyframe};
+use calling::video::{I420Frame, i420_to_rgb, step_for};
 
 fn frame(w: usize, h: usize, y: impl Fn(usize, usize) -> u8, u: u8, v: u8) -> I420Frame {
     let mut data = Vec::new();
@@ -74,7 +74,9 @@ fn single_nal_units_and_stap_a_become_annex_b() {
     let unit = d.push(&packet(2, 90, true, &[0x65, 1, 2])).unwrap();
     assert_eq!(
         unit,
-        [0, 0, 0, 1, 0x67, 0xAA, 0, 0, 0, 1, 0x68, 0xBB, 0, 0, 0, 1, 0x65, 1, 2]
+        [
+            0, 0, 0, 1, 0x67, 0xAA, 0, 0, 0, 1, 0x68, 0xBB, 0, 0, 0, 1, 0x65, 1, 2
+        ]
     );
     assert!(calling::video::h264::is_keyframe(&unit));
 }

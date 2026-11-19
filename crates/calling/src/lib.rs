@@ -32,8 +32,8 @@ pub mod ngc_trouter;
 pub mod relay;
 pub mod signaling;
 pub mod types;
-pub mod voicemail;
 pub mod video;
+pub mod voicemail;
 
 pub use error::{Error, Result};
 pub use types::*;
