@@ -29,9 +29,12 @@
 //!                                 teams and channels (writes go to the sandbox team, see team.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli diag [--log F] [--out P]  write a local, redacted problem-report bundle (nothing is uploaded)
+//! kelma-cli accounts [tenants|use <label>|add <label>|remove <label>|org <tenant-id|home>]
+//!                                 several accounts and organizations (list and tenants are read-only)
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
+mod accounts;
 mod apps;
 mod drive;
 mod store;
@@ -495,6 +498,7 @@ async fn main() -> Result<()> {
                 out.display()
             );
         }
+        Some("accounts") => accounts::run(&paths, &args[1..]).await?,
         Some("logout") => {
             let cfg = paths.load_config()?;
             session::delete_refresh_token(&cfg.account)?;
