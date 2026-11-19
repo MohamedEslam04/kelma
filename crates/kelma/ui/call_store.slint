@@ -16,6 +16,14 @@ export struct CallPerson {
     speaking: bool,
     // This tile shows the other side's video (CallStore.remote-video) when there is one.
     video: bool,
+    // The meeting gallery slot showing their camera, 1-based (CallStore.slot-videos); 0: none.
+    gallery-slot: int,
+}
+
+// One meeting gallery slot's picture.
+export struct CallVideo {
+    frame: image,
+    shown: bool,
 }
 
 export global CallStore {
@@ -44,6 +52,12 @@ export global CallStore {
     in property <bool> has-self-view;
     in property <image> remote-video;
     in property <bool> has-remote-video;
+    // The meeting gallery's pictures, one per receive slot (CallPerson.gallery-slot).
+    in property <[CallVideo]> slot-videos;
+    // Who else shares a screen ("" when the roster names nobody), and the shared screen.
+    in property <string> presenter;
+    in property <image> content-video;
+    in property <bool> has-content;
     // The pre-join microphone switch.
     in property <bool> prejoin-mic: true;
     // Shown only when the call state says the meeting is recorded.
@@ -68,9 +82,12 @@ export global CallStore {
     in property <int> mic;
     in property <[string]> speakers;
     in property <int> speaker;
+    // The call window's layout: "gallery" (everyone in a grid) | "content" (a shared screen on
+    // the stage). A share that starts switches to "content", as Teams does.
+    in-out property <string> view-mode: "gallery";
     // The side panel: "" | people | more.
     in-out property <string> panel;
-    // The open dropdown or card: "" | devices | a device picker's key.
+    // The open dropdown or card: "" | devices | view | a device picker's key.
     in-out property <string> menu;
     // The call shrinks to a floating bar while the meeting chat is open.
     in-out property <bool> minimized;
@@ -82,6 +99,11 @@ export global CallStore {
     callback command(string, string);
     // The conversation is a meeting's chat (its header shows Join).
     pure callback is-meeting-chat(string) -> bool;
+
+    // Someone else shares a screen: the roster says so, or its picture came.
+    public pure function content-shared() -> bool {
+        return presenter != "" || has-content;
+    }
 
     public pure function in-call-phase() -> bool {
         return phase == "connecting" || phase == "lobby" || phase == "connected" || phase == "reconnecting";

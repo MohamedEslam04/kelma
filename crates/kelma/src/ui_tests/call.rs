@@ -337,7 +337,6 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
     c.connected();
     for (label, why) in [
         ("React", "Reactions aren't available yet"),
-        ("View", "Only this view is available"),
         ("Camera", "Video isn't available in this call"),
         ("Share", "Screen sharing isn't available in this call"),
     ] {
@@ -350,6 +349,27 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
     assert_eq!(c.button("Chat").accessible_enabled(), Some(true));
     assert_eq!(c.sent().len(), 2, "only join-chat and join-now were sent");
     assert_eq!(c.fake.calls().len(), 1);
+}
+
+#[test]
+fn a_share_takes_the_stage_and_names_who_presents() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("View"));
+    let focus = || {
+        ElementHandle::find_by_accessible_label(&c.h.app, "Focus on content")
+            .next()
+            .expect("the View menu lists Focus on content")
+    };
+    assert_eq!(focus().accessible_enabled(), Some(false));
+    assert_eq!(focus().accessible_description().unwrap(), "Nobody is sharing");
+
+    c.fake.emit(Event::Presenter("Ada Lovelace".into()));
+    assert_eq!(cs(&c.h.app).get_view_mode(), "content", "a share takes the stage");
+    assert!(c.shows("Ada Lovelace is presenting"));
+
+    c.fake.emit(Event::Presenter(String::new()));
+    assert_eq!(cs(&c.h.app).get_view_mode(), "gallery", "and gives it back");
 }
 
 #[test]

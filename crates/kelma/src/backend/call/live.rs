@@ -14,6 +14,7 @@
 //! like `--no-aec`). `KELMA_CALL_DUMP=<dir>` writes every raw calling push there.
 
 use super::camera::{self, Camera, CameraMsg};
+use super::remote_video::{self, RemoteVideo};
 use super::share::{self, Share, ShareMsg};
 use super::{
     CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
@@ -420,7 +421,12 @@ async fn join_meeting(
         .await
         .context("the calling connection didn't come up")?;
     let ice = hub.ice_servers(&ngc.endpoints().region).await;
-    let (media, events) = MediaSession::with_options(ice.clone(), share::media_options()).await?;
+    // A meeting join also offers the gallery's receive-only lines (UNVERIFIED).
+    let options = calling::media::MediaOptions {
+        receive_slots: remote_video::wanted_slots(),
+        ..share::media_options()
+    };
+    let (media, events) = MediaSession::with_options(ice.clone(), options).await?;
     let offer = media.create_offer().await?;
     let me = hub.client.self_mri().await?;
     let s = CallSession::new(&surl, &me, &opts.name);
@@ -442,10 +448,14 @@ async fn join_meeting(
         roster.apply_snapshot(snapshot);
     }
     let mut answered = false;
+    let mut video = RemoteVideo::default();
     if let Some(ans) = find_blob(&conv.raw) {
         match ans.decode() {
             Ok(sdp) => match media.set_answer(&sdp).await {
-                Ok(()) => answered = true,
+                Ok(()) => {
+                    answered = true;
+                    video.negotiated(&media, &sdp).await;
+                }
                 Err(e) => tracing::warn!(%e, "inline media answer refused"),
             },
             Err(e) => tracing::warn!(%e, "undecodable inline answer"),
@@ -467,6 +477,7 @@ async fn join_meeting(
         link: Link::New,
         share: Share::default(),
         camera: Camera::default(),
+        video,
     };
     Ok((call, events, pushes))
 }
@@ -516,7 +527,10 @@ pub fn adopt(
             link: Link::Connected,
             share: Share::default(),
             camera: Camera::default(),
+            video: RemoteVideo::default(),
         };
+        // A direct call's sharing line shows the other side's screen (no subscription).
+        call.video.negotiated(&call.media, "").await;
         call.start_keep_alive(None);
         call.run(events, pushes, opts, sink, rx, vec![]).await;
     });
@@ -703,7 +717,7 @@ impl Talk {
     }
 }
 
-fn people(roster: &Roster, me: &str, talk: &Talk) -> Vec<Person> {
+fn people(roster: &Roster, me: &str, talk: &Talk, video: &RemoteVideo) -> Vec<Person> {
     roster
         .participants()
         .iter()
@@ -720,6 +734,7 @@ fn people(roster: &Roster, me: &str, talk: &Talk) -> Vec<Person> {
             lobby: p.presence == Presence::Lobby,
             me: p.mri == me,
             role: p.role.map(|r| r.name().to_owned()).unwrap_or_default(),
+            video_slot: video.slot_of(&p.mri),
         })
         .collect()
 }
@@ -741,6 +756,8 @@ struct Call {
     link: Link,
     share: Share,
     camera: Camera,
+    /// Other people's video: the 1:1 camera, a shared screen, the meeting gallery.
+    video: RemoteVideo,
 }
 
 impl Call {
@@ -756,17 +773,23 @@ impl Call {
         }));
     }
 
-    async fn apply_answer(&mut self, answer: &SdpBlob) {
+    /// Applies the media answer once; true when it was applied now.
+    async fn apply_answer(&mut self, answer: &SdpBlob) -> bool {
         if self.answered {
-            return;
+            return false;
         }
         match answer.decode() {
             Ok(sdp) => match self.media.set_answer(&sdp).await {
-                Ok(()) => self.answered = true,
+                Ok(()) => {
+                    self.answered = true;
+                    self.video.negotiated(&self.media, &sdp).await;
+                    return true;
+                }
                 Err(e) => tracing::warn!(%e, "media answer refused"),
             },
             Err(e) => tracing::warn!(%e, "undecodable media answer"),
         }
+        false
     }
 
     async fn control(&mut self, c: Control, audio: &mut Audio, sink: &EventSink) {
@@ -845,7 +868,7 @@ impl Call {
         let mut forwarders = vec![forward(play_rx.clone(), events.audio)];
         let mut state_rx = events.state;
         let mut speakers_rx = events.speakers;
-        self.camera.show_remote(events.video, &sink);
+        self.video.show(events.video, &sink);
         let mut talk = Talk::default();
         let mut speakers_open = true;
         if !opts.mic_on {
@@ -898,13 +921,14 @@ impl Call {
                         CallEvent::Accepted { answer, links, keep_alive_interval_s, .. } => {
                             self.links.0.extend(links.0);
                             if let Some(a) = answer {
-                                self.apply_answer(&a).await;
+                                // New lines: the subscriptions follow.
+                                roster_changed |= self.apply_answer(&a).await;
                             }
                             self.start_keep_alive(keep_alive_interval_s);
                         }
                         CallEvent::MediaAnswer { answer, links } => {
                             self.links.0.extend(links.0);
-                            self.apply_answer(&answer).await;
+                            roster_changed |= self.apply_answer(&answer).await;
                         }
                         CallEvent::MediaRenegotiation { offer, links } => {
                             let swapped = self.renegotiate(&offer, &links, &sender_tx, &sink).await;
@@ -915,7 +939,7 @@ impl Call {
                                 }
                                 // So was the camera: it comes back on the new session's line.
                                 camera_wanted |= self.camera.stop(&sink).await;
-                                self.camera.show_remote(ev.video, &sink);
+                                self.video.show(ev.video, &sink);
                                 state_rx = ev.state;
                                 speakers_rx = ev.speakers;
                                 speakers_open = true;
@@ -924,6 +948,8 @@ impl Call {
                             self.links.0.extend(links.0);
                             // Admission re-offers the media; we are out of the lobby.
                             in_lobby = false;
+                            // The lines may have changed: the subscriptions start over.
+                            roster_changed = true;
                         }
                         CallEvent::Rejected(r) | CallEvent::Ended(r) => {
                             tracing::info!(code = r.code, sub = r.sub_code, "call ended by the service");
@@ -948,7 +974,15 @@ impl Call {
                 }
             }
             if roster_changed {
-                sink.send(Event::Roster(people(&self.roster, &me, &talk)));
+                if self.meeting {
+                    let spoke = |m: &str| talk.last.get(m).copied().unwrap_or(0);
+                    self.video
+                        .reselect(&self.ngc, &self.s, &self.links, &self.roster, spoke, &sink);
+                }
+                if let Some(name) = self.video.presenter_changed(&self.roster, &me) {
+                    sink.send(Event::Presenter(name));
+                }
+                sink.send(Event::Roster(people(&self.roster, &me, &talk, &self.video)));
                 if let Some(p) = self.roster.get(&me) {
                     in_lobby = p.presence == Presence::Lobby;
                     let hand = p.hand.is_some();
@@ -999,7 +1033,7 @@ impl Call {
         }
         self.share.stop().await;
         self.camera.stop(&sink).await;
-        self.camera.stop_remote(&sink);
+        self.video.stop(&sink);
         audio.stop();
         let _ = self.media.close().await;
         for f in forwarders {
@@ -1238,6 +1272,8 @@ impl Call {
         };
         match answer {
             Ok(ans) => {
+                // The media server's offer names its lines' stream ids.
+                self.video.negotiated(&self.media, &sdp).await;
                 if let Some(url) = links.get("mediaAnswer") {
                     match self
                         .ngc
@@ -1394,7 +1430,7 @@ mod tests {
             "8:orgid:g": {"version": 1, "state": "active", "details": {"displayName": ""},
                 "endpoints": {"e": {"lobby": {}}}}
         }}));
-        let p = people(&r, "8:orgid:me", &Talk::default());
+        let p = people(&r, "8:orgid:me", &Talk::default(), &RemoteVideo::default());
         let me = p.iter().find(|p| p.me).unwrap();
         assert!(me.muted && !me.lobby);
         let guest = p.iter().find(|p| !p.me).unwrap();

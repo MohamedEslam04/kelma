@@ -1,6 +1,6 @@
 //! The camera in a live call: the Camera portal (or a V4L2 device), the encoder task feeding the
-//! call's `main-video` line, our self-view, the other side's video, and telling the service (see
-//! `docs/protocol-calls.md`, Camera video).
+//! call's `main-video` line, our self-view, and telling the service (see
+//! `docs/protocol-calls.md`, Camera video). The other side's video is `remote_video`'s.
 //!
 //! The main-video line is negotiated only when `KELMA_CAMERA=1` (until a live run confirms the
 //! media servers accept it, the verified audio-only offer stays the default), the same opt-in as
@@ -21,7 +21,6 @@ use calling::signaling::video::{
 use calling::signaling::{CallSession, NgcClient};
 use calling::video::camera::{CameraCapture, CameraSettings, open};
 use calling::video::h264::{EncoderSettings, H264Encoder};
-use calling::video::receive::{VideoPacket, spawn_decoder};
 use calling::video::{VideoRole, i420_to_rgb, pump, step_for, tap};
 use calling::{Links, SdpBlob};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,8 +30,6 @@ use tokio::task::JoinHandle;
 pub const ROLE: VideoRole = VideoRole::MainVideo;
 /// The self-view is drawn small, in our own tile: no wider than this.
 const SELF_VIEW_WIDTH: usize = 320;
-/// The other side's video, in their tile.
-const REMOTE_WIDTH: usize = 960;
 /// One self-view picture every this many camera frames (15 fps camera, 7.5 fps self-view).
 const SELF_VIEW_EVERY: u32 = 2;
 
@@ -93,8 +90,6 @@ pub struct Camera {
     capture: Option<CameraCapture>,
     encoder: Option<JoinHandle<()>>,
     keyframes: Option<mpsc::UnboundedSender<()>>,
-    /// Shows the other side's video.
-    remote: Option<JoinHandle<()>>,
     /// `requestId` of the last `UpdateMediaDescriptions`.
     request_id: u64,
     /// What the UI was last told: (available, on).
@@ -181,30 +176,6 @@ impl Camera {
 
     pub fn open_failed(&mut self) {
         self.opening = false;
-    }
-
-    /// Shows the other side's video from `packets` (a session's
-    /// [`calling::media::MediaEvents::video`]); replaces what a previous session showed.
-    pub fn show_remote(&mut self, packets: mpsc::Receiver<VideoPacket>, sink: &EventSink) {
-        if let Some(r) = self.remote.take() {
-            r.abort();
-        }
-        let mut frames = spawn_decoder(packets, REMOTE_WIDTH);
-        let sink = sink.clone();
-        self.remote = Some(tokio::spawn(async move {
-            while let Some(f) = frames.recv().await {
-                sink.video(VideoSlot::Remote, Some(f));
-            }
-            sink.video(VideoSlot::Remote, None);
-        }));
-    }
-
-    /// Stops showing the other side's video.
-    pub fn stop_remote(&mut self, sink: &EventSink) {
-        if let Some(r) = self.remote.take() {
-            r.abort();
-            sink.video(VideoSlot::Remote, None);
-        }
     }
 
     /// A `controlVideoStreaming` callback: a keyframe request reaches the encoder.

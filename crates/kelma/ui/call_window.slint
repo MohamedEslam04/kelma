@@ -3,19 +3,21 @@
 // the rail (see app.slint); `CallMini` is the floating call while another page is open.
 //
 // Camera and screen sharing work when the build negotiates them (KELMA_CAMERA=1,
-// KELMA_SCREEN_SHARE=1); reactions and views are drawn but disabled (no reaction API,
-// crates/calling/src/signaling/controls.rs).
+// KELMA_SCREEN_SHARE=1); someone else's share takes the stage (View > Focus on content).
+// Reactions are drawn but disabled (no reaction API, crates/calling/src/signaling/controls.rs).
 import { Theme } from "theme.slint";
 import { Avatar, Icon } from "widgets.slint";
-import { CallStore, CallPerson } from "call_store.slint";
+import { CallStore, CallPerson, CallVideo } from "call_store.slint";
 import { CallButton, CallAction, DeviceSettings } from "call_widgets.slint";
 import { PreJoin } from "call_prejoin.slint";
 import { PeoplePanel, MorePanel } from "call_people.slint";
 
-export { CallStore, CallPerson }
+export { CallStore, CallPerson, CallVideo }
 
 component TopBar inherits Rectangle {
     callback open-chat();
+    // Where the View button is, for its dropdown.
+    out property <length> view-x: view.x;
     height: 62px;
     background: Theme.topbar;
     HorizontalLayout {
@@ -82,11 +84,13 @@ component TopBar inherits Rectangle {
             enabled: false;
             tip: "Reactions aren't available yet";
         }
-        CallButton {
+        view := CallButton {
             icon: @image-url("icons/grid.svg");
             label: "View";
-            enabled: false;
-            tip: "Only this view is available";
+            checkable: true;
+            active: CallStore.menu == "view";
+            tip: "Change the layout";
+            clicked => { CallStore.menu = CallStore.menu == "view" ? "" : "view"; }
         }
         CallButton {
             icon: @image-url("icons/more.svg");
@@ -175,14 +179,19 @@ component Banner inherits Rectangle {
 
 component Tile inherits Rectangle {
     in property <CallPerson> p;
-    // Our camera in our tile, the other side's video in theirs.
+    // Our camera in our tile, the other side's video in theirs: their meeting gallery slot, else
+    // the call's one remote picture.
     property <bool> self-view: root.p.me && CallStore.camera && CallStore.has-self-view;
-    property <bool> remote: !root.p.me && root.p.video && CallStore.has-remote-video;
+    property <bool> gallery: !root.p.me && root.p.gallery-slot > 0
+        && CallStore.slot-videos[root.p.gallery-slot - 1].shown;
+    property <bool> remote: !root.p.me && !root.gallery && root.p.video && CallStore.has-remote-video;
     border-radius: 8px;
     clip: true;
     background: Theme.surface;
-    if root.self-view || root.remote: Image {
-        source: root.self-view ? CallStore.self-view : CallStore.remote-video;
+    if root.self-view || root.gallery || root.remote: Image {
+        source: root.self-view ? CallStore.self-view
+            : root.gallery ? CallStore.slot-videos[root.p.gallery-slot - 1].frame
+            : CallStore.remote-video;
         width: root.width;
         height: root.height;
         image-fit: root.self-view ? ImageFit.cover : ImageFit.contain;
@@ -192,7 +201,7 @@ component Tile inherits Rectangle {
     // Speaking: the accent outline, as Teams draws it; a raised hand also shows it.
     border-width: root.p.speaking || root.p.hand ? 2px : 0px;
     border-color: Theme.accent;
-    if !root.self-view && !root.remote: Avatar {
+    if !root.self-view && !root.gallery && !root.remote: Avatar {
         initials: root.p.initials;
         size: min(72px, root.height / 2);
         x: (root.width - self.width) / 2;
@@ -228,8 +237,57 @@ component Tile inherits Rectangle {
     }
 }
 
-// What fills the middle: the lobby, connecting, or the participants' tiles.
+// A shared screen on the whole stage, and who presents it.
+component ContentStage inherits Rectangle {
+    property <string> who: CallStore.presenter != "" ? CallStore.presenter
+        : CallStore.kind == "direct" ? CallStore.title : "Someone";
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 8px;
+            clip: true;
+            background: #000000;
+            if CallStore.has-content: Image {
+                source: CallStore.content-video;
+                width: parent.width;
+                height: parent.height;
+                image-fit: ImageFit.contain;
+                accessible-role: image;
+                accessible-label: @tr("{}'s shared screen", root.who);
+            }
+            if !CallStore.has-content: Text {
+                text: "Waiting for the shared screen…";
+                color: Theme.fg-muted;
+                font-size: 14px * Theme.font-scale;
+            }
+        }
+        HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+            Icon {
+                source: @image-url("icons/screen-share.svg");
+                tint: Theme.accent;
+                width: 16px;
+                height: 16px;
+                y: 2px;
+            }
+            Text {
+                text: @tr("{} is presenting", root.who);
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                font-weight: 600;
+                overflow: elide;
+                accessible-role: text;
+            }
+        }
+    }
+}
+
+// What fills the middle: the lobby, connecting, the participants' tiles, or a shared screen.
 component Stage inherits Rectangle {
+    property <bool> content: CallStore.view-mode == "content" && CallStore.content-shared();
     property <int> count: max(1, min(CallStore.in-call, 12));
     property <int> cols: count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
     property <int> rows: Math.ceil(count / cols);
@@ -263,8 +321,12 @@ component Stage inherits Rectangle {
             color: Theme.fg-muted;
             font-size: 15px * Theme.font-scale;
         }
+        if root.content: ContentStage {
+            width: root.width;
+            height: root.height;
+        }
         for p[i] in CallStore.people: Tile {
-            visible: i < root.count;
+            visible: i < root.count && !root.content;
             p: p;
             width: root.tile-w;
             height: root.tile-h;
@@ -275,10 +337,73 @@ component Stage inherits Rectangle {
     }
 }
 
+// The View button's dropdown: how the stage lays out the call.
+component ViewMenu inherits Rectangle {
+    width: 220px;
+    height: card.preferred-height;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: #00000080;
+    card := VerticalLayout {
+        padding: 6px;
+        for item[i] in [
+            { mode: "gallery", label: "Gallery", why: "" },
+            { mode: "content", label: "Focus on content", why: CallStore.content-shared() ? "" : "Nobody is sharing" },
+        ]: Rectangle {
+            property <bool> enabled: item.why == "";
+            height: 32px;
+            border-radius: 3px;
+            background: touch.has-hover && self.enabled ? Theme.surface-hover : transparent;
+            accessible-role: list-item;
+            accessible-label: item.label;
+            accessible-description: item.why;
+            accessible-enabled: self.enabled;
+            accessible-item-selectable: true;
+            accessible-item-selected: CallStore.view-mode == item.mode;
+            accessible-action-default => {
+                if self.enabled {
+                    CallStore.view-mode = item.mode;
+                    CallStore.menu = "";
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px;
+                spacing: 8px;
+                opacity: parent.enabled ? 1 : 0.4;
+                Text {
+                    text: CallStore.view-mode == item.mode ? "✓" : "";
+                    width: 12px;
+                    color: Theme.accent;
+                    font-size: 13px * Theme.font-scale;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: item.label;
+                    color: Theme.fg;
+                    font-size: 13px * Theme.font-scale;
+                    vertical-alignment: center;
+                }
+            }
+            touch := TouchArea {
+                mouse-cursor: parent.enabled ? pointer : default;
+                clicked => {
+                    if parent.enabled {
+                        CallStore.view-mode = item.mode;
+                        CallStore.menu = "";
+                    }
+                }
+            }
+        }
+    }
+}
+
 component InCall inherits Rectangle {
     callback open-chat();
     VerticalLayout {
-        TopBar { open-chat => { root.open-chat(); } }
+        bar := TopBar { open-chat => { root.open-chat(); } }
         if CallStore.phase == "reconnecting": Banner {
             message: "Reconnecting… Your connection was interrupted.";
             tone: #8a5a00;
@@ -293,6 +418,12 @@ component InCall inherits Rectangle {
             if CallStore.panel == "people": PeoplePanel { width: 320px; }
             if CallStore.panel == "more": MorePanel { width: 320px; }
         }
+    }
+    // The View button's dropdown, under the button.
+    if CallStore.menu == "view": ViewMenu {
+        x: min(bar.view-x, root.width - self.width - 12px);
+        y: 64px;
+        z: 30;
     }
     // The mic button's dropdown.
     if CallStore.menu == "devices" || CallStore.menu == "card-mic" || CallStore.menu == "card-speaker": Rectangle {

@@ -14,12 +14,36 @@ fn texts(v: Vec<String>) -> slint::ModelRc<SharedString> {
     model(v.into_iter().map(SharedString::from).collect())
 }
 
+/// The layout to switch to when someone else's share starts (`now`) or ends: the shared screen
+/// when it starts, back to the gallery when it ends while it was shown. `None`: keep `mode`.
+fn view_after_share(mode: &str, was: bool, now: bool) -> Option<&'static str> {
+    match (was, now) {
+        (false, true) if mode != "content" => Some("content"),
+        (true, false) if mode == "content" => Some("gallery"),
+        _ => None,
+    }
+}
+
+/// Switches the layout when a share started or ended since `was`, as Teams does.
+fn follow_share(s: &CallStore, was: bool) {
+    let now = !s.get_presenter().is_empty() || s.get_has_content();
+    if let Some(mode) = view_after_share(&s.get_view_mode(), was, now) {
+        s.set_view_mode(mode.into());
+    }
+}
+
+fn shared(s: &CallStore) -> bool {
+    !s.get_presenter().is_empty() || s.get_has_content()
+}
+
 fn set(w: &AppWindow, d: CallData) {
     let s = w.global::<CallStore>();
+    let was_shared = shared(&s);
     if d.phase.is_empty() || d.phase == "prejoin" {
         // A new call opens full size, with no panel or menu left from the last one.
         s.set_minimized(false);
         s.set_menu(SharedString::new());
+        s.set_view_mode("gallery".into());
         if d.phase.is_empty() {
             s.set_panel(SharedString::new());
         }
@@ -45,7 +69,10 @@ fn set(w: &AppWindow, d: CallData) {
     }
     if !matches!(d.phase, "connected" | "reconnecting") {
         s.set_has_remote_video(false);
+        s.set_has_content(false);
     }
+    s.set_presenter(d.presenter.into());
+    follow_share(&s, was_shared);
     s.set_prejoin_mic(d.prejoin_mic);
     s.set_prejoin_camera(d.prejoin_camera);
     s.set_recording(d.recording);
@@ -81,6 +108,7 @@ fn set(w: &AppWindow, d: CallData) {
 fn call_person(p: Person, video: bool) -> CallPerson {
     CallPerson {
         video,
+        gallery_slot: p.video_slot.map_or(0, |i| int(i + 1)),
         initials: initials(&p.name).into(),
         name: p.name.into(),
         muted: p.muted,
@@ -131,6 +159,19 @@ pub fn wire(window: &AppWindow) {
     s.on_is_meeting_chat(|id| is_meeting_chat(&id));
     #[cfg(feature = "calls")]
     s.set_camera_available(crate::backend::call::camera::wanted());
+    #[cfg(feature = "calls")]
+    s.set_slot_videos(GALLERY.with(|g| slint::ModelRc::from(g.clone())));
+}
+
+#[cfg(feature = "calls")]
+thread_local! {
+    /// The meeting gallery's pictures, one row per receive slot, updated in place per frame.
+    static GALLERY: std::rc::Rc<slint::VecModel<crate::CallVideo>> = std::rc::Rc::new(
+        slint::VecModel::from(vec![
+            crate::CallVideo::default();
+            crate::backend::call::remote_video::RECEIVE_SLOTS
+        ]),
+    );
 }
 
 impl UiHandle {
@@ -167,6 +208,18 @@ impl UiHandle {
                     s.set_remote_video(image);
                     s.set_has_remote_video(shown);
                 }
+                VideoSlot::Content => {
+                    let was = shared(&s);
+                    s.set_content_video(image);
+                    s.set_has_content(shown);
+                    follow_share(&s, was);
+                }
+                VideoSlot::Gallery(i) => GALLERY.with(|g| {
+                    use slint::Model;
+                    if i < g.row_count() {
+                        g.set_row_data(i, crate::CallVideo { frame: image, shown });
+                    }
+                }),
             }
         });
     }
@@ -218,6 +271,19 @@ mod tests {
         people[3].speaking = true;
         assert_eq!(video_owner(&people), Some(3));
         assert_eq!(video_owner(&people[..2]), None);
+    }
+
+    #[test]
+    fn a_share_that_starts_takes_the_stage_and_one_that_ends_gives_it_back() {
+        assert_eq!(view_after_share("gallery", false, true), Some("content"));
+        assert_eq!(view_after_share("content", true, false), Some("gallery"));
+        assert_eq!(view_after_share("gallery", true, true), None, "still sharing");
+        assert_eq!(
+            view_after_share("gallery", true, false),
+            None,
+            "the user had left the shared screen"
+        );
+        assert_eq!(view_after_share("content", false, false), None);
     }
 
     #[test]
