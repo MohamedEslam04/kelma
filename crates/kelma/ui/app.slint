@@ -144,6 +144,8 @@ export component AppWindow inherits Window {
     in-out property <bool> shortcuts-open: false;
     in-out property <bool> composer-expanded: false;
     in-out property <int> msg-focus-tick: 0;
+    // The composer's "Mark as important"; main.rs reads it when the message is sent.
+    in-out property <bool> important: false;
     in-out property <bool> composer-focused;
     in-out property <int> skin-tone: 0;
     in property <[ComposerEmoji]> recent-emoji;
@@ -879,6 +881,7 @@ export component AppWindow inherits Window {
                         focus-tick <=> root.focus-tick;
                         enter-sends <=> root.enter-sends;
                         expanded <=> root.composer-expanded;
+                        important <=> root.important;
                         input-focus(f) => { root.composer-focused = f; }
                         edit-last => {
                             if ShortcutApi.last-own(root.messages) != "" { root.edit(ShortcutApi.last-own(root.messages)); }

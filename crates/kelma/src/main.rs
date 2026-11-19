@@ -345,6 +345,9 @@ fn main() -> anyhow::Result<()> {
                 .upgrade()
                 .map(|w| w.get_post_subject().to_string())
                 .unwrap_or_default();
+            if weak.upgrade().is_some_and(|w| w.get_important()) {
+                let _ = tx.send(Cmd::SetImportant(true));
+            }
             let _ = tx.send(Cmd::Send(text.into(), subject));
         });
     }

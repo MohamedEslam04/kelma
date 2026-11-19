@@ -154,6 +154,7 @@ fn msg(m: MsgData) -> Msg {
         flash: m.flash,
         card: channels::card_rows(m.card),
         headline: m.headline.into(),
+        importance: m.importance.into(),
         grid_w: m.grid_w,
         grid_h: m.grid_h,
         translate: m.translate.into(),

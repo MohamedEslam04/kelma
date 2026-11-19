@@ -94,6 +94,8 @@ pub enum Cmd {
     AttachFile,
     CopyLink(String),
     ToggleSave(String),
+    /// The composer's "Mark as important" state, sent right before the message it applies to.
+    SetImportant(bool),
     Pin(String),
     /// Message menu "Mark as unread": the chat turns unread from this message on.
     MarkUnread(String),
@@ -181,6 +183,8 @@ struct View {
     at_bottom: bool,
     /// New messages that arrived while scrolled up; shown on the jump button.
     new_count: usize,
+    /// "Mark as important" is on for the next message (set by the composer just before a send).
+    important: bool,
     /// Latest composer text of the current chat as the engine knows it.
     draft_text: String,
     /// `draft_text` (or the reply target) changed since it was last written to the store.
@@ -361,6 +365,8 @@ impl Engine {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
             Cmd::Flush => self.flush_draft(),
+            // In order with the Send that follows it.
+            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
             // Selection and view changes run in order with the command that follows them.
             Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             cmd => {
@@ -533,6 +539,7 @@ impl Engine {
             Cmd::AttachFile => self.attach_file().await?,
             Cmd::CopyLink(id) => self.copy_link(&id)?,
             Cmd::ToggleSave(id) => self.toggle_save(&id).await?,
+            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
             Cmd::Pin(id) => self.pin(&id).await?,
             Cmd::MarkUnread(id) => self.mark_unread_from(&id).await?,
             Cmd::ForwardBegin(id) => self.forward_begin(id)?,

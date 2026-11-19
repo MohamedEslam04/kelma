@@ -56,6 +56,9 @@ export component Composer inherits Rectangle {
     // Formatting (plan chat 5.4): the toolbar and preview strip, and the taller composer (Ctrl+Shift+X).
     in-out property <bool> format-open: false;
     in-out property <bool> expanded: false;
+    // "Mark as important" (Ctrl+Shift+I): the next message is sent with the Important delivery
+    // option. It shows as a red chip and is used up by the send.
+    in-out property <bool> important: false;
     // True while the text box has the keyboard focus (the window leaves Ctrl+Shift+7 and 8 to the composer then).
     property <bool> input-focused: composer-input.has-focus;
     callback input-focus(bool);
@@ -127,6 +130,11 @@ export component Composer inherits Rectangle {
 
     // A toolbar action or shortcut on the selection (`a`, `c`: anchor and cursor byte offsets).
     function format(act: string, a: int, c: int) {
+        if act == "important" {
+            root.important = !root.important;
+            root.focus-tick += 1;
+            return;
+        }
         if act == "undo" || act == "redo" {
             let u = act == "undo" ? FormatApi.undo(composer-input.text, a, c) : FormatApi.redo(composer-input.text, a, c);
             if u.ok { root.put-selection(u); }
@@ -167,6 +175,7 @@ export component Composer inherits Rectangle {
         if composer-input.text != "" || root.pending-attachments.length > 0 {
             root.send(composer-input.text);
             composer-input.text = "";
+            root.important = false;
         }
     }
 
@@ -243,6 +252,41 @@ export component Composer inherits Rectangle {
                                     clicked => { root.remove-attachment(i); }
                                 }
                             }
+                        }
+                    }
+                }
+                if root.important: HorizontalLayout {
+                    padding-left: 10px;
+                    padding-top: 6px;
+                    alignment: start;
+                    Rectangle {
+                        height: 24px;
+                        width: important-text.preferred-width + 34px;
+                        border-radius: 12px;
+                        background: #4d2024;
+                        border-width: 1px;
+                        border-color: Theme.danger;
+                        accessible-role: groupbox;
+                        accessible-label: "Important message";
+                        important-text := Text {
+                            x: 10px;
+                            text: "IMPORTANT!";
+                            color: #ff7e83;
+                            font-size: 11px;
+                            font-weight: 800;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            x: parent.width - 22px;
+                            width: 18px;
+                            height: 18px;
+                            y: 3px;
+                            border-radius: 9px;
+                            background: important-x.has-hover ? #6b2f33 : transparent;
+                            accessible-role: button;
+                            accessible-label: "Remove important";
+                            Text { text: "✕"; color: #ff7e83; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                            important-x := TouchArea { mouse-cursor: pointer; clicked => { root.important = false; } }
                         }
                     }
                 }

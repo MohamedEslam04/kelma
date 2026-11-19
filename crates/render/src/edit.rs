@@ -63,7 +63,7 @@ pub fn apply(action: &str, text: &str, anchor: usize, cursor: usize) -> Option<E
 }
 
 /// The shortcut for a key press, as an action for [`apply`] or one of `link` (open the link
-/// dialog), `undo` and `redo`. `key` is the key's text (case is ignored).
+/// dialog), `undo`, `redo` and `important` (Ctrl+Shift+I, the composer's delivery option). `key` is the key's text (case is ignored).
 pub fn shortcut(key: &str, ctrl: bool, alt: bool, shift: bool) -> Option<&'static str> {
     if !ctrl {
         return None;
@@ -87,6 +87,8 @@ pub fn shortcut(key: &str, ctrl: bool, alt: bool, shift: bool) -> Option<&'stati
         // Shift+7 and Shift+8 type `&` and `*` on a US layout.
         (false, true, "7" | "&") => Some("ol"),
         (false, true, "8" | "*") => Some("ul"),
+        // Not a text edit: the composer marks the next message as important.
+        (false, true, "i") => Some("important"),
         _ => None,
     }
 }
@@ -1129,6 +1131,8 @@ mod tests {
         assert_eq!(s("*", true, false, true), Some("ul"));
         assert_eq!(s("z", true, false, false), Some("undo"));
         assert_eq!(s("y", true, false, false), Some("redo"));
+        assert_eq!(s("I", true, false, true), Some("important"));
+        assert_eq!(s("i", true, false, false), Some("italic"));
     }
 
     #[test]
