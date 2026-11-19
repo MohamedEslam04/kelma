@@ -490,17 +490,18 @@ pub fn adopt(
                 return;
             }
         };
+        // An answered 1:1 call has its controller from the attach answer; a placed one may learn
+        // it from its conversation push.
+        let controller = links
+            .get(calling::signaling::bodies::CONVERSATION_CONTROLLER)
+            .unwrap_or_default()
+            .to_owned();
         let mut call = Call {
             hub,
             ngc,
             s: session,
             links,
-            // An answered 1:1 call has its controller from the attach answer; a placed one may
-            // learn it from its conversation push.
-            controller: links
-                .get(calling::signaling::bodies::CONVERSATION_CONTROLLER)
-                .unwrap_or_default()
-                .to_owned(),
+            controller,
             media,
             ice: vec![],
             answered: true,
