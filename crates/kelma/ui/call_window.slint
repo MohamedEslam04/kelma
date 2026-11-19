@@ -11,6 +11,7 @@ import { CallButton, CallAction, DeviceSettings } from "call_widgets.slint";
 import { PreJoin } from "call_prejoin.slint";
 import { PeoplePanel, MorePanel, PeopleSearch } from "call_people.slint";
 import { CaptionStrip } from "call_captions.slint";
+import { HeldBar } from "call_held.slint";
 
 export { CallStore, CallPerson, CallCaption, CallFound }
 
@@ -455,10 +456,12 @@ component InCall inherits Rectangle {
     callback open-chat();
     VerticalLayout {
         bar := TopBar { open-chat => { root.open-chat(); } }
-        if CallStore.held: Banner {
+        // A meeting on hold (call waiting) has the "On hold" bar instead, with its Resume.
+        if CallStore.held && CallStore.kind == "direct": Banner {
             message: "You put the call on hold. Select Resume to continue.";
             tone: #4b4f8a;
         }
+        if CallStore.held-name != "": HeldBar { }
         if CallStore.phase == "reconnecting": Banner {
             message: "Reconnecting… Your connection was interrupted.";
             tone: #8a5a00;
@@ -748,6 +751,7 @@ export component CallMini inherits Rectangle {
                 clicked => { CallStore.command("leave", ""); }
             }
         }
+        if CallStore.held-name != "": HeldBar { compact: true; }
         MiniStage { vertical-stretch: 1; }
     }
 }

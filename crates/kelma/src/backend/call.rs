@@ -365,6 +365,9 @@ pub struct CallData {
     pub ended: String,
     pub chat_id: String,
     pub can_rejoin: bool,
+    /// The call on the "On hold" bar (call waiting): the other call while this one is shown, or
+    /// this meeting when it is the one on hold (a 1:1 call has its own Resume). Empty: no bar.
+    pub held_name: String,
     pub people: Vec<Person>,
     pub in_call: usize,
     pub in_lobby: usize,
@@ -773,6 +776,14 @@ impl CallModel {
             ended: self.ended.clone(),
             chat_id: self.chat_id.clone(),
             can_rejoin: self.target.is_some(),
+            held_name: if self.held
+                && self.phase.active()
+                && matches!(self.kind, CallKind::Meeting { .. })
+            {
+                self.held_title()
+            } else {
+                String::new()
+            },
             in_call: people.len() - in_lobby,
             in_lobby,
             people,
@@ -788,6 +799,16 @@ impl CallModel {
             held: self.held,
             found: self.found.clone(),
             invite_status: self.invite_status.clone(),
+        }
+    }
+}
+
+impl CallModel {
+    /// The name the "On hold" bar shows for this call.
+    fn held_title(&self) -> String {
+        match self.kind.title() {
+            "" => "Call".into(),
+            t => t.to_owned(),
         }
     }
 }
@@ -872,6 +893,10 @@ pub enum CallCmd {
     /// More › Record and transcribe › Start/Stop transcription.
     Transcription(bool),
     DismissNotice,
+    /// The "On hold" bar's Resume: the held call comes back, the shown one goes on hold.
+    Resume,
+    /// The "On hold" bar's End: ends the call on hold.
+    EndHeld,
 }
 
 impl CallCmd {
@@ -898,6 +923,8 @@ impl CallCmd {
             "recording" => CallCmd::Recording(arg == "start"),
             "transcription" => CallCmd::Transcription(arg == "start"),
             "dismiss-notice" => CallCmd::DismissNotice,
+            "resume" => CallCmd::Resume,
+            "end-held" => CallCmd::EndHeld,
             _ => return None,
         })
     }
@@ -927,11 +954,27 @@ impl EventSink {
     }
 }
 
+/// A call on hold while another one is shown (call waiting). Its driver keeps running and
+/// reporting under its own generation.
+struct Held {
+    model: CallModel,
+    handle: Option<Arc<dyn CallHandle>>,
+    generation: u64,
+}
+
+/// Two calls can live together: the shown one (`model`, `handle`, `generation`), which the call
+/// window shows and the controls reach, and at most one on hold (`held`). A call's events carry
+/// its generation, so each lands on its own model whichever slot it sits in. Lock order: `model`,
+/// then `held`, then `handle`.
 struct Shared {
     model: Mutex<CallModel>,
     handle: Mutex<Option<Arc<dyn CallHandle>>>,
+    held: Mutex<Option<Held>>,
     driver: Mutex<Arc<dyn CallDriver>>,
+    /// The shown call's generation (0: none).
     generation: AtomicU64,
+    /// The last generation handed out.
+    next_generation: AtomicU64,
     ticking: AtomicBool,
     ui: UiHandle,
     photos: Mutex<Option<PhotoLookup>>,
@@ -939,7 +982,10 @@ struct Shared {
 
 impl Shared {
     fn push(&self) {
-        let d = self.model.lock().unwrap().data(Instant::now());
+        let mut d = self.model.lock().unwrap().data(Instant::now());
+        if let Some(h) = self.held.lock().unwrap().as_ref() {
+            d.held_name = h.model.held_title();
+        }
         let lookup = self.photos.lock().unwrap().clone();
         let found = lookup
             .map(|f| photos(&d.people, |m| f(m)))
@@ -947,17 +993,28 @@ impl Shared {
         self.ui.call_state(d, found);
     }
 
+    /// A new call's generation, which becomes the shown one.
+    fn new_generation(&self) -> u64 {
+        let g = self.next_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.generation.store(g, Ordering::SeqCst);
+        g
+    }
+
     fn apply(self: &Arc<Self>, generation: u64, ev: Event) {
         if generation != self.generation.load(Ordering::SeqCst) {
-            return;
+            return self.apply_held(generation, ev);
         }
-        let (changed, phase) = {
+        let (mut changed, mut phase) = {
             let mut m = self.model.lock().unwrap();
             (m.apply(ev, Instant::now()), m.phase)
         };
         if phase == Phase::Ended {
             // The driver is done; dropping the handle stops whatever it still runs.
             self.handle.lock().unwrap().take();
+            if self.promote_held() {
+                changed = true;
+                phase = self.model.lock().unwrap().phase;
+            }
         }
         if changed {
             self.push();
@@ -965,6 +1022,142 @@ impl Shared {
         if phase == Phase::Connected {
             self.tick();
         }
+    }
+
+    /// An event of the call on hold. Its end (the other side hung up) takes the bar away.
+    fn apply_held(&self, generation: u64, ev: Event) {
+        let changed = {
+            let mut held = self.held.lock().unwrap();
+            let Some(h) = held.as_mut().filter(|h| h.generation == generation) else {
+                return;
+            };
+            let changed = h.model.apply(ev, Instant::now());
+            if h.model.phase == Phase::Ended {
+                *held = None;
+            }
+            changed
+        };
+        if changed {
+            self.push();
+        }
+    }
+
+    /// When the shown call is over and another is on hold, the held one is shown instead, still
+    /// on hold (Resume takes it back). True when it did.
+    fn promote_held(&self) -> bool {
+        let mut m = self.model.lock().unwrap();
+        if m.phase.active() {
+            return false;
+        }
+        let Some(h) = self.held.lock().unwrap().take() else {
+            return false;
+        };
+        let my_name = std::mem::take(&mut m.my_name);
+        *m = h.model;
+        m.my_name = my_name;
+        m.held = true;
+        *self.handle.lock().unwrap() = h.handle;
+        self.generation.store(h.generation, Ordering::SeqCst);
+        true
+    }
+
+    /// Moves the shown call to the hold slot to answer another one, and holds it. False when no
+    /// call runs or one is already on hold.
+    fn hold_current(&self) -> bool {
+        let (handle, was_on_hold) = {
+            let mut m = self.model.lock().unwrap();
+            let mut held = self.held.lock().unwrap();
+            if !m.phase.active() || held.is_some() {
+                return false;
+            }
+            let idle = CallModel {
+                my_name: m.my_name.clone(),
+                ..Default::default()
+            };
+            let mut model = std::mem::replace(&mut *m, idle);
+            let was_on_hold = std::mem::replace(&mut model.held, true);
+            let handle = self.handle.lock().unwrap().take();
+            // Its events now find it in the hold slot.
+            let generation = self.generation.swap(0, Ordering::SeqCst);
+            *held = Some(Held {
+                model,
+                handle: handle.clone(),
+                generation,
+            });
+            (handle, was_on_hold)
+        };
+        if !was_on_hold && let Some(h) = handle {
+            h.control(Control::Hold(true));
+        }
+        true
+    }
+
+    /// Leaves the shown call to answer another one ("End and accept"). The call on hold, if
+    /// any, stays on hold.
+    fn end_current(&self) {
+        let handle = {
+            let mut m = self.model.lock().unwrap();
+            if !m.leave(Instant::now()) {
+                return;
+            }
+            // Whatever it still reports is dropped: it must not bring the held call forward.
+            self.generation.store(0, Ordering::SeqCst);
+            self.handle.lock().unwrap().take()
+        };
+        if let Some(h) = handle {
+            h.control(Control::Leave);
+        }
+    }
+
+    /// Resume: the call on hold comes back and the shown one goes on hold. With no other call,
+    /// the shown call (on hold) resumes. False when there is nothing to resume.
+    fn resume(&self) -> bool {
+        self.promote_held();
+        let (hold, resume) = {
+            let mut m = self.model.lock().unwrap();
+            let mut held = self.held.lock().unwrap();
+            match held.take() {
+                Some(mut h) => {
+                    h.model.held = false;
+                    let mut shown = std::mem::replace(&mut *m, h.model);
+                    m.my_name = shown.my_name.clone();
+                    shown.held = true;
+                    let shown_handle =
+                        std::mem::replace(&mut *self.handle.lock().unwrap(), h.handle.clone());
+                    let generation = self.generation.swap(h.generation, Ordering::SeqCst);
+                    *held = Some(Held {
+                        model: shown,
+                        handle: shown_handle.clone(),
+                        generation,
+                    });
+                    (shown_handle, h.handle)
+                }
+                None if m.held && m.phase.active() => {
+                    m.held = false;
+                    (None, self.handle.lock().unwrap().clone())
+                }
+                None => return false,
+            }
+        };
+        // Silence the one going on hold before the other takes the devices.
+        if let Some(h) = hold {
+            h.control(Control::Hold(true));
+        }
+        if let Some(h) = resume {
+            h.control(Control::Hold(false));
+        }
+        true
+    }
+
+    /// The "On hold" bar's End for the other call. False when no other call is on hold.
+    fn end_held(&self) -> bool {
+        let Some(h) = self.held.lock().unwrap().take() else {
+            return false;
+        };
+        if let Some(handle) = h.handle {
+            handle.control(Control::Leave);
+        }
+        true
     }
 
     /// Pushes the timer once a second while the call runs.
@@ -1029,10 +1222,9 @@ impl CallDriver for Unavailable {
     }
 }
 
-#[cfg(any(test, not(feature = "calls")))]
+/// A handle with nothing behind it.
 struct NoHandle;
 
-#[cfg(any(test, not(feature = "calls")))]
 impl CallHandle for NoHandle {
     fn control(&self, _: Control) {}
 }
@@ -1058,8 +1250,10 @@ impl CallManager {
                     ..Default::default()
                 }),
                 handle: Mutex::new(None),
+                held: Mutex::new(None),
                 driver: Mutex::new(driver),
                 generation: AtomicU64::new(0),
+                next_generation: AtomicU64::new(0),
                 ticking: AtomicBool::new(false),
                 ui,
                 photos: Mutex::new(None),
@@ -1115,7 +1309,7 @@ impl CallManager {
         let Some((target, opts)) = self.shared.model.lock().unwrap().joining() else {
             return;
         };
-        let generation = self.shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = self.shared.new_generation();
         self.shared.push();
         let sink = EventSink {
             shared: Arc::downgrade(&self.shared),
@@ -1189,14 +1383,40 @@ impl CallManager {
                     m.notice.clear();
                     None
                 }
+                CallCmd::Resume => {
+                    drop(m);
+                    if self.shared.resume() {
+                        self.shared.push();
+                        self.shared.tick();
+                    }
+                    return;
+                }
+                CallCmd::EndHeld => {
+                    let shown_on_hold = m.held;
+                    drop(m);
+                    if self.shared.end_held() {
+                        self.shared.push();
+                    } else if shown_on_hold {
+                        self.command(CallCmd::Leave);
+                    }
+                    return;
+                }
             }
         };
-        if let Some(c) = control {
-            let leave = c == Control::Leave;
-            self.shared.control(c);
-            if leave {
-                self.shared.handle.lock().unwrap().take();
+        match control {
+            Some(Control::Leave) => {
+                // The handle goes first, so a driver reporting the end finds the call gone.
+                let h = self.shared.handle.lock().unwrap().take();
+                if let Some(h) = h {
+                    h.control(Control::Leave);
+                }
+                // A call on hold stays on hold, now shown.
+                if self.shared.promote_held() {
+                    self.shared.tick();
+                }
             }
+            Some(c) => self.shared.control(c),
+            None => {}
         }
         self.shared.push();
     }
@@ -1239,19 +1459,39 @@ impl CallManager {
     }
 }
 
-/// The running manager, once kelma is signed in ([`CallManager::start`]); the 1:1 call flows
-/// (`call_direct`) reach it here.
-#[cfg(feature = "calls")]
-static MANAGER: Mutex<Option<Arc<CallManager>>> = Mutex::new(None);
-
-#[cfg(feature = "calls")]
-pub fn manager() -> Option<Arc<CallManager>> {
-    MANAGER.lock().unwrap().clone()
+/// What happens to the call in progress when a waiting call is answered.
+#[cfg(any(test, feature = "calls"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentCall {
+    /// "Hold and accept": it goes on hold (the "On hold" bar).
+    Hold,
+    /// "End and accept": we leave it.
+    End,
 }
 
-/// The entry points of the 1:1 call flows (`call_direct`).
-#[cfg(feature = "calls")]
+/// Call waiting: a second call while one runs.
+#[cfg(any(test, feature = "calls"))]
 impl CallManager {
+    /// A call runs (joined or joining), shown in the call window.
+    pub fn in_call(&self) -> bool {
+        self.shared.model.lock().unwrap().phase.active()
+    }
+
+    /// Another call is on hold behind the shown one.
+    pub fn has_held(&self) -> bool {
+        self.shared.held.lock().unwrap().is_some()
+    }
+
+    /// Makes room for a call being answered while another runs: holds or leaves the current one.
+    pub fn make_room(&self, current: CurrentCall) {
+        match current {
+            CurrentCall::Hold => {
+                self.shared.hold_current();
+            }
+            CurrentCall::End => self.shared.end_current(),
+        }
+    }
+
     /// Starts the window on a call that is already connected, run by `handle`. False while
     /// another call runs.
     fn adopt_handle(
@@ -1269,7 +1509,7 @@ impl CallManager {
         {
             return false;
         }
-        let generation = self.shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = self.shared.new_generation();
         let handle = start(EventSink {
             shared: Arc::downgrade(&self.shared),
             generation,
@@ -1280,9 +1520,33 @@ impl CallManager {
         true
     }
 
+    /// A connected 1:1 call with no engine behind it (the fake call flows of the demo and the
+    /// tests), after making room as `current` says.
+    pub fn adopt_without_engine(&self, kind: CallKind, current: Option<CurrentCall>) -> bool {
+        if let Some(c) = current {
+            self.make_room(c);
+        }
+        self.adopt_handle(kind, |_| Box::new(NoHandle))
+    }
+}
+
+/// The running manager, once kelma is signed in ([`CallManager::start`]); the 1:1 call flows
+/// (`call_direct`) reach it here.
+#[cfg(feature = "calls")]
+static MANAGER: Mutex<Option<Arc<CallManager>>> = Mutex::new(None);
+
+#[cfg(feature = "calls")]
+pub fn manager() -> Option<Arc<CallManager>> {
+    MANAGER.lock().unwrap().clone()
+}
+
+/// The entry points of the 1:1 call flows (`call_direct`).
+#[cfg(feature = "calls")]
+impl CallManager {
     /// The entry point for a connected 1:1 call (answered or placed by the ringing flows): the
     /// manager runs it from here on (keepAlive, roster, controls, audio through cpal with echo
-    /// cancellation, leave). Needs a tokio runtime. Errors while another call runs.
+    /// cancellation, leave). Needs a tokio runtime. `current`: what happens to the call in
+    /// progress (call waiting). Errors while another call runs.
     pub fn adopt(
         &self,
         session: calling::signaling::CallSession,
@@ -1290,7 +1554,13 @@ impl CallManager {
         media: calling::media::MediaSession,
         events: calling::media::MediaEvents,
         kind: CallKind,
+        current: Option<CurrentCall>,
     ) -> anyhow::Result<()> {
+        // Call waiting: the call in progress goes on hold (or ends) only now that the new one is
+        // answered, so a failed answer leaves it untouched.
+        if let Some(c) = current {
+            self.make_room(c);
+        }
         let (hub, shared) = (self.hub.clone(), self.shared.clone());
         let mut parts = Some((session, links, media, events));
         let adopted = self.adopt_handle(kind, |sink| {
@@ -1998,6 +2268,35 @@ mod tests {
             Some(false)
         );
         assert_eq!(recording_state(&json!({"roster": {"x": 1}})), None);
+    }
+
+    #[test]
+    fn call_waiting_commands_parse() {
+        assert_eq!(CallCmd::parse("resume", ""), Some(CallCmd::Resume));
+        assert_eq!(CallCmd::parse("end-held", ""), Some(CallCmd::EndHeld));
+    }
+
+    #[test]
+    fn a_meeting_on_hold_names_itself_on_the_hold_bar_and_a_direct_call_does_not() {
+        let t0 = Instant::now();
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Connected, t0);
+        assert_eq!(m.data(t0).held_name, "");
+        m.held = true;
+        assert_eq!(m.data(t0).held_name, "Standup");
+        m.kind = CallKind::Meeting {
+            title: String::new(),
+        };
+        assert_eq!(m.data(t0).held_name, "Call", "never an empty bar");
+        // A 1:1 call on hold has its own Resume in the top bar.
+        m.kind = CallKind::Direct {
+            peer_name: "Ada".into(),
+            chat_id: String::new(),
+        };
+        assert_eq!(m.data(t0).held_name, "");
+        m.leave(t0);
+        assert_eq!(m.data(t0).held_name, "", "not once it ended");
     }
 
     #[test]

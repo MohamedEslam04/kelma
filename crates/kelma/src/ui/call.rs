@@ -57,6 +57,7 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_ended(d.ended.into());
     s.set_chat_id(d.chat_id.into());
     s.set_can_rejoin(d.can_rejoin);
+    s.set_held_name(d.held_name.into());
     s.set_in_call(int(d.in_call));
     s.set_in_lobby(int(d.in_lobby));
     let images = photo_images(&photos);
