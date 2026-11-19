@@ -464,7 +464,7 @@ audience and was not needed. Muting a channel uses the chat `alerts` property of
 |---|---|---|
 | `GET groups.json?mine=1` | communities: `{id, name, full_name, description, privacy, company_group, stats{members, last_message_at}, web_url}` | ✅ 1 community (the company-wide one) |
 | `GET messages/in_group/<id>.json?limit=<n>&older_than=<id>` | `{messages:[{id, thread_id, sender_id, replied_to_id, created_at ("2026/09/20 08:53:00 +0000"), body{plain, rich}, liked_by{count}, attachments[], web_url}], references:[users and threads], meta}`; sender names come from `references` | ✅ |
-| Storyline post `POST messages.json` | body `{"body":"…","is_storyline_post":true}` is a guess, not verified. A storyline post is public to the company, so it was not sent. The CLI needs `--yes` | 🧪 |
+| Storyline post `POST messages.json` | ⚠️ body `{"body":"…","is_storyline_post":true}` is a guess the Engage client never uses; with no `group_id` it may land in All Company. Do not send. The real call is GraphQL `createUserWallMessage` on `engage.cloud.microsoft/graphql`, with `isDraft` for an unpublished draft: see `docs/research/storyline.md` | ⛔ |
 | `engageCommunities[]` in the CSA v3 list | empty for this account, so the web client's own list is not used | ✅ |
 
 Communities are read-only in kelma; replying or reacting is not wired.
