@@ -22,6 +22,8 @@ use std::rc::Rc;
 
 pub(crate) mod activity;
 pub(crate) mod appstore;
+#[cfg(feature = "calls")]
+pub(crate) mod call_direct;
 mod channels;
 pub(crate) mod drive;
 mod engage;

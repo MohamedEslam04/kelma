@@ -19,6 +19,8 @@ use teams_proto::Client;
 
 mod activity;
 mod appstore;
+#[cfg(feature = "calls")]
+mod call_direct;
 mod channels;
 mod drive;
 mod engage;

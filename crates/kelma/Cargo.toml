@@ -16,6 +16,7 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 serde = { version = "1.0.229", features = ["derive"] }
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 calendar = { version = "0.0.0", path = "../calendar" }
+calling = { path = "../calling", optional = true }
 diag = { version = "0.0.0", path = "../diag" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 emoji = { version = "0.0.0", path = "../emoji" }
@@ -44,3 +45,7 @@ slint-build = "1.19"
 
 [dev-dependencies]
 i-slint-backend-testing = "=1.19.0"
+
+[features]
+default = ["calls"]
+calls = ["dep:calling"]

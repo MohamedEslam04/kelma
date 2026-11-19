@@ -3562,6 +3562,7 @@ dependencies = [
  "apps",
  "arboard",
  "calendar",
+ "calling",
  "chrono",
  "devices",
  "diag",
