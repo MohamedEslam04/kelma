@@ -1183,3 +1183,79 @@ msgstr "الاجتماعات التي أشارك فيها"
 
 msgid "Only ones I unmuted"
 msgstr "فقط التي ألغيت كتمها"
+
+# Calls page (calls_page.slint)
+msgid "Calls"
+msgstr "المكالمات"
+
+msgid "Speed dial"
+msgstr "الاتصال السريع"
+
+msgid "History"
+msgstr "السجل"
+
+msgid "All"
+msgstr "الكل"
+
+msgid "Missed"
+msgstr "فائتة"
+
+msgid "No answer"
+msgstr "لا رد"
+
+msgid "Declined"
+msgstr "مرفوضة"
+
+msgid "Voicemail"
+msgstr "البريد الصوتي"
+
+msgid "Incoming"
+msgstr "واردة"
+
+msgid "Outgoing"
+msgstr "صادرة"
+
+msgid "Call back"
+msgstr "معاودة الاتصال"
+
+msgid "Call {}"
+msgstr "اتصال بـ {}"
+
+msgid "Add to speed dial"
+msgstr "إضافة إلى الاتصال السريع"
+
+msgid "Remove from speed dial"
+msgstr "إزالة من الاتصال السريع"
+
+msgid "Move up"
+msgstr "نقل لأعلى"
+
+msgid "Move down"
+msgstr "نقل لأسفل"
+
+msgid "Type a name"
+msgstr "اكتب اسمًا"
+
+msgid "Star someone in History or in the search results to add them here."
+msgstr "ضع نجمة على شخص في السجل أو في نتائج البحث لإضافته هنا."
+
+msgid "Refresh"
+msgstr "تحديث"
+
+msgid "Loading…"
+msgstr "جارٍ التحميل…"
+
+msgid "No calls to show"
+msgstr "لا توجد مكالمات لعرضها"
+
+msgid "No voicemail"
+msgstr "لا يوجد بريد صوتي"
+
+msgid "No transcript"
+msgstr "لا يوجد نص"
+
+msgid "Mark as read"
+msgstr "وضع علامة كمقروء"
+
+msgid "Play"
+msgstr "تشغيل"

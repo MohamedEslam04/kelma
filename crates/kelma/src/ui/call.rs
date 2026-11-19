@@ -16,8 +16,31 @@ fn texts(v: Vec<String>) -> slint::ModelRc<SharedString> {
     model(v.into_iter().map(SharedString::from).collect())
 }
 
+/// The layout to switch to when someone else's share starts (`now`) or ends: the shared screen
+/// when it starts, back to the gallery when it ends while it was shown. `None`: keep `mode`.
+fn view_after_share(mode: &str, was: bool, now: bool) -> Option<&'static str> {
+    match (was, now) {
+        (false, true) if mode != "content" => Some("content"),
+        (true, false) if mode == "content" => Some("gallery"),
+        _ => None,
+    }
+}
+
+/// Switches the layout when a share started or ended since `was`, as Teams does.
+fn follow_share(s: &CallStore, was: bool) {
+    let now = !s.get_presenter().is_empty() || s.get_has_content();
+    if let Some(mode) = view_after_share(&s.get_view_mode(), was, now) {
+        s.set_view_mode(mode.into());
+    }
+}
+
+fn shared(s: &CallStore) -> bool {
+    !s.get_presenter().is_empty() || s.get_has_content()
+}
+
 fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     let s = w.global::<CallStore>();
+    let was_shared = shared(&s);
     if d.phase.is_empty() || d.phase == "prejoin" {
         // A new call opens full size, with no panel or menu left from the last one.
         s.set_minimized(false);
@@ -39,7 +62,21 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_timer(d.timer.into());
     s.set_muted(d.muted);
     s.set_hand(d.hand);
+    s.set_can_share(d.can_share);
+    s.set_sharing(d.sharing);
+    s.set_can_camera(d.can_camera);
+    s.set_camera(d.camera);
+    if !d.camera {
+        s.set_has_self_view(false);
+    }
+    if !matches!(d.phase, "connected" | "reconnecting") {
+        s.set_has_remote_video(false);
+        s.set_has_content(false);
+    }
+    s.set_presenter(d.presenter.into());
+    follow_share(&s, was_shared);
     s.set_prejoin_mic(d.prejoin_mic);
+    s.set_prejoin_camera(d.prejoin_camera);
     s.set_recording(d.recording);
     s.set_transcribing(d.transcribing);
     s.set_captions(d.captions);
@@ -57,17 +94,36 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_ended(d.ended.into());
     s.set_chat_id(d.chat_id.into());
     s.set_can_rejoin(d.can_rejoin);
+    s.set_held_name(d.held_name.into());
     s.set_in_call(int(d.in_call));
     s.set_in_lobby(int(d.in_lobby));
     let images = photo_images(&photos);
-    let person = |p| call_person(p, &images);
     let (mini, more) = mini_people(&d.people);
-    s.set_mini_people(model(mini.into_iter().map(person).collect()));
-    s.set_mini_more(int(more));
-    s.set_speaker_people(model(
-        speaker_order(&d.people).into_iter().map(person).collect(),
+    let mini_owner = video_owner(&mini);
+    s.set_mini_people(model(
+        mini.into_iter()
+            .enumerate()
+            .map(|(i, p)| call_person(p, &images, Some(i) == mini_owner))
+            .collect(),
     ));
-    s.set_people(model(d.people.into_iter().map(person).collect()));
+    s.set_mini_more(int(more));
+    let speakers = speaker_order(&d.people);
+    let speakers_owner = video_owner(&speakers);
+    s.set_speaker_people(model(
+        speakers
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| call_person(p, &images, Some(i) == speakers_owner))
+            .collect(),
+    ));
+    let owner = video_owner(&d.people);
+    s.set_people(model(
+        d.people
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| call_person(p, &images, Some(i) == owner))
+            .collect(),
+    ));
     s.set_mics(texts(d.mics));
     s.set_mic(int(d.mic));
     s.set_speakers(texts(d.speakers));
@@ -110,11 +166,13 @@ fn photo_images(photos: &HashMap<String, Pixels>) -> HashMap<String, Image> {
     })
 }
 
-fn call_person(p: Person, images: &HashMap<String, Image>) -> CallPerson {
+fn call_person(p: Person, images: &HashMap<String, Image>, video: bool) -> CallPerson {
     let photo = images.get(&p.mri);
     CallPerson {
         has_photo: photo.is_some(),
         photo: photo.cloned().unwrap_or_default(),
+        video,
+        gallery_slot: p.video_slot.map_or(0, |i| int(i + 1)),
         initials: initials(&p.name).into(),
         name: p.name.into(),
         muted: p.muted,
@@ -124,6 +182,17 @@ fn call_person(p: Person, images: &HashMap<String, Image>) -> CallPerson {
         role: p.role.into(),
         speaking: p.speaking,
     }
+}
+
+/// Whose tile shows the other side's video: in a 1:1 call the other person; in a meeting the
+/// person heard now (UNVERIFIED: the main-video line is assumed to carry the active speaker
+/// until sources are mapped to people), else the first other person in the call.
+fn video_owner(people: &[Person]) -> Option<usize> {
+    let others = || people.iter().enumerate().filter(|(_, p)| !p.me && !p.lobby);
+    others()
+        .find(|(_, p)| p.speaking)
+        .or_else(|| others().next())
+        .map(|(i, _)| i)
 }
 
 /// The floating call shows at most this many tiles.
@@ -161,15 +230,77 @@ fn speaker_order(people: &[Person]) -> Vec<Person> {
 /// Wires what the call window answers by itself: whether a conversation is a meeting chat (the
 /// header's Join button).
 pub fn wire(window: &AppWindow) {
-    window
-        .global::<CallStore>()
-        .on_is_meeting_chat(|id| is_meeting_chat(&id));
+    let s = window.global::<CallStore>();
+    s.on_is_meeting_chat(|id| is_meeting_chat(&id));
+    #[cfg(feature = "calls")]
+    s.set_camera_available(crate::backend::call::camera::wanted());
+    #[cfg(feature = "calls")]
+    s.set_slot_videos(GALLERY.with(|g| slint::ModelRc::from(g.clone())));
+}
+
+#[cfg(feature = "calls")]
+thread_local! {
+    /// The meeting gallery's pictures, one row per receive slot, updated in place per frame.
+    static GALLERY: std::rc::Rc<slint::VecModel<crate::CallVideo>> = std::rc::Rc::new(
+        slint::VecModel::from(vec![
+            crate::CallVideo::default();
+            crate::backend::call::remote_video::RECEIVE_SLOTS
+        ]),
+    );
 }
 
 impl UiHandle {
     /// Replaces everything the call window shows; `photos` are the profile photos known by MRI.
     pub fn call_state(&self, d: CallData, photos: HashMap<String, Pixels>) {
         self.run(move |w| set(&w, d, photos));
+    }
+
+    /// Draws our self-view or the other side's video (`None` clears it).
+    #[cfg(feature = "calls")]
+    pub fn call_video(
+        &self,
+        slot: crate::backend::call::VideoSlot,
+        frame: Option<calling::video::RgbFrame>,
+    ) {
+        use crate::backend::call::VideoSlot;
+        // The pixels are copied here, off the UI thread; an `Image` itself is not `Send`.
+        let pixels = frame.and_then(|f| {
+            let (w, h) = (u32::try_from(f.width).ok()?, u32::try_from(f.height).ok()?);
+            Some(slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&f.data, w, h))
+        });
+        self.run(move |w| {
+            let s = w.global::<CallStore>();
+            let shown = pixels.is_some();
+            let image = pixels.map(slint::Image::from_rgb8).unwrap_or_default();
+            match slot {
+                VideoSlot::SelfView => {
+                    s.set_self_view(image);
+                    s.set_has_self_view(shown);
+                }
+                VideoSlot::Remote => {
+                    s.set_remote_video(image);
+                    s.set_has_remote_video(shown);
+                }
+                VideoSlot::Content => {
+                    let was = shared(&s);
+                    s.set_content_video(image);
+                    s.set_has_content(shown);
+                    follow_share(&s, was);
+                }
+                VideoSlot::Gallery(i) => GALLERY.with(|g| {
+                    use slint::Model;
+                    if i < g.row_count() {
+                        g.set_row_data(
+                            i,
+                            crate::CallVideo {
+                                frame: image,
+                                shown,
+                            },
+                        );
+                    }
+                }),
+            }
+        });
     }
 }
 
@@ -235,6 +366,37 @@ mod tests {
     fn we_lead_the_speaker_view_when_we_spoke_last() {
         let people = [p("Ada", false, false, 2), p("Me", true, false, 5)];
         assert_eq!(names(&speaker_order(&people)), ["Me", "Ada"]);
+    }
+
+    #[test]
+    fn the_other_side_s_video_shows_in_the_speaker_s_tile_else_the_first_other_one() {
+        let mut people = [
+            p("Me", true, false, 0),
+            p("Cy", false, true, 0),
+            p("Ada", false, false, 0),
+            p("Bo", false, false, 0),
+        ];
+        assert_eq!(video_owner(&people), Some(2), "not us, not the lobby");
+        people[3].speaking = true;
+        assert_eq!(video_owner(&people), Some(3));
+        assert_eq!(video_owner(&people[..2]), None);
+    }
+
+    #[test]
+    fn a_share_that_starts_takes_the_stage_and_one_that_ends_gives_it_back() {
+        assert_eq!(view_after_share("gallery", false, true), Some("content"));
+        assert_eq!(view_after_share("content", true, false), Some("gallery"));
+        assert_eq!(
+            view_after_share("gallery", true, true),
+            None,
+            "still sharing"
+        );
+        assert_eq!(
+            view_after_share("gallery", true, false),
+            None,
+            "the user had left the shared screen"
+        );
+        assert_eq!(view_after_share("content", false, false), None);
     }
 
     #[test]

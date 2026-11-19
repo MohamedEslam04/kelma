@@ -26,7 +26,13 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "calls")]
 mod bots;
 #[cfg(feature = "calls")]
+pub(crate) mod camera;
+#[cfg(feature = "calls")]
 pub(crate) mod live;
+#[cfg(feature = "calls")]
+pub(crate) mod remote_video;
+#[cfg(feature = "calls")]
+pub(crate) mod share;
 
 /// What kind of call the window shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +161,8 @@ pub struct Person {
     /// When they last spoke, as a rising count (0: not yet); the floating call shows the latest
     /// speakers first.
     pub spoke: u64,
+    /// The meeting gallery slot ([`VideoSlot::Gallery`]) that shows their camera, if any.
+    pub video_slot: Option<usize>,
 }
 
 /// The profile photos `lookup` knows for these people, by MRI. A lookup may start a download, so
@@ -215,6 +223,21 @@ pub enum Event {
     /// Whether the call is on hold (a hold or resume that failed puts it back).
     #[cfg(any(test, feature = "calls"))]
     Held(bool),
+    /// Whether the call can share a screen now, and whether we are sharing.
+    #[cfg(any(test, feature = "calls"))]
+    Share {
+        available: bool,
+        sharing: bool,
+    },
+    /// Whether the call can send our camera now, and whether it is on.
+    #[cfg(any(test, feature = "calls"))]
+    Camera {
+        available: bool,
+        on: bool,
+    },
+    /// Who else shares a screen now (their name), or nobody (empty).
+    #[cfg(any(test, feature = "calls"))]
+    Presenter(String),
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.
@@ -232,6 +255,8 @@ pub enum Control {
         mic: Option<String>,
         speaker: Option<String>,
     },
+    /// Start (the desktop's ScreenCast picker opens) or stop sharing the screen.
+    Share(bool),
     /// Live captions on or off.
     Captions(bool),
     /// Start or stop recording the meeting.
@@ -250,6 +275,8 @@ pub enum Control {
         mri: String,
         name: String,
     },
+    /// Turn the camera on (the Camera portal may ask) or off.
+    Camera(bool),
     Leave,
 }
 
@@ -260,6 +287,17 @@ pub struct Found {
     pub name: String,
     /// Job title or email.
     pub subtitle: String,
+}
+
+/// Which picture a driver draws: our camera in our tile, the other side's video in theirs, a
+/// shared screen on the stage, or one meeting gallery slot (in the tile of whom it shows).
+#[cfg(feature = "calls")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoSlot {
+    SelfView,
+    Remote,
+    Content,
+    Gallery(usize),
 }
 
 /// What to join.
@@ -294,6 +332,9 @@ pub struct JoinOptions {
     pub mic: Option<String>,
     #[cfg(any(test, feature = "calls"))]
     pub speaker: Option<String>,
+    /// Start the camera once the call can send it.
+    #[cfg(any(test, feature = "calls"))]
+    pub camera: bool,
 }
 
 /// An audio device as the pickers list it. `id: None` is the system default.
@@ -354,7 +395,14 @@ pub struct CallData {
     pub timer: String,
     pub muted: bool,
     pub hand: bool,
+    pub can_share: bool,
+    pub sharing: bool,
+    pub can_camera: bool,
+    pub camera: bool,
+    /// Who else shares a screen (their name), or empty.
+    pub presenter: String,
     pub prejoin_mic: bool,
+    pub prejoin_camera: bool,
     pub recording: bool,
     pub transcribing: bool,
     pub captions: bool,
@@ -365,6 +413,9 @@ pub struct CallData {
     pub ended: String,
     pub chat_id: String,
     pub can_rejoin: bool,
+    /// The call on the "On hold" bar (call waiting): the other call while this one is shown, or
+    /// this meeting when it is the one on hold (a 1:1 call has its own Resume). Empty: no bar.
+    pub held_name: String,
     pub people: Vec<Person>,
     pub in_call: usize,
     pub in_lobby: usize,
@@ -400,6 +451,16 @@ pub struct CallModel {
     pub mic_on: bool,
     pub muted: bool,
     pub hand: bool,
+    /// The driver can share a screen in this call (it negotiated a sharing line).
+    pub can_share: bool,
+    pub sharing: bool,
+    /// The driver can send our camera in this call (it negotiated a main-video line).
+    pub can_camera: bool,
+    pub camera: bool,
+    /// The pre-join camera choice.
+    pub prejoin_camera: bool,
+    /// Who else shares a screen now, or empty.
+    pub presenter: String,
     pub recording: bool,
     pub transcribing: bool,
     /// Live captions are on (asked for, and not refused).
@@ -481,6 +542,8 @@ impl CallModel {
             mic: self.mic_id(),
             #[cfg(any(test, feature = "calls"))]
             speaker: self.speaker_id(),
+            #[cfg(any(test, feature = "calls"))]
+            camera: self.prejoin_camera,
         }
     }
 
@@ -555,6 +618,17 @@ impl CallModel {
             Event::Hand(h) => return replace(&mut self.hand, h),
             #[cfg(any(test, feature = "calls"))]
             Event::Held(h) => return replace(&mut self.held, h),
+            Event::Share { available, sharing } => {
+                let a = replace(&mut self.can_share, available);
+                return replace(&mut self.sharing, sharing) || a;
+            }
+            #[cfg(any(test, feature = "calls"))]
+            Event::Camera { available, on } => {
+                let a = replace(&mut self.can_camera, available);
+                return replace(&mut self.camera, on) || a;
+            }
+            #[cfg(any(test, feature = "calls"))]
+            Event::Presenter(name) => return replace(&mut self.presenter, name),
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
                 self.end(reason, now);
@@ -569,6 +643,11 @@ impl CallModel {
         self.ended = reason;
         self.duration = self.connected_at.map(|t| now.saturating_duration_since(t));
         self.hand = false;
+        self.can_share = false;
+        self.sharing = false;
+        self.can_camera = false;
+        self.camera = false;
+        self.presenter.clear();
         self.recording = false;
         self.transcribing = false;
         self.notice.clear();
@@ -656,6 +735,25 @@ impl CallModel {
             }
             _ => None,
         }
+    }
+
+    /// The Share toggle: what to ask the driver while a call that can share runs. The state
+    /// itself follows the driver's [`Event::Share`] (the picker can be cancelled).
+    pub fn toggle_share(&self) -> Option<Control> {
+        (self.phase.active() && (self.can_share || self.sharing))
+            .then_some(Control::Share(!self.sharing))
+    }
+
+    /// The Camera toggle: on the pre-join screen it flips the choice; in a call that can send
+    /// video it asks the driver. The state itself follows the driver's [`Event::Camera`] (the
+    /// portal can refuse).
+    pub fn toggle_camera(&mut self) -> Option<Control> {
+        if self.phase == Phase::PreJoin {
+            self.prejoin_camera = !self.prejoin_camera;
+            return None;
+        }
+        (self.phase.active() && (self.can_camera || self.camera))
+            .then_some(Control::Camera(!self.camera))
     }
 
     /// The hand toggle. Returns the new state while a call runs.
@@ -763,7 +861,17 @@ impl CallModel {
             timer: clock(elapsed),
             muted: self.muted,
             hand: self.hand,
+            can_share: self.can_share && self.phase.active(),
+            sharing: self.sharing,
+            can_camera: self.can_camera && self.phase.active(),
+            camera: self.camera,
+            presenter: if self.phase.active() {
+                self.presenter.clone()
+            } else {
+                String::new()
+            },
             prejoin_mic: self.mic_on,
+            prejoin_camera: self.prejoin_camera,
             recording: self.recording,
             transcribing: self.transcribing,
             captions: self.captions,
@@ -773,6 +881,14 @@ impl CallModel {
             ended: self.ended.clone(),
             chat_id: self.chat_id.clone(),
             can_rejoin: self.target.is_some(),
+            held_name: if self.held
+                && self.phase.active()
+                && matches!(self.kind, CallKind::Meeting { .. })
+            {
+                self.held_title()
+            } else {
+                String::new()
+            },
             in_call: people.len() - in_lobby,
             in_lobby,
             people,
@@ -788,6 +904,16 @@ impl CallModel {
             held: self.held,
             found: self.found.clone(),
             invite_status: self.invite_status.clone(),
+        }
+    }
+}
+
+impl CallModel {
+    /// The name the "On hold" bar shows for this call.
+    fn held_title(&self) -> String {
+        match self.kind.title() {
+            "" => "Call".into(),
+            t => t.to_owned(),
         }
     }
 }
@@ -860,6 +986,10 @@ pub enum CallCmd {
     Invite(String),
     /// "Transfer now" to a person from the search.
     Transfer(String),
+    ToggleShare,
+    ToggleCamera,
+    /// The pre-join camera switch.
+    PrejoinCamera(bool),
     Leave,
     /// Close the call-ended screen.
     Close,
@@ -872,6 +1002,10 @@ pub enum CallCmd {
     /// More › Record and transcribe › Start/Stop transcription.
     Transcription(bool),
     DismissNotice,
+    /// The "On hold" bar's Resume: the held call comes back, the shown one goes on hold.
+    Resume,
+    /// The "On hold" bar's End: ends the call on hold.
+    EndHeld,
 }
 
 impl CallCmd {
@@ -890,6 +1024,9 @@ impl CallCmd {
             "find" => CallCmd::Find(arg.into()),
             "invite" if !arg.is_empty() => CallCmd::Invite(arg.into()),
             "transfer" if !arg.is_empty() => CallCmd::Transfer(arg.into()),
+            "share" => CallCmd::ToggleShare,
+            "camera" => CallCmd::ToggleCamera,
+            "prejoin-camera" => CallCmd::PrejoinCamera(arg == "on"),
             "leave" => CallCmd::Leave,
             "close" => CallCmd::Close,
             "rejoin" => CallCmd::Rejoin,
@@ -898,6 +1035,8 @@ impl CallCmd {
             "recording" => CallCmd::Recording(arg == "start"),
             "transcription" => CallCmd::Transcription(arg == "start"),
             "dismiss-notice" => CallCmd::DismissNotice,
+            "resume" => CallCmd::Resume,
+            "end-held" => CallCmd::EndHeld,
             _ => return None,
         })
     }
@@ -917,6 +1056,17 @@ impl EventSink {
         }
     }
 
+    /// A picture for the call window (`None` clears it). Bypasses the model: frames come many
+    /// times a second and change nothing else.
+    #[cfg(feature = "calls")]
+    pub fn video(&self, slot: VideoSlot, frame: Option<calling::video::RgbFrame>) {
+        if let Some(s) = self.shared.upgrade()
+            && s.generation.load(Ordering::SeqCst) == self.generation
+        {
+            s.ui.call_video(slot, frame);
+        }
+    }
+
     /// A sink attached to nothing (tests of a driver alone).
     #[cfg(test)]
     pub fn detached() -> Self {
@@ -927,11 +1077,27 @@ impl EventSink {
     }
 }
 
+/// A call on hold while another one is shown (call waiting). Its driver keeps running and
+/// reporting under its own generation.
+struct Held {
+    model: CallModel,
+    handle: Option<Arc<dyn CallHandle>>,
+    generation: u64,
+}
+
+/// Two calls can live together: the shown one (`model`, `handle`, `generation`), which the call
+/// window shows and the controls reach, and at most one on hold (`held`). A call's events carry
+/// its generation, so each lands on its own model whichever slot it sits in. Lock order: `model`,
+/// then `held`, then `handle`.
 struct Shared {
     model: Mutex<CallModel>,
     handle: Mutex<Option<Arc<dyn CallHandle>>>,
+    held: Mutex<Option<Held>>,
     driver: Mutex<Arc<dyn CallDriver>>,
+    /// The shown call's generation (0: none).
     generation: AtomicU64,
+    /// The last generation handed out.
+    next_generation: AtomicU64,
     ticking: AtomicBool,
     ui: UiHandle,
     photos: Mutex<Option<PhotoLookup>>,
@@ -939,7 +1105,10 @@ struct Shared {
 
 impl Shared {
     fn push(&self) {
-        let d = self.model.lock().unwrap().data(Instant::now());
+        let mut d = self.model.lock().unwrap().data(Instant::now());
+        if let Some(h) = self.held.lock().unwrap().as_ref() {
+            d.held_name = h.model.held_title();
+        }
         let lookup = self.photos.lock().unwrap().clone();
         let found = lookup
             .map(|f| photos(&d.people, |m| f(m)))
@@ -947,17 +1116,28 @@ impl Shared {
         self.ui.call_state(d, found);
     }
 
+    /// A new call's generation, which becomes the shown one.
+    fn new_generation(&self) -> u64 {
+        let g = self.next_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.generation.store(g, Ordering::SeqCst);
+        g
+    }
+
     fn apply(self: &Arc<Self>, generation: u64, ev: Event) {
         if generation != self.generation.load(Ordering::SeqCst) {
-            return;
+            return self.apply_held(generation, ev);
         }
-        let (changed, phase) = {
+        let (mut changed, mut phase) = {
             let mut m = self.model.lock().unwrap();
             (m.apply(ev, Instant::now()), m.phase)
         };
         if phase == Phase::Ended {
             // The driver is done; dropping the handle stops whatever it still runs.
             self.handle.lock().unwrap().take();
+            if self.promote_held() {
+                changed = true;
+                phase = self.model.lock().unwrap().phase;
+            }
         }
         self.publish_presence();
         if changed {
@@ -978,6 +1158,142 @@ impl Shared {
         let connected =
             phase.active() && !matches!(phase, Phase::PreJoin | Phase::Connecting | Phase::Lobby);
         super::call_presence::update(connected, meeting);
+    }
+
+    /// An event of the call on hold. Its end (the other side hung up) takes the bar away.
+    fn apply_held(&self, generation: u64, ev: Event) {
+        let changed = {
+            let mut held = self.held.lock().unwrap();
+            let Some(h) = held.as_mut().filter(|h| h.generation == generation) else {
+                return;
+            };
+            let changed = h.model.apply(ev, Instant::now());
+            if h.model.phase == Phase::Ended {
+                *held = None;
+            }
+            changed
+        };
+        if changed {
+            self.push();
+        }
+    }
+
+    /// When the shown call is over and another is on hold, the held one is shown instead, still
+    /// on hold (Resume takes it back). True when it did.
+    fn promote_held(&self) -> bool {
+        let mut m = self.model.lock().unwrap();
+        if m.phase.active() {
+            return false;
+        }
+        let Some(h) = self.held.lock().unwrap().take() else {
+            return false;
+        };
+        let my_name = std::mem::take(&mut m.my_name);
+        *m = h.model;
+        m.my_name = my_name;
+        m.held = true;
+        *self.handle.lock().unwrap() = h.handle;
+        self.generation.store(h.generation, Ordering::SeqCst);
+        true
+    }
+
+    /// Moves the shown call to the hold slot to answer another one, and holds it. False when no
+    /// call runs or one is already on hold.
+    fn hold_current(&self) -> bool {
+        let (handle, was_on_hold) = {
+            let mut m = self.model.lock().unwrap();
+            let mut held = self.held.lock().unwrap();
+            if !m.phase.active() || held.is_some() {
+                return false;
+            }
+            let idle = CallModel {
+                my_name: m.my_name.clone(),
+                ..Default::default()
+            };
+            let mut model = std::mem::replace(&mut *m, idle);
+            let was_on_hold = std::mem::replace(&mut model.held, true);
+            let handle = self.handle.lock().unwrap().take();
+            // Its events now find it in the hold slot.
+            let generation = self.generation.swap(0, Ordering::SeqCst);
+            *held = Some(Held {
+                model,
+                handle: handle.clone(),
+                generation,
+            });
+            (handle, was_on_hold)
+        };
+        if !was_on_hold && let Some(h) = handle {
+            h.control(Control::Hold(true));
+        }
+        true
+    }
+
+    /// Leaves the shown call to answer another one ("End and accept"). The call on hold, if
+    /// any, stays on hold.
+    fn end_current(&self) {
+        let handle = {
+            let mut m = self.model.lock().unwrap();
+            if !m.leave(Instant::now()) {
+                return;
+            }
+            // Whatever it still reports is dropped: it must not bring the held call forward.
+            self.generation.store(0, Ordering::SeqCst);
+            self.handle.lock().unwrap().take()
+        };
+        if let Some(h) = handle {
+            h.control(Control::Leave);
+        }
+    }
+
+    /// Resume: the call on hold comes back and the shown one goes on hold. With no other call,
+    /// the shown call (on hold) resumes. False when there is nothing to resume.
+    fn resume(&self) -> bool {
+        self.promote_held();
+        let (hold, resume) = {
+            let mut m = self.model.lock().unwrap();
+            let mut held = self.held.lock().unwrap();
+            match held.take() {
+                Some(mut h) => {
+                    h.model.held = false;
+                    let mut shown = std::mem::replace(&mut *m, h.model);
+                    m.my_name = shown.my_name.clone();
+                    shown.held = true;
+                    let shown_handle =
+                        std::mem::replace(&mut *self.handle.lock().unwrap(), h.handle.clone());
+                    let generation = self.generation.swap(h.generation, Ordering::SeqCst);
+                    *held = Some(Held {
+                        model: shown,
+                        handle: shown_handle.clone(),
+                        generation,
+                    });
+                    (shown_handle, h.handle)
+                }
+                None if m.held && m.phase.active() => {
+                    m.held = false;
+                    (None, self.handle.lock().unwrap().clone())
+                }
+                None => return false,
+            }
+        };
+        // Silence the one going on hold before the other takes the devices.
+        if let Some(h) = hold {
+            h.control(Control::Hold(true));
+        }
+        if let Some(h) = resume {
+            h.control(Control::Hold(false));
+        }
+        true
+    }
+
+    /// The "On hold" bar's End for the other call. False when no other call is on hold.
+    fn end_held(&self) -> bool {
+        let Some(h) = self.held.lock().unwrap().take() else {
+            return false;
+        };
+        if let Some(handle) = h.handle {
+            handle.control(Control::Leave);
+        }
+        true
     }
 
     /// Pushes the timer once a second while the call runs.
@@ -1042,10 +1358,9 @@ impl CallDriver for Unavailable {
     }
 }
 
-#[cfg(any(test, not(feature = "calls")))]
+/// A handle with nothing behind it.
 struct NoHandle;
 
-#[cfg(any(test, not(feature = "calls")))]
 impl CallHandle for NoHandle {
     fn control(&self, _: Control) {}
 }
@@ -1073,8 +1388,10 @@ impl CallManager {
                     ..Default::default()
                 }),
                 handle: Mutex::new(None),
+                held: Mutex::new(None),
                 driver: Mutex::new(driver),
                 generation: AtomicU64::new(0),
+                next_generation: AtomicU64::new(0),
                 ticking: AtomicBool::new(false),
                 ui,
                 photos: Mutex::new(None),
@@ -1113,6 +1430,19 @@ impl CallManager {
         self.driver().native()
     }
 
+    /// The meeting behind this Join link is the one running, being joined or on the pre-join
+    /// screen, so the calendar does not offer to join it again.
+    pub fn is_in_meeting(&self, join_url: &str) -> bool {
+        let m = self.shared.model.lock().unwrap();
+        if !(m.phase.active() || m.phase == Phase::PreJoin) {
+            return false;
+        }
+        let same_link = matches!(&m.target, Some(JoinTarget::Link(u)) if u == join_url);
+        let same_chat = !m.chat_id.is_empty()
+            && ::calendar::meeting_chat_thread_id(join_url).as_deref() == Some(m.chat_id.as_str());
+        same_link || same_chat
+    }
+
     /// Opens the pre-join screen for a meeting. A running call stays; the window shows why.
     pub fn prejoin(&self, title: String, target: JoinTarget, chat_id: String) {
         let devices = self.driver().devices();
@@ -1130,7 +1460,7 @@ impl CallManager {
         let Some((target, opts)) = self.shared.model.lock().unwrap().joining() else {
             return;
         };
-        let generation = self.shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = self.shared.new_generation();
         self.shared.push();
         let sink = EventSink {
             shared: Arc::downgrade(&self.shared),
@@ -1176,6 +1506,12 @@ impl CallManager {
                 CallCmd::Find(_) => None,
                 CallCmd::Invite(mri) => m.invite(&mri),
                 CallCmd::Transfer(mri) => m.transfer(&mri),
+                CallCmd::ToggleShare => m.toggle_share(),
+                CallCmd::ToggleCamera => m.toggle_camera(),
+                CallCmd::PrejoinCamera(on) => {
+                    m.prejoin_camera = on;
+                    None
+                }
                 CallCmd::Leave => m.leave(now).then_some(Control::Leave),
                 CallCmd::Close => {
                     m.close();
@@ -1204,14 +1540,40 @@ impl CallManager {
                     m.notice.clear();
                     None
                 }
+                CallCmd::Resume => {
+                    drop(m);
+                    if self.shared.resume() {
+                        self.shared.push();
+                        self.shared.tick();
+                    }
+                    return;
+                }
+                CallCmd::EndHeld => {
+                    let shown_on_hold = m.held;
+                    drop(m);
+                    if self.shared.end_held() {
+                        self.shared.push();
+                    } else if shown_on_hold {
+                        self.command(CallCmd::Leave);
+                    }
+                    return;
+                }
             }
         };
-        if let Some(c) = control {
-            let leave = c == Control::Leave;
-            self.shared.control(c);
-            if leave {
-                self.shared.handle.lock().unwrap().take();
+        match control {
+            Some(Control::Leave) => {
+                // The handle goes first, so a driver reporting the end finds the call gone.
+                let h = self.shared.handle.lock().unwrap().take();
+                if let Some(h) = h {
+                    h.control(Control::Leave);
+                }
+                // A call on hold stays on hold, now shown.
+                if self.shared.promote_held() {
+                    self.shared.tick();
+                }
             }
+            Some(c) => self.shared.control(c),
+            None => {}
         }
         self.shared.push();
     }
@@ -1254,19 +1616,39 @@ impl CallManager {
     }
 }
 
-/// The running manager, once kelma is signed in ([`CallManager::start`]); the 1:1 call flows
-/// (`call_direct`) reach it here.
-#[cfg(feature = "calls")]
-static MANAGER: Mutex<Option<Arc<CallManager>>> = Mutex::new(None);
-
-#[cfg(feature = "calls")]
-pub fn manager() -> Option<Arc<CallManager>> {
-    MANAGER.lock().unwrap().clone()
+/// What happens to the call in progress when a waiting call is answered.
+#[cfg(any(test, feature = "calls"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentCall {
+    /// "Hold and accept": it goes on hold (the "On hold" bar).
+    Hold,
+    /// "End and accept": we leave it.
+    End,
 }
 
-/// The entry points of the 1:1 call flows (`call_direct`).
-#[cfg(feature = "calls")]
+/// Call waiting: a second call while one runs.
+#[cfg(any(test, feature = "calls"))]
 impl CallManager {
+    /// A call runs (joined or joining), shown in the call window.
+    pub fn in_call(&self) -> bool {
+        self.shared.model.lock().unwrap().phase.active()
+    }
+
+    /// Another call is on hold behind the shown one.
+    pub fn has_held(&self) -> bool {
+        self.shared.held.lock().unwrap().is_some()
+    }
+
+    /// Makes room for a call being answered while another runs: holds or leaves the current one.
+    pub fn make_room(&self, current: CurrentCall) {
+        match current {
+            CurrentCall::Hold => {
+                self.shared.hold_current();
+            }
+            CurrentCall::End => self.shared.end_current(),
+        }
+    }
+
     /// Starts the window on a call that is already connected, run by `handle`. False while
     /// another call runs.
     fn adopt_handle(
@@ -1284,7 +1666,7 @@ impl CallManager {
         {
             return false;
         }
-        let generation = self.shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = self.shared.new_generation();
         let handle = start(EventSink {
             shared: Arc::downgrade(&self.shared),
             generation,
@@ -1296,9 +1678,33 @@ impl CallManager {
         true
     }
 
+    /// A connected 1:1 call with no engine behind it (the fake call flows of the demo and the
+    /// tests), after making room as `current` says.
+    pub fn adopt_without_engine(&self, kind: CallKind, current: Option<CurrentCall>) -> bool {
+        if let Some(c) = current {
+            self.make_room(c);
+        }
+        self.adopt_handle(kind, |_| Box::new(NoHandle))
+    }
+}
+
+/// The running manager, once kelma is signed in ([`CallManager::start`]); the 1:1 call flows
+/// (`call_direct`) reach it here.
+#[cfg(feature = "calls")]
+static MANAGER: Mutex<Option<Arc<CallManager>>> = Mutex::new(None);
+
+#[cfg(feature = "calls")]
+pub fn manager() -> Option<Arc<CallManager>> {
+    MANAGER.lock().unwrap().clone()
+}
+
+/// The entry points of the 1:1 call flows (`call_direct`).
+#[cfg(feature = "calls")]
+impl CallManager {
     /// The entry point for a connected 1:1 call (answered or placed by the ringing flows): the
     /// manager runs it from here on (keepAlive, roster, controls, audio through cpal with echo
-    /// cancellation, leave). Needs a tokio runtime. Errors while another call runs.
+    /// cancellation, leave). Needs a tokio runtime. `current`: what happens to the call in
+    /// progress (call waiting). Errors while another call runs.
     pub fn adopt(
         &self,
         session: calling::signaling::CallSession,
@@ -1306,12 +1712,19 @@ impl CallManager {
         media: calling::media::MediaSession,
         events: calling::media::MediaEvents,
         kind: CallKind,
+        current: Option<CurrentCall>,
     ) -> anyhow::Result<()> {
+        // Call waiting: the call in progress goes on hold (or ends) only now that the new one is
+        // answered, so a failed answer leaves it untouched.
+        if let Some(c) = current {
+            self.make_room(c);
+        }
         let (hub, shared) = (self.hub.clone(), self.shared.clone());
         let mut parts = Some((session, links, media, events));
         let adopted = self.adopt_handle(kind, |sink| {
             let (session, links, media, events) = parts.take().expect("taken once");
-            let opts = shared.model.lock().unwrap().options();
+            let mut opts = shared.model.lock().unwrap().options();
+            opts.camera = camera::take_accept_with_video();
             live::adopt(hub, session, links, media, events, opts, sink)
         });
         if !adopted {
@@ -1535,6 +1948,8 @@ impl CallHandle for FakeHandle {
             Control::Mute(m) => format!("mute {}", if *m { "on" } else { "off" }),
             Control::RaiseHand => "hand up".into(),
             Control::LowerHand => "hand down".into(),
+            Control::Share(on) => format!("share {}", if *on { "on" } else { "off" }),
+            Control::Camera(on) => format!("camera {}", if *on { "on" } else { "off" }),
             Control::Devices { mic, speaker } => format!(
                 "devices {} {}",
                 mic.as_deref().unwrap_or("default"),
@@ -1749,6 +2164,96 @@ mod tests {
         assert_eq!(m.phase, Phase::Connecting);
         assert_eq!(m.error, ALREADY_IN_CALL);
         assert!(!m.adopted(meeting(), devices(), Instant::now()));
+    }
+
+    #[test]
+    fn share_is_asked_only_in_a_call_that_can_share_and_follows_the_driver() {
+        let mut m = ready();
+        assert_eq!(m.toggle_share(), None, "not on the pre-join screen");
+        m.joining();
+        assert_eq!(m.toggle_share(), None, "no sharing line negotiated");
+        let now = Instant::now();
+        assert!(m.apply(
+            Event::Share {
+                available: true,
+                sharing: false
+            },
+            now
+        ));
+        assert_eq!(m.toggle_share(), Some(Control::Share(true)));
+        assert!(!m.sharing, "the picker may still be cancelled");
+        m.apply(
+            Event::Share {
+                available: true,
+                sharing: true,
+            },
+            now,
+        );
+        assert_eq!(m.toggle_share(), Some(Control::Share(false)));
+        assert!(m.data(now).sharing && m.data(now).can_share);
+        m.leave(now);
+        assert!(!m.sharing && !m.can_share);
+        assert_eq!(m.toggle_share(), None);
+    }
+
+    #[test]
+    fn the_camera_is_chosen_before_joining_and_follows_the_driver_in_a_call() {
+        let mut m = ready();
+        assert_eq!(m.toggle_camera(), None);
+        assert!(m.prejoin_camera && m.data(Instant::now()).prejoin_camera);
+        let (_, opts) = m.joining().unwrap();
+        assert!(opts.camera, "the driver starts it once it can");
+        assert_eq!(m.toggle_camera(), None, "no video line negotiated");
+        let now = Instant::now();
+        assert!(m.apply(
+            Event::Camera {
+                available: true,
+                on: false
+            },
+            now
+        ));
+        assert_eq!(m.toggle_camera(), Some(Control::Camera(true)));
+        assert!(!m.camera, "the portal may still refuse");
+        m.apply(
+            Event::Camera {
+                available: true,
+                on: true,
+            },
+            now,
+        );
+        assert_eq!(m.toggle_camera(), Some(Control::Camera(false)));
+        assert!(m.data(now).camera && m.data(now).can_camera);
+        m.leave(now);
+        assert!(!m.camera && !m.can_camera);
+        assert_eq!(m.toggle_camera(), None);
+    }
+
+    #[test]
+    fn the_presenter_follows_the_driver_and_clears_when_the_call_ends() {
+        let mut m = ready();
+        m.joining().unwrap();
+        let now = Instant::now();
+        assert!(m.apply(Event::Presenter("Ada".into()), now));
+        assert!(!m.apply(Event::Presenter("Ada".into()), now), "no change");
+        assert_eq!(m.data(now).presenter, "Ada");
+        assert!(m.apply(Event::Presenter(String::new()), now));
+        assert_eq!(m.data(now).presenter, "");
+        m.apply(Event::Presenter("Bo".into()), now);
+        m.leave(now);
+        assert_eq!(m.data(now).presenter, "");
+    }
+
+    #[test]
+    fn camera_commands_parse() {
+        assert_eq!(CallCmd::parse("camera", ""), Some(CallCmd::ToggleCamera));
+        assert_eq!(
+            CallCmd::parse("prejoin-camera", "on"),
+            Some(CallCmd::PrejoinCamera(true))
+        );
+        assert_eq!(
+            CallCmd::parse("prejoin-camera", "off"),
+            Some(CallCmd::PrejoinCamera(false))
+        );
     }
 
     #[test]
@@ -2014,6 +2519,35 @@ mod tests {
             Some(false)
         );
         assert_eq!(recording_state(&json!({"roster": {"x": 1}})), None);
+    }
+
+    #[test]
+    fn call_waiting_commands_parse() {
+        assert_eq!(CallCmd::parse("resume", ""), Some(CallCmd::Resume));
+        assert_eq!(CallCmd::parse("end-held", ""), Some(CallCmd::EndHeld));
+    }
+
+    #[test]
+    fn a_meeting_on_hold_names_itself_on_the_hold_bar_and_a_direct_call_does_not() {
+        let t0 = Instant::now();
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Connected, t0);
+        assert_eq!(m.data(t0).held_name, "");
+        m.held = true;
+        assert_eq!(m.data(t0).held_name, "Standup");
+        m.kind = CallKind::Meeting {
+            title: String::new(),
+        };
+        assert_eq!(m.data(t0).held_name, "Call", "never an empty bar");
+        // A 1:1 call on hold has its own Resume in the top bar.
+        m.kind = CallKind::Direct {
+            peer_name: "Ada".into(),
+            chat_id: String::new(),
+        };
+        assert_eq!(m.data(t0).held_name, "");
+        m.leave(t0);
+        assert_eq!(m.data(t0).held_name, "", "not once it ended");
     }
 
     #[test]

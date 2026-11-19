@@ -272,13 +272,73 @@ fn the_roster_lists_people_with_mute_and_hand_and_the_lobby() {
 }
 
 #[test]
+fn share_asks_the_engine_and_follows_what_it_reports() {
+    let c = CallHarness::new();
+    c.connected();
+    assert_eq!(c.button("Share").accessible_enabled(), Some(false));
+    c.fake.emit(Event::Share {
+        available: true,
+        sharing: false,
+    });
+    click(&c.button("Share"));
+    // The picker is the desktop's; the button turns only when the engine says it shares.
+    assert!(c.shows("Share"));
+    c.fake.emit(Event::Share {
+        available: true,
+        sharing: true,
+    });
+    assert_eq!(c.button("Stop sharing").accessible_checked(), Some(true));
+    click(&c.button("Stop sharing"));
+    assert_eq!(
+        c.fake.calls()[1..],
+        ["share on", "share off"].map(String::from)
+    );
+}
+
+#[test]
+fn camera_asks_the_engine_and_follows_what_it_reports() {
+    let c = CallHarness::new();
+    c.connected();
+    assert_eq!(c.button("Camera").accessible_enabled(), Some(false));
+    c.fake.emit(Event::Camera {
+        available: true,
+        on: false,
+    });
+    click(&c.button("Camera"));
+    // The portal may still refuse; the button turns only when the engine says it is on.
+    assert_eq!(c.button("Camera").accessible_checked(), Some(false));
+    c.fake.emit(Event::Camera {
+        available: true,
+        on: true,
+    });
+    assert_eq!(c.button("Camera").accessible_checked(), Some(true));
+    click(&c.button("Camera"));
+    assert_eq!(
+        c.fake.calls()[1..],
+        ["camera on", "camera off"].map(String::from)
+    );
+}
+
+#[test]
+fn the_prejoin_camera_switch_works_when_the_build_has_video() {
+    let c = CallHarness::new();
+    c.open_prejoin();
+    cs(&c.h.app).set_camera_available(true);
+    let camera = c.button("Camera");
+    assert_eq!(camera.accessible_enabled(), Some(true));
+    click(&camera);
+    assert!(c.shows("Your camera turns on when you join"));
+    assert!(c.sent().contains(&"prejoin-camera on".to_owned()));
+}
+
+#[test]
 fn unavailable_controls_are_shown_disabled_and_say_why() {
     let c = CallHarness::new();
     c.connected();
     for (label, why) in [
         ("React", "Reactions aren't available yet"),
-        ("Camera", "Video isn't available yet"),
-        ("Share", "Screen sharing isn't available yet"),
+        ("Camera", "Video isn't available in this call"),
+        ("Share", "Screen sharing isn't available in this call"),
     ] {
         let b = c.button(label);
         assert_eq!(b.accessible_enabled(), Some(false), "{label}");
@@ -289,6 +349,34 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
     assert_eq!(c.button("Chat").accessible_enabled(), Some(true));
     assert_eq!(c.sent().len(), 2, "only join-chat and join-now were sent");
     assert_eq!(c.fake.calls().len(), 1);
+}
+
+#[test]
+fn a_share_takes_the_stage_and_names_who_presents() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("View"));
+    let focus = || {
+        ElementHandle::find_by_accessible_label(&c.h.app, "Focus on content")
+            .next()
+            .expect("the View menu lists Focus on content")
+    };
+    assert_eq!(focus().accessible_enabled(), Some(false));
+    assert_eq!(
+        focus().accessible_description().unwrap(),
+        "Nobody is sharing"
+    );
+
+    c.fake.emit(Event::Presenter("Ada Lovelace".into()));
+    assert_eq!(
+        cs(&c.h.app).get_view_mode(),
+        "content",
+        "a share takes the stage"
+    );
+    assert!(c.shows("Ada Lovelace is presenting"));
+
+    c.fake.emit(Event::Presenter(String::new()));
+    assert_eq!(cs(&c.h.app).get_view_mode(), "gallery", "and gives it back");
 }
 
 #[test]

@@ -41,6 +41,13 @@ Requires:       libglvnd-egl
 Requires:       libglvnd-glx
 Recommends:     google-noto-emoji-fonts
 Recommends:     xdg-desktop-portal
+# Screen sharing in calls runs `gst-launch-1.0 pipewiresrc` on the ScreenCast portal's stream.
+Recommends:     gstreamer1
+Recommends:     gstreamer1-plugins-base
+Recommends:     pipewire-gstreamer
+# Camera video in calls: `pipewiresrc` (Camera portal) or `v4l2src`, and `jpegdec` for MJPEG
+# cameras, from plugins-good.
+Recommends:     gstreamer1-plugins-good
 
 %description
 kelma is a small, fast Linux client for Microsoft Teams chat, channels, activity, calendar and

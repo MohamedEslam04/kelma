@@ -13,6 +13,7 @@ pub mod endpoints;
 pub mod meeting;
 pub mod recorder;
 pub mod roster;
+pub mod video;
 
 pub use bodies::{Attached, Conversation, MeetingInfo};
 pub use call_ops::TransferOutcome;

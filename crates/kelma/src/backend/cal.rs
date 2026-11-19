@@ -385,6 +385,8 @@ struct Inner {
     /// Ranges fetched with calendarView outside the delta window.
     fetched: Vec<(i64, i64)>,
     fired: HashSet<Key>,
+    /// Teams meetings whose "started" notification went out.
+    started: HashSet<Key>,
     snoozed: HashMap<Key, i64>,
     dismissed: HashSet<Key>,
     banner: Option<Key>,
@@ -453,6 +455,7 @@ impl CalState {
             window: None,
             fetched: Vec::new(),
             fired: HashSet::new(),
+            started: HashSet::new(),
             snoozed: HashMap::new(),
             dismissed: HashSet::new(),
             banner: None,
@@ -829,7 +832,9 @@ impl Engine {
     /// Fires due reminders, updates the Join banner and refreshes the view (the now line moves).
     fn calendar_tick(self: &Arc<Self>, notify: bool) {
         let now = now_ms();
-        let (due, banner) = {
+        // The meeting we are in (or about to join) neither banners nor notifies again.
+        let joined = |url: &str| self.calls.is_in_meeting(url);
+        let (due, started, banner) = {
             let mut s = self.cal.lock();
             let s = &mut *s;
             let due = reminders::due_reminders(s.nearby(now), now, &s.fired, &s.snoozed);
@@ -838,10 +843,27 @@ impl Engine {
                 s.snoozed.remove(&k);
                 s.fired.insert(k);
             }
-            let banner = reminders::join_banner(s.nearby(now), now, &s.dismissed);
+            let started =
+                reminders::just_started(s.nearby(now), now, &s.started, &s.dismissed, joined);
+            for r in &started {
+                s.started.insert((r.id.clone(), r.start_ms));
+            }
+            let banner = reminders::join_banner(
+                s.nearby(now)
+                    .into_iter()
+                    .filter(|e| !e.join_url.as_deref().is_some_and(joined)),
+                now,
+                &s.dismissed,
+            );
             s.banner = banner.as_ref().map(|b| (b.id.clone(), b.start_ms));
-            (due, banner)
+            (due, started, banner)
         };
+        for r in started {
+            tracing::info!("calendar: a Teams meeting started");
+            if notify {
+                self.notify_reminder(r, now);
+            }
+        }
         for r in due {
             tracing::info!(
                 minutes_to_start = (r.start_ms - now) / 60_000,
@@ -952,7 +974,12 @@ impl Engine {
     pub(super) async fn calendar_cmd(self: &Arc<Self>, cmd: CalCmd) -> anyhow::Result<()> {
         match cmd {
             CalCmd::Join(url) => {
-                if url.starts_with("https://") && !self.call_prejoin_link("Meeting", &url) {
+                let title = {
+                    let s = self.cal.lock();
+                    reminders::subject_for_link(s.nearby(now_ms()), &url)
+                }
+                .unwrap_or_else(|| "Meeting".to_owned());
+                if url.starts_with("https://") && !self.call_prejoin_link(&title, &url) {
                     let _ = crate::external::open(&url);
                 }
                 return Ok(());

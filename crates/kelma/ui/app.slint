@@ -13,6 +13,7 @@ import { ForwardDialog } from "forward_dialog.slint";
 import { SelectBar } from "select_bar.slint";
 import { LoginView } from "login.slint";
 import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
+import { CallsPage, CallsPageStore } from "calls_page.slint";
 import { ActivityView } from "activity.slint";
 import { PeopleStore } from "people.slint";
 import { NewChatPane } from "new_chat.slint";
@@ -51,8 +52,9 @@ export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
 export { MediaStore } from "media.slint";
 export { EngageStore, EPost } from "engage.slint";
 export { GifStore, GifItem } from "gif_picker.slint";
-export { CallStore, CallPerson, CallCaption, CallFound } from "call_window.slint";
+export { CallStore, CallPerson, CallCaption, CallFound, CallVideo } from "call_window.slint";
 export { DirectCallStore } from "call_incoming.slint";
+export { CallsPageStore, CallHistoryItem, CallPersonItem, VoicemailItem } from "calls_page.slint";
 export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
@@ -390,9 +392,12 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     padding-top: 8px;
                     spacing: 4px;
-                    for item in [{key: "activity", label: @tr("Activity"), icon: @image-url("icons/activity.svg")}, {key: "chat", label: @tr("Chat"), icon: @image-url("icons/chat.svg")}, {key: "teams", label: @tr("Teams"), icon: @image-url("icons/teams.svg")}, {key: "calendar", label: @tr("Calendar"), icon: @image-url("icons/calendar.svg")}, {key: "onedrive", label: "OneDrive", icon: @image-url("icons/cloud.svg")}]: ri := Rectangle {
+                    for item in [{key: "activity", label: @tr("Activity"), icon: @image-url("icons/activity.svg")}, {key: "chat", label: @tr("Chat"), icon: @image-url("icons/chat.svg")}, {key: "teams", label: @tr("Teams"), icon: @image-url("icons/teams.svg")}, {key: "calendar", label: @tr("Calendar"), icon: @image-url("icons/calendar.svg")}, {key: "calls", label: @tr("Calls"), icon: @image-url("icons/call-direct.svg")}, {key: "onedrive", label: "OneDrive", icon: @image-url("icons/cloud.svg")}]: ri := Rectangle {
                         property <int> badge-count: item.key == "activity" ? root.activity-unread : (item.key == "chat" ? root.chats-unread : 0);
-                        height: 56px;
+                        // Calls shows only in a build with calls.
+                        property <bool> shown: item.key != "calls" || CallsPageStore.available;
+                        height: shown ? 56px : 0px;
+                        visible: shown;
                         Rectangle {
                             x: 0;
                             width: 3px;
@@ -426,6 +431,7 @@ export component AppWindow inherits Window {
                                 root.view = item.key;
                                 if item.key == "activity" { root.activity-refresh(); }
                                 if item.key == "onedrive" { DriveStore.command("enter", ""); }
+                                if item.key == "calls" { CallsPageStore.command("open", ""); }
                             }
                         }
                     }
@@ -434,7 +440,7 @@ export component AppWindow inherits Window {
             }
 
             // Sidebar
-            if root.view != "calendar" && root.view != "onedrive": Sidebar {
+            if root.view != "calendar" && root.view != "onedrive" && root.view != "calls": Sidebar {
                 visible: root.view != "activity" && root.view != "search";
                 width: root.view == "activity" || root.view == "search" ? 0px : root.sidebar-width;
                 max-height: 100000px;
@@ -485,9 +491,16 @@ export component AppWindow inherits Window {
 
             if root.view == "calendar": CalendarView { horizontal-stretch: 1; }
             if root.view == "onedrive": OneDriveView { horizontal-stretch: 1; }
+            if root.view == "calls": CallsPage {
+                horizontal-stretch: 1;
+                open-chat(mri) => {
+                    root.view = "chat";
+                    CallsPageStore.command("chat", mri);
+                }
+            }
 
             // Conversation
-            if root.view != "calendar" && root.view != "onedrive": Rectangle {
+            if root.view != "calendar" && root.view != "onedrive" && root.view != "calls": Rectangle {
                 background: Theme.main;
                 if root.view == "search": SearchView {
                     z: 40;

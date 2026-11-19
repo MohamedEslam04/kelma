@@ -6,23 +6,28 @@
 //! the audio pipeline survives the swap); keepAlive, the roster, the controls and leave.
 //!
 //! [`Hub`] owns the one calling trouter of the app (per endpoint id). It starts at sign-in, so
-//! incoming call invitations always arrive, and routes every push: the active call's callbacks to
-//! it, invitations and every other push to the ringing flows' subscriptions.
+//! incoming call invitations always arrive, and routes every push: each live call's callbacks to
+//! it (a call on hold keeps getting its own), invitations and every other push to the ringing
+//! flows' subscriptions.
 //!
 //! Audio is the microphone through echo cancellation (AEC3, noise suppression, AGC2), fed by
 //! what the speaker plays, as `call join --mic --speaker` runs it (`KELMA_NO_AEC=1` turns it off,
 //! like `--no-aec`). `KELMA_CALL_DUMP=<dir>` writes every raw calling push there.
 
 use super::bots::Bots;
+use super::camera::{self, Camera, CameraMsg};
+use super::remote_video::{self, RemoteVideo};
+use super::share::{self, Share, ShareMsg};
 use super::{
-    CallDriver, CallHandle, Control, Device, Devices, Event, EventSink, JoinOptions, JoinTarget,
-    Link, Person, Phase, live_phase, recording_state,
+    CallDriver, CallHandle, Caption, Control, Device, Devices, Event, EventSink, JoinOptions,
+    JoinTarget, Link, Person, Phase, live_phase, recording_state,
 };
 use anyhow::Context;
 use calling::audio::{
     AudioProcessor, Capture, Playback, ProcessingOptions, echo_cancelled, spawn_capture_encoder,
     spawn_decoder_playback,
 };
+use calling::captions::{CAPTIONS_DATA_ID, Depacketizer, parse_caption_message};
 use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::{AudioSender, MediaEvents, MediaOptions, MediaSession, MediaState};
 use calling::ngc_trouter::{CallPush, NgcEvent, NgcTrouter};
@@ -33,6 +38,7 @@ use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_
 use calling::signaling::roster::{Presence, roster_snapshot};
 use calling::signaling::{CallSession, Controls, NgcClient, Roster};
 use calling::{CallInvitation, IceServer, Links, Modality, OpusPacket, SdpBlob};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -58,8 +64,9 @@ pub struct Hub {
     client: Client,
     trouter: Mutex<Option<NgcTrouter>>,
     ngc: Mutex<Option<NgcClient>>,
-    /// The active call's session id and where its callbacks go.
-    active: Mutex<Option<(String, mpsc::UnboundedSender<CallPush>)>>,
+    /// Where each live call's callbacks go, by its session id (the shown call and the one on
+    /// hold).
+    sessions: Mutex<HashMap<String, mpsc::UnboundedSender<CallPush>>>,
     invitations: Mutex<Vec<mpsc::UnboundedSender<Box<CallInvitation>>>>,
     unmatched: Mutex<Vec<mpsc::UnboundedSender<CallPush>>>,
 }
@@ -70,7 +77,7 @@ impl Hub {
             client,
             trouter: Mutex::new(None),
             ngc: Mutex::new(None),
-            active: Mutex::new(None),
+            sessions: Mutex::new(HashMap::new()),
             invitations: Mutex::new(Vec::new()),
             unmatched: Mutex::new(Vec::new()),
         })
@@ -149,12 +156,12 @@ impl Hub {
                 .unwrap()
                 .retain(|tx| tx.send(inv.clone()).is_ok()),
             NgcPush::Call { session_id, .. } => {
-                let active = self.active.lock().unwrap().clone();
-                match active {
-                    Some((id, tx)) if id == session_id => {
+                let call = self.sessions.lock().unwrap().get(&session_id).cloned();
+                match call {
+                    Some(tx) => {
                         let _ = tx.send(p);
                     }
-                    _ => self.unmatched(p),
+                    None => self.unmatched(p),
                 }
             }
             NgcPush::Other { .. } => self.unmatched(p),
@@ -180,18 +187,19 @@ impl Hub {
         rx
     }
 
-    /// Routes the callbacks of `session_id` to the returned receiver from now on.
-    fn set_active(&self, session_id: &str) -> mpsc::UnboundedReceiver<CallPush> {
+    /// Routes the callbacks of `session_id` to the returned receiver from now on, next to every
+    /// other live call's.
+    fn add_session(&self, session_id: &str) -> mpsc::UnboundedReceiver<CallPush> {
         let (tx, rx) = mpsc::unbounded_channel();
-        *self.active.lock().unwrap() = Some((session_id.to_owned(), tx));
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.to_owned(), tx);
         rx
     }
 
-    fn clear_active(&self, session_id: &str) {
-        let mut a = self.active.lock().unwrap();
-        if a.as_ref().is_some_and(|(id, _)| id == session_id) {
-            *a = None;
-        }
+    fn remove_session(&self, session_id: &str) {
+        self.sessions.lock().unwrap().remove(session_id);
     }
 
     async fn ice_servers(&self, region: &str) -> Vec<IceServer> {
@@ -422,19 +430,24 @@ async fn join_meeting(
         .await
         .context("the calling connection didn't come up")?;
     let ice = hub.ice_servers(&ngc.endpoints().region).await;
-    let (media, events) = MediaSession::with_options(ice.clone(), MediaOptions::default()).await?;
+    // A meeting join also offers the gallery's receive-only lines (UNVERIFIED).
+    let options = MediaOptions {
+        receive_slots: remote_video::wanted_slots(),
+        ..media_options(true)
+    };
+    let (media, events) = MediaSession::with_options(ice.clone(), options).await?;
     let offer = media.create_offer().await?;
     let me = hub.client.self_mri().await?;
     let s = CallSession::new(&surl, &me, &opts.name);
     // Callbacks can arrive before the join answers.
-    let pushes = hub.set_active(s.callbacks.session_id());
+    let pushes = hub.add_session(s.callbacks.session_id());
     let conv = match ngc
         .join(&s, &target, &SdpBlob::ngc(offer), &MODALITIES)
         .await
     {
         Ok(c) => c,
         Err(e) => {
-            hub.clear_active(s.callbacks.session_id());
+            hub.remove_session(s.callbacks.session_id());
             let _ = media.close().await;
             return Err(e.into());
         }
@@ -446,10 +459,14 @@ async fn join_meeting(
         bots.roster(snapshot);
     }
     let mut answered = false;
+    let mut video = RemoteVideo::default();
     if let Some(ans) = find_blob(&conv.raw) {
         match ans.decode() {
             Ok(sdp) => match media.set_answer(&sdp).await {
-                Ok(()) => answered = true,
+                Ok(()) => {
+                    answered = true;
+                    video.negotiated(&media, &sdp).await;
+                }
                 Err(e) => tracing::warn!(%e, "inline media answer refused"),
             },
             Err(e) => tracing::warn!(%e, "undecodable inline answer"),
@@ -471,7 +488,10 @@ async fn join_meeting(
         pending_offer: None,
         transferring: None,
         link: Link::New,
+        share: Share::default(),
         bots,
+        camera: Camera::default(),
+        video,
     };
     Ok((call, events, pushes))
 }
@@ -487,12 +507,12 @@ pub fn adopt(
     sink: EventSink,
 ) -> Box<dyn CallHandle> {
     let (tx, rx) = mpsc::unbounded_channel();
-    let pushes = hub.set_active(session.callbacks.session_id());
+    let pushes = hub.add_session(session.callbacks.session_id());
     tokio::spawn(async move {
         let ngc = match hub.ngc_client().await {
             Ok(n) => n,
             Err(e) => {
-                hub.clear_active(session.callbacks.session_id());
+                hub.remove_session(session.callbacks.session_id());
                 let _ = media.close().await;
                 sink.send(Event::Error(format!("{e:#}")));
                 sink.send(Event::Ended("The call ended.".into()));
@@ -521,8 +541,13 @@ pub fn adopt(
             pending_offer: None,
             transferring: None,
             link: Link::Connected,
+            share: Share::default(),
             bots: Bots::new(None, false),
+            camera: Camera::default(),
+            video: RemoteVideo::default(),
         };
+        // A direct call's sharing line shows the other side's screen (no subscription).
+        call.video.negotiated(&call.media, "").await;
         call.start_keep_alive(None);
         call.run(events, pushes, opts, sink, rx, vec![]).await;
     });
@@ -729,7 +754,58 @@ impl Talk {
     }
 }
 
-fn people(roster: &Roster, me: &str, talk: &Talk) -> Vec<Person> {
+/// A call's media options: [`share::media_options`], plus in a meeting the data channel that
+/// carries live captions.
+fn media_options(meeting: bool) -> MediaOptions {
+    MediaOptions {
+        data_channel: meeting,
+        ..share::media_options()
+    }
+}
+
+/// The captions in one data-channel frame, once the message it ends is whole. A caption without
+/// the speaker's name takes it from the roster by the speaker's id.
+fn captions_in(dp: &mut Depacketizer, frame: &[u8], roster: &Roster) -> Vec<Caption> {
+    let Some(msg) = dp.push(frame) else {
+        return Vec::new();
+    };
+    if msg.data_id != CAPTIONS_DATA_ID {
+        return Vec::new();
+    }
+    parse_caption_message(&msg.payload)
+        .into_iter()
+        .map(|l| Caption {
+            speaker: if l.speaker.is_empty() {
+                speaker_name(roster, &l.user_id)
+            } else {
+                l.speaker
+            },
+            id: l.id,
+            text: l.text,
+        })
+        .collect()
+}
+
+/// The roster's name for a caption's `userId`: the MRI itself, or (UNVERIFIED which one the
+/// service sends) the id after the MRI's prefix.
+fn speaker_name(roster: &Roster, user_id: &str) -> String {
+    if user_id.is_empty() {
+        return String::new();
+    }
+    roster
+        .get(user_id)
+        .or_else(|| {
+            roster.participants().iter().find(|p| {
+                p.mri
+                    .rsplit_once(':')
+                    .is_some_and(|(_, id)| id.eq_ignore_ascii_case(user_id))
+            })
+        })
+        .map(|p| p.display_name.clone())
+        .unwrap_or_default()
+}
+
+fn people(roster: &Roster, me: &str, talk: &Talk, video: &RemoteVideo) -> Vec<Person> {
     roster
         .participants()
         .iter()
@@ -747,6 +823,7 @@ fn people(roster: &Roster, me: &str, talk: &Talk) -> Vec<Person> {
             lobby: p.presence == Presence::Lobby,
             me: p.mri == me,
             role: p.role.map(|r| r.name().to_owned()).unwrap_or_default(),
+            video_slot: video.slot_of(&p.mri),
         })
         .collect()
 }
@@ -766,6 +843,7 @@ struct Call {
     meeting: bool,
     keep_alive: Option<JoinHandle<()>>,
     link: Link,
+    share: Share,
     /// Captions, recording and transcription (the recorder bot).
     bots: Bots,
     /// Our re-offer (hold, resume) as the media session made it, while its answer is due on the
@@ -773,6 +851,9 @@ struct Call {
     pending_offer: Option<String>,
     /// Who we are transferring the call to, until `call/transferCompletion`.
     transferring: Option<String>,
+    camera: Camera,
+    /// Other people's video: the 1:1 camera, a shared screen, the meeting gallery.
+    video: RemoteVideo,
 }
 
 impl Call {
@@ -788,17 +869,23 @@ impl Call {
         }));
     }
 
-    async fn apply_answer(&mut self, answer: &SdpBlob) {
+    /// Applies the media answer once; true when it was applied now.
+    async fn apply_answer(&mut self, answer: &SdpBlob) -> bool {
         if self.answered {
-            return;
+            return false;
         }
         match answer.decode() {
             Ok(sdp) => match self.media.set_answer(&sdp).await {
-                Ok(()) => self.answered = true,
+                Ok(()) => {
+                    self.answered = true;
+                    self.video.negotiated(&self.media, &sdp).await;
+                    return true;
+                }
                 Err(e) => tracing::warn!(%e, "media answer refused"),
             },
             Err(e) => tracing::warn!(%e, "undecodable media answer"),
         }
+        false
     }
 
     async fn control(&mut self, c: Control, audio: &mut Audio, sink: &EventSink) {
@@ -845,6 +932,8 @@ impl Call {
                     sink.send(Event::Error(format!("Audio device: {e:#}")));
                 }
             }
+            // Share and Camera are handled by the run loop, which owns their channels.
+            Control::Share(_) | Control::Camera(_) | Control::Leave => {}
             Control::Captions(_) | Control::Recording(_) | Control::Transcription(_) => {
                 self.bots.ask(&c);
                 self.step_bots(sink).await;
@@ -869,7 +958,6 @@ impl Call {
                     )));
                 }
             },
-            Control::Leave => {}
         }
     }
 
@@ -969,6 +1057,9 @@ impl Call {
         let mut forwarders = vec![forward(play_rx.clone(), audio.held.clone(), events.audio)];
         let mut state_rx = events.state;
         let mut speakers_rx = events.speakers;
+        let mut data_rx = events.data;
+        let mut depacketizer = Depacketizer::default();
+        self.video.show(events.video, &sink);
         let mut talk = Talk::default();
         let mut speakers_open = true;
         if !opts.mic_on {
@@ -983,13 +1074,26 @@ impl Call {
         let mut own_hand: Option<bool> = None;
         // A finished transfer ends the call, and we still leave our leg.
         let mut hang_up = false;
+        let (share_tx, mut share_rx) = mpsc::unbounded_channel();
+        let (camera_tx, mut camera_rx) = mpsc::unbounded_channel();
+        // Joined with the camera on: it starts once the call can send it.
+        let mut camera_wanted = opts.camera;
         let ended: Option<String> = loop {
             let mut roster_changed = false;
             tokio::select! {
                 c = ctl.recv() => match c {
                     None | Some(Control::Leave) => break None,
+                    Some(Control::Share(on)) => self.share_control(on, &share_tx, &sink).await,
+                    Some(Control::Camera(on)) => self.camera_control(on, &camera_tx, &sink).await,
                     Some(c) => self.control(c, &mut audio, &sink).await,
                 },
+                Some(m) = share_rx.recv() => self.share_msg(m, &share_tx, &sink).await,
+                Some(frame) = data_rx.recv() => {
+                    for c in captions_in(&mut depacketizer, &frame, &self.roster) {
+                        sink.send(Event::Caption(c));
+                    }
+                }
+                Some(m) = camera_rx.recv() => self.camera_msg(m, &camera_tx, &sink).await,
                 heard = speakers_rx.changed(), if speakers_open => match heard {
                     Ok(()) => {
                         let sources = speakers_rx.borrow_and_update().clone();
@@ -1015,28 +1119,40 @@ impl Call {
                         CallEvent::Accepted { answer, links, keep_alive_interval_s, .. } => {
                             self.links.0.extend(links.0);
                             if let Some(a) = answer {
-                                self.apply_answer(&a).await;
+                                // New lines: the subscriptions follow.
+                                roster_changed |= self.apply_answer(&a).await;
                             }
                             self.start_keep_alive(keep_alive_interval_s);
                         }
                         CallEvent::MediaAnswer { answer, links } => {
                             match self.pending_offer.take() {
                                 Some(ours) => self.apply_reoffer_answer(&answer, &ours, &links, &sink).await,
-                                None => self.apply_answer(&answer).await,
+                                None => roster_changed |= self.apply_answer(&answer).await,
                             }
                             self.links.0.extend(links.0);
                         }
                         CallEvent::MediaRenegotiation { offer, links } => {
                             let swapped = self.renegotiate(&offer, &links, &sender_tx, &sink).await;
                             if let Some(ev) = swapped {
+                                // The share was sent on the old session's line.
+                                if self.share.stop().await {
+                                    sink.send(Event::Error("Screen sharing stopped: the call's media restarted.".into()));
+                                }
+                                // So was the camera: it comes back on the new session's line.
+                                camera_wanted |= self.camera.stop(&sink).await;
+                                self.video.show(ev.video, &sink);
                                 state_rx = ev.state;
                                 speakers_rx = ev.speakers;
                                 speakers_open = true;
+                                data_rx = ev.data;
+                                depacketizer = Depacketizer::default();
                                 forwarders.push(forward(play_rx.clone(), audio.held.clone(), ev.audio));
                             }
                             self.links.0.extend(links.0);
                             // Admission re-offers the media; we are out of the lobby.
                             in_lobby = false;
+                            // The lines may have changed: the subscriptions start over.
+                            roster_changed = true;
                         }
                         CallEvent::Rejected(r) | CallEvent::Ended(r) => {
                             tracing::info!(code = r.code, sub = r.sub_code, "call ended by the service");
@@ -1089,14 +1205,31 @@ impl Call {
                                 None => {}
                             }
                         }
-                        CallEvent::Progress { .. }
-                        | CallEvent::MediaAcknowledgement { .. }
-                        | CallEvent::Other { .. } => {}
+                        CallEvent::MediaAcknowledgement { links } => self.links.0.extend(links.0),
+                        CallEvent::Other { event, body, .. } if event == "controlVideoStreaming" => {
+                            self.share.sender_control(&body);
+                            self.camera.sender_control(&body);
+                        }
+                        CallEvent::Progress { .. } | CallEvent::Other { .. } => {}
                     }
                 }
             }
             if roster_changed {
-                sink.send(Event::Roster(people(&self.roster, &me, &talk)));
+                if self.meeting {
+                    let spoke = |m: &str| talk.last.get(m).copied().unwrap_or(0);
+                    self.video.reselect(
+                        &self.ngc,
+                        &self.s,
+                        &self.links,
+                        &self.roster,
+                        spoke,
+                        &sink,
+                    );
+                }
+                if let Some(name) = self.video.presenter_changed(&self.roster, &me) {
+                    sink.send(Event::Presenter(name));
+                }
+                sink.send(Event::Roster(people(&self.roster, &me, &talk, &self.video)));
                 if let Some(p) = self.roster.get(&me) {
                     in_lobby = p.presence == Presence::Lobby;
                     let hand = p.hand.is_some();
@@ -1104,6 +1237,19 @@ impl Call {
                         sink.send(Event::Hand(hand));
                     }
                 }
+            }
+            let can_share = self.link == Link::Connected
+                && share::available(&self.media, &self.links, self.meeting);
+            if let Some((available, sharing)) = self.share.changed(can_share) {
+                sink.send(Event::Share { available, sharing });
+            }
+            let can_camera = self.link == Link::Connected
+                && camera::available(&self.media, &self.links, self.meeting);
+            if can_camera && std::mem::take(&mut camera_wanted) {
+                self.camera.open(&camera_tx);
+            }
+            if let Some((available, on)) = self.camera.changed(can_camera) {
+                sink.send(Event::Camera { available, on });
             }
             let phase = live_phase(self.link, in_lobby && self.meeting, was_in_call);
             was_in_call |= phase == Phase::Connected;
@@ -1132,14 +1278,190 @@ impl Call {
         if let Some(k) = self.keep_alive.take() {
             k.abort();
         }
+        self.share.stop().await;
+        self.camera.stop(&sink).await;
+        self.video.stop(&sink);
         audio.stop();
         let _ = self.media.close().await;
         for f in forwarders {
             f.abort();
         }
-        self.hub.clear_active(self.s.callbacks.session_id());
+        self.hub.remove_session(self.s.callbacks.session_id());
         if let Some(reason) = ended {
             sink.send(Event::Ended(reason));
+        }
+    }
+
+    /// Share / Stop sharing: the picker opens without blocking the call (its answer comes as a
+    /// [`ShareMsg`]); stopping tells the service at once.
+    async fn share_control(
+        &mut self,
+        on: bool,
+        tx: &mpsc::UnboundedSender<ShareMsg>,
+        sink: &EventSink,
+    ) {
+        if on {
+            self.share.pick(tx);
+        } else if self.share.stop().await {
+            self.tell_share(false, sink).await;
+        }
+    }
+
+    async fn share_msg(
+        &mut self,
+        m: ShareMsg,
+        tx: &mpsc::UnboundedSender<ShareMsg>,
+        sink: &EventSink,
+    ) {
+        match m {
+            ShareMsg::Picked(Ok(Some(capture))) => {
+                match self.share.start(*capture, &self.media, tx) {
+                    Ok(()) => self.tell_share(true, sink).await,
+                    Err(e) => {
+                        tracing::warn!(%e, "screen share not started");
+                        self.share.stop().await;
+                        sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
+                    }
+                }
+            }
+            ShareMsg::Picked(Ok(None)) => self.share.picked_nothing(),
+            ShareMsg::Picked(Err(e)) => {
+                self.share.picked_nothing();
+                tracing::warn!(%e, "screen capture failed");
+                sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
+            }
+            ShareMsg::Ended => {
+                if self.share.stop().await {
+                    self.tell_share(false, sink).await;
+                }
+            }
+        }
+    }
+
+    /// Tells the service our sharing line sends (or stopped): `UpdateMediaDescriptions` in a
+    /// meeting, a re-offer in a 1:1 call.
+    async fn tell_share(&mut self, sending: bool, sink: &EventSink) {
+        let r = if self.meeting {
+            share::tell_meeting(
+                &self.ngc,
+                &self.s,
+                &self.links,
+                &self.media,
+                &mut self.share,
+                sending,
+            )
+            .await
+        } else {
+            // The answer comes inline or on `call/mediaAnswer/`, which `apply_answer` takes.
+            self.answered = false;
+            match share::reoffer_direct(&self.ngc, &self.s, &self.links, &self.media, sending).await
+            {
+                Ok(Some(a)) => {
+                    self.apply_answer(&a).await;
+                    Ok(())
+                }
+                Ok(None) => Ok(()),
+                Err(e) => {
+                    self.answered = true;
+                    Err(e)
+                }
+            }
+        };
+        if let Err(e) = r {
+            tracing::warn!("share not signalled: {e:#}");
+            if sending {
+                self.share.stop().await;
+                sink.send(Event::Error(
+                    "Others can't see your screen: the call refused the share.".into(),
+                ));
+            }
+        }
+    }
+
+    /// Camera on / off: the portal opens without blocking the call (its answer comes as a
+    /// [`CameraMsg`]); turning it off tells the service at once.
+    async fn camera_control(
+        &mut self,
+        on: bool,
+        tx: &mpsc::UnboundedSender<CameraMsg>,
+        sink: &EventSink,
+    ) {
+        if on {
+            self.camera.open(tx);
+        } else if self.camera.stop(sink).await {
+            self.tell_camera(false, sink).await;
+        }
+    }
+
+    async fn camera_msg(
+        &mut self,
+        m: CameraMsg,
+        tx: &mpsc::UnboundedSender<CameraMsg>,
+        sink: &EventSink,
+    ) {
+        match m {
+            CameraMsg::Opened(Ok(capture)) => {
+                match self.camera.start(*capture, &self.media, tx, sink) {
+                    Ok(()) => self.tell_camera(true, sink).await,
+                    Err(e) => {
+                        tracing::warn!(%e, "camera not started");
+                        self.camera.stop(sink).await;
+                        sink.send(Event::Error(format!("Couldn't turn on your camera: {e}")));
+                    }
+                }
+            }
+            CameraMsg::Opened(Err(e)) => {
+                self.camera.open_failed();
+                tracing::warn!(%e, "camera not opened");
+                sink.send(Event::Error(format!("Couldn't turn on your camera: {e}")));
+            }
+            CameraMsg::Ended => {
+                if self.camera.stop(sink).await {
+                    self.tell_camera(false, sink).await;
+                }
+            }
+        }
+    }
+
+    /// Tells the service our camera sends (or stopped): `UpdateMediaDescriptions` in a meeting,
+    /// a re-offer in a 1:1 call.
+    async fn tell_camera(&mut self, on: bool, sink: &EventSink) {
+        let r = if self.meeting {
+            camera::tell_meeting(
+                &self.ngc,
+                &self.s,
+                &self.links,
+                &self.media,
+                &mut self.camera,
+                on,
+            )
+            .await
+        } else {
+            // The answer comes inline or on `call/mediaAnswer/`, which `apply_answer` takes.
+            self.answered = false;
+            let sharing = self.share.sharing();
+            match camera::reoffer_direct(&self.ngc, &self.s, &self.links, &self.media, on, sharing)
+                .await
+            {
+                Ok(Some(a)) => {
+                    self.apply_answer(&a).await;
+                    Ok(())
+                }
+                Ok(None) => Ok(()),
+                Err(e) => {
+                    self.answered = true;
+                    Err(e)
+                }
+            }
+        };
+        if let Err(e) = r {
+            tracing::warn!("camera not signalled: {e:#}");
+            if on {
+                self.camera.stop(sink).await;
+                sink.send(Event::Error(
+                    "Others can't see your video: the call refused it.".into(),
+                ));
+            }
         }
     }
 
@@ -1176,7 +1498,9 @@ impl Call {
                 if self.ice.is_empty() {
                     self.ice = self.hub.ice_servers(&self.ngc.endpoints().region).await;
                 }
-                match MediaSession::with_options(self.ice.clone(), MediaOptions::default()).await {
+                match MediaSession::with_options(self.ice.clone(), media_options(self.meeting))
+                    .await
+                {
                     Ok((fresh, ev)) => match fresh.accept_offer(&sdp).await {
                         Ok(ans) => {
                             let old = std::mem::replace(&mut self.media, fresh);
@@ -1197,6 +1521,8 @@ impl Call {
         };
         match answer {
             Ok(ans) => {
+                // The media server's offer names its lines' stream ids.
+                self.video.negotiated(&self.media, &sdp).await;
                 if let Some(url) = links.get("mediaAnswer") {
                     match self
                         .ngc
@@ -1380,7 +1706,7 @@ mod tests {
             "8:orgid:g": {"version": 1, "state": "active", "details": {"displayName": ""},
                 "endpoints": {"e": {"lobby": {}}}}
         }}));
-        let p = people(&r, "8:orgid:me", &Talk::default());
+        let p = people(&r, "8:orgid:me", &Talk::default(), &RemoteVideo::default());
         let me = p.iter().find(|p| p.me).unwrap();
         assert!(me.muted && !me.lobby);
         let guest = p.iter().find(|p| !p.me).unwrap();
@@ -1388,10 +1714,40 @@ mod tests {
     }
 
     #[test]
+    fn pushes_route_to_every_live_call() {
+        let hub = Hub::new(Client::offline("t").unwrap());
+        let mut unmatched = hub.subscribe_unmatched();
+        let mut shown = hub.add_session("sess-1");
+        let mut held = hub.add_session("sess-2");
+        let push = |session: &str| CallPush {
+            id: 1,
+            url: format!("https://surl/callAgent/{session}/abcd1234/conversation/rosterUpdate/"),
+            headers: Default::default(),
+            body: json!({"participants": {}}),
+        };
+        hub.route(push("sess-1"));
+        hub.route(push("sess-2"));
+        hub.route(push("sess-3"));
+        assert!(shown.try_recv().unwrap().url.contains("sess-1"));
+        assert!(shown.try_recv().is_err());
+        assert!(
+            held.try_recv().unwrap().url.contains("sess-2"),
+            "the held call's own"
+        );
+        assert!(unmatched.try_recv().unwrap().url.contains("sess-3"));
+        // One call ending leaves the other routed.
+        hub.remove_session("sess-1");
+        hub.route(push("sess-1"));
+        hub.route(push("sess-2"));
+        assert!(unmatched.try_recv().unwrap().url.contains("sess-1"));
+        assert!(held.try_recv().is_ok());
+    }
+
+    #[test]
     fn pushes_route_to_the_active_call_or_the_subscribers() {
         let hub = Hub::new(Client::offline("t").unwrap());
         let mut unmatched = hub.subscribe_unmatched();
-        let mut active = hub.set_active("sess-1");
+        let mut active = hub.add_session("sess-1");
         let push = |session: &str| CallPush {
             id: 1,
             url: format!("https://surl/callAgent/{session}/abcd1234/conversation/rosterUpdate/"),
@@ -1403,7 +1759,7 @@ mod tests {
         assert!(active.try_recv().is_ok());
         assert!(active.try_recv().is_err());
         assert!(unmatched.try_recv().unwrap().url.contains("sess-2"));
-        hub.clear_active("sess-1");
+        hub.remove_session("sess-1");
         hub.route(push("sess-1"));
         assert!(unmatched.try_recv().is_ok(), "no active call: unmatched");
     }

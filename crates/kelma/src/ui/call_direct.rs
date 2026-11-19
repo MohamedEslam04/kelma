@@ -32,6 +32,7 @@ impl UiHandle {
             s.set_incoming_has_avatar(has_avatar);
             s.set_incoming_video(v.video);
             s.set_incoming_status(v.status.into());
+            s.set_incoming_waiting(v.waiting);
             s.set_incoming_open(v.open);
         });
     }

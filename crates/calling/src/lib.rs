@@ -11,9 +11,11 @@
 //! - [`relay`]: TURN credentials from `trap/tokens`.
 //! - [`media`]: one WebRTC peer (webrtc-rs) speaking Opus over ICE/TURN + SRTP.
 //! - [`audio`]: microphone/speaker I/O and the Opus codec.
+//! - [`video`]: video we send (screen share; the camera later): frames, H.264, the portal.
 //! - [`history`]: call history from the `48:calllogs` system thread.
 //! - [`emergency`]: emergency short codes kelma refuses to dial.
 //! - [`captions`]: live caption text from the media data channel.
+//! - [`voicemail`]: voicemails, which are Exchange mail read through Graph.
 //!
 //! Protocol sources: rusty-teams `crates/calling` and eisbaw/ost `src/calling` (MIT, code may be
 //! reused with attribution); mautrix-teams `pkg/msteams/calls.go` (AGPL) and teams-lite
@@ -32,6 +34,8 @@ pub mod ngc_trouter;
 pub mod relay;
 pub mod signaling;
 pub mod types;
+pub mod video;
+pub mod voicemail;
 
 pub use error::{Error, Result};
 pub use types::*;

@@ -126,6 +126,49 @@ pub fn join_banner<'a>(
         })
 }
 
+/// A Teams meeting's "started" notification may go out this long after its start (kelma opened
+/// late still tells, but not about a meeting long under way).
+pub const STARTED_WINDOW_MS: i64 = 5 * MIN_MS;
+
+/// Teams meetings that have just started, for the "started" notification with Join (Teams sends
+/// one at the start time, separate from the reminder). Once per occurrence (`notified`); a
+/// dismissed banner, a declined or cancelled meeting, or one `joined` says we are in never tells.
+pub fn just_started<'a>(
+    events: impl IntoIterator<Item = &'a Event>,
+    now_ms: i64,
+    notified: &HashSet<Key>,
+    dismissed: &HashSet<Key>,
+    joined: impl Fn(&str) -> bool,
+) -> Vec<Reminder> {
+    events
+        .into_iter()
+        .filter(|e| attendable(e) && e.is_online_meeting)
+        .filter(|e| e.start_ms <= now_ms && now_ms < (e.start_ms + STARTED_WINDOW_MS).min(e.end_ms))
+        .filter(|e| !notified.contains(&key(e)) && !dismissed.contains(&key(e)))
+        .filter_map(|e| {
+            let url = e.join_url.clone()?;
+            (!joined(&url)).then(|| Reminder {
+                id: e.id.clone(),
+                subject: e.subject.clone(),
+                start_ms: e.start_ms,
+                join_url: Some(url),
+                location: e.location.clone(),
+            })
+        })
+        .collect()
+}
+
+/// The subject of the meeting a Join link belongs to, for the pre-join screen's title.
+pub fn subject_for_link<'a>(
+    events: impl IntoIterator<Item = &'a Event>,
+    url: &str,
+) -> Option<String> {
+    events
+        .into_iter()
+        .find(|e| e.join_url.as_deref() == Some(url))
+        .map(|e| subject(e).to_owned())
+}
+
 fn subject(e: &Event) -> &str {
     if e.subject.is_empty() {
         "Meeting"
@@ -230,6 +273,38 @@ mod tests {
         let r = &due_reminders([&plain], at(20), &HashSet::new(), &HashMap::new())[0];
         assert_eq!(r.join_url, None);
         assert_eq!(reminder_body(r, at(20)), "Starts in 10 min · Room 4");
+    }
+
+    #[test]
+    fn a_started_meeting_notifies_once_in_its_first_minutes_unless_joined() {
+        let t = teams("a", 30, 60);
+        let none = HashSet::new();
+        let started = |now, notified: &HashSet<Key>, joined: bool| {
+            just_started([&t], now, notified, &none, |_| joined).len()
+        };
+        assert_eq!(started(at(29), &none, false), 0, "not yet");
+        assert_eq!(started(at(30), &none, false), 1, "at the start");
+        assert_eq!(started(at(34), &none, false), 1);
+        assert_eq!(started(at(35), &none, false), 0, "long under way");
+        assert_eq!(started(at(31), &HashSet::from([key(&t)]), false), 0, "once");
+        assert_eq!(started(at(31), &none, true), 0, "already in it");
+        let dismissed = HashSet::from([key(&t)]);
+        assert!(just_started([&t], at(31), &none, &dismissed, |_| false).is_empty());
+        let plain = ev("b", 30, 60, json!({}));
+        assert!(just_started([&plain], at(30), &none, &none, |_| false).is_empty());
+        let r = &just_started([&t], at(30), &none, &none, |_| false)[0];
+        assert_eq!(r.join_url.as_deref(), Some("https://teams.example/j"));
+        assert_eq!(reminder_body(r, at(30)), "Starts now");
+    }
+
+    #[test]
+    fn a_join_link_finds_its_meeting_subject() {
+        let t = teams("a", 30, 60);
+        assert_eq!(
+            subject_for_link([&t], "https://teams.example/j").as_deref(),
+            Some("Subject a")
+        );
+        assert_eq!(subject_for_link([&t], "https://teams.example/other"), None);
     }
 
     fn banner(events: &[Event], now: i64) -> Option<Banner> {
