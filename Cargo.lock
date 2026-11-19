@@ -3087,6 +3087,7 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "url",
+ "webhost",
 ]
 
 [[package]]
@@ -6916,6 +6917,22 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "url",
  "web-sys",
+]
+
+[[package]]
+name = "webhost"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "libc",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]
