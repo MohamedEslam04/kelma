@@ -1,0 +1,12 @@
+{
+  "callInvitation": {
+    "callModalities": ["Audio"],
+    "links": {
+      "acceptance": "https://cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c1/27/i1/1351/accept?i=10",
+      "callLeg": "https://cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c1/27/i1/1351?i=10",
+      "mediaAnswer": "https://cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c1/27/i1/1351/mediaAnswer?i=10",
+      "progress": "https://cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c1/27/i1/1351/progress?i=10",
+      "redirection": "https://cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c1/27/i1/1351/redirect?i=10"
+    }
+  }
+}

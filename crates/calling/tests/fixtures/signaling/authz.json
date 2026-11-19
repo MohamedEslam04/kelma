@@ -1,0 +1,11 @@
+{
+  "tokens": {"skypeToken": "SKYPE-TOKEN-PLACEHOLDER", "expiresIn": 86399},
+  "region": "emea",
+  "partition": "emea02",
+  "regionGtms": {
+    "chatService": "https://emea.ng.msg.teams.microsoft.com",
+    "middleTier": "https://teams.microsoft.com/api/mt/emea",
+    "calling_conversationServiceUrl": "https://api-emea.flightproxy.teams.microsoft.com/api/v2/epconv",
+    "calling_callControllerServiceUrl": "https://emea.cc.skype.com"
+  }
+}
