@@ -74,6 +74,17 @@ impl EncoderSettings {
             keyframe_interval: 30,
         }
     }
+
+    /// The camera: 15 frames a second at 600 kbit/s (enough for 640x360 baseline; UNVERIFIED
+    /// what the web client sends), a keyframe every 2 s.
+    pub fn camera() -> Self {
+        EncoderSettings {
+            fps: 15.0,
+            bitrate_bps: 600_000,
+            screen: false,
+            keyframe_interval: 30,
+        }
+    }
 }
 
 /// One encoded picture.
