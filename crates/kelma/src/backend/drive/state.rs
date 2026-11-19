@@ -668,14 +668,25 @@ impl State {
         let mut n = 0;
         match self.group {
             Some(key) => {
-                for g in group_items(&visible, key, now_ms) {
+                // Group on local wall-clock days, so "Today" starts at local midnight, not UTC.
+                let local: Vec<DriveItem> = visible
+                    .iter()
+                    .map(|i| DriveItem {
+                        modified_ms: i.modified_ms + off(i.modified_ms),
+                        ..(*i).clone()
+                    })
+                    .collect();
+                for g in group_items(&local, key, now_ms + off(now_ms)) {
                     out.push(RowData {
                         id: format!("group:{}", g.label),
                         name: g.label,
                         header: true,
                         ..Default::default()
                     });
-                    for i in &g.items {
+                    for shifted in &g.items {
+                        let Some(i) = visible.iter().find(|v| v.id == shifted.id) else {
+                            continue;
+                        };
                         out.push(self.row(i, n, now_ms, off));
                         n += 1;
                     }
@@ -995,6 +1006,24 @@ mod tests {
         // Item rows are numbered without the headers.
         let idx: Vec<_> = rows.iter().filter(|r| !r.header).map(|r| r.index).collect();
         assert_eq!(idx, (0..6).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn grouping_uses_local_days_not_utc_days() {
+        // 02:30 local at UTC+2 is 00:30 UTC. A file from 45 minutes earlier is from today in
+        // local time, but from "yesterday" by UTC days.
+        let utc_midnight = NOW.div_euclid(DAY_MS) * DAY_MS;
+        let now = utc_midnight + 30 * 60_000;
+        let mut f = file("1", "fresh.txt", 1, 0, "me");
+        f.modified_ms = now - 45 * 60_000;
+        let mut s = State::default();
+        let g = s.go(Section::MyFiles);
+        s.set_listing(g, vec![f], None);
+        s.group = Some(SortKey::Modified);
+        let plus2 = |_: i64| 2 * 3_600_000;
+        let rows = s.rows(now, &plus2);
+        assert_eq!(rows[0].name, "Today");
+        assert_eq!(rows[1].name, "fresh.txt");
     }
 
     #[test]
