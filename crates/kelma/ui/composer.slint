@@ -57,7 +57,9 @@ export component Composer inherits Rectangle {
     in-out property <bool> format-open: false;
     in-out property <bool> expanded: false;
     // True while the text box has the keyboard focus (the window leaves Ctrl+Shift+7 and 8 to the composer then).
-    out property <bool> input-focused: composer-input.has-focus;
+    property <bool> input-focused: composer-input.has-focus;
+    callback input-focus(bool);
+    changed input-focused => { root.input-focus(root.input-focused); }
 
     callback send(string);
     callback set-enter-sends(bool);
