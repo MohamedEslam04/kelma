@@ -17,7 +17,8 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 /// Answers `authentication.getAuthToken`: `Ok(access token)` or `Err(reason shown to the app)`.
-/// kelma's UI plugs `teams_proto`'s auth broker in here.
+/// kelma's UI plugs `teams_proto`'s auth broker in here. It is only called for requests that
+/// passed [`shim::check_token_request`], so `resources` holds exactly the one resource to mint.
 pub type TokenCallback =
     Arc<dyn Fn(TokenRequest) -> BoxFuture<std::result::Result<String, String>> + Send + Sync>;
 
@@ -388,9 +389,14 @@ async fn on_binding(inner: Arc<Inner>, name: String, payload: String, origin: St
         let Some((request, to)) = handled.token else {
             return;
         };
-        let result = match &inner.token {
-            Some(cb) => cb(request).await,
-            None => Err("kelma has no token provider for this window".into()),
+        // The app's own resource on the app's own origin, or nothing is minted.
+        let result = match (&inner.token, shim::check_token_request(&cfg, request)) {
+            (_, Err(reason)) => {
+                tracing::info!(%origin, %reason, "app token request refused");
+                Err(reason)
+            }
+            (Some(cb), Ok(request)) => cb(request).await,
+            (None, Ok(_)) => Err("kelma has no token provider for this window".into()),
         };
         shim::deliver_js(&shim::token_response(&to, result))
     } else if name == shim::BRIDGE_BINDING {
