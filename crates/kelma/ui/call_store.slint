@@ -49,6 +49,9 @@ export global CallStore {
     in-out property <string> menu;
     // The call shrinks to a floating bar while the meeting chat is open.
     in-out property <bool> minimized;
+    // Where the user dragged the minimized call to: its offset from the bottom-right corner.
+    in-out property <length> mini-dx;
+    in-out property <length> mini-dy;
     // (name, argument): join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
     // leave, close, rejoin, dismiss-error. See `backend/call.rs` `CallCmd::parse`.
     callback command(string, string);
