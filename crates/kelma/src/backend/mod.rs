@@ -22,10 +22,12 @@ mod cal;
 mod channels;
 mod drafts;
 pub(crate) mod drive;
+pub(crate) mod engage;
 mod find;
 mod lists;
 mod live;
 mod manage;
+mod media;
 mod mentions;
 mod outbox;
 mod people;
@@ -33,6 +35,7 @@ mod people;
 mod people_live;
 mod render;
 mod send;
+pub(crate) mod settings;
 mod shared;
 mod sync;
 mod unread;
@@ -54,12 +57,16 @@ pub use cal::{
 };
 pub use channels::ChannelCmd;
 pub use drive::DriveCmd;
+pub use engage::EngageCmd;
 pub use find::FindCmd;
 pub use lists::ListsCmd;
 pub use manage::{
     CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
     SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
 };
+pub use media::MediaCmd;
+#[cfg(test)]
+pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
@@ -115,11 +122,16 @@ pub enum Cmd {
     Find(FindCmd),
     People(PeopleCmd),
     Teams(TeamsCmd),
+    Settings(settings::SettingsCmd),
     Drive(DriveCmd),
+    /// Viva Engage: a community's read-only feed (plan S3.2).
+    Engage(EngageCmd),
     /// The chat list: sections, item menu, options, channel menu (plan 8.1 to 8.3, 8.5).
     Lists(ListsCmd),
     /// The channel Posts tab (plan 8.4).
     Channels(ChannelCmd),
+    /// The image viewer, Translate and link previews (plan 9.5 to 9.7).
+    Media(MediaCmd),
     Apps(AppsCmd),
     SetEnterSends(bool),
     /// The composer text changed.
@@ -215,8 +227,10 @@ pub struct Engine {
     find: Mutex<find::State>,
     manage: Mutex<manage::State>,
     drive: Mutex<drive::Drive>,
+    engage: Mutex<engage::State>,
     lists: Mutex<lists::State>,
     channels: Mutex<channels::State>,
+    media: Mutex<media::State>,
     apps: Mutex<appstore::Apps>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
@@ -273,8 +287,10 @@ impl Engine {
             find: Mutex::new(find::State::default()),
             manage: Mutex::new(manage::State::default()),
             drive: Mutex::new(drive::Drive::default()),
+            engage: Mutex::new(engage::State::default()),
             lists: Mutex::new(lists::State::default()),
             channels: Mutex::new(channels::State::default()),
+            media: Mutex::new(media::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
@@ -554,8 +570,11 @@ impl Engine {
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
+            Cmd::Settings(c) => self.settings_cmd(c).await?,
+            Cmd::Engage(c) => self.engage_cmd(c).await?,
             Cmd::Lists(c) => self.lists_cmd(c).await?,
             Cmd::Channels(c) => self.channel_cmd(c).await?,
+            Cmd::Media(c) => self.media_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,

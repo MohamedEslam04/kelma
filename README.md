@@ -1,6 +1,6 @@
 # kelma
 
-A lightweight native desktop client for Microsoft Teams chat on Linux, written in Rust with [Slint](https://slint.dev).
+A lightweight native desktop client for Microsoft Teams on Linux, written in Rust with [Slint](https://slint.dev).
 
 The Teams web app takes around 1 GB of RAM. kelma gives you the same chat experience in a familiar
 Teams-like layout and uses a fraction of that memory: see [Memory](#memory).
@@ -13,35 +13,30 @@ Teams-like layout and uses a fraction of that memory: see [Memory](#memory).
 ## Features
 
 - **Sign-in:** sign in with a device code (works with MFA). The refresh token lives in your system
-  keyring (KWallet or GNOME Keyring), never in a file.
-- **Chat list:**
-  - 1:1, group, meeting and self-notes chats
-  - Favorites, Chats and "Teams and channels" sections
-  - Unread / Channels / Chats filters and search
-  - real profile photos
-- **Teams and channels:**
-  - read posts with their subject lines and reply counts
-  - open threads and reply in them
-  - start new posts
-- **Messages:**
-  - rich text: bold, italic, links, lists, code, @mentions, reply quotes, edited and deleted markers, day separators
-  - Arabic, English and mixed-direction text, each paragraph laid out in its own direction
-  - inline images
-  - file cards (open in browser)
-  - voice messages and videos (play in your system player)
+  keyring (KWallet or GNOME Keyring), never in a file. Several accounts and guest organizations.
+- **Chat:**
+  - 1:1, group, meeting and self-notes chats, with custom sections, filters and list options
+  - rich text both ways: a formatting toolbar (bold to tables, colors and code blocks) and Teams' shortcuts
+  - @mentions, reply quotes, forward, pin, save, mark unread, drafts and an offline outbox
+  - new chats and group management, profile cards, read receipts, pinned-message banner
+  - image grid and viewer, link previews, translation, voice messages and videos
   - bot and workflow cards (Adaptive Cards)
-  - color emoji
-- **Actions:**
-  - send and reply
-  - react, edit, delete
-  - paste emoji
-  - upload images
-  - send files: uploaded to your OneDrive and shared with the chat, as Teams does (chats only, not channels)
-  - typing indicator
-- **Live:** real-time updates over Teams' push channel (new messages, edits, reactions, typing),
-  automatic reconnect and catch-up, and desktop notifications when the window is not focused.
+  - Arabic, English and mixed-direction text, each paragraph in its own direction
+- **Find:** a search page (messages, files, people, meetings), find in chat, Mentions, Followed
+  threads and Saved quick views, the Shared tab and a chat details pane.
+- **Activity:** the Teams activity feed with filters, a preview pane, mark all as read and badges.
+- **Teams and channels:** posts as cards with replies, announcements, follow thread, channel files,
+  plus a management page: discover and join, channels, members, tags, email address, notifications.
+- **Calendar:** day, week and month views, event peek and full view, the event form with
+  recurrence, the scheduling assistant, rooms, proposals, filters, share and print.
+- **OneDrive:** browse, For you, Shared, People, Media and Meetings views, create and upload,
+  share dialog, recycle bin and a native PDF and Office preview.
+- **Apps:** the app bar, the Store, Planner and To Do, Workflows, OneNote and Lists (read-only).
+- **Desktop:** tray icon with unread badge, close to tray, autostart, window state, desktop
+  notifications, a local redacted problem report (`kelma-cli diag`).
+- **Live:** real-time updates over Teams' push channel, automatic reconnect and catch-up.
 
-Calls, meetings and screen sharing are **out of scope**. Use the Teams web app for them.
+Native calls and meetings are in progress (`crates/calling`); until then use the Teams web app for them.
 
 ## Install
 
@@ -120,15 +115,29 @@ cargo run -p kelma-cli -- login | chats | teams | read <id> | send <id> <text> |
 
 | Crate | Role |
 |---|---|
-| `crates/teams-proto` | Protocol: auth, chat service, channels, profiles, AMS media, trouter real-time, cards |
-| `crates/render` | Teams HTML to a rich-text model, with per-paragraph text direction |
-| `crates/store` | SQLite cache |
-| `crates/session` | Keyring and config persistence |
+| `crates/teams-proto` | Protocol: auth broker, chat service, channels and teams, search, activity, cards, real-time |
+| `crates/render` | Teams HTML to a rich-text model and back, with per-paragraph text direction |
+| `crates/store` | SQLite cache, drafts, outbox and saved messages |
+| `crates/session` | Keyring, accounts and config persistence |
 | `crates/kelma` | The desktop app (Slint UI and engine) |
 | `crates/kelma-cli` | Command-line client for protocol work |
+| `crates/calendar` | Outlook calendar over Microsoft Graph |
+| `crates/onedrive` | OneDrive and SharePoint files |
+| `crates/apps` | App bar, installed apps, the Store, bots and message extensions |
+| `crates/calling` | Native calling: signalling, push, WebRTC media, audio |
+| `crates/webhost` | Chromium `--app` window over CDP with a TeamsJS host shim |
+| `crates/preview` | PDF pages to images, Office files to PDF |
+| `crates/tray` | Tray icon, unread badge, autostart |
+| `crates/appearance` | Theme, accent, density, font scale and accessibility preferences |
+| `crates/devices` | Audio devices and cameras for settings |
+| `crates/diag` | Redaction and the local problem report |
+| `crates/emoji` | Emoji table, search, shortcodes and skin tones |
 
 [`docs/protocol.md`](docs/protocol.md) documents every endpoint and what has been verified.
-[`docs/adr/0001-ui-toolkit.md`](docs/adr/0001-ui-toolkit.md) explains the toolkit choice.
+The ADRs in [`docs/adr/`](docs/adr/) explain the toolkit, the web host and the composer choices.
+
+Parallel builds on a small machine: run cargo through `flock /tmp/kelma-build.lock cargo …` so only one
+build compiles the large `kelma` crate at a time.
 
 ## Disclaimer
 
@@ -145,3 +154,5 @@ Use it at your own risk.
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+Docs synced to commit 8b62517 ("Merge branch 'worktree-agent-a9f14921f98fb3510' into feat/parity-wave-2", 2026-11-19)

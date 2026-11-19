@@ -33,7 +33,6 @@ pub enum ActivityCmd {
     GoTo,
     /// Replies in the thread of the selected channel post.
     Reply(String),
-    Settings,
 }
 
 /// Feed items plus the view settings. The network feed is the source of truth for read state, but
@@ -283,11 +282,6 @@ impl Engine {
             }
             ActivityCmd::GoTo => self.activity_go_to(),
             ActivityCmd::Reply(text) => self.activity_reply(text).await?,
-            ActivityCmd::Settings => {
-                // There is no settings screen yet (plans/settings-and-platform.md).
-                self.ui
-                    .banner("Notification settings: coming with Settings".into());
-            }
         }
         Ok(())
     }

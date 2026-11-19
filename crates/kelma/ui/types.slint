@@ -53,7 +53,10 @@ export struct Edited { text: string, cursor: int }
 // An attachment waiting in the composer (pasted image, dropped or picked file).
 export struct PendingAttachment { name: string, detail: string, is-image: bool, preview: image, has-preview: bool }
 export struct FileItem { name: string, url: string, ext: string }
-export struct ImageItem { url: string, img: image, loaded: bool, w: length, h: length }
+// One cell of a message's image grid (x, y, w, h place it; `overflow` is the "+K more" of the last cell).
+export struct ImageItem { url: string, img: image, loaded: bool, x: length, y: length, w: length, h: length, overflow: int }
+// A link preview card under a message (plan chat 9.7).
+export struct LinkCard { url: string, title: string, description: string, domain: string, thumb: image, has-thumb: bool }
 
 export struct Msg {
     id: string,
@@ -92,6 +95,11 @@ export struct Msg {
     card: [CardRow],       // an Adaptive Card drawn like Teams does (empty: show the text body)
     headline: string,      // headline of an announcement post
     importance: string,    // "" | "high" | "urgent": a red IMPORTANT! or URGENT! label
+    grid-w: length,        // size of the image grid
+    grid-h: length,
+    translate: string,     // "" | "can" (menu only) | "offer" (link too) | "busy" | "shown" | "failed"
+    translate-from: string, // language name shown with "See original"
+    links: [LinkCard],     // preview cards of the links in the message
 }
 
 // A person (or, for the @mention picker, a team, channel or "Everyone" entry) in a people list.

@@ -49,6 +49,11 @@ pub struct Message {
     pub importance: crate::delivery::Importance,
     /// Headline and banner of a channel announcement, if the message is one.
     pub announcement: Option<crate::delivery::Announcement>,
+    /// `properties.languageStamp` (`languages=de:100;length:82;&detector=Bling`): the language
+    /// Teams detected in the message, which decides the Translate link.
+    pub language_stamp: Option<String>,
+    /// The link preview cards the sender attached (`properties.links`), see [`crate::urlpreview`].
+    pub links: Vec<crate::urlpreview::LinkPreview>,
 }
 
 impl Message {
@@ -240,6 +245,14 @@ pub fn message_from_json(v: &Value, fallback_conversation: &str) -> Option<Messa
         card: message_card(v, props),
         importance: crate::delivery::Importance::from_properties(props),
         announcement: crate::delivery::parse_announcement(props),
+        language_stamp: props
+            .and_then(|p| str_field(p, "languageStamp"))
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
+        links: props
+            .and_then(|p| p.get("links"))
+            .map(crate::urlpreview::parse_links_property)
+            .unwrap_or_default(),
     })
 }
 
@@ -489,6 +502,27 @@ mod tests {
         assert_eq!(m.files[0].name, "contoso-docs-demo.mp4");
         assert_eq!(m.files[0].url, "https://x.sharepoint.com/:v:/g/a");
         assert!(m.is_chat_content());
+    }
+
+    #[test]
+    fn message_carries_language_stamp_and_link_previews() {
+        let plain = message_from_json(&msg_json(), "").unwrap();
+        assert_eq!(plain.language_stamp, None);
+        assert!(plain.links.is_empty());
+
+        let mut v = msg_json();
+        v["properties"]["languageStamp"] = json!("languages=de:100;length:82;&detector=Bling");
+        v["properties"]["links"] = json!(
+            r#"[{"@type":"http://schema.skype.com/HyperLink","url":"https://www.rust-lang.org/","preview":{"previewurl":"https://urlp.asm.skype.com/v1/url/image/Thumbnail?url=x","title":"Rust","description":"A language"},"previewenabled":true}]"#
+        );
+        let m = message_from_json(&v, "").unwrap();
+        assert_eq!(
+            m.language_stamp.as_deref(),
+            Some("languages=de:100;length:82;&detector=Bling")
+        );
+        assert_eq!(m.links.len(), 1);
+        assert_eq!(m.links[0].title.as_deref(), Some("Rust"));
+        assert_eq!(m.links[0].url, "https://www.rust-lang.org/");
     }
 
     #[test]

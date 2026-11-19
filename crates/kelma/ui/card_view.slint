@@ -6,7 +6,7 @@ import { CardRow } from "types.slint";
 
 export global CardColors {
     pure public function band(b: string) -> color {
-        if b == "emphasis" { return #333333; }
+        if b == "emphasis" { return Theme.surface-hover; }
         if b == "good" { return #1d3b27; }
         if b == "attention" { return #4d2024; }
         if b == "warning" { return #4a3912; }
@@ -37,7 +37,7 @@ component CardBtn inherits Rectangle {
     accessible-role: button;
     accessible-label: root.title;
     accessible-enabled: root.enabled;
-    label := Text { text: root.title; color: Theme.fg; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+    label := Text { text: root.title; color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
     touch := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
@@ -52,7 +52,7 @@ export component CardView inherits Rectangle {
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.border;
-    background: #1f1f1f;
+    background: Theme.sidebar;
     clip: true;
     accessible-role: groupbox;
     accessible-label: "Card";
@@ -88,7 +88,7 @@ export component CardView inherits Rectangle {
                     Text {
                         text: r.label;
                         color: Theme.fg-muted;
-                        font-size: 13px;
+                        font-size: 13px * Theme.font-scale;
                         font-weight: 700;
                         width: 150px;
                         wrap: word-wrap;
@@ -96,7 +96,7 @@ export component CardView inherits Rectangle {
                     StyledText {
                         text: r.text;
                         default-color: Theme.fg;
-                        default-font-size: 13px;
+                        default-font-size: 13px * Theme.font-scale;
                         link-color: Theme.accent;
                         selectable: true;
                         horizontal-stretch: 1;
@@ -122,7 +122,7 @@ export component CardView inherits Rectangle {
                 if r.kind == "image": Rectangle {
                     height: r.img-h;
                     if r.has-img: Image { source: r.img; width: min(r.img-w, parent.width); height: parent.height; image-fit: contain; x: 0px; }
-                    if !r.has-img: Text { text: "Loading image…"; color: Theme.fg-subtle; font-size: 11px; vertical-alignment: center; }
+                    if !r.has-img: Text { text: "Loading image…"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: center; }
                 }
                 if r.kind == "actions": HorizontalLayout {
                     spacing: 8px;

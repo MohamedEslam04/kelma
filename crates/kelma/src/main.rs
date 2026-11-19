@@ -9,6 +9,7 @@ mod external;
 mod find_data;
 mod lists_data;
 mod markdown;
+mod media_data;
 mod mention;
 mod reactions;
 mod shortcuts;
@@ -325,9 +326,6 @@ fn main() -> anyhow::Result<()> {
     cmd!(on_activity_reply, |t| Cmd::Activity(ActivityCmd::Reply(
         t.into()
     )));
-    cmd!(on_activity_settings, || Cmd::Activity(
-        ActivityCmd::Settings
-    ));
     cmd!(on_set_enter_sends, |on| Cmd::SetEnterSends(on));
     cmd!(on_draft_edited, |text| Cmd::DraftEdited(text.into()));
     cmd!(on_emoji_used, |e| Cmd::EmojiUsed(e.into()));
@@ -354,6 +352,7 @@ fn main() -> anyhow::Result<()> {
     }
     ui::install_calendar(&window, tx.clone());
     ui::install_apps(&window, tx.clone());
+    ui::settings::install_system(&window, tx.clone());
     {
         let tx = tx.clone();
         window.global::<FindStore>().on_command(move |name, arg| {
@@ -393,6 +392,22 @@ fn main() -> anyhow::Result<()> {
         window.global::<TeamsStore>().on_command(move |name, arg| {
             if let Some(c) = backend::TeamsCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Teams(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<MediaStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::MediaCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Media(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<EngageStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::EngageCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Engage(c));
             }
         });
     }

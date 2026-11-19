@@ -14,7 +14,7 @@ export component ReactionPicker inherits Rectangle {
     width: 308px;
     height: 300px;
     border-radius: 6px;
-    background: #2b2b2b;
+    background: Theme.surface;
     border-width: 1px;
     border-color: Theme.border;
     drop-shadow-blur: 12px;
@@ -26,7 +26,7 @@ export component ReactionPicker inherits Rectangle {
         Rectangle {
             height: 32px;
             border-radius: 4px;
-            background: #1f1f1f;
+            background: Theme.sidebar;
             border-width: 1px;
             border-color: input.has-focus ? Theme.accent : Theme.border;
             HorizontalLayout {
@@ -37,7 +37,7 @@ export component ReactionPicker inherits Rectangle {
                 input := TextInput {
                     property <int> tick: root.focus-tick;
                     color: Theme.fg;
-                    font-size: 13px;
+                    font-size: 13px * Theme.font-scale;
                     single-line: true;
                     vertical-alignment: center;
                     accessible-role: text-input;
@@ -54,7 +54,7 @@ export component ReactionPicker inherits Rectangle {
                 x: 32px;
                 text: "Search reactions";
                 color: Theme.fg-subtle;
-                font-size: 13px;
+                font-size: 13px * Theme.font-scale;
                 vertical-alignment: center;
             }
         }
@@ -69,7 +69,7 @@ export component ReactionPicker inherits Rectangle {
                     height: 34px;
                     border-radius: 4px;
                     background: cell.has-hover ? Theme.surface-hover : transparent;
-                    Text { text: e.emoji; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { text: e.emoji; font-size: 20px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
                     cell := TouchArea {
                         mouse-cursor: pointer;
                         accessible-role: button;
@@ -82,7 +82,7 @@ export component ReactionPicker inherits Rectangle {
         if root.items.length == 0: Text {
             text: "No reactions found";
             color: Theme.fg-subtle;
-            font-size: 12px;
+            font-size: 12px * Theme.font-scale;
             horizontal-alignment: center;
         }
     }

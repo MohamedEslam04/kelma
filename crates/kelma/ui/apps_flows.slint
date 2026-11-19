@@ -26,9 +26,9 @@ component FlowRowView inherits Rectangle {
             horizontal-stretch: 1;
             min-width: 0px;
             spacing: 2px;
-            Text { text: root.f.title; color: Theme.fg; font-size: 13px; font-weight: 600; overflow: elide; }
-            Text { text: root.f.subtitle; color: Theme.fg-muted; font-size: 11px; overflow: elide; }
-            Text { text: root.f.meta; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+            Text { text: root.f.title; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; overflow: elide; }
+            Text { text: root.f.subtitle; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; overflow: elide; }
+            Text { text: root.f.meta; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
         }
         KitBadge { y: 22px; text: root.f.badge; tone: root.f.tone; }
     }
@@ -52,8 +52,8 @@ export component FlowsView inherits Rectangle {
                         VerticalLayout {
                             alignment: center;
                             horizontal-stretch: 1;
-                            Text { text: "Workflows"; color: Theme.fg; font-size: 18px; font-weight: 700; }
-                            Text { text: FlowsStore.environment; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
+                            Text { text: "Workflows"; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; }
+                            Text { text: FlowsStore.environment; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
                         }
                         IconButton { y: 12px; icon: @image-url("icons/sync.svg"); tooltip: "Refresh flows"; clicked => { FlowsStore.command("flows-refresh", ""); } }
                     }
@@ -82,7 +82,7 @@ export component FlowsView inherits Rectangle {
                     Text {
                         text: FlowsStore.selected-name == "" ? "Run history" : "Run history of " + FlowsStore.selected-name;
                         color: Theme.fg;
-                        font-size: 16px;
+                        font-size: 16px * Theme.font-scale;
                         font-weight: 700;
                         vertical-alignment: center;
                         overflow: elide;
@@ -107,12 +107,12 @@ export component FlowsView inherits Rectangle {
                             padding-left: 8px;
                             padding-right: 8px;
                             spacing: 12px;
-                            Text { text: r.title; color: Theme.fg; font-size: 13px; vertical-alignment: center; width: 150px; }
-                            Text { text: r.subtitle; color: Theme.fg-muted; font-size: 12px; vertical-alignment: center; width: 70px; }
-                            Text { text: r.meta; color: Theme.fg-subtle; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                            Text { text: r.title; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; width: 150px; }
+                            Text { text: r.subtitle; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 70px; }
+                            Text { text: r.meta; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
                             KitBadge { y: 12px; text: r.badge; tone: r.tone; }
                         }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: #262626; }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
                     }
                 }
             }

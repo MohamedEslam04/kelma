@@ -42,9 +42,24 @@ pub struct AttachmentData {
 #[derive(Clone)]
 pub struct ImgData {
     pub url: String,
+    /// Position and size of the cell in the message's image grid.
+    pub x: f32,
+    pub y: f32,
     pub w: f32,
     pub h: f32,
+    /// `k` on the last cell when `k` more images are not shown.
+    pub overflow: usize,
     pub pixels: Option<Pixels>,
+}
+
+/// A link preview card.
+#[derive(Clone)]
+pub struct LinkData {
+    pub url: String,
+    pub title: String,
+    pub description: String,
+    pub domain: String,
+    pub thumb: Option<Pixels>,
 }
 
 #[derive(Clone)]
@@ -111,6 +126,13 @@ pub struct MsgData {
     pub headline: String,
     /// `""`, `"high"` or `"urgent"`: the red label above the text.
     pub importance: String,
+    /// Size of the image grid.
+    pub grid_w: f32,
+    pub grid_h: f32,
+    /// Translation state, see `Msg.translate`.
+    pub translate: &'static str,
+    pub translate_from: String,
+    pub links: Vec<LinkData>,
 }
 
 /// A person, or a team, channel or "everyone" entry, in a people list.
