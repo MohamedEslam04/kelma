@@ -179,6 +179,19 @@ pub fn status_note_body(text: &str, expiry_iso: Option<&str>, show_when_messaged
     json!({ "message": message, "expiry": expiry_iso.unwrap_or(NEVER_EXPIRES) })
 }
 
+/// Body for `PUT me/endpoints/`: this device's own presence, which the service aggregates with
+/// the user's other devices (and which lets a forced status show, see chat plan 6.4).
+/// `activity` is e.g. `Available`, `InACall` or `InAConferenceCall`.
+pub fn endpoint_body(endpoint_id: &str, a: Availability, activity: &str) -> Value {
+    json!({
+        "id": endpoint_id,
+        "availability": a.as_str(),
+        "activity": activity,
+        "activityReporting": "Transport",
+        "deviceType": "Desktop",
+    })
+}
+
 /// Body for `reportmyactivity`.
 pub fn activity_body(endpoint_id: &str, active: bool) -> Value {
     json!({ "endpointId": endpoint_id, "isActive": active })
@@ -266,6 +279,27 @@ impl Client {
     ) -> Result<()> {
         let body = status_note_body(text, expiry_iso, show_when_messaged);
         self.presence_json("status note", Method::PUT, "me/publishnote", Some(&body))
+            .await
+            .map(|_| ())
+    }
+
+    /// Publishes this device's presence (registers the endpoint on first use).
+    pub async fn publish_endpoint(&self, a: Availability, activity: &str) -> Result<()> {
+        let body = endpoint_body(self.epid(), a, activity);
+        self.presence_json(
+            "publish endpoint",
+            Method::PUT,
+            "me/endpoints/",
+            Some(&body),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Removes this device's presence (on sign-out or quit), so it no longer counts.
+    pub async fn remove_endpoint(&self) -> Result<()> {
+        let path = format!("me/endpoints/{}", self.epid());
+        self.presence_json("remove endpoint", Method::DELETE, &path, None)
             .await
             .map(|_| ())
     }
@@ -370,6 +404,15 @@ mod tests {
         assert_eq!(shown["expiry"], "2030-01-01T00:00:00.000Z");
         // Clearing never carries the suffix.
         assert_eq!(status_note_body("", None, true)["message"], "");
+    }
+
+    #[test]
+    fn endpoint_body_carries_this_devices_presence() {
+        assert_eq!(
+            endpoint_body("ep-1", Availability::Busy, "InACall"),
+            json!({"id": "ep-1", "availability": "Busy", "activity": "InACall",
+                   "activityReporting": "Transport", "deviceType": "Desktop"})
+        );
     }
 
     #[test]

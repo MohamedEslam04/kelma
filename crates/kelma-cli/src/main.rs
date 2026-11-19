@@ -909,6 +909,27 @@ async fn main() -> Result<()> {
                     println!("reset");
                     mris.clear();
                 }
+                Some("idle") => {
+                    client.report_activity(false).await?;
+                    println!("reported idle");
+                    mris.clear();
+                }
+                Some("remove-endpoint") => {
+                    client.remove_endpoint().await?;
+                    println!("removed this device's endpoint");
+                    mris.clear();
+                }
+                Some("endpoint") => {
+                    // `presence endpoint <availability> <activity>`: this device's own presence.
+                    let a = mris
+                        .get(1)
+                        .and_then(|w| teams_proto::presence::Availability::from_wire(w))
+                        .context("usage: presence endpoint <availability> <activity>")?;
+                    let activity = mris.get(2).map(String::as_str).unwrap_or(a.as_str());
+                    client.publish_endpoint(a, activity).await?;
+                    println!("endpoint {} / {activity}", a.as_str());
+                    mris.clear();
+                }
                 _ => {}
             }
             if mris.is_empty() {

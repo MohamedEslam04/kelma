@@ -22,6 +22,7 @@ mod cal;
 pub(crate) mod call;
 #[cfg(feature = "calls")]
 pub(crate) mod call_direct;
+pub(crate) mod call_presence;
 mod channels;
 pub(crate) mod composer_apps;
 mod drafts;

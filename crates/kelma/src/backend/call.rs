@@ -704,12 +704,25 @@ impl Shared {
             // The driver is done; dropping the handle stops whatever it still runs.
             self.handle.lock().unwrap().take();
         }
+        self.publish_presence();
         if changed {
             self.push();
         }
         if phase == Phase::Connected {
             self.tick();
         }
+    }
+
+    /// "In a call" while connected (or reconnecting), Available once the call is over.
+    fn publish_presence(&self) {
+        let (phase, meeting) = {
+            let m = self.model.lock().unwrap();
+            (m.phase, matches!(m.kind, CallKind::Meeting { .. }))
+        };
+        // Connected or reconnecting: active, and past joining.
+        let connected =
+            phase.active() && !matches!(phase, Phase::PreJoin | Phase::Connecting | Phase::Lobby);
+        super::call_presence::update(connected, meeting);
     }
 
     /// Pushes the timer once a second while the call runs.
@@ -785,6 +798,8 @@ impl CallHandle for NoHandle {
 impl CallManager {
     /// The manager with the live driver (or [`Unavailable`] without the `calls` feature).
     pub fn new(ui: UiHandle, client: teams_proto::Client, my_name: String) -> Self {
+        #[cfg(not(test))]
+        super::call_presence::install(client.clone());
         #[cfg(feature = "calls")]
         let hub = live::Hub::new(client);
         // Tests never reach the network or the sound cards.
@@ -977,6 +992,7 @@ impl CallManager {
             generation,
         });
         *self.shared.handle.lock().unwrap() = Some(Arc::from(handle));
+        self.shared.publish_presence();
         self.shared.push();
         self.shared.tick();
         true
