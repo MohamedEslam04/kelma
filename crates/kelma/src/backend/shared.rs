@@ -246,6 +246,18 @@ impl Engine {
         self.clone().handle(super::Cmd::AttachFile).await;
     }
 
+    /// Upload from OneDrive: the OneDrive file picker (`DriveFilePicker`) adds the chosen file
+    /// to the composer like Attach cloud files does, so the chat shows again with the chip.
+    pub(super) async fn shared_onedrive(self: &Arc<Self>) {
+        self.ui.chat_tab("chat");
+        self.find.lock().unwrap().shared.tab_open = false;
+        self.clone()
+            .handle(super::Cmd::Drive(super::DriveCmd::PickBegin(
+                "attach".into(),
+            )))
+            .await;
+    }
+
     fn push_shared(&self) {
         let (rows, recent, loading) = {
             let f = self.find.lock().unwrap();

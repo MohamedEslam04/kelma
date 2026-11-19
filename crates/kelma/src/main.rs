@@ -5,6 +5,7 @@ mod composer;
 mod composer_format;
 mod data;
 mod demo;
+mod external;
 mod find_data;
 mod lists_data;
 mod markdown;
