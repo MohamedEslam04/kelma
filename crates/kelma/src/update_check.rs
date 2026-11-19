@@ -55,13 +55,11 @@ pub fn parse_version(s: &str) -> Option<Version> {
         None => (s, false),
     };
     let mut nums = [0u64; 3];
-    let mut n = 0;
-    for part in core.split('.') {
+    for (n, part) in core.split('.').enumerate() {
         if n == 3 || part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
         nums[n] = part.parse().ok()?;
-        n += 1;
     }
     Some(Version { core: nums, pre })
 }
