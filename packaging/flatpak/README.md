@@ -1,6 +1,6 @@
 # Flatpak
 
-`io.github.mohamedeslam04.kelma.yml` builds kelma against the Freedesktop 25.08 runtime with the
+`io.github.mohamedeslam04.kelma.yml` builds kelma against the Freedesktop 26.08 runtime with the
 `rust-stable` SDK extension.
 
 ## Permissions
@@ -33,8 +33,8 @@ flatpak run io.github.mohamedeslam04.kelma
 By hand, from this folder:
 
 ```sh
-flatpak install flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08 \
-  org.freedesktop.Sdk.Extension.rust-stable//25.08
+flatpak install flathub org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08 \
+  org.freedesktop.Sdk.Extension.rust-stable//26.08
 python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json
 flatpak-builder --user --install --force-clean --state-dir=/data/kelma-flatpak/state \
   /data/kelma-flatpak/build-dir io.github.mohamedeslam04.kelma.yml

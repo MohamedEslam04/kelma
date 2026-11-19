@@ -1,7 +1,7 @@
 # Flatpak manifest for kelma. See packaging/flatpak/README.md for how to build it.
 app-id: io.github.mohamedeslam04.kelma
 runtime: org.freedesktop.Platform
-runtime-version: '25.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -34,6 +34,8 @@ build-options:
   env:
     CARGO_HOME: /run/build/kelma/cargo
     CARGO_NET_OFFLINE: 'true'
+    # One compile job: the build host and CI runners are short on memory.
+    CARGO_BUILD_JOBS: '1'
 
 modules:
   - name: kelma

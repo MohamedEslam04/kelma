@@ -1,11 +1,13 @@
 # Optional packaging builds. They are slow, so they never run on pull requests: start them by
-# hand from the Actions tab, or they run when packaging/ changes on main.
+# hand from the Actions tab, or they run when packaging/ changes on main. Pushing a branch named
+# ci/packaging-* also runs them, which tests changes before the workflow reaches main (a manual
+# run needs the workflow on the default branch).
 name: Packaging
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'ci/packaging-*']
     paths: ['packaging/**', 'Cargo.lock', '.github/workflows/packaging.yml']
 
 jobs:
@@ -33,12 +35,15 @@ jobs:
   flatpak:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
       options: --privileged
     steps:
       - uses: actions/checkout@v4
       - name: Generate cargo-sources.json
         run: |
+          # The image sets PYTHONPATH to /app/lib/python3.13/site-packages, so pip believes aiohttp is
+          # installed already and skips it, then `python3 -I` ignores that path and fails.
+          unset PYTHONPATH
           python3 -m venv /tmp/gen
           /tmp/gen/bin/pip -q install 'aiohttp>=3.9.5,<4' 'PyYAML>=6.0.2,<7' 'tomlkit>=0.13.3,<1'
           curl -fsSL -o /tmp/gen/flatpak-cargo-generator.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/9d86d336a39b9af38b86f114b6ce5820fe260f91/cargo/flatpak-cargo-generator.py

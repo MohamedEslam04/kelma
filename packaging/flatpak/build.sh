@@ -31,6 +31,9 @@ if command -v flatpak-builder >/dev/null 2>&1; then
 else
   builder="flatpak run org.flatpak.Builder"
 fi
+# One build job by default (the manifest sets CARGO_BUILD_JOBS=1 too): the compile needs several GB
+# of memory per job. Raise it with KELMA_FLATPAK_JOBS=4 on a bigger machine.
 # shellcheck disable=SC2086
 $builder --user $install_flag --force-clean --install-deps-from=flathub \
+  --jobs="${KELMA_FLATPAK_JOBS:-1}" \
   --state-dir="$work/state" "$work/build-dir" "$here/$APP_ID.yml"
