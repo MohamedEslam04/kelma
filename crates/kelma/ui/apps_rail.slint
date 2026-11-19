@@ -9,6 +9,8 @@ import { AppTile, KitButton, KitSearch, KitMenuRow, KitMenuFrame } from "apps_ki
 // One rail button. `app` entries show the app's icon; the fixed ones show a glyph.
 component RailEntry inherits Rectangle {
     in property <string> label;
+    // What a screen reader says, when it should differ from the label under the icon.
+    in property <string> a11y-label;
     in property <image> glyph;
     in property <image> icon;
     in property <bool> has-icon;
@@ -26,7 +28,7 @@ component RailEntry inherits Rectangle {
     property <bool> was-drag;
     property <length> dy;
     accessible-role: button;
-    accessible-label: root.label;
+    accessible-label: root.a11y-label != "" ? root.a11y-label : root.label;
     accessible-description: root.active ? "Current" : "";
     Rectangle {
         x: 0;
@@ -45,7 +47,7 @@ component RailEntry inherits Rectangle {
             spacing: 2px;
             if root.glyph.width > 0: Icon { source: root.glyph; tint: root.active || ta.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
             if root.glyph.width == 0: AppTile { icon: root.icon; has-icon: root.has-icon; letter: root.letter; tone: root.tone; size: 24px; x: (parent.width - 24px) / 2; }
-            if !AppsStore.rail-collapsed: Text { text: root.label; color: root.active ? Theme.accent : Theme.fg-muted; font-size: 10px; horizontal-alignment: center; overflow: elide; }
+            if !AppsStore.rail-collapsed: Text { accessible-role: none; text: root.label; color: root.active ? Theme.accent : Theme.fg-muted; font-size: 10px; horizontal-alignment: center; overflow: elide; }
         }
     }
     ta := TouchArea {
@@ -127,6 +129,7 @@ export component RailApps inherits Rectangle {
         }
         RailEntry {
             label: "More";
+            a11y-label: "More apps";
             glyph: @image-url("icons/more.svg");
             active: AppsStore.flyout-open;
             clicked => {

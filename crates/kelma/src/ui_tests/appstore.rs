@@ -167,7 +167,7 @@ fn the_rail_lists_the_pinned_apps_after_the_fixed_entries_with_store_and_more() 
         "Planner",
         "Workflows",
         "Store",
-        "More",
+        "More apps",
     ] {
         assert!(a.has_label(label), "rail entry {label}");
     }
@@ -290,7 +290,7 @@ fn ctrl_shift_digits_open_the_nth_entry_and_the_bar_collapses() {
 #[test]
 fn more_opens_a_searchable_list_of_installed_apps_that_are_not_pinned() {
     let a = AppsHarness::open();
-    a.click("More");
+    a.click("More apps");
     assert!(a.store().get_flyout_open());
     // Installed, not pinned, with a personal tab: not Planner (pinned) or Contoso Tickets (a
     // message extension only).
@@ -312,12 +312,12 @@ fn more_opens_a_searchable_list_of_installed_apps_that_are_not_pinned() {
 #[test]
 fn opening_an_app_from_the_flyout_shows_it_in_the_main_area() {
     let a = AppsHarness::open();
-    a.click("More");
+    a.click("More apps");
     a.click("OneNote");
     assert!(!a.store().get_flyout_open(), "the flyout closes");
     assert_eq!(a.view(), "onenote");
     // Shifts has no screen of its own: its page opens in Teams on the web.
-    a.click("More");
+    a.click("More apps");
     a.click("Shifts");
     assert_eq!(a.view(), "app");
     assert_eq!(a.store().get_host_name(), "Shifts");
@@ -334,7 +334,7 @@ fn opening_an_app_from_the_flyout_shows_it_in_the_main_area() {
 #[test]
 fn pin_from_the_flyout_adds_the_app_to_the_rail() {
     let a = AppsHarness::open();
-    a.click("More");
+    a.click("More apps");
     a.click("Pin Shifts");
     assert_eq!(a.rail(), ["Calling", "Planner", "Workflows", "Shifts"]);
     assert!(a.banner().contains("Pinned Shifts"), "{}", a.banner());
