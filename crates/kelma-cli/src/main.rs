@@ -1049,7 +1049,7 @@ async fn main() -> Result<()> {
                    presence [mri..]\n\
                    card [mri]\n\
                    horizons <conv>\n\
-                   find <probe|search|mentions|followed|shared> (search and quick views, counts only)\n\
+                   find <search|mentions|followed|shared|folder|feed> (search, quick views and shared files; counts only)\n\
                    drive <ls|search|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir|rm|selftest|purge>\n\
                    drive <meetings|for-you|shared-by-me|people|media|new|shape|shape-search>\n\
                    tasks [todo <n>|plan <n>]\n\

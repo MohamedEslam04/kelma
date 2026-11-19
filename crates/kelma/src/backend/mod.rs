@@ -20,6 +20,7 @@ mod attach;
 mod cal;
 mod drafts;
 pub(crate) mod drive;
+mod find;
 mod live;
 mod mentions;
 mod outbox;
@@ -28,6 +29,7 @@ mod people;
 mod people_live;
 mod render;
 mod send;
+mod shared;
 mod sync;
 mod unread;
 mod util;
@@ -45,6 +47,7 @@ pub use cal::{
     SchedPush, SchedReq, SlotReq, local_tz, parse_hm, people_lenient, slot_for_pick, slot_minutes,
 };
 pub use drive::DriveCmd;
+pub use find::FindCmd;
 pub use people::PeopleCmd;
 
 /// Commands sent by the UI.
@@ -95,6 +98,7 @@ pub enum Cmd {
     MarkAllRead,
     Calendar(CalCmd),
     Activity(ActivityCmd),
+    Find(FindCmd),
     People(PeopleCmd),
     Drive(DriveCmd),
     SetEnterSends(bool),
@@ -186,6 +190,7 @@ pub struct Engine {
     dirty: Mutex<Dirty>,
     activity: Mutex<activity::State>,
     people: Mutex<people::State>,
+    find: Mutex<find::State>,
     drive: Mutex<drive::Drive>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
@@ -238,6 +243,7 @@ impl Engine {
             }),
             activity: Mutex::new(activity::State::default()),
             people: Mutex::new(people::State::default()),
+            find: Mutex::new(find::State::default()),
             drive: Mutex::new(drive::Drive::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
@@ -504,6 +510,8 @@ impl Engine {
             Cmd::MarkAllRead => self.mark_all_read().await?,
             Cmd::Calendar(c) => self.calendar_cmd(c).await?,
             Cmd::Activity(c) => self.activity_cmd(c).await?,
+            // Boxed: a search result opens a chat through `handle` again.
+            Cmd::Find(c) => Box::pin(self.find_cmd(c)).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,

@@ -236,6 +236,7 @@ impl Engine {
         self.restore_draft(&id);
         self.push_attachments();
         self.on_chat_opened(&id);
+        self.find_chat_opened(&id);
         self.mark(|d| {
             d.header = true;
             d.messages = true;

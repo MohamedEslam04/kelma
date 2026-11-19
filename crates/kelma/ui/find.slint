@@ -159,24 +159,24 @@ component HitItem inherits Rectangle {
                     }
                     Text { text: root.data.subtitle; color: Theme.fg-subtle; font-size: 11px; overflow: elide; }
                 }
-                if root.secondary-label != "": Rectangle {
-                    width: 82px;
-                    horizontal-stretch: 0;
-                    Rectangle {
-                        height: 28px;
-                        y: (parent.height - 28px) / 2;
-                        border-radius: 4px;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        background: sec.has-hover ? Theme.surface-hover : transparent;
-                        accessible-role: button;
-                        accessible-label: root.secondary-label;
-                        Text { text: root.secondary-label; color: Theme.fg; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-                        sec := TouchArea { mouse-cursor: pointer; clicked => { root.secondary(); } }
-                    }
-                }
+                if root.secondary-label != "": Rectangle { width: 82px; horizontal-stretch: 0; }
             }
             touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+            // After the row's own TouchArea, so it gets its clicks.
+            if root.secondary-label != "": Rectangle {
+                x: parent.width - self.width - 12px;
+                y: (parent.height - self.height) / 2;
+                width: 74px;
+                height: 28px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: sec.has-hover ? Theme.surface-hover : transparent;
+                accessible-role: button;
+                accessible-label: root.secondary-label;
+                Text { text: root.secondary-label; color: Theme.fg; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                sec := TouchArea { mouse-cursor: pointer; clicked => { root.secondary(); } }
+            }
         }
     }
 }
@@ -244,6 +244,17 @@ export component SearchView inherits Rectangle {
                 border-width: 1px;
                 border-color: query-input.has-focus ? Theme.accent : Theme.border;
                 max-width: 720px;
+                FocusScope {
+                    capture-key-pressed(event) => {
+                        if event.text == Key.Escape {
+                            root.close();
+                            return accept;
+                        }
+                        reject
+                    }
+                    // Ctrl+Alt+E again puts the cursor back in the box.
+                    property <int> tick: FindStore.focus-tick;
+                    changed tick => { query-input.focus(); query-input.select-all(); }
                 HorizontalLayout {
                     padding-left: 12px;
                     padding-right: 12px;
@@ -270,6 +281,7 @@ export component SearchView inherits Rectangle {
                         y: 8px;
                         clicked => { FindStore.query = ""; query-input.focus(); }
                     }
+                }
                 }
                 if query-input.text == "": Text { x: 40px; text: "Search messages, files, people and chats"; color: Theme.fg-subtle; font-size: 14px; vertical-alignment: center; }
             }
@@ -325,10 +337,12 @@ export component SearchView inherits Rectangle {
         }
         Rectangle {
             vertical-stretch: 1;
-            ListView {
-                for r in FindStore.results: HitItem {
-                    data: r;
-                    clicked => { FindStore.command("open", r.id); }
+            VerticalLayout {
+                ListView {
+                    for r in FindStore.results: HitItem {
+                        data: r;
+                        clicked => { FindStore.command("open", r.id); }
+                    }
                 }
                 if FindStore.more && !FindStore.searching: Rectangle {
                     height: 44px;
@@ -386,12 +400,14 @@ export component QuickView inherits Rectangle {
         }
         Rectangle {
             vertical-stretch: 1;
-            ListView {
-                for r in FindStore.quick-rows: HitItem {
-                    data: r;
-                    secondary-label: FindStore.quick-kind == "followed" ? "Unfollow" : "";
-                    clicked => { FindStore.command("open", r.id); }
-                    secondary => { FindStore.command("unfollow", r.id); }
+            VerticalLayout {
+                ListView {
+                    for r in FindStore.quick-rows: HitItem {
+                        data: r;
+                        secondary-label: FindStore.quick-kind == "followed" ? "Unfollow" : "";
+                        clicked => { FindStore.command("open", r.id); }
+                        secondary => { FindStore.command("unfollow", r.id); }
+                    }
                 }
                 if FindStore.quick-more && !FindStore.quick-loading: Rectangle {
                     height: 44px;
@@ -603,7 +619,7 @@ export component DetailsPane inherits Rectangle {
                 padding-right: 8px;
                 Text { text: "In this chat"; color: Theme.fg; font-size: 15px; font-weight: 700; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
-                IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close details"; y: 10px; clicked => { FindStore.command("details", "close"); } }
+                IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close details"; y: 10px; clicked => { FindStore.details-open = false; FindStore.command("details", "close"); } }
             }
         }
         HorizontalLayout {
@@ -624,7 +640,7 @@ export component DetailsPane inherits Rectangle {
                 accessible-role: button;
                 accessible-label: "See all";
                 see-text := Text { text: "See all"; color: Theme.accent; font-size: 12px; vertical-alignment: center; horizontal-alignment: center; }
-                TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("tab", "shared"); } }
+                TouchArea { mouse-cursor: pointer; clicked => { FindStore.chat-tab = "shared"; FindStore.command("tab", "shared"); } }
             }
         }
         for s in FindStore.recent: SharedLine {

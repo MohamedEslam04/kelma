@@ -153,6 +153,45 @@ pub async fn run(client: &Client, cfg: &session::Config, args: &[String]) -> Res
                 }
             }
         }
+        // `find followed`: the followed threads (counts only).
+        Some("followed") => {
+            let list = client.followed_threads(100).await?;
+            println!(
+                "followed threads: {} ({} implicit, {} explicit)",
+                list.len(),
+                list.iter().filter(|t| t.implicit).count(),
+                list.iter().filter(|t| !t.implicit).count()
+            );
+        }
+        // `find shared <conv>`: files and links shared in a chat or channel (counts only).
+        Some("shared") => {
+            let conv = args.get(1).map(String::as_str).unwrap_or("48:notes");
+            let items = client.shared_items(&me, conv).await?;
+            let files = items
+                .iter()
+                .filter(|i| i.kind == teams_proto::views::SharedKind::File)
+                .count();
+            println!(
+                "shared in the conversation: {} files, {} links, {} with a sender, {} with a date",
+                files,
+                items.len() - files,
+                items.iter().filter(|i| !i.shared_by.is_empty()).count(),
+                items.iter().filter(|i| i.shared_ms > 0).count()
+            );
+        }
+        // `find folder <group id> <channel id>`: the files in a channel's folder (count only).
+        Some("folder") => {
+            let (Some(group), Some(channel)) = (args.get(1), args.get(2)) else {
+                bail!("usage: find folder <group id> <channel id>")
+            };
+            let (drive, folder) = client.channel_files_folder(group, channel).await?;
+            let page = onedrive::children(client, &drive, &folder, None).await?;
+            println!(
+                "channel folder: {} items, {} folders",
+                page.items.len(),
+                page.items.iter().filter(|i| i.is_folder).count()
+            );
+        }
         // `find mentions`: how many hits really mention me.
         Some("mentions") => {
             let q = mentions_query(&me).unwrap_or_default();
@@ -191,7 +230,9 @@ pub async fn run(client: &Client, cfg: &session::Config, args: &[String]) -> Res
                 );
             }
         }
-        _ => bail!("usage: find <search q [in conv]|mentions|feed conv [n]>"),
+        _ => bail!(
+            "usage: find <search q [in conv]|mentions|followed|shared conv|folder group channel|feed conv [n]>"
+        ),
     }
     Ok(())
 }

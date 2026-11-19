@@ -337,8 +337,8 @@ export component AppWindow inherits Window {
 
             // Sidebar
             if root.view != "calendar" && root.view != "onedrive": Sidebar {
-                visible: root.view != "activity";
-                width: root.view == "activity" ? 0px : 320px;
+                visible: root.view != "activity" && root.view != "search";
+                width: root.view == "activity" || root.view == "search" ? 0px : 320px;
                 max-height: 100000px;
                 view: root.view;
                 filter <=> root.filter;
@@ -354,11 +354,12 @@ export component AppWindow inherits Window {
                     PeopleStore.new-chat-open = true;
                     PeopleStore.command("new-chat-open", "");
                 }
-                select-chat(id) => { root.select-chat(id); }
-                select-channel(id, title) => { root.select-channel(id, title); }
+                select-chat(id) => { FindStore.quick-open = false; root.select-chat(id); }
+                select-channel(id, title) => { FindStore.quick-open = false; root.select-channel(id, title); }
                 toggle-team(i) => { root.toggle-team(i); }
                 toggle-favorite(id) => { root.toggle-favorite(id); }
                 set-filter(f) => { root.set-filter(f); }
+                quick-view(kind) => { FindStore.command("quick", kind); }
             }
 
             if root.view == "calendar": CalendarView { horizontal-stretch: 1; }
@@ -367,6 +368,18 @@ export component AppWindow inherits Window {
             // Conversation
             if root.view != "calendar" && root.view != "onedrive": Rectangle {
                 background: Theme.main;
+                if root.view == "search": SearchView {
+                    z: 40;
+                    width: parent.width;
+                    height: parent.height;
+                    close => { root.view = "chat"; }
+                }
+                if FindStore.quick-open && root.view == "chat": QuickView {
+                    z: 18;
+                    width: parent.width;
+                    height: parent.height;
+                    close => { FindStore.quick-open = false; FindStore.command("quick-close", ""); }
+                }
                 if root.view == "activity": ActivityView {
                     z: 20;
                     width: parent.width;
@@ -507,10 +520,25 @@ export component AppWindow inherits Window {
                                     root.renaming = true;
                                 }
                             }
-                            for tab in (root.current-is-channel ? ["Posts", "Files"] : ["Chat", "Shared"]): VerticalLayout {
-                                alignment: center;
-                                Text { text: tab; color: tab == "Chat" || tab == "Posts" ? Theme.fg : Theme.fg-muted; font-size: 14px; font-weight: tab == "Chat" || tab == "Posts" ? 600 : 400; }
-                                Rectangle { height: 3px; border-radius: 1px; background: tab == "Chat" || tab == "Posts" ? Theme.accent : transparent; }
+                            for tab in (root.current-is-channel ? ["Posts", "Files"] : ["Chat", "Shared"]): tab-item := Rectangle {
+                                // The Shared (Files) tab replaces the conversation, see `FindStore`.
+                                property <bool> active: (FindStore.chat-tab == "shared") == (tab == "Shared" || tab == "Files");
+                                width: tab-label.preferred-width;
+                                accessible-role: AccessibleRole.tab;
+                                accessible-label: tab;
+                                accessible-checked: self.active;
+                                VerticalLayout {
+                                    alignment: center;
+                                    tab-label := Text { text: tab; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px; font-weight: tab-item.active ? 600 : 400; }
+                                    Rectangle { height: 3px; border-radius: 1px; background: tab-item.active ? Theme.accent : transparent; }
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        FindStore.chat-tab = (tab == "Shared" || tab == "Files") ? "shared" : "chat";
+                                        FindStore.command("tab", FindStore.chat-tab);
+                                    }
+                                }
                             }
                             if root.thread-root == "" && !root.current-is-channel: IconButton {
                                 icon: @image-url("icons/calendar.svg");
@@ -519,6 +547,27 @@ export component AppWindow inherits Window {
                                 clicked => { root.schedule-meeting(root.current-id); }
                             }
                             Rectangle { horizontal-stretch: 1; }
+                            if root.thread-root == "": IconButton {
+                                icon: @image-url("icons/search.svg");
+                                y: 14px;
+                                tooltip: root.current-is-channel ? "Find in channel" : "Find in chat";
+                                active: FindStore.chat-find-open;
+                                clicked => {
+                                    FindStore.chat-find-open = !FindStore.chat-find-open;
+                                    FindStore.chat-find-tick += 1;
+                                    FindStore.command(FindStore.chat-find-open ? "find-open" : "find-close", "");
+                                }
+                            }
+                            if root.thread-root == "": IconButton {
+                                icon: @image-url("icons/info.svg");
+                                y: 14px;
+                                tooltip: "Open chat details";
+                                active: FindStore.details-open;
+                                clicked => {
+                                    FindStore.details-open = !FindStore.details-open;
+                                    FindStore.command("details", FindStore.details-open ? "open" : "close");
+                                }
+                            }
                             if PeopleStore.header-group && root.thread-root == "": people-btn := Rectangle {
                                 width: people-count.preferred-width + 40px;
                                 height: 32px;
@@ -541,6 +590,8 @@ export component AppWindow inherits Window {
                         }
                         Rectangle { y: parent.height - 1px; height: 1px; background: #2b2b2b; }
                     }
+
+                    if FindStore.chat-find-open && root.thread-root == "": ChatFindBar { channel: root.current-is-channel; }
 
                     if PeopleStore.pinned.length > 0 && root.thread-root == "": PinnedBanner {
                         items: PeopleStore.pinned;
@@ -608,6 +659,7 @@ export component AppWindow inherits Window {
                                         root.menu-x = x;
                                         root.menu-y = y;
                                         root.menu-open = true;
+                                        if root.current-is-channel { FindStore.command("menu-follow", m.id); }
                                     }
                                     toggle-select => { root.toggle-select(m.id); }
                                     retry-send => { root.retry-send(m.id); }
@@ -713,6 +765,20 @@ export component AppWindow inherits Window {
                         attach-file => { root.attach-file(); }
                     }
                 }
+                // The Shared (Files) tab and the details pane sit below the 60px header.
+                if root.current-id != "" && FindStore.chat-tab == "shared" && root.view != "activity": SharedView {
+                    z: 8;
+                    y: 60px;
+                    width: parent.width;
+                    height: parent.height - 60px;
+                }
+                if root.current-id != "" && FindStore.details-open && root.thread-root == "" && root.view != "activity": DetailsPane {
+                    z: 9;
+                    x: parent.width - self.width;
+                    y: 60px;
+                    height: parent.height - 60px;
+                    title: root.current-title;
+                }
             }
         }
     }
@@ -734,6 +800,12 @@ export component AppWindow inherits Window {
             mine: root.menu-msg.mine;
             saved: root.menu-msg.saved;
             can-pin: !root.current-is-channel;
+            can-follow: root.current-is-channel && root.thread-root == "";
+            following: FindStore.menu-following;
+            toggle-follow => {
+                root.menu-open = false;
+                FindStore.command(FindStore.menu-following ? "unfollow-msg" : "follow", root.menu-msg.id);
+            }
             reply => { root.menu-open = false; root.reply(root.menu-msg.id); }
             forward-one => {
                 root.menu-open = false;

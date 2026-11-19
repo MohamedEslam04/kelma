@@ -21,6 +21,7 @@ use std::rc::Rc;
 
 pub(crate) mod activity;
 pub(crate) mod drive;
+mod find;
 mod people;
 
 thread_local! {

@@ -280,6 +280,21 @@ Pitfalls found live:
 - Uploads and the recycle bin call sometimes ran past the client's 60 s timeout during the live runs.
   Retrying worked.
 
+## Search, quick views and shared files (`teams_proto::search`, `views`) 2026-11-19
+
+Live checks ran with `kelma-cli find …` (counts and shapes only). Message content was never printed.
+
+| Call | Notes | Live |
+|---|---|---|
+| `POST substrate.office.com/searchservice/api/v2/query` `entityType:"Message"`, `contentSources:["Teams"]`, `query.queryString:"NOT (isClientSoftDeleted:TRUE) AND (<text>)"` plus ` AND clientthreadid:<conv>`, ` AND …FromSkypeInternalId_String:<mri>`, ` AND sent>=YYYY-MM-DD`; `from`/`size` page it | headers `x-anchormailbox: Oid:<oid>@<tenant>`, `Origin`/`Referer: https://teams.microsoft.com`, `X-ClientType: MicrosoftTeams`, `X-ClientScenario: TeamsSearch`. Answer `EntitySets[0].ResultSets[0]{Total, MoreResultsAvailable, Results[]}`; each result has `HitHighlightedSummary` (no highlight markup came back for the queries tried, so kelma bolds the words itself), `Source{ClientConversationId, ClientThreadId, DateTimeSent, ConversationTopic, ChannelName, TeamName, From.EmailAddress.Name, MentionsPreview.IsMentioned, Extensions{…ParentMessageId, …FromSkypeInternalId, …ThreadType}}` | ✅ |
+| Message id of a hit | `ClientConversationId` is `<conv>;messageid=<id>` but that id is **not** the message's. For chat messages and channel posts the message id is `Extensions.…ParentMessageId` (a misleading name; it equals `DateTimeSent` in ms). For a channel reply both name the thread root, and the reply's own id equals `DateTimeSent` in ms (3 fractional digits; some rows have 2, so kelma looks for the nearest reply within 1.5 s). `ThreadType`: `chat`, `topic` (channel), `space`, `meeting`, `streamofnotes` (Notes) | ✅ every hit of 10 found in the chat service |
+| `mentions:<oid without dashes>` as the query text | the messages that @mention you; `MentionsPreview.IsMentioned` was true for all 50 of the first page | ✅ |
+| Substrate `File`, `Chat` and `TeamsChannel` entities | `File` answers `500` for this account, `Chat` and `TeamsChannel` answered 0 results. kelma searches files through Graph search (`onedrive::search`) and chats and channels from the local cache | ❌ not used |
+| `GET chat/v1/users/ME/conversations/48:threads/messages?view=msnp24Equivalent\|supportsMessageProperties&pageSize=N&startTime=1` | rows with `properties.activity{activityType:"threads", activityReason: author \| channelFollow \| deleted, sourceThreadId, sourceReplyChainId (the root post), sourceThreadTopic, activityContext.followType: ImplicitFollow}`. Replying to a post in the sandbox channel added an `author` row with `ImplicitFollow` within seconds. The newest row per thread decides; `deleted` means not followed | ✅ read |
+| Follow: `PUT …/conversations/<channel>/messages/<root>/properties?name=emotions` `{"emotions":{"key":"follow","value":"0"}}` (follow) or `"1"` (unfollow); `DELETE` with `{"emotions":{"key":"follow"}}` clears it | the post then carries a `follow` emotion with the value (read back from the message properties). Because it is stored as an emotion, kelma hides the key `follow` from the reaction chips. **Not confirmed**: `48:threads` did not change within 30 s of an explicit follow or unfollow, so whether Teams' Followed threads view reads this flag was not seen (the Teams UI was not used) | 🧪 |
+| `GET substrate.office.com/AllFiles/api/users('OID:<oid>@<tenant>')/AllShared?ThreadId=<conv>&ItemTypes=File&ItemTypes=Link&PageSize=50` | header `x-anchormailbox`. `Items[]{ItemType: File \| Link, FileData{FileName, FileUrl, FileExtension, WebUrl}, WeblinkData{Title, WebUrl}, SharedByDisplayName, SharedByMRIId, SharedDateTime, TeamsMessageId, ParentMessageId, ThreadId}`, plus `HasMoreItems` and `Bookmark` (paging not used). `48:notes` returned 3 files and 19 links; the sandbox channel returned none | ✅ |
+| `GET graph/v1.0/teams/<group id>/channels/<channel id>/filesFolder` | the channel's SharePoint folder: `id`, `parentReference.driveId`, `folder.childCount`. Its children are listed with `onedrive::children` | ✅ (the sandbox folder is empty) |
+
 ## Real-time (trouter) ✅
 
 1. `POST go.trouter.teams.microsoft.com/v4/a?epid=<epid>` → `socketio`, `surl`, `ccid`, `connectparams`.

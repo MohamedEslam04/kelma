@@ -280,7 +280,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
 ## Phase 7: finding things
 
 ### 7.1 Search page
-- [ ] Impact 5, effort 4. Seen: Search (Ctrl+Alt+E).
+- [x] Impact 5, effort 4. Seen: Search (Ctrl+Alt+E).
   - **What.**
     - Results tabs: All, Messages, Files, People, Channels, Group chats, Meetings (and 2 more).
     - Filters: In (chat or channel), Person, Date.
@@ -291,12 +291,21 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - People results reuse `searchV2`.
     - Chats and channels can be searched locally.
   - **Done when.** Searching a phrase from the cache finds it, and the jump lands on it.
+  - **Status.**
+    - Built in `ui/find.slint` (`SearchView`), `backend/find.rs` and `teams_proto::search`. Tabs: All, Messages, Files, People, Channels, Group chats, Meetings (the two unnamed extra tabs are not built). Filters In, Person and Date apply to messages. A hit shows the sender, the place, the time and a snippet with the matching words in bold.
+    - The cache is searched first (so results show at once and offline), then Substrate adds older messages. Files use Graph search (`onedrive::search`) because the Substrate `File` entity answers 500; people reuse `search_people`; channels, group chats and meetings are matched locally by name.
+    - The top-bar box opens the page on Enter. Clicking a message hit opens its chat and lands on the message (a channel reply opens its thread).
+  - **Evidence.** UI test `ctrl_alt_e_opens_search_and_a_phrase_from_the_cache_is_found_and_jumped_to`, plus `the_in_and_date_filters_narrow_the_messages` and `search_tabs_split_the_results_and_an_empty_search_says_so`. Live read check: `kelma-cli find search` returned hits whose ids were all found in the chat service (counts in `docs/protocol.md`), and `find mentions` flagged 50 of 50 hits as mentions.
 
 ### 7.2 Find in chat
-- [ ] Impact 4, effort 3. Seen: chat header 🔍 ("Find in chat"), and "Find in channel".
+- [x] Impact 4, effort 3. Seen: chat header 🔍 ("Find in chat"), and "Find in channel".
   - **What.** A search box above the conversation with ↑ and ↓ through matches; the list scrolls to each match and highlights it.
   - **How.** Add SQLite FTS5 over cached messages. When a match is older than the cache, page backward with the existing history paging.
   - **Done when.** A UI test plus a live check on a long chat.
+  - **Status.**
+    - Deviation from "How": the cache is scanned with a SQL `LIKE` prefilter (`Store::messages_containing`) and confirmed on the plain text, not FTS5, so there is no migration (other work is adding migrations in parallel). Matches older than the cache come from the server search `clientthreadid:<chat>`; moving to one pages the history back with `jump_to` (10 pages).
+    - The 🔍 button in the chat or channel header opens the bar ("Find in chat" or "Find in channel"). ↑ goes to the older match, ↓ to the newer one, Enter and Shift+Enter do the same, Esc closes. The list scrolls to each match and keeps it highlighted. A channel reply match opens its thread.
+  - **Evidence.** UI tests `find_in_chat_steps_through_the_matches_and_highlights_each` and `find_in_channel_has_its_own_label_and_finds_posts`. Live read check: `kelma-cli find search <word> in <sandbox channel>` found the 2 sandbox messages (a post and its reply) and both ids were found in the chat service.
 
 ### 7.3 Activity feed
 Moved to its own plan: `plans/activity.md`.
@@ -310,6 +319,12 @@ Moved to its own plan: `plans/activity.md`.
     - Auto-follow covers threads you started, threads you replied to and threads where you are @mentioned (settings).
   - **How.** Mentions is a filtered Activity. Followed threads needs discovery (a thread subscription property).
   - **Done when.** Following a test post in kelma shows it in Teams' Followed threads.
+  - **Status.** Not ticked: the Done-when needs the Teams web UI, which was not used.
+    - Built: the chat list "…" menu has Quick views > Mentions and Followed threads (`QuickView` in `find.slint`, `backend/find.rs`). Channel posts have "Follow thread" and "Unfollow thread" in the "…" menu. Unfollow is also a button on each Followed threads row, and the list is ordered by the newest reply.
+    - Mentions is not a filtered Activity (Activity's feed rows carry no text for `48:mentions`): it uses the Substrate query `mentions:<oid>` plus mentioning messages in the cache, which listed 50 of 50 hits as mentions in the live check.
+    - Followed threads reads `48:threads` (newest row per thread, `deleted` rows drop it). Following writes the `follow` emotion (`"0"` follow, `"1"` unfollow), checked on a sandbox post: the service stores it and reads it back. `48:threads` did not change within 30 s of an explicit follow or unfollow (it did get an `ImplicitFollow` row when the sandbox post was replied to), so it is unknown whether Teams' view reads that flag.
+    - Auto-follow is a Teams account setting and no Settings screen exists yet (`plans/settings-and-platform.md`), so it is not built.
+  - **Evidence.** UI tests `mentions_lists_the_messages_that_mention_me_and_a_click_opens_one`, `followed_threads_list_new_replies_on_top_and_unfollow_removes_one` and `channel_posts_offer_follow_and_unfollow_in_their_menu`.
 
 ### 7.5 Shared and Files tabs
 - [ ] Impact 4, effort 3. Seen: chat tab "Shared", channel tab "Shared".
@@ -322,11 +337,17 @@ Moved to its own plan: `plans/activity.md`.
     - Chats: collect from cached messages (`properties.files` and links in the content).
     - Channels: Graph `GET /teams/{groupId}/channels/{channelId}/filesFolder`, then its children. `groupId` comes from CSA `teamSiteInformation` (verify).
   - **Done when.** It lists the same files as Teams for 48:notes and the test channel.
+  - **Status.** Not ticked: the comparison with Teams' own Shared tab was not made (the Teams UI was not used).
+    - Built: the header tab "Shared" (chats) or "Files" (channels) shows `SharedView` with Recent, Files and Links, a keyword filter, and Upload (the file picker adds the file to the composer, then the chat shows again with the chip). Rows open the file or link in the browser.
+    - Chats read the Substrate `AllShared` list, the same call the Teams tab uses, and add what cached messages carry. Channels also list their SharePoint folder (Graph `filesFolder` then its children, `teams_proto::views::channel_files_folder`, reusable by 8.6).
+    - Live read check: `find shared 48:notes` returned 3 files and 19 links, all with a sender and a date. `find folder` on the sandbox channel found its folder (0 items), and `AllShared` for that channel returned none.
+  - **Evidence.** UI tests `the_shared_tab_lists_files_and_links_filters_them_and_opens_one` and `a_channel_shows_its_files_tab_and_a_chat_list_of_links`.
 
 ### 7.6 Chat details pane
-- [ ] Impact 2, effort 2. Seen: header button "Open chat details".
+- [x] Impact 2, effort 2. Seen: header button "Open chat details".
   - **What.** A right panel "In this chat" with the recent shared items and "See all", which goes to 7.5.
   - **Done when.** It toggles, and its items open.
+  - **Evidence.** UI test `the_details_pane_toggles_lists_recent_items_and_see_all_opens_shared` (the "i" button toggles it, it lists the five newest shared items, a row opens, "See all" goes to the Shared tab). The panel overlays the right edge of the conversation instead of pushing it aside.
 
 ---
 
