@@ -1,0 +1,153 @@
+{
+  "messages": [
+    {
+      "id": "1794919831001",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831001",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-17T10:51:36.8494045Z\", \"connectTime\": \"2026-11-17T10:51:41.4643648Z\", \"endTime\": \"2026-11-17T12:50:31.26382Z\", \"callDirection\": \"incoming\", \"callType\": \"twoParty\", \"callState\": \"accepted\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000101\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Ada Lovelace\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000201\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": null, \"participantList\": null, \"threadId\": null, \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831002",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831002",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-17T09:00:00.000Z\", \"connectTime\": \"2026-11-17T09:00:08.500Z\", \"endTime\": \"2026-11-17T09:04:20.500Z\", \"callDirection\": \"outgoing\", \"callType\": \"twoParty\", \"callState\": \"accepted\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000102\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Me Myself\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000202\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": null, \"participantList\": null, \"threadId\": null, \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831003",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831003",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-16T15:30:00.000Z\", \"connectTime\": null, \"endTime\": \"2026-11-16T15:30:25.000Z\", \"callDirection\": \"incoming\", \"callType\": \"twoParty\", \"callState\": \"missed\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000103\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Bob Builder\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000203\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": null, \"participantList\": null, \"threadId\": null, \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831004",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831004",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-16T14:00:00.000Z\", \"connectTime\": null, \"endTime\": \"2026-11-16T14:00:40.000Z\", \"callDirection\": \"outgoing\", \"callType\": \"twoParty\", \"callState\": \"missed\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000104\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Me Myself\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000204\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": null, \"participantList\": null, \"threadId\": null, \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831005",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831005",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-16T13:00:00.000Z\", \"connectTime\": null, \"endTime\": \"2026-11-16T13:00:07.000Z\", \"callDirection\": \"incoming\", \"callType\": \"twoParty\", \"callState\": \"declined\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000105\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000d\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000d\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Cy Young\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000205\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": null, \"participantList\": null, \"threadId\": null, \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831006",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831006",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-16T10:00:00.000Z\", \"connectTime\": \"2026-11-16T10:00:03.000Z\", \"endTime\": \"2026-11-16T10:38:03.000Z\", \"callDirection\": \"incoming\", \"callType\": \"multiParty\", \"callState\": \"accepted\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000106\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Bob Builder\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000206\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": [\"8:orgid:00000000-0000-0000-0000-00000000000c\", \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"8:orgid:00000000-0000-0000-0000-00000000000d\"], \"participantList\": [{\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000c\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000d\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}], \"threadId\": \"19:meeting_synthetic@thread.v2\", \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831007",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "from": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/contacts/48:calllogs",
+      "composetime": "2026-11-17T12:50:31.406Z",
+      "originalarrivaltime": "2026-11-17T12:50:31.406Z",
+      "version": "1794919831007",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-15T16:00:00.000Z\", \"connectTime\": \"2026-11-15T16:00:02.000Z\", \"endTime\": \"2026-11-15T16:00:37.000Z\", \"callDirection\": \"outgoing\", \"callType\": \"twoParty\", \"callState\": \"accepted\", \"userParticipantId\": \"00000000-0000-0000-0000-000000000107\", \"originator\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"target\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000a\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Me Myself\", \"applicationType\": null, \"alternateId\": null}, \"targetParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"voicemail\", \"displayName\": null, \"applicationType\": null, \"alternateId\": null}, \"callId\": \"00000000-0000-0000-0000-000000000207\", \"callAttributes\": null, \"forwardingInfo\": null, \"transferInfo\": null, \"participants\": null, \"participantList\": null, \"threadId\": null, \"sessionType\": \"default\", \"messageId\": null}",
+        "languageStamp": "{}",
+        "s2spartnername": "x"
+      }
+    },
+    {
+      "id": "1794919831010",
+      "type": "Message",
+      "messagetype": "Text",
+      "contenttype": "Text",
+      "content": "",
+      "conversationid": "48:calllogs",
+      "properties": {
+        "call-log": "{\"startTime\": \"2026-11-15T12:00:00.000Z\", \"endTime\": \"2026-11-15T12:00:42.000Z\", \"callDirection\": \"incoming\", \"callId\": \"00000000-0000-0000-0000-000000000210\", \"callLogsOwnerId\": \"00000000-0000-0000-0000-00000000000a\", \"voicemailCallId\": \"00000000-0000-0000-0000-000000000310\", \"voicemailInternetMessageId\": \"<synthetic-voicemail@example.invalid>\", \"alternateId\": null, \"originatorParticipant\": {\"id\": \"8:orgid:00000000-0000-0000-0000-00000000000b\", \"tenantId\": \"00000000-0000-0000-0000-0000000000ff\", \"type\": \"default\", \"displayName\": \"Ada Lovelace\", \"applicationType\": null, \"alternateId\": null}}"
+      }
+    },
+    {
+      "id": "1",
+      "messagetype": "RichText/Media_CallRecording",
+      "properties": {}
+    },
+    {
+      "id": "2",
+      "messagetype": "Text",
+      "properties": {
+        "call-log": "not json"
+      }
+    }
+  ],
+  "tenantId": "x",
+  "_metadata": {
+    "backwardLink": "https://emea.ng.msg.teams.example.invalid/v1/users/ME/conversations/48%3Acalllogs/messages?view=msnp24Equivalent&pageSize=200&startTime=1794000000000&syncState=abc",
+    "lastCompleteSegmentStartTime": 1,
+    "lastCompleteSegmentEndTime": 2,
+    "syncState": "s"
+  }
+}

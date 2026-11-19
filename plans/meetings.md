@@ -148,7 +148,7 @@ Everything Teams web has, inside a kelma-owned window. Each item is "verify it w
 
 ## Phase M5: native meeting media
 
-- [ ] **M5.1 Calling crate.** Impact 5, effort 5.
+- [x] **M5.1 Calling crate.** Impact 5, effort 5. Done 2026-11-18: kelma joined a live meeting and audio flowed both ways (`docs/protocol-calls.md`). Mic and speaker, TURN relay (300 Try Alternate followed) and echo cancellation verified live too. Open: TURN over TCP/TLS, 1:1 calls.
   - **What.** A `crates/calling` crate covering:
     - trouter `NextGenCalling` registration
     - `epconv` create and join with `meetingInfo{tenantId, organizerId}`

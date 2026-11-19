@@ -1,0 +1,12 @@
+{
+  "callAcceptance": {
+    "acceptedBy": {"id": "8:orgid:00000000-0000-0000-0000-0000000000b2", "displayName": "Callee Example"},
+    "acceptedCallModalities": ["Audio"],
+    "callKeepAliveInterval": 2700,
+    "mediaContent": {"contentType": "application/sdp-ngc-1.0", "blob": "v=0\r\nanswer\r\n", "mediaLegId": "AB12"},
+    "links": {
+      "callLeg": "https://cc-example.cc.skype.com/cc/v1/active/6/a1/413?i=2",
+      "mediaRenegotiation": "https://cc-example.cc.skype.com/cc/v1/active/6/a1/413/renegotiate?i=2"
+    }
+  }
+}

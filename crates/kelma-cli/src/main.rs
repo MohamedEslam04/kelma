@@ -16,10 +16,12 @@
 //! kelma-cli card [mri]            profile card of a person, default yourself
 //! kelma-cli horizons <conv>       who has read up to which message in a chat
 //! kelma-cli drive <ls [path]|search q|recent|shared|favorites|recordings|libraries|sync-help|bin|mkdir name|rm id|selftest>
+//! kelma-cli call <probe|meetings>   native calling checks (see call.rs)
 //! kelma-cli tail                  print live events until Ctrl+C
 //! kelma-cli logout                remove the stored refresh token
 //! ```
 
+mod call;
 mod drive;
 
 use anyhow::{Context, Result, bail};
@@ -727,6 +729,12 @@ async fn main() -> Result<()> {
                 "read receipts enabled: {}",
                 client.read_receipts_enabled().await?
             );
+        }
+        Some("call") => {
+            let (client, cfg) = connect(&paths).await?;
+            let r = call::run(&client, &args).await;
+            session::persist(&cfg, &client).await?;
+            r?;
         }
         Some("drive") => {
             let (client, cfg) = connect(&paths).await?;

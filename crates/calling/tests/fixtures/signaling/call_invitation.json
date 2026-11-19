@@ -1,0 +1,35 @@
+{
+  "callNotification": {
+    "from": {
+      "id": "8:orgid:00000000-0000-0000-0000-0000000000a1",
+      "displayName": "Caller Example",
+      "endpointId": "00000000-0000-0000-0000-0000000000e1",
+      "participantId": "00000000-0000-0000-0000-0000000000p1"
+    },
+    "to": {
+      "id": "8:orgid:00000000-0000-0000-0000-0000000000b2",
+      "displayName": "Callee Example",
+      "endpointId": "00000000-0000-0000-0000-000000000000",
+      "participantId": "00000000-0000-0000-0000-0000000000p2"
+    },
+    "callModalities": ["Audio", "Video"],
+    "links": {
+      "attach": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c1/27/i1/1351/attach?i=10",
+      "progress": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c1/27/i1/1351/progress?i=10",
+      "reject": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/cc-example-prod-aks.cc.skype.com/cc/v1/forked/00000000-0000-0000-0000-0000000000c1/27/i1/1351/reject?i=10",
+      "mediaAnswer": "cc://ma"
+    },
+    "mediaContent": {
+      "contentType": "application/sdp-ngc-1.0",
+      "blob": "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\n",
+      "mediaLegId": "0123456789ABCDEF0123456789ABCDEF"
+    }
+  },
+  "conversationInvitation": {
+    "conversationController": "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-example.conv.skype.com/conv/00000000-0000-0000-0000-0000000000c2?i=3",
+    "isMultiParty": false,
+    "isBroadcast": false
+  },
+  "groupChat": {"threadId": "19:a1_b2@unq.gbl.spaces"},
+  "debugContent": {"callId": "00000000-0000-0000-0000-0000000000c1"}
+}

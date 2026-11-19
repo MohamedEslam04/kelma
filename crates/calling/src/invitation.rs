@@ -1,0 +1,312 @@
+//! Parsing what the calling trouter pushes: a `callInvitation` (an incoming call) and the
+//! callbacks of a call in progress (`<surl>callAgent/<session>/<tag>/<call|conversation>/<event>/`).
+//!
+//! Shapes: rusty-teams `crates/calling/src/push.rs` and `trouter_events.rs` (MIT), mautrix-teams
+//! `trouter.go`/`calls.go` and teams-lite `NATIVE-CALLING.md` §8a (facts only). The invite is the
+//! decoded `cp`/`gp` payload with `callNotification` at its root.
+
+use crate::error::{Error, Result};
+use crate::types::{CallInvitation, Links, Modality, Participant, SdpBlob};
+use serde_json::Value;
+
+fn text(v: &Value, ptr: &str) -> Option<String> {
+    v.pointer(ptr)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+fn links_of(v: &Value) -> Links {
+    Links(
+        v.as_object()
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+/// A modality as `callModalities` names it (any case).
+pub fn parse_modality(name: &str) -> Option<Modality> {
+    match name.to_ascii_lowercase().as_str() {
+        "audio" => Some(Modality::Audio),
+        "video" => Some(Modality::Video),
+        "screensharer" | "screenviewer" | "screensharing" => Some(Modality::ScreenSharing),
+        _ => None,
+    }
+}
+
+fn modalities_of(v: &Value) -> Vec<Modality> {
+    let mut out: Vec<Modality> = Vec::new();
+    for m in v
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| parse_modality(m.as_str()?))
+    {
+        if !out.contains(&m) {
+            out.push(m);
+        }
+    }
+    out
+}
+
+fn sdp_of(media: &Value) -> Option<SdpBlob> {
+    Some(SdpBlob {
+        content_type: text(media, "/contentType").unwrap_or_else(|| "application/sdp".into()),
+        blob: text(media, "/blob")?,
+    })
+}
+
+fn participant_of(v: &Value) -> Option<Participant> {
+    Some(Participant {
+        mri: text(v, "/id")?,
+        display_name: text(v, "/displayName"),
+        endpoint_id: text(v, "/endpointId"),
+        participant_id: text(v, "/participantId"),
+    })
+}
+
+/// True when a decoded push body is an incoming call.
+pub fn is_call_invitation(body: &Value) -> bool {
+    body.get("callNotification").is_some_and(Value::is_object)
+}
+
+/// Parses an incoming call. Fails when it is no invitation, names no caller, or has neither an
+/// `attach` nor an `acceptance` link to answer with.
+pub fn parse_invitation(body: &Value) -> Result<CallInvitation> {
+    let n = body
+        .get("callNotification")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| Error::Protocol("push has no callNotification".into()))?;
+    let from = participant_of(&n["from"])
+        .ok_or_else(|| Error::Protocol("call invitation names no caller".into()))?;
+    let links = links_of(&n["links"]);
+    let answer_link = links
+        .get("attach")
+        .or_else(|| links.get("acceptance"))
+        .ok_or_else(|| Error::Protocol("call invitation has no attach/acceptance link".into()))?
+        .to_owned();
+    let mut modalities = modalities_of(&n["callModalities"]);
+    if modalities.is_empty() {
+        modalities.push(Modality::Audio);
+    }
+    Ok(CallInvitation {
+        call_id: text(body, "/debugContent/callId")
+            .or_else(|| text(n, "/callId"))
+            .unwrap_or(answer_link),
+        from,
+        modalities,
+        links,
+        offer: sdp_of(&n["mediaContent"]),
+        raw: body.clone(),
+    })
+}
+
+/// The conversation the invitation belongs to (joined through `attach`'s `additionalActions`).
+pub fn conversation_controller(inv: &CallInvitation) -> Option<&str> {
+    inv.raw
+        .pointer("/conversationInvitation/conversationController")
+        .and_then(Value::as_str)
+}
+
+/// The participant id the service gave us in the invitation (`callNotification.to`).
+pub fn own_participant_id(inv: &CallInvitation) -> Option<&str> {
+    inv.raw
+        .pointer("/debugContent/participantId")
+        .or_else(|| inv.raw.pointer("/callNotification/to/participantId"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+}
+
+/// The caller's media leg id, which our answer names too.
+pub fn media_leg_id(inv: &CallInvitation) -> Option<&str> {
+    inv.raw
+        .pointer("/callNotification/mediaContent/mediaLegId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+}
+
+/// `callAgent/<session_id>/<tag>/<scope>/<event>/` split up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallbackPath {
+    /// Our endpoint id of the call the callback belongs to.
+    pub session_id: String,
+    /// `call` or `conversation`.
+    pub scope: String,
+    pub event: String,
+}
+
+/// Splits a callback URL (or path) we published. `None` for anything else.
+pub fn parse_callback_path(url: &str) -> Option<CallbackPath> {
+    let start = url.find("callAgent/")? + "callAgent/".len();
+    let rest = url[start..].split(['?', '#']).next()?;
+    let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
+    let [session, _tag, scope, event] = parts.as_slice() else {
+        return None;
+    };
+    if session.is_empty() || scope.is_empty() || event.is_empty() {
+        return None;
+    }
+    Some(CallbackPath {
+        session_id: (*session).to_owned(),
+        scope: (*scope).to_owned(),
+        event: (*event).to_owned(),
+    })
+}
+
+/// Why a call ended or was refused (`callEnd` / `sessionRejection` / ...).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EndReason {
+    pub code: i64,
+    pub sub_code: i64,
+    pub phrase: String,
+}
+
+fn end_reason(body: &Value) -> EndReason {
+    let r = [
+        "callEnd",
+        "sessionRejection",
+        "conversationEnd",
+        "callTransactionEnd",
+    ]
+    .iter()
+    .find_map(|k| body.get(*k).filter(|v| v.is_object()))
+    .unwrap_or(&Value::Null);
+    EndReason {
+        code: r["code"].as_i64().unwrap_or_default(),
+        sub_code: r["subCode"].as_i64().unwrap_or_default(),
+        phrase: r["phrase"].as_str().unwrap_or_default().to_owned(),
+    }
+}
+
+/// What a callback for a call in progress says.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallEvent {
+    /// `call/progress`: the far side rings (`status` = `ringing`, ...).
+    Progress { status: String },
+    /// `call/acceptance`: the call we placed (or the meeting we joined) was accepted.
+    Accepted {
+        answer: Option<SdpBlob>,
+        links: Links,
+        accepted_by: Option<Participant>,
+        keep_alive_interval_s: Option<u64>,
+    },
+    /// `call/mediaAnswer`: the answer to our offer.
+    MediaAnswer { answer: SdpBlob, links: Links },
+    /// `call/mediaAcknowledgement`.
+    MediaAcknowledgement { links: Links },
+    /// `call/mediaRenegotiation`: the service offers new media; answer on `links.mediaAnswer`.
+    MediaRenegotiation { offer: SdpBlob, links: Links },
+    /// `call/rejection`.
+    Rejected(EndReason),
+    /// `call/end` or `conversation/conversationEnd`.
+    Ended(EndReason),
+    /// `conversation/rosterUpdate` (a delta, each changed participant in full).
+    RosterUpdate(Value),
+    /// `conversation/conversationUpdate`.
+    ConversationUpdate(Value),
+    /// Anything else (`addParticipantFailure`, `csrcInfo`, `controlVideoStreaming`, ...).
+    Other {
+        scope: String,
+        event: String,
+        body: Value,
+    },
+}
+
+/// The object holding `mediaContent`: the body itself or one of its top-level values.
+fn media_holder(body: &Value) -> Option<&Value> {
+    if body.get("mediaContent").is_some() {
+        return Some(body);
+    }
+    body.as_object()?
+        .values()
+        .find(|v| v.get("mediaContent").is_some())
+}
+
+/// Parses a callback for a call in progress, routed by its path. `None` when `url` is not one of
+/// our callback URLs, or a media event carries no SDP.
+pub fn parse_call_event(url: &str, body: &Value) -> Option<(CallbackPath, CallEvent)> {
+    let path = parse_callback_path(url)?;
+    let ev = match (path.scope.as_str(), path.event.as_str()) {
+        ("call", "progress") => CallEvent::Progress {
+            status: text(body, "/callProgress/status").unwrap_or_default(),
+        },
+        ("call", "acceptance") => {
+            let a = &body["callAcceptance"];
+            CallEvent::Accepted {
+                answer: sdp_of(&a["mediaContent"]),
+                links: links_of(&a["links"]),
+                accepted_by: participant_of(&a["acceptedBy"]),
+                keep_alive_interval_s: a["callKeepAliveInterval"].as_u64(),
+            }
+        }
+        ("call", "mediaAnswer") => {
+            let a = &body["mediaAnswer"];
+            CallEvent::MediaAnswer {
+                answer: sdp_of(&a["mediaContent"])?,
+                links: links_of(&a["links"]),
+            }
+        }
+        ("call", "mediaAcknowledgement") => {
+            let mut links = links_of(&body["links"]);
+            links
+                .0
+                .extend(links_of(&body["mediaAcknowledgement"]["links"]).0);
+            CallEvent::MediaAcknowledgement { links }
+        }
+        ("call", "mediaRenegotiation") => {
+            let holder = media_holder(body)?;
+            CallEvent::MediaRenegotiation {
+                offer: sdp_of(&holder["mediaContent"])?,
+                links: links_of(&holder["links"]),
+            }
+        }
+        ("call", "rejection") => CallEvent::Rejected(end_reason(body)),
+        ("call", "end") | ("conversation", "conversationEnd") => CallEvent::Ended(end_reason(body)),
+        ("conversation", "rosterUpdate") => CallEvent::RosterUpdate(body.clone()),
+        ("conversation", "conversationUpdate") => CallEvent::ConversationUpdate(body.clone()),
+        (scope, event) => CallEvent::Other {
+            scope: scope.to_owned(),
+            event: event.to_owned(),
+            body: body.clone(),
+        },
+    };
+    Some((path, ev))
+}
+
+/// A push on the calling trouter, classified.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NgcPush {
+    Invitation(Box<CallInvitation>),
+    /// A callback for the call whose session (our endpoint id) is `session_id`.
+    Call {
+        session_id: String,
+        event: CallEvent,
+    },
+    Other {
+        url: String,
+        body: Value,
+    },
+}
+
+/// Classifies a decoded push by its URL and body.
+pub fn classify(url: &str, body: &Value) -> NgcPush {
+    if let Some((path, event)) = parse_call_event(url, body) {
+        return NgcPush::Call {
+            session_id: path.session_id,
+            event,
+        };
+    }
+    if is_call_invitation(body)
+        && let Ok(inv) = parse_invitation(body)
+    {
+        return NgcPush::Invitation(Box::new(inv));
+    }
+    NgcPush::Other {
+        url: url.to_owned(),
+        body: body.clone(),
+    }
+}
