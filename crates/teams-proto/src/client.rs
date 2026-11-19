@@ -2,8 +2,11 @@
 //! with the right headers for each backend.
 
 use crate::auth::{self, DeviceCode, SkypeToken};
-use crate::broker::{Audience, TokenCache};
-use crate::client_info::{RESOURCE_CSA, RESOURCE_GRAPH, RESOURCE_PRESENCE, RESOURCE_SPACES};
+use crate::broker::{AppToken, Audience, TokenCache};
+use crate::client_info::{
+    AUTHORITY, CLIENT_ID, RESOURCE_CSA, RESOURCE_GRAPH, RESOURCE_PRESENCE, RESOURCE_SPACES,
+    USER_AGENT, scope_for,
+};
 use crate::error::{Error, Result};
 use crate::http::{Tokens, headers_for};
 use reqwest::Method;
@@ -97,8 +100,12 @@ fn refresh_due(expires_at: SystemTime, now: SystemTime) -> bool {
 }
 
 /// True when `url` is an https URL on the host of `aud`. Loki also runs per region, as
-/// `nam.loki.delve.office.com`, and takes the same token.
+/// `nam.loki.delve.office.com`, and takes the same token. App tokens are for the app, not for
+/// kelma's own requests, so an app audience owns nothing.
 fn audience_owns(aud: &Audience, url: &Url) -> bool {
+    if matches!(aud, Audience::App(_)) {
+        return false;
+    }
     // The provisioning token is minted for `templates.teams.microsoft.com` but sent to the
     // `/fabric/` path of the main Teams host.
     if *aud == Audience::Templates {
@@ -118,6 +125,38 @@ fn audience_owns(aud: &Audience, url: &Url) -> bool {
         && (host == want
             || (*aud == Audience::Loki && host.ends_with(&format!(".{want}")))
             || api_host(aud) == Some(host.as_str()))
+}
+
+/// [`auth::refresh`] with an optional `claims` request parameter (conditional access).
+async fn mint_with_claims(
+    http: &reqwest::Client,
+    tenant: &str,
+    refresh_token: &str,
+    resource: &str,
+    claims: Option<&str>,
+) -> Result<auth::TokenResponse> {
+    let scope = scope_for(resource);
+    let mut form = vec![
+        ("client_id", CLIENT_ID),
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("scope", scope.as_str()),
+    ];
+    if let Some(c) = claims {
+        form.push(("claims", c));
+    }
+    let resp = http
+        .post(format!("{AUTHORITY}/{tenant}/oauth2/v2.0/token"))
+        .header("User-Agent", USER_AGENT)
+        .form(&form)
+        .send()
+        .await?;
+    match auth::parse_token_response(&resp.text().await?)? {
+        auth::PollOutcome::Done(t) => Ok(t),
+        _ => Err(Error::Auth(
+            "unexpected pending response to a refresh".into(),
+        )),
+    }
 }
 
 /// The API host of an audience whose token resource is not the host that serves the API.
@@ -306,6 +345,42 @@ impl Client {
         );
         tracing::debug!(audience = %aud.resource(), ttl_s = tok.expires_in_s, "token minted");
         Ok(tok.access_token)
+    }
+
+    /// A token for a Teams app's own resource (app single sign-on), minted from the session's
+    /// refresh token with the Teams client id, as Teams does: the app's Entra registration
+    /// pre-authorizes the Teams client ids for its `api://<domain>/<app id>`. Cached per
+    /// resource like the other audiences. `claims` (a conditional access challenge, JSON) is
+    /// passed to the token request and skips the cache. Checking that the asking app owns
+    /// `resource` is the caller's job (`webhost::shim::check_token_request`).
+    pub async fn app_token(&self, resource: &str, claims: Option<&str>) -> Result<AppToken> {
+        let aud = Audience::app(resource)
+            .ok_or_else(|| Error::Protocol(format!("not an app resource: {resource:?}")))?;
+        let rt = {
+            let st = self.state.lock().await;
+            if claims.is_none()
+                && let Some((access_token, expires_at)) = st.cache.entry(&aud, SystemTime::now())
+            {
+                return Ok(AppToken {
+                    access_token,
+                    expires_at,
+                });
+            }
+            st.refresh_token.clone()
+        };
+        let tok = mint_with_claims(&self.http, &self.tenant, &rt, resource, claims).await?;
+        let now = SystemTime::now();
+        let mut st = self.state.lock().await;
+        if let Some(new_rt) = tok.refresh_token {
+            st.refresh_token = new_rt;
+        }
+        st.cache
+            .put(&aud, tok.access_token.clone(), now, tok.expires_in_s);
+        tracing::debug!(audience = %resource, ttl_s = tok.expires_in_s, "app token minted");
+        Ok(AppToken {
+            access_token: tok.access_token,
+            expires_at: now + Duration::from_secs(tok.expires_in_s),
+        })
     }
 
     /// Sends a request with a bearer token for `aud`. The token is only attached when `url` is
@@ -630,6 +705,38 @@ mod tests {
         assert!(!audience_owns(
             &sp,
             &u("https://contoso.sharepoint.com/_api/web")
+        ));
+    }
+
+    #[test]
+    fn app_audiences_own_no_host() {
+        let u = |s: &str| Url::parse(s).unwrap();
+        let app = Audience::app("api://app.contoso.com/0d5e1a2b").unwrap();
+        assert!(!audience_owns(&app, &u("https://app.contoso.com/api")));
+        let graph = Audience::app("https://graph.microsoft.com").unwrap();
+        assert!(!audience_owns(
+            &graph,
+            &u("https://graph.microsoft.com/v1.0/me")
+        ));
+    }
+
+    #[tokio::test]
+    async fn app_token_serves_a_cached_token_and_refuses_bad_resources() {
+        let client = Client::offline("epid").unwrap();
+        let r = "api://app.contoso.com/0d5e1a2b";
+        let exp = {
+            let mut st = client.state.lock().await;
+            let now = SystemTime::now();
+            st.cache
+                .put(&Audience::app(r).unwrap(), "CACHED".into(), now, 3600);
+            now + Duration::from_secs(3600)
+        };
+        let t = client.app_token(r, None).await.unwrap();
+        assert_eq!(t.access_token, "CACHED");
+        assert_eq!(t.expires_at, exp);
+        assert!(matches!(
+            client.app_token("api://x.com/a openid", None).await,
+            Err(Error::Protocol(_))
         ));
     }
 
