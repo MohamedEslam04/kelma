@@ -3,7 +3,7 @@
 //! send (dry run) and never send it.
 
 use anyhow::{Context, Result, bail};
-use apps::{AddTarget, AppDetails, Filter, PinChange, Scope, Target, WorksIn};
+use app_store::{AddTarget, AppDetails, Filter, PinChange, Scope, Target, WorksIn};
 use reqwest::Method;
 use serde_json::Value;
 use teams_proto::Client;
@@ -131,18 +131,18 @@ fn filter(args: &[String]) -> Filter {
 }
 
 async fn app_page(client: &Client, id: &str) -> Result<()> {
-    let def = apps::definitions(client, &[id])
+    let def = app_store::definitions(client, &[id])
         .await?
         .into_iter()
         .next()
         .context("no such app")?;
-    let home = apps::store_home(client).await?;
+    let home = app_store::store_home(client).await?;
     let entry = home
         .categories
         .iter()
         .flat_map(|c| &c.apps)
         .find(|e| e.id == def.id);
-    let hits = apps::search(client, &def.name).await?;
+    let hits = app_store::search(client, &def.name).await?;
     let hit = hits.iter().find(|h| h.id == def.id);
     let d = AppDetails::new(def, entry, hit);
     let def = &d.definition;
@@ -190,8 +190,8 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
     let arg = |i: usize| args.get(i).map(String::as_str);
     match arg(0) {
         Some("bar") => {
-            let installed = apps::installed_apps(client).await?;
-            let policy = apps::app_policy(client).await?;
+            let installed = app_store::installed_apps(client).await?;
+            let policy = app_store::app_policy(client).await?;
             println!(
                 "{} entitled apps, user pinning allowed: {}",
                 installed.entitlements.len(),
@@ -207,7 +207,7 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
             }
         }
         Some("more") => {
-            let installed = apps::installed_apps(client).await?;
+            let installed = app_store::installed_apps(client).await?;
             let more = installed.more_apps(arg(1).unwrap_or_default());
             println!("{} more apps", more.len());
             for d in more {
@@ -219,7 +219,7 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
             }
         }
         Some("home") => {
-            let home = apps::store_home(client).await?;
+            let home = app_store::store_home(client).await?;
             println!("{} categories", home.categories.len());
             for c in &home.categories {
                 println!(
@@ -235,7 +235,7 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
         Some("search") => {
             let q = arg(1).context("usage: store search <query> [--personal|--team|--chat|--meeting] [--agents|--apps]")?;
             let f = filter(&args[2..]);
-            let hits: Vec<_> = apps::search(client, q)
+            let hits: Vec<_> = app_store::search(client, q)
                 .await?
                 .into_iter()
                 .filter(|h| f.matches(h.works_in, h.is_agent))
@@ -253,8 +253,8 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
         }
         Some("app") => app_page(client, arg(1).context("usage: store app <app id>")?).await?,
         Some("mine") => {
-            let mine = apps::your_apps(client).await?;
-            let installed = apps::installed_apps(client).await?;
+            let mine = app_store::your_apps(client).await?;
+            let installed = app_store::installed_apps(client).await?;
             let updates = installed
                 .entitlements
                 .iter()
@@ -266,7 +266,7 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
             );
         }
         Some("org") => {
-            let org = apps::org_apps(client).await?;
+            let org = app_store::org_apps(client).await?;
             println!(
                 "{} apps built for your org, {} with a bot",
                 org.len(),
@@ -274,13 +274,13 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
             );
         }
         Some("settings") => {
-            let policy = apps::app_policy(client).await?;
+            let policy = app_store::app_policy(client).await?;
             println!(
                 "custom app upload allowed: {}, user pinning allowed: {}",
                 policy.sideloading_allowed, policy.user_pinning_allowed
             );
-            let installed = apps::installed_apps(client).await?;
-            for p in apps::DevicePermission::ALL {
+            let installed = app_store::installed_apps(client).await?;
+            for p in app_store::DevicePermission::ALL {
                 let n = installed
                     .definitions
                     .values()
@@ -292,37 +292,37 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
         Some("install") => {
             let id = arg(1)
                 .context("usage: store install <app id> [--team|--chat|--meeting <thread>]")?;
-            let def = apps::definitions(client, &[id])
+            let def = app_store::definitions(client, &[id])
                 .await?
                 .into_iter()
                 .next()
                 .context("no such app")?;
-            let base = apps::api::base(client).await;
+            let base = app_store::api::base(client).await;
             println!(
                 "{}",
-                apps::install_request(&base, &target(args), &def.raw).dry_run()
+                app_store::install_request(&base, &target(args), &def.raw).dry_run()
             );
         }
         Some("uninstall") => {
             let id = arg(1)
                 .context("usage: store uninstall <app id> [--team|--chat|--meeting <thread>]")?;
-            let base = apps::api::base(client).await;
+            let base = app_store::api::base(client).await;
             println!(
                 "{}",
-                apps::uninstall_request(&base, &target(args), id).dry_run()
+                app_store::uninstall_request(&base, &target(args), id).dry_run()
             );
         }
         Some("update") => {
             let id = arg(1).context("usage: store update <app id>")?;
-            let def = apps::definitions(client, &[id])
+            let def = app_store::definitions(client, &[id])
                 .await?
                 .into_iter()
                 .next()
                 .context("no such app")?;
-            let base = apps::api::base(client).await;
+            let base = app_store::api::base(client).await;
             println!(
                 "{}",
-                apps::update_request(&base, &target(args), id, &def.version).dry_run()
+                app_store::update_request(&base, &target(args), id, &def.version).dry_run()
             );
         }
         Some(cmd @ ("pin" | "unpin" | "move")) => {
@@ -333,11 +333,11 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
                 "unpin" => PinChange::Unpin(id.into()),
                 _ => PinChange::Move(id.into(), arg(2).context("missing index")?.parse()?),
             };
-            let installed = apps::installed_apps(client).await?;
-            let base = apps::api::base(client).await;
+            let installed = app_store::installed_apps(client).await?;
+            let base = app_store::api::base(client).await;
             println!(
                 "{}",
-                apps::pin_request(&base, &installed, &change).dry_run()
+                app_store::pin_request(&base, &installed, &change).dry_run()
             );
         }
         Some("probe") => {
