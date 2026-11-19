@@ -399,6 +399,37 @@ impl Store {
         Ok(out)
     }
 
+    /// Messages (replies included, deleted ones not) whose HTML contains `needle`, newest first,
+    /// in one conversation or in all of them. SQLite's `LIKE` only folds ASCII case, so this is
+    /// a prefilter: the caller confirms the match on the plain text.
+    pub fn messages_containing(
+        &self,
+        conversation_id: Option<&str>,
+        needle: &str,
+        limit: usize,
+    ) -> Result<Vec<MessageRow>> {
+        let pattern = format!(
+            "%{}%",
+            needle
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {MSG_COLS} FROM messages \
+             WHERE deleted = 0 AND content_html LIKE ?1 ESCAPE '\\' \
+               AND (?2 IS NULL OR conversation_id = ?2) \
+             ORDER BY compose_ms DESC, id DESC LIMIT ?3"
+        ))?;
+        let out = stmt
+            .query_map(
+                params![pattern, conversation_id, limit_i64(limit)],
+                msg_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
+    }
+
     /// Replies to a channel thread root, oldest first, at most `limit`.
     pub fn thread_replies(&self, root_id: &str, limit: usize) -> Result<Vec<MessageRow>> {
         let mut stmt = self.conn.prepare_cached(&format!(

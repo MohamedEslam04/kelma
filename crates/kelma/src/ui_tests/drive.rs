@@ -837,27 +837,6 @@ fn a_link_without_a_web_address_is_refused_before_anything_is_sent() {
 }
 
 #[test]
-fn attach_cloud_files_in_the_composer_picks_a_onedrive_file_into_the_chat() {
-    let d = DriveHarness::open();
-    d.h.app.set_view("chat".into());
-    d.h.select(NOTES);
-    assert!(chips(&d.h.app).is_empty());
-
-    d.click_label("Attach cloud files");
-    assert!(d.log().contains(&"pick-begin attach".to_owned()));
-    assert_eq!(d.store().get_dialog(), "picker");
-    assert_eq!(d.store().get_picker_title(), "Choose a file");
-    // The chat shows the picker itself: the OneDrive view is not on screen.
-    assert!(d.has_label("Folder My files"));
-    d.click_label("Folder My files");
-    d.click_label("File Budget 2026.xlsx");
-    d.click_label("Select");
-    d.settle();
-    assert_eq!(chips(&d.h.app), ["Budget 2026.xlsx"]);
-    assert_eq!(d.store().get_dialog(), "");
-}
-
-#[test]
 fn a_pdf_opens_page_by_page_inside_kelma() {
     let d = DriveHarness::open();
     d.double_click_label("Vendor contract.pdf");

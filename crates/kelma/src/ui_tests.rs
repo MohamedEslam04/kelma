@@ -18,9 +18,13 @@ use store::Store;
 use teams_proto::Client;
 
 mod activity;
+mod channels;
 mod drive;
+mod find;
+mod lists;
 mod people;
 mod teams;
+mod window_state;
 
 type Log = Rc<RefCell<Vec<String>>>;
 
@@ -669,7 +673,9 @@ fn send_button_sends_draft() {
     let app = app_with_messages(vec![]);
     let sent = record_send(&app);
     app.set_draft(SharedString::from("from button"));
+    // The composer's buttons, not the header's (find and details sit at the header's right edge).
     let send = ElementHandle::find_by_element_id(&app, "IconButton::touch")
+        .filter(|e| e.absolute_position().y > 400.0)
         .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
         .unwrap();
     send.mock_single_click(PointerEventButton::Left);
@@ -695,21 +701,13 @@ fn toolbar_emoji_picker_and_attach_buttons() {
         app.on_attach_image(move || l.borrow_mut().push("image".into()));
         let l = log.clone();
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
-        let l = log.clone();
-        app.global::<crate::DriveStore>()
-            .on_command(move |name, arg| {
-                if (name.as_str(), arg.as_str()) == ("pick-begin", "attach") {
-                    l.borrow_mut().push("cloud".into());
-                }
-            });
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 6, "emoji, image, file, cloud, more, send");
+    assert_eq!(tb.len(), 5, "emoji, image, file, more, send");
 
     tb[1].mock_single_click(PointerEventButton::Left);
     tb[2].mock_single_click(PointerEventButton::Left);
-    tb[3].mock_single_click(PointerEventButton::Left);
-    assert_eq!(*log.borrow(), vec!["image", "file", "cloud"]);
+    assert_eq!(*log.borrow(), vec!["image", "file"]);
 }
 
 /// Buttons in the strip directly above the composer input (reply or edit preview).
@@ -1054,7 +1052,7 @@ fn composer_more_menu_switches_the_enter_behavior() {
         let l = log.clone();
         app.on_set_enter_sends(move |on| l.borrow_mut().push(format!("enter-sends {on}")));
     }
-    let more = &toolbar(&app)[4];
+    let more = &toolbar(&app)[3];
     assert_eq!(
         ElementHandle::find_by_element_id(&app, "Composer::enter-opt").count(),
         0

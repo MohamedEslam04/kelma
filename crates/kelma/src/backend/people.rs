@@ -1153,6 +1153,12 @@ impl Engine {
     /// Scrolls the open chat to a message and highlights it, loading older history when it is
     /// not in the list yet.
     async fn jump_to(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        self.jump_to_with(id, true).await
+    }
+
+    /// [`Self::jump_to`]; with `fade` false the highlight stays until [`Self::clear_flash`]
+    /// (Find in chat keeps its current match marked).
+    pub(super) async fn jump_to_with(self: &Arc<Self>, id: &str, fade: bool) -> anyhow::Result<()> {
         let Some(conv) = self.current_chat() else {
             return Ok(());
         };
@@ -1183,6 +1189,9 @@ impl Engine {
             d.messages = true;
             d.scroll = true;
         });
+        if !fade {
+            return Ok(());
+        }
         let e = self.clone();
         let id = id.to_string();
         tokio::spawn(async move {
@@ -1195,6 +1204,28 @@ impl Engine {
             }
         });
         Ok(())
+    }
+
+    /// Marks a row of the open list as the jump target without loading anything (a thread reply
+    /// that is already stored); the highlight stays until [`Self::clear_flash`].
+    pub(super) fn flash_row(&self, id: &str) {
+        {
+            let mut p = self.people.lock().unwrap();
+            p.jump = Some(id.to_string());
+            p.flash = Some(id.to_string());
+        }
+        self.mark(|d| {
+            d.messages = true;
+            d.scroll = true;
+        });
+    }
+
+    pub(super) fn clear_flash(&self) {
+        let mut p = self.people.lock().unwrap();
+        if p.flash.take().is_some() {
+            drop(p);
+            self.mark(|d| d.messages = true);
+        }
     }
 
     /// Row index of a pending jump in `out`, which the render scrolls to; marks the flashed row.

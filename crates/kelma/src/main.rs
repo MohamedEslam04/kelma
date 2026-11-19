@@ -4,12 +4,16 @@ mod backend;
 mod composer;
 mod data;
 mod demo;
+mod find_data;
+mod lists_data;
 mod markdown;
 mod mention;
 mod reactions;
+mod tray_wiring;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
+mod window_state;
 
 slint::include_modules!();
 
@@ -345,11 +349,37 @@ fn main() -> anyhow::Result<()> {
     ui::install_calendar(&window, tx.clone());
     {
         let tx = tx.clone();
+        window.global::<FindStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::FindCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Find(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
         window.global::<PeopleStore>().on_command(move |name, arg| {
             if let Some(c) = backend::PeopleCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::People(c));
             }
         });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<ListStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::ListsCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Lists(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window
+            .global::<ChannelStore>()
+            .on_command(move |name, arg| {
+                if let Some(c) = backend::ChannelCmd::parse(&name, &arg) {
+                    let _ = tx.send(Cmd::Channels(c));
+                }
+            });
     }
     {
         let tx = tx.clone();
@@ -427,12 +457,22 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Saved size, position, last chat and collapsed teams; demo mode neither restores nor saves.
+    let _window_state_timers = window_state::install(
+        &window,
+        std::env::var_os("KELMA_DEMO").is_none(),
+        tx.clone(),
+    );
+    let hidden = args.iter().any(|a| a == "--hidden");
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()?;
     rt.spawn(app_main(ui, rx, focus));
-    window.run()?;
+    // Tray, close-to-tray and the event loop (stays up with the window hidden).
+    tray_wiring::run(&window, hidden)?;
+    window_state::finish(&window);
     // Give the engine a moment to write a draft typed just before closing.
     let _ = tx.send(Cmd::Flush);
     std::thread::sleep(std::time::Duration::from_millis(100));

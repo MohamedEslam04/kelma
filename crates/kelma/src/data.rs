@@ -25,6 +25,10 @@ pub struct ChatData {
     pub mention: bool,
     /// A group chat, which can be left from the item menu.
     pub group: bool,
+    /// Notifications are off for this chat or channel.
+    pub muted: bool,
+    /// A channel (its item menu has the channel items).
+    pub channel: bool,
 }
 
 /// A chip above the composer.
@@ -101,6 +105,10 @@ pub struct MsgData {
     pub receipt_names: String,
     /// The row a jump from the pinned banner landed on.
     pub flash: bool,
+    /// An Adaptive Card drawn like Teams does; empty when the message has none.
+    pub card: Vec<crate::lists_data::CardRowData>,
+    /// Headline of an announcement post.
+    pub headline: String,
 }
 
 /// A person, or a team, channel or "everyone" entry, in a people list.
@@ -162,7 +170,8 @@ pub struct TeamData {
     pub initials: String,
     pub color: u32,
     pub expanded: bool,
-    pub channels: Vec<(String, String, bool)>,
+    /// `(id, name, unread, hidden)`.
+    pub channels: Vec<(String, String, bool, bool)>,
 }
 
 #[derive(Clone, Default)]

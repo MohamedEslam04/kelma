@@ -406,6 +406,24 @@ fn recording_items(recs: Vec<onedrive::Recording>) -> Vec<DriveItem> {
         .collect()
 }
 
+/// `drive_id` of the picker's "Recent" and "Shared with me" entries: lists, not folders.
+const VIRTUAL: &str = "@virtual";
+
+/// The extra top-level entries of the picker when attaching files: Teams offers Recent and
+/// Shared with me next to My files and the team libraries.
+fn virtual_items() -> Vec<DriveItem> {
+    [("Recent", "recent"), ("Shared with me", "shared")]
+        .into_iter()
+        .map(|(name, id)| DriveItem {
+            id: id.into(),
+            drive_id: VIRTUAL.into(),
+            name: name.into(),
+            is_folder: true,
+            ..Default::default()
+        })
+        .collect()
+}
+
 fn picker_data(p: &Picker, libs: &[Library]) -> PickerData {
     let s = State {
         items: p.items.clone(),
@@ -2002,6 +2020,9 @@ impl Engine {
             let mut d = self.drive.lock().unwrap();
             let libs = d.s.libraries.clone();
             let mut items = vec![my_files_item()];
+            if purpose == "attach" {
+                items.extend(virtual_items());
+            }
             items.extend(libs.iter().map(library_item));
             d.picker = Some(Picker {
                 purpose,
@@ -2103,7 +2124,19 @@ impl Engine {
         generation: u64,
         folders_only: bool,
     ) -> anyhow::Result<()> {
-        let items = if self.drive_offline() {
+        let items = if folder.drive_id == VIRTUAL {
+            let list = match folder.item_id.as_str() {
+                "recent" => browse::recent(&self.client).await,
+                _ => browse::shared_with_me(&self.client).await,
+            };
+            match list {
+                Ok(items) => items,
+                Err(err) => {
+                    self.drive_status(format!("Couldn't list {}: {err}", folder.name));
+                    Vec::new()
+                }
+            }
+        } else if self.drive_offline() {
             crate::demo::drive_listing("files", &folder.item_id, now_ms())
         } else {
             match browse::children(&self.client, &folder.drive_id, &folder.item_id, None).await {
@@ -2165,31 +2198,22 @@ impl Engine {
         match (purpose, dest) {
             ("move", Some(dest)) => self.drive_move_copy(true, dest).await,
             ("copy", Some(dest)) => self.drive_move_copy(false, dest).await,
-            ("attach", _) => match file {
-                Some(file) => self.drive_attach(file).await,
-                None => Ok(()),
-            },
+            ("attach", _) => {
+                let Some(f) = file else {
+                    return Ok(());
+                };
+                let drive_id = if f.drive_id.is_empty() {
+                    self.drive_my_drive_id().await.unwrap_or_default()
+                } else {
+                    f.drive_id.clone()
+                };
+                self.attach_cloud_file(&drive_id, &f.id, &f.name).await
+            }
             (other, _) => {
                 tracing::info!(purpose = other, picked = ?file.map(|f| f.name), "file picked with no handler");
                 Ok(())
             }
         }
-    }
-
-    /// "Attach cloud files" in the composer: the chosen file is downloaded and joins the chips of
-    /// the open chat like a file picked from disk, so sending it uses the normal file flow.
-    async fn drive_attach(self: &Arc<Self>, file: DriveItem) -> anyhow::Result<()> {
-        let bytes = if self.drive_offline() {
-            crate::demo::drive_file_text(&file.name).into_bytes()
-        } else {
-            if file.size > MAX_OPEN_BYTES {
-                self.ui
-                    .banner(format!("{} is too big to attach (100 MB limit)", file.name));
-                return Ok(());
-            }
-            ops::download(&self.client, &file).await?
-        };
-        self.add_attachment(file.name, bytes).await
     }
 
     async fn drive_move_copy(self: &Arc<Self>, moving: bool, dest: Crumb) -> anyhow::Result<()> {
