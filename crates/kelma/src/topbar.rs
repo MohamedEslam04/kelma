@@ -2,6 +2,7 @@
 //! lists, the recent searches kept on this computer, and the back and forward history. The window
 //! side (`ui/topbar.rs`) turns these into rows and clicks.
 
+use crate::find_data::HitData;
 use crate::suggest::SuggestData;
 use std::path::{Path, PathBuf};
 
@@ -196,9 +197,9 @@ pub fn matching(input: &str) -> Vec<&'static SlashCommand> {
 /// One row of the dropdown.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
-    /// `command`, `person`, `chat`, `channel`, `search`, `recent` or `clear`.
+    /// `command`, `person`, `chat`, `channel`, `message`, `search`, `recent` or `clear`.
     pub kind: &'static str,
-    /// The command's name or the conversation id.
+    /// The command's name, the conversation id or the id of a message hit.
     pub id: String,
     pub title: String,
     pub subtitle: String,
@@ -208,6 +209,12 @@ pub struct Row {
     pub section: &'static str,
     /// What a command row puts in the box when it needs a name.
     pub insert: String,
+    /// A message hit: Markdown of the text around the match, the matching words in bold.
+    pub snippet: String,
+    /// A message hit: when it was sent.
+    pub time: String,
+    /// A message hit whose text runs right to left.
+    pub rtl: bool,
 }
 
 impl Row {
@@ -221,13 +228,21 @@ impl Row {
             color: 0,
             section: "",
             insert: String::new(),
+            snippet: String::new(),
+            time: String::new(),
+            rtl: false,
         }
     }
 }
 
 /// The rows for the text in the box: commands after "/", the recent searches for an empty box, and
-/// otherwise the suggestions with "Search messages for" at the end.
-pub fn rows(input: &str, recents: &[String], suggestions: &[SuggestData]) -> Vec<Row> {
+/// otherwise the suggestions, the messages found, and "Search messages for" at the end.
+pub fn rows(
+    input: &str,
+    recents: &[String],
+    suggestions: &[SuggestData],
+    messages: &[HitData],
+) -> Vec<Row> {
     if input.trim_start().starts_with('/') {
         return matching(input)
             .into_iter()
@@ -278,6 +293,16 @@ pub fn rows(input: &str, recents: &[String], suggestions: &[SuggestData]) -> Vec
             ..Row::plain(s.kind, &s.id, s.title.clone())
         })
         .collect();
+    out.extend(messages.iter().enumerate().map(|(i, m)| Row {
+        subtitle: m.subtitle.clone(),
+        initials: m.initials.clone(),
+        color: m.color,
+        section: if i == 0 { "Messages" } else { "" },
+        snippet: m.snippet.clone(),
+        time: m.time.clone(),
+        rtl: m.rtl,
+        ..Row::plain("message", &m.id, m.title.clone())
+    }));
     let mut search = Row::plain("search", "", format!("Search messages for \"{q}\""));
     if !out.is_empty() {
         search.section = "Search";
@@ -296,6 +321,8 @@ pub enum Pick {
     Search(String),
     /// Open a person, a chat or a channel: kind, id, title.
     Open(&'static str, String, String),
+    /// Open the chat of a message hit at that message: the hit's id.
+    OpenMessage(String),
     ClearRecents,
 }
 
@@ -317,6 +344,7 @@ pub fn pick(row: &Row, input: &str) -> Pick {
         "person" => Pick::Open("person", row.id.clone(), row.title.clone()),
         "chat" => Pick::Open("chat", row.id.clone(), row.title.clone()),
         "channel" => Pick::Open("channel", row.id.clone(), row.title.clone()),
+        "message" => Pick::OpenMessage(row.id.clone()),
         "recent" => Pick::Search(row.title.clone()),
         "clear" => Pick::ClearRecents,
         _ => Pick::Search(input.trim().to_string()),
@@ -549,7 +577,7 @@ mod tests {
 
     #[test]
     fn a_slash_shows_commands_with_the_ones_that_need_a_name_inserting_it() {
-        let r = rows("/", &[], &[]);
+        let r = rows("/", &[], &[], &[]);
         assert_eq!(r.len(), COMMANDS.len());
         assert_eq!(r[0].section, "Commands");
         assert_eq!(r[1].section, "");
@@ -563,8 +591,8 @@ mod tests {
 
     #[test]
     fn an_empty_box_lists_recent_searches_with_a_clear_row() {
-        assert!(rows("", &[], &[]).is_empty());
-        let r = rows("  ", &["budget".into(), "launch".into()], &[]);
+        assert!(rows("", &[], &[], &[]).is_empty());
+        let r = rows("  ", &["budget".into(), "launch".into()], &[], &[]);
         let kinds: Vec<_> = r.iter().map(|r| r.kind).collect();
         assert_eq!(kinds, ["recent", "recent", "clear"]);
         assert_eq!(r[0].section, "Recent searches");
@@ -577,31 +605,75 @@ mod tests {
             s("person", "p1", "Sara Hassan"),
             s("channel", "c1", "A › B"),
         ];
-        let r = rows("sara", &[], &sug);
+        let r = rows("sara", &[], &sug, &[]);
         let kinds: Vec<_> = r.iter().map(|r| r.kind).collect();
         assert_eq!(kinds, ["person", "channel", "search"]);
         assert_eq!(r[2].title, "Search messages for \"sara\"");
         // Alone, the search row has no heading.
-        let alone = rows("sara", &[], &[]);
+        let alone = rows("sara", &[], &[], &[]);
         assert_eq!(alone.len(), 1);
         assert_eq!(alone[0].section, "");
+    }
+
+    fn msg(id: &str, sender: &str, rtl: bool) -> HitData {
+        HitData {
+            id: id.into(),
+            kind: "message",
+            section: String::new(),
+            title: sender.into(),
+            subtitle: "Backend Team".into(),
+            snippet: "it was **deployed** to staging".into(),
+            time: "10:30".into(),
+            initials: "SH".into(),
+            color: 2,
+            avatar: None,
+            rtl,
+        }
+    }
+
+    #[test]
+    fn message_hits_come_after_the_suggestions_in_their_own_group() {
+        let sug = [s("person", "p1", "Sara Hassan")];
+        let msgs = [msg("m1", "Sara Hassan", false), msg("m2", "Omar", true)];
+        let r = rows("dep", &[], &sug, &msgs);
+        let kinds: Vec<_> = r.iter().map(|r| r.kind).collect();
+        assert_eq!(kinds, ["person", "message", "message", "search"]);
+        assert_eq!(r[1].section, "Messages");
+        assert_eq!(r[2].section, "");
+        assert_eq!(r[3].section, "Search");
+        assert_eq!(r[1].title, "Sara Hassan");
+        assert_eq!(r[1].subtitle, "Backend Team");
+        assert_eq!(r[1].snippet, "it was **deployed** to staging");
+        assert_eq!(r[1].time, "10:30");
+        assert!(r[2].rtl);
+        assert_eq!(pick(&r[1], "dep"), Pick::OpenMessage("m1".into()));
+        // Messages alone still head their group.
+        let r = rows("dep", &[], &[], &msgs[..1]);
+        assert_eq!(r[0].section, "Messages");
+        // A command or an empty box shows none.
+        assert!(
+            rows("/b", &[], &[], &msgs)
+                .iter()
+                .all(|r| r.kind == "command")
+        );
+        assert!(rows("", &[], &[], &msgs).is_empty());
     }
 
     #[test]
     fn choosing_a_row_does_what_its_kind_says() {
         let sug = [s("person", "p1", "Sara Hassan")];
-        let r = rows("sa", &[], &sug);
+        let r = rows("sa", &[], &sug, &[]);
         assert_eq!(
             pick(&r[0], "sa"),
             Pick::Open("person", "p1".into(), "Sara Hassan".into())
         );
         assert_eq!(pick(&r[1], " sa "), Pick::Search("sa".into()));
 
-        let recent = rows("", &["budget".into()], &[]);
+        let recent = rows("", &["budget".into()], &[], &[]);
         assert_eq!(pick(&recent[0], ""), Pick::Search("budget".into()));
         assert_eq!(pick(&recent[1], ""), Pick::ClearRecents);
 
-        let cmds = rows("/", &[], &[]);
+        let cmds = rows("/", &[], &[], &[]);
         let row = |id: &str| cmds.iter().find(|r| r.id == id).unwrap().clone();
         assert_eq!(pick(&row("busy"), "/"), Pick::Run(Action::Status("Busy")));
         assert_eq!(pick(&row("goto"), "/g"), Pick::Insert("/goto ".into()));

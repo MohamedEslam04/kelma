@@ -8,7 +8,9 @@ import { Avatar, Icon } from "widgets.slint";
 import { SettingsStore } from "settings_store.slint";
 import { SFont, ZoomRow } from "settings_widgets.slint";
 
-// One row of the dropdown. `kind`: command | person | chat | channel | search | recent | clear.
+// One row of the dropdown. `kind`: command | person | chat | channel | message | search | recent
+// | clear. A message hit has `title` (its sender), `subtitle` (its chat), a one-line `snippet` with
+// the matching words in bold, `time`, and the sender's picture when known.
 export struct TopRow {
     kind: string,
     id: string,
@@ -18,6 +20,14 @@ export struct TopRow {
     color: color,
     section: string,
     insert: string,
+    snippet: styled-text,
+    snippet-plain: string,
+    time: string,
+    rtl: bool,
+    avatar: image,
+    has-avatar: bool,
+    // Where the row's body starts in the list (below its group's heading).
+    top: length,
 }
 
 export global TopBarStore {
@@ -120,6 +130,10 @@ export component TopSearch inherits Rectangle {
                 TopBarStore.selected = max(TopBarStore.selected - 1, -1);
                 return accept;
             }
+            if event.text == Key.Escape && input.text != "" {
+                TopBarStore.command("clear", "");
+                return accept;
+            }
             if event.text == Key.Escape && TopBarStore.search-open {
                 TopBarStore.command("close", "");
                 return accept;
@@ -156,6 +170,35 @@ export component TopSearch inherits Rectangle {
                     }
                 }
             }
+            // Clears the box, as deleting the text would, and leaves the cursor in it.
+            if input.text != "": Rectangle {
+                width: 20px;
+                height: 20px;
+                y: 6px;
+                border-radius: 4px;
+                background: clear-touch.has-hover ? Theme.surface-hover : transparent;
+                accessible-role: button;
+                accessible-label: @tr("Clear search");
+                accessible-action-default => {
+                    TopBarStore.command("clear", "");
+                    input.focus();
+                }
+                Icon {
+                    source: @image-url("icons/close.svg");
+                    width: 12px;
+                    height: 12px;
+                    x: 4px;
+                    y: 4px;
+                    tint: Theme.fg-muted;
+                }
+                clear-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        TopBarStore.command("clear", "");
+                        input.focus();
+                    }
+                }
+            }
         }
     }
     if input.text == "": Text {
@@ -175,7 +218,8 @@ component DropRow inherits Rectangle {
     in property <bool> chosen;
     callback clicked();
     property <length> head: root.data.section != "" ? 24px : 0px;
-    height: root.head + 36px;
+    property <length> body: root.data.kind == "message" ? 52px : 36px;
+    height: root.head + root.body;
     VerticalLayout {
         if root.data.section != "": HorizontalLayout {
             height: 24px;
@@ -190,14 +234,76 @@ component DropRow inherits Rectangle {
             }
         }
         Rectangle {
-            height: 36px;
+            height: root.body;
             border-radius: 4px;
             background: root.chosen || touch.has-hover ? Theme.surface-hover : transparent;
             accessible-role: list-item;
             accessible-label: root.data.title;
-            accessible-description: root.data.subtitle;
+            accessible-description: root.data.kind == "message" ? root.data.snippet-plain + " · " + root.data.subtitle + " · " + root.data.time : root.data.subtitle;
             accessible-action-default => { root.clicked(); }
-            HorizontalLayout {
+            // A message hit: who and where on the first line, the text around the match below.
+            if root.data.kind == "message": HorizontalLayout {
+                width: parent.width;
+                height: parent.height;
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
+                Avatar {
+                    y: 12px;
+                    size: 28px;
+                    initials: root.data.initials;
+                    tone: root.data.color;
+                    img: root.data.avatar;
+                    has-img: root.data.has-avatar;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: root.data.title;
+                            color: Theme.fg;
+                            font-size: 13px * Theme.font-scale;
+                            font-weight: 600;
+                            overflow: elide;
+                            horizontal-stretch: 0;
+                            min-width: 24px;
+                        }
+                        Text {
+                            text: root.data.subtitle;
+                            color: Theme.fg-subtle;
+                            font-size: 12px * Theme.font-scale;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                            min-width: 24px;
+                        }
+                        Text {
+                            text: root.data.time;
+                            color: Theme.fg-subtle;
+                            font-size: 11px * Theme.font-scale;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                    }
+                    // One line: what does not fit is cut at the edge.
+                    Rectangle {
+                        height: 18px;
+                        clip: true;
+                        StyledText {
+                            width: parent.width;
+                            text: root.data.snippet;
+                            default-color: Theme.fg-muted;
+                            default-font-size: 12px * Theme.font-scale;
+                            horizontal-alignment: root.data.rtl ? right : left;
+                        }
+                    }
+                }
+            }
+            if root.data.kind != "message": HorizontalLayout {
+                width: parent.width;
+                height: parent.height;
                 padding-left: 12px;
                 padding-right: 12px;
                 spacing: 10px;
@@ -251,17 +357,19 @@ export component SearchDropdown inherits Rectangle {
     property <int> chosen: TopBarStore.selected;
     // Keeps the row the arrow keys chose in view.
     changed chosen => {
-        if self.chosen >= 0 {
-            // Every row is 36px, the first also carries its group's heading.
-            root.top-of-chosen = self.chosen * 36px + (TopBarStore.rows.length > 0 && TopBarStore.rows[0].section != "" ? 24px : 0px);
+        if self.chosen >= 0 && self.chosen < TopBarStore.rows.length {
+            // Rust works out where each row starts; a message hit is taller.
+            root.top-of-chosen = TopBarStore.rows[self.chosen].top;
+            root.chosen-height = TopBarStore.rows[self.chosen].kind == "message" ? 52px : 36px;
             if root.top-of-chosen < -sv.content-y {
                 sv.content-y = -root.top-of-chosen;
-            } else if root.top-of-chosen + 36px > -sv.content-y + sv.height {
-                sv.content-y = -(root.top-of-chosen + 36px - sv.height);
+            } else if root.top-of-chosen + root.chosen-height > -sv.content-y + sv.height {
+                sv.content-y = -(root.top-of-chosen + root.chosen-height - sv.height);
             }
         }
     }
     property <length> top-of-chosen;
+    property <length> chosen-height;
     width: max(340px, TopBarStore.box-w);
     height: TopBarStore.rows.length == 0 ? 44px : root.shown-height;
     border-radius: 8px;

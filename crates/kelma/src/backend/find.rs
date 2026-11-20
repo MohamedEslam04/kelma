@@ -17,6 +17,7 @@ use teams_proto::views::FollowedThread;
 
 mod global;
 mod goto;
+mod top_messages;
 
 /// Messages asked from the server per page.
 const PAGE: u32 = 25;
@@ -87,6 +88,8 @@ pub enum FindCmd {
     MenuFollow(String),
     /// The top search box: suggestions for the text typed so far.
     Suggest(String),
+    /// The top search box's Messages group, once typing has paused.
+    SuggestMessages(String),
     /// `/goto`, `/chat` and `/call`: the command's name, U+001F and the name typed after it.
     Go(String),
 }
@@ -137,6 +140,7 @@ impl FindCmd {
             "unfollow-msg" => FindCmd::UnfollowMsg(a),
             "menu-follow" => FindCmd::MenuFollow(a),
             "suggest" => FindCmd::Suggest(a),
+            "suggest-messages" => FindCmd::SuggestMessages(a),
             "go" => FindCmd::Go(a),
             _ => return None,
         })
@@ -309,6 +313,8 @@ pub(super) struct State {
     follow_override: HashMap<(String, String), bool>,
     // Find in chat.
     find: ChatFind,
+    /// The Messages group of the top search box's dropdown.
+    top: top_messages::TopMessages,
     pub(super) shared: super::shared::State,
 }
 
@@ -368,6 +374,7 @@ impl Engine {
         match cmd {
             FindCmd::Search(q) => self.search_start(q).await,
             FindCmd::Suggest(q) => self.suggest_start(q),
+            FindCmd::SuggestMessages(q) => self.suggest_messages(q),
             FindCmd::Go(arg) => self.go_to(&arg).await?,
             FindCmd::SearchTab(t) => {
                 self.find.lock().unwrap().tab = Tab::parse(&t);
@@ -976,6 +983,7 @@ impl Engine {
             f.hits
                 .iter()
                 .chain(f.quick_hits.iter())
+                .chain(f.top.hits.iter())
                 .find(|h| h.id() == id)
                 .cloned()
         };
