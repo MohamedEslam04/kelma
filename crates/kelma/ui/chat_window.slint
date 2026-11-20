@@ -5,6 +5,7 @@ import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Msg } from "types.slint";
 import { MessageRow } from "message_row.slint";
+import { IconButton } from "widgets.slint";
 
 export component ChatWindow inherits Window {
     in property <string> conv-id;
@@ -14,6 +15,9 @@ export component ChatWindow inherits Window {
     callback send(string);
     callback react(string, string);
     callback open-url(string);
+    // Rust bumps it when the window opens a chat: the list goes to the newest message.
+    in-out property <int> scroll-tick;
+    out property <bool> at-newest: pop-list.content-y <= pop-list.visible-height - pop-list.content-height + 4px;
 
     title: root.chat-title == "" ? "kelma" : root.chat-title + " - kelma";
     preferred-width: 560px;
@@ -51,15 +55,37 @@ export component ChatWindow inherits Window {
         Rectangle { height: 1px; background: Theme.border; }
         pop-list := ListView {
             vertical-stretch: 1;
-            // Stays at the newest message while it is at the bottom.
+            // Stays at the newest message while it is at the bottom, as the main view does. The
+            // list's height is an estimate that grows as rows get their real height (and the
+            // window gets its size after the rows came): a move of the list while the height or
+            // the window changed is the list following them, not the user scrolling away.
             property <bool> pinned: true;
+            property <length> pinned-height;
+            property <length> pinned-visible;
+            property <int> tick: root.scroll-tick;
+            function to-bottom() {
+                self.pinned-height = self.content-height;
+                self.pinned-visible = self.visible-height;
+                self.content-y = min(0px, self.visible-height - self.content-height);
+            }
+            changed tick => {
+                self.pinned = true;
+                self.to-bottom();
+            }
             changed content-height => {
                 if self.pinned {
-                    self.content-y = min(0px, self.visible-height - self.content-height);
+                    self.to-bottom();
+                }
+            }
+            changed visible-height => {
+                if self.pinned {
+                    self.to-bottom();
                 }
             }
             changed content-y => {
-                self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
+                if self.content-height == self.pinned-height && self.visible-height == self.pinned-visible {
+                    self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
+                }
             }
             for m in root.messages: MessageRow {
                 m: m;
@@ -81,6 +107,7 @@ export component ChatWindow inherits Window {
                 border-width: 1px;
                 border-color: pop-input.has-focus ? Theme.accent : Theme.border;
                 FocusScope {
+                    width: parent.width - 44px;
                     capture-key-pressed(event) => {
                         if event.text == Key.Return && !event.modifiers.shift {
                             root.send-now();
@@ -108,6 +135,14 @@ export component ChatWindow inherits Window {
                     text: @tr("Type a message");
                     color: Theme.fg-subtle;
                     font-size: 14px * Theme.font-scale;
+                }
+                // Send, as in the main composer (Enter sends too).
+                IconButton {
+                    x: parent.width - self.width - 6px;
+                    y: parent.height - self.height - 6px;
+                    icon: @image-url("icons/send.svg");
+                    tooltip: @tr("Send");
+                    clicked => { root.send-now(); }
                 }
             }
         }
