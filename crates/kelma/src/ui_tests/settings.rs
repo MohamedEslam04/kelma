@@ -917,3 +917,33 @@ fn time_format_and_keep_running_reach_the_helpers_that_read_them() {
     appearance::formats::set_from(&appearance::GeneralPrefs::default());
     crate::tray_wiring::set_keep_running(true);
 }
+#[test]
+fn settings_rows_stay_inside_at_the_smallest_window() {
+    let ui = window(Home::new("overflow").with_accounts());
+    let app = &ui.app;
+    app.window().set_size(LogicalSize::new(900., 560.));
+    for page in [
+        "general",
+        "accounts",
+        "privacy",
+        "notifications",
+        "appearance",
+        "accessibility",
+        "devices",
+        "files",
+        "permissions",
+        "about",
+    ] {
+        open_page(app, page);
+        for _ in 0..3 {
+            testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        for kind in ["SChoice", "SSwitch", "SButton", "SPersonRow", "SField"] {
+            for row in ElementHandle::find_by_element_type_name(app, kind)
+                .filter(|r| !super::overflow::texts(r).is_empty())
+            {
+                super::overflow::assert_texts_inside(&row, &format!("{kind} on the {page} page"));
+            }
+        }
+    }
+}

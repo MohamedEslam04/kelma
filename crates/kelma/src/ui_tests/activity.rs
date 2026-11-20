@@ -334,3 +334,30 @@ fn notification_settings_entry_is_in_the_menu() {
     by_id(&app, "ActivityView::settings-entry")[0].mock_single_click(PointerEventButton::Left);
     assert_eq!(*log.borrow(), ["settings"]);
 }
+#[test]
+fn long_titles_previews_and_locations_stay_inside_the_feed_rows() {
+    use super::overflow::{LONG, LONG_AR, LONG_WORD, assert_texts_inside};
+    let (app, _state, _log) = feed();
+    let item = |id: &str, text: &str, rtl: bool| ActivityRow {
+        id: id.into(),
+        title: text.into(),
+        initials: "QP".into(),
+        badge: "@".into(),
+        unread: true,
+        preview: text.into(),
+        time: "Wednesday 12:30 PM".into(),
+        location: format!("{text} › {text}").into(),
+        rtl_preview: rtl,
+        ..Default::default()
+    };
+    app.set_activity_items(ModelRc::new(VecModel::from(vec![
+        item("a", LONG, false),
+        item("b", LONG_AR, true),
+        item("c", LONG_WORD, false),
+    ])));
+    let rows: Vec<_> = ElementHandle::find_by_element_type_name(&app, "ActivityItem").collect();
+    assert_eq!(rows.len(), 3);
+    for row in &rows {
+        assert_texts_inside(row, "activity row");
+    }
+}

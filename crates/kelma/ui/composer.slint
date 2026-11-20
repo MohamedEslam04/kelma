@@ -208,7 +208,7 @@ export component Composer inherits Rectangle {
                         spacing: 8px;
                         Rectangle { width: 3px; background: Theme.accent; }
                         VerticalLayout {
-                            Text { text: root.editing-id != "" ? @tr("Editing message") : @tr("Replying to {}", root.reply-author); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                            Text { text: root.editing-id != "" ? @tr("Editing message") : @tr("Replying to {}", root.reply-author); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; overflow: elide; }
                             Text { text: root.reply-preview; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
                         }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; clicked => { root.cancel-reply(); } }
@@ -240,7 +240,7 @@ export component Composer inherits Rectangle {
                             VerticalLayout {
                                 alignment: center;
                                 Text { text: a.name; color: Theme.fg; font-size: 12px * Theme.font-scale; font-weight: 600; overflow: elide; }
-                                Text { text: a.detail; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; }
+                                Text { text: a.detail; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; overflow: elide; }
                             }
                             Rectangle {
                                 width: 22px;

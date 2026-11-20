@@ -1277,3 +1277,66 @@ fn joining_a_new_meeting_replaces_a_floating_ended_call() {
     click(&c.button("Join now"));
     assert_eq!(c.phase(), "connecting");
 }
+#[test]
+fn long_names_in_the_people_panel_stay_inside_their_rows() {
+    use super::overflow::{LONG, LONG_AR, assert_texts_inside};
+    let c = CallHarness::new();
+    c.connected();
+    let p = |mri: &str, name: &str, lobby, me, role: &str| Person {
+        mri: mri.into(),
+        name: name.into(),
+        lobby,
+        me,
+        role: role.into(),
+        hand: true,
+        ..Default::default()
+    };
+    c.fake.emit(Event::Roster(vec![
+        p(ORGANIZER, "Me", false, true, "organizer"),
+        p(GUEST, LONG, true, false, ""),
+        p("8:orgid:ar", LONG_AR, false, false, "presenter"),
+        p("8:orgid:en", LONG, false, false, "attendee"),
+        p("8:orgid:ar2", LONG_AR, true, false, ""),
+    ]));
+    click(&c.button("People"));
+    let rows: Vec<_> = ElementHandle::find_by_element_type_name(&c.h.app, "PersonRow").collect();
+    assert_eq!(rows.len(), 5);
+    for row in &rows {
+        assert_texts_inside(row, "people panel row");
+    }
+    let panel = ElementHandle::find_by_element_type_name(&c.h.app, "PeoplePanel")
+        .next()
+        .expect("the people panel");
+    assert_texts_inside(&panel, "people panel");
+}
+
+#[test]
+fn a_long_caption_speaker_stays_inside_the_caption_strip() {
+    use super::overflow::{LONG, assert_texts_inside};
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("More"));
+    click(&c.with_role("Show live captions", AccessibleRole::Switch));
+    c.fake.emit(Event::Caption(crate::backend::call::Caption {
+        id: "u1".into(),
+        speaker: LONG.into(),
+        text: "Hello everyone, this is what the speaker said.".into(),
+    }));
+    let strip = ElementHandle::find_by_element_type_name(&c.h.app, "CaptionStrip")
+        .next()
+        .expect("the caption strip");
+    assert_texts_inside(&strip, "caption strip");
+}
+
+#[test]
+fn a_long_meeting_title_stays_inside_the_stage_while_waiting_in_the_lobby() {
+    use super::overflow::{LONG, assert_texts_inside};
+    let c = CallHarness::new();
+    c.open_prejoin();
+    cs(&c.h.app).set_title(LONG.into());
+    cs(&c.h.app).set_phase("lobby".into());
+    let stage = ElementHandle::find_by_element_type_name(&c.h.app, "Stage")
+        .next()
+        .expect("the stage");
+    assert_texts_inside(&stage, "lobby stage");
+}

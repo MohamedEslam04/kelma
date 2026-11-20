@@ -9,6 +9,8 @@ import { CallAction, DeviceSettings } from "call_widgets.slint";
 // A small text button of a People row (Admit, Admit all).
 component RowButton inherits Rectangle {
     in property <string> label;
+    // What the button shows when it is not the label (a name would make it as wide as the name).
+    in property <string> shown: root.label;
     callback clicked();
     height: 26px;
     width: txt.preferred-width + 20px;
@@ -20,7 +22,7 @@ component RowButton inherits Rectangle {
     accessible-label: root.label;
     accessible-action-default => { root.clicked(); }
     txt := Text {
-        text: root.label;
+        text: root.shown;
         color: Theme.fg;
         font-size: 12px * Theme.font-scale;
         font-weight: 600;
@@ -63,6 +65,7 @@ component PersonRow inherits Rectangle {
                 text: root.p.role == "organizer" ? "Organizer" : "Presenter";
                 color: Theme.fg-subtle;
                 font-size: 11px * Theme.font-scale;
+                overflow: elide;
             }
         }
         if root.p.hand: Icon {
@@ -74,6 +77,7 @@ component PersonRow inherits Rectangle {
             alignment: center;
             RowButton {
                 label: "Admit " + root.p.name;
+                shown: "Admit";
                 clicked => { CallStore.command("admit", root.p.id); }
             }
         }
@@ -95,6 +99,7 @@ component PanelHeader inherits HorizontalLayout {
         font-weight: 600;
         vertical-alignment: center;
         horizontal-stretch: 1;
+        overflow: elide;
     }
     IconButton {
         icon: @image-url("icons/close.svg");
@@ -178,6 +183,7 @@ export component PeoplePanel inherits Rectangle {
             text: CallStore.invite-status;
             color: Theme.fg-subtle;
             font-size: 12px * Theme.font-scale;
+            wrap: word-wrap;
             accessible-role: text;
             accessible-label: self.text;
         }
@@ -190,6 +196,7 @@ export component PeoplePanel inherits Rectangle {
                     color: Theme.fg-muted;
                     font-size: 12px * Theme.font-scale;
                     font-weight: 600;
+                    overflow: elide;
                 }
                 for p[i] in CallStore.people: VerticalLayout {
                     if p.lobby && i == CallStore.in-call: HorizontalLayout {
@@ -202,6 +209,7 @@ export component PeoplePanel inherits Rectangle {
                             font-weight: 600;
                             vertical-alignment: bottom;
                             horizontal-stretch: 1;
+                            overflow: elide;
                         }
                         if CallStore.can-admit: VerticalLayout {
                             alignment: end;
@@ -248,6 +256,7 @@ component SwitchRow inherits Rectangle {
             font-size: 13px * Theme.font-scale;
             vertical-alignment: center;
             horizontal-stretch: 1;
+            overflow: elide;
         }
         Rectangle {
             width: 34px;

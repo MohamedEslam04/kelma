@@ -416,7 +416,7 @@ export component AppWindow inherits Window {
                             alignment: center;
                             spacing: 2px;
                             Icon { source: item.icon; tint: root.view == item.key || rt.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
-                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px * Theme.font-scale; horizontal-alignment: center; }
+                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px * Theme.font-scale; horizontal-alignment: center; overflow: elide; }
                         }
                         if ri.badge-count > 0: Rectangle {
                             x: parent.width / 2 + 2px;
@@ -589,7 +589,7 @@ export component AppWindow inherits Window {
                             accessible-role: button;
                             accessible-label: root.banner-action;
                             accessible-action-default => { root.banner-action-clicked(); }
-                            Text { text: root.banner-action; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: root.banner-action; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
                             TouchArea { mouse-cursor: pointer; clicked => { root.banner-action-clicked(); } }
                         }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 6px; clicked => { root.dismiss-banner(); } }
@@ -671,13 +671,13 @@ export component AppWindow inherits Window {
                             for tab in (root.current-is-channel ? [{k: "posts", l: @tr("Posts")}, {k: "files", l: @tr("Files")}] : [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}]): tab-item := Rectangle {
                                 // The Shared (Files) tab replaces the conversation, see `FindStore`.
                                 property <bool> active: (FindStore.chat-tab == "shared") == (tab.k == "shared" || tab.k == "files");
-                                width: tab-label.preferred-width;
+                                width: min(tab-label.preferred-width, 200px);
                                 accessible-role: AccessibleRole.tab;
                                 accessible-label: tab.l;
                                 accessible-checked: self.active;
                                 VerticalLayout {
                                     alignment: center;
-                                    tab-label := Text { text: tab.l; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; font-weight: tab-item.active ? 600 : 400; }
+                                    tab-label := Text { text: tab.l; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; font-weight: tab-item.active ? 600 : 400; overflow: elide; }
                                     Rectangle { height: 3px; border-radius: 1px; background: tab-item.active ? Theme.accent : transparent; }
                                 }
                                 TouchArea {
@@ -690,12 +690,12 @@ export component AppWindow inherits Window {
                             }
                             // The channel's other tabs (empty for chats), then "+" Add a tab.
                             for ct in FindStore.channel-tabs: ct-item := Rectangle {
-                                width: ct-label.preferred-width;
+                                width: min(ct-label.preferred-width, 200px);
                                 accessible-role: AccessibleRole.tab;
                                 accessible-label: ct.name;
                                 VerticalLayout {
                                     alignment: center;
-                                    ct-label := Text { text: ct.name; color: ct-touch.has-hover ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; }
+                                    ct-label := Text { text: ct.name; color: ct-touch.has-hover ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; overflow: elide; }
                                     Rectangle { height: 3px; }
                                 }
                                 ct-touch := TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("channel-tab-open", ct.url); } }
@@ -959,7 +959,7 @@ export component AppWindow inherits Window {
 
                     if root.typing != "": HorizontalLayout {
                         padding-left: 24px;
-                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
+                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
                     }
 
                     if root.select-mode: SelectBar {

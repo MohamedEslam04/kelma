@@ -259,7 +259,7 @@ export component SPersonRow inherits Rectangle {
     HorizontalLayout {
         spacing: 10px;
         Text { text: root.name; color: Theme.fg; font-size: SFont.body; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-        SButton { label: root.action + " " + root.name; y: 5px; clicked => { root.act(); } }
+        SButton { label: root.action; accessible-label: root.action + " " + root.name; y: 5px; clicked => { root.act(); } }
     }
 }
 

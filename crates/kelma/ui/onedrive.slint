@@ -683,12 +683,12 @@ component ShareDialog inherits DialogFrame {
                 alignment: start;
                 for p in DriveStore.share-picked: Rectangle {
                     height: 24px;
-                    width: pn.preferred-width + 26px;
+                    width: min(pn.preferred-width, 160px) + 26px;
                     border-radius: 12px;
                     background: Theme.dark ? #34365c : #e3e4fa;
                     accessible-role: button;
                     accessible-label: "Remove " + p.name;
-                    pn := Text { x: 10px; text: p.name; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                    pn := Text { x: 10px; width: parent.width - 26px; text: p.name; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
                     Text { x: parent.width - 16px; text: "×"; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
                     TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("share-pick", p.id); } }
                 }
@@ -704,7 +704,7 @@ component ShareDialog inherits DialogFrame {
                     padding-left: 8px;
                     padding-right: 8px;
                     spacing: 10px;
-                    Text { text: p.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                    Text { text: p.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                     Text { text: p.detail; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                     Text { text: p.picked ? "✓" : ""; color: Theme.accent; font-size: 15px * Theme.font-scale; vertical-alignment: center; }
                 }

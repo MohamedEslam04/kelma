@@ -69,6 +69,7 @@ component MenuRow inherits Rectangle {
             vertical-alignment: center;
             horizontal-alignment: Theme.start-align;
             horizontal-stretch: 1;
+            overflow: elide;
             accessible-role: none;
         }
         if root.checked: Text { text: "✓"; color: Theme.accent; font-size: 13px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 0; }
