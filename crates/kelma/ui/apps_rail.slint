@@ -1,10 +1,11 @@
 // The pinned apps on the left rail (after the fixed Activity, Chat, Teams, Calendar and OneDrive
 // entries), the Store button and "…", and the overlays they open: the right click menu, the
-// "View more apps" flyout and the dialog that shows an install request.
+// "View more apps" flyout and the confirm and input dialog of the app screens.
 import { Theme } from "theme.slint";
 import { Icon, IconButton } from "widgets.slint";
 import { AppsStore, RailApp } from "apps_store.slint";
-import { AppTile, KitButton, KitSearch, KitMenuRow, KitMenuFrame } from "apps_kit.slint";
+import { ScrollView } from "std-widgets.slint";
+import { AppTile, KitButton, KitSearch, KitMenuRow, KitMenuFrame, KitField } from "apps_kit.slint";
 
 // One rail button. `app` entries show the app's icon; the fixed ones show a glyph.
 component RailEntry inherits Rectangle {
@@ -190,6 +191,10 @@ component FlyoutRow inherits Rectangle {
 
 // The overlays of the app bar. Put it last in the window so it draws over everything.
 export component AppsOverlays inherits Rectangle {
+    // The confirm button of the dialog: the text fields joined by newlines.
+    function submit() {
+        AppsStore.command("form-submit", AppsStore.form-text1 + "\n" + AppsStore.form-text2 + "\n" + AppsStore.form-text3);
+    }
     // Right click menu of a pinned app.
     if AppsStore.menu-app != "": Rectangle {
         width: parent.width;
@@ -296,8 +301,9 @@ export component AppsOverlays inherits Rectangle {
         }
     }
 
-    // The request an Add, Remove or Update would send, which kelma never sends.
-    if AppsStore.install-title != "": Rectangle {
+    // The confirm and input dialog: Add, Remove and Update an app, a task, a flow, a page, a
+    // list item. The engine decides what Confirm does (form-submit).
+    if AppsStore.form-title != "": Rectangle {
         width: parent.width;
         height: parent.height;
         background: #00000080;
@@ -305,44 +311,57 @@ export component AppsOverlays inherits Rectangle {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: max(8px, (parent.height - self.height) / 2);
-            width: min(560px, parent.width - 32px);
+            width: min(520px, parent.width - 32px);
             height: dlg.preferred-height + 8px;
             border-radius: 8px;
             background: Theme.surface;
             border-width: 1px;
             border-color: Theme.border;
+            accessible-role: groupbox;
+            accessible-label: AppsStore.form-title;
             dlg := VerticalLayout {
                 padding: 20px;
                 spacing: 12px;
-                Text { text: AppsStore.install-title; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; wrap: word-wrap; }
-                Rectangle {
-                    border-radius: 4px;
-                    background: Theme.sidebar;
-                    height: req.preferred-height + 20px;
-                    req := Text {
-                        x: 10px;
-                        y: 10px;
-                        width: parent.width - 20px;
-                        text: AppsStore.install-request;
-                        color: Theme.fg-muted;
-                        font-size: 12px * Theme.font-scale;
-                        wrap: word-wrap;
+                Text { text: AppsStore.form-title; color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; wrap: word-wrap; }
+                if AppsStore.form-body != "": Text { text: AppsStore.form-body; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
+                if AppsStore.form-choices.length > 0: ScrollView {
+                    height: min(216px, AppsStore.form-choices.length * 36px);
+                    VerticalLayout {
+                        width: parent.width - 12px;
+                        spacing: 2px;
+                        alignment: start;
+                        for c in AppsStore.form-choices: Rectangle {
+                            height: 34px;
+                            border-radius: 4px;
+                            background: c.selected ? Theme.selected : (pick.has-hover ? Theme.surface-hover : transparent);
+                            accessible-role: button;
+                            accessible-label: c.title;
+                            accessible-item-selected: c.selected;
+                            Text { x: 12px; width: parent.width - 24px; text: c.title; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+                            pick := TouchArea { mouse-cursor: pointer; clicked => { AppsStore.command("form-choice", c.id); } }
+                        }
                     }
                 }
+                if AppsStore.form-label1 != "": KitField { label: AppsStore.form-label1; text <=> AppsStore.form-text1; autofocus: true; accepted => { root.submit(); } }
+                if AppsStore.form-label2 != "": KitField { label: AppsStore.form-label2; text <=> AppsStore.form-text2; accepted => { root.submit(); } }
+                if AppsStore.form-label3 != "": KitField { label: AppsStore.form-label3; text <=> AppsStore.form-text3; accepted => { root.submit(); } }
+                if AppsStore.form-error != "": Text { text: AppsStore.form-error; color: Theme.danger; font-size: 12px * Theme.font-scale; wrap: word-wrap; accessible-role: text; accessible-label: "Problem: " + AppsStore.form-error; }
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: end;
-                    KitButton {
-                        label: "Open in Teams on the web";
-                        primary: true;
-                        clicked => {
-                            AppsStore.command("app-link", "url:" + AppsStore.install-link);
-                            AppsStore.install-title = "";
-                        }
+                    if AppsStore.form-link-label != "": KitButton {
+                        label: AppsStore.form-link-label;
+                        clicked => { AppsStore.command("form-link", ""); }
                     }
                     KitButton {
-                        label: "Close";
-                        clicked => { AppsStore.install-title = ""; }
+                        label: "Cancel";
+                        clicked => { AppsStore.command("form-cancel", ""); }
+                    }
+                    KitButton {
+                        label: AppsStore.form-confirm;
+                        primary: !AppsStore.form-danger;
+                        danger: AppsStore.form-danger;
+                        clicked => { root.submit(); }
                     }
                 }
             }

@@ -1,11 +1,17 @@
-//! Workflows (Power Automate), read only: environments, the user's flows and a flow's run
-//! history. The token audience is `service.flow.microsoft.com`; the API host is
-//! `api.flow.microsoft.com`. Kelma never turns a flow on or off and never runs one.
+//! Workflows (Power Automate): environments, the user's flows and a flow's run history, plus the
+//! requests that turn a flow on or off and run a manual one. The token audience is
+//! `service.flow.microsoft.com`; the API host is `api.flow.microsoft.com`.
+//!
+//! The reads are verified live. The writes are NOT verified: `start` and `stop` follow the
+//! Power Automate management API (`POST …/flows/{flow}/start` and `…/stop`); the manual run
+//! (`POST …/flows/{flow}/triggers/manual/run`) is the request the maker portal's "Run" button is
+//! known to send, and the trigger name `manual` is the default of "Manually trigger a flow".
+//! None of them was sent against a real account.
 
 use crate::broker::Audience;
 use crate::client::Client;
 use crate::error::Result;
-use crate::graph::{ms_of, str_of, values};
+use crate::graph::{Write, ms_of, str_of, values};
 use reqwest::Method;
 use serde_json::Value;
 
@@ -115,6 +121,35 @@ fn url(path: &[&str], extra: &str) -> String {
     u.into()
 }
 
+fn flow_write(env: &str, flow: &str, tail: &[&str], body: Option<Value>) -> Write {
+    let mut path = vec!["environments", env, "flows", flow];
+    path.extend(tail);
+    let mut w = Write::graph(Method::POST, url(&path, ""), body);
+    w.audience = Audience::Flow;
+    w
+}
+
+/// Turns a flow on: `POST …/flows/{flow}/start`. UNVERIFIED, never sent live.
+pub fn start_request(env: &str, flow: &str) -> Write {
+    flow_write(env, flow, &["start"], None)
+}
+
+/// Turns a flow off: `POST …/flows/{flow}/stop`. UNVERIFIED, never sent live.
+pub fn stop_request(env: &str, flow: &str) -> Write {
+    flow_write(env, flow, &["stop"], None)
+}
+
+/// Runs a manual (button) flow: `POST …/flows/{flow}/triggers/manual/run` with an empty
+/// `inputs`. UNVERIFIED, never sent live.
+pub fn run_request(env: &str, flow: &str) -> Write {
+    flow_write(
+        env,
+        flow,
+        &["triggers", "manual", "run"],
+        Some(serde_json::json!({"inputs": {}})),
+    )
+}
+
 impl Client {
     async fn flow_get(&self, context: &'static str, url: &str) -> Result<Value> {
         self.json_as(context, &Audience::Flow, Method::GET, url, None)
@@ -202,6 +237,31 @@ mod tests {
         assert_eq!(runs[0].trigger.as_deref(), Some("manual"));
         assert_eq!(runs[0].end_ms.unwrap() - runs[0].start_ms.unwrap(), 4_877);
         assert_eq!(runs[1].start_ms, None);
+    }
+
+    #[test]
+    fn flow_writes_post_to_the_flow_with_the_flow_audience() {
+        let on = start_request("Default-1", "f 1");
+        assert_eq!(on.method, Method::POST);
+        assert_eq!(on.audience, Audience::Flow);
+        assert_eq!(
+            on.url,
+            "https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments/Default-1/flows/f%201/start?api-version=2016-11-01"
+        );
+        assert!(
+            stop_request("e", "f")
+                .url
+                .contains("/flows/f/stop?api-version=")
+        );
+        let run = run_request("e", "f");
+        assert!(
+            run.url
+                .contains("/flows/f/triggers/manual/run?api-version=")
+        );
+        assert_eq!(
+            run.body,
+            crate::graph::WriteBody::Json(serde_json::json!({"inputs": {}}))
+        );
     }
 
     #[test]

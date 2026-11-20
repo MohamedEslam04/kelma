@@ -1,12 +1,15 @@
-//! Microsoft Lists (SharePoint lists), read only, through Graph `/sites/{id}/lists`.
+//! Microsoft Lists (SharePoint lists) through Graph `/sites/{id}/lists`.
 //!
 //! Sites are found through the teams the user joined (`/groups/{id}/sites/root`). Items come with
-//! their `fields` expanded. Kelma never adds, edits or deletes an item.
+//! their `fields` expanded. Kelma adds and edits items (`create_item_request`,
+//! `update_item_request`); it never deletes one.
 
 use crate::client::Client;
 use crate::error::Result;
-use crate::graph::{graph_url, ms_of, str_of, values};
-use serde_json::{Map, Value};
+use crate::graph::{Write, graph_url, ms_of, str_of, values};
+use crate::time::parse_date_input;
+use reqwest::Method;
+use serde_json::{Map, Value, json};
 
 /// A SharePoint site.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +161,75 @@ pub fn field_text(v: &Value) -> String {
     }
 }
 
+impl Column {
+    /// Whether the new and edit forms offer this column: a plain value kelma can type
+    /// (text, number, choice, yes/no, date) that the user may change.
+    pub fn is_editable(&self) -> bool {
+        !self.hidden
+            && !self.read_only
+            && matches!(
+                self.kind.as_str(),
+                "text" | "number" | "choice" | "boolean" | "dateTime"
+            )
+    }
+}
+
+/// What a typed value becomes in an item's `fields`: text and choices as they are, numbers
+/// parsed, yes/no (also true/false) as a boolean, dates `YYYY-MM-DD` as UTC midnight. An empty
+/// string clears the field (`null`).
+pub fn field_value(kind: &str, text: &str) -> std::result::Result<Value, String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Ok(Value::Null);
+    }
+    match kind {
+        "number" => t
+            .parse::<f64>()
+            .ok()
+            .filter(|n| n.is_finite())
+            .map(|n| json!(n))
+            .ok_or_else(|| format!("\"{t}\" is not a number.")),
+        "boolean" => match t.to_lowercase().as_str() {
+            "yes" | "true" | "y" | "1" => Ok(json!(true)),
+            "no" | "false" | "n" | "0" => Ok(json!(false)),
+            _ => Err(format!("\"{t}\" is not yes or no.")),
+        },
+        "dateTime" => parse_date_input(t)
+            .map(|ms| json!(crate::time::iso_utc(ms)))
+            .ok_or_else(|| format!("\"{t}\" is not a date. Use YYYY-MM-DD.")),
+        _ => Ok(json!(t)),
+    }
+}
+
+/// A new item: `POST /sites/{site}/lists/{list}/items` with `{"fields": {...}}`.
+pub fn create_item_request(site_id: &str, list_id: &str, fields: Map<String, Value>) -> Write {
+    Write::graph(
+        Method::POST,
+        graph_url(&["sites", site_id, "lists", list_id, "items"], ""),
+        Some(json!({ "fields": fields })),
+    )
+}
+
+/// An edit of an item's fields: `PATCH /sites/{site}/lists/{list}/items/{item}/fields` with the
+/// changed fields as the body.
+pub fn update_item_request(
+    site_id: &str,
+    list_id: &str,
+    item_id: &str,
+    fields: Map<String, Value>,
+) -> Write {
+    Write::graph(
+        Method::PATCH,
+        graph_url(
+            &[
+                "sites", site_id, "lists", list_id, "items", item_id, "fields",
+            ],
+            "",
+        ),
+        Some(Value::Object(fields)),
+    )
+}
+
 fn collection(items: Vec<Value>) -> Value {
     serde_json::json!({ "value": items })
 }
@@ -262,6 +334,55 @@ mod tests {
         assert_eq!(cols[2].kind, "dateTime");
         assert_eq!(cols[3].kind, "other");
         assert!(cols[3].hidden && cols[3].read_only);
+    }
+
+    #[test]
+    fn typed_values_become_field_values() {
+        assert_eq!(field_value("text", " Fix it "), Ok(json!("Fix it")));
+        assert_eq!(field_value("choice", "Open"), Ok(json!("Open")));
+        assert_eq!(field_value("number", "3.5"), Ok(json!(3.5)));
+        assert_eq!(field_value("boolean", "Yes"), Ok(json!(true)));
+        assert_eq!(field_value("boolean", "no"), Ok(json!(false)));
+        assert_eq!(
+            field_value("dateTime", "2026-11-25"),
+            Ok(json!("2026-11-25T00:00:00Z"))
+        );
+        assert_eq!(field_value("text", "  "), Ok(Value::Null));
+        assert!(field_value("number", "abc").is_err());
+        assert!(field_value("boolean", "maybe").is_err());
+        assert!(field_value("dateTime", "tomorrow").is_err());
+        let cols = parse_columns(&json!({"value":[
+            {"name":"Title","text":{}},{"name":"Calc","calculated":{}},
+            {"name":"Ro","text":{},"readOnly":true},{"name":"H","text":{},"hidden":true}]}));
+        let editable: Vec<&str> = cols
+            .iter()
+            .filter(|c| c.is_editable())
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(editable, ["Title"]);
+    }
+
+    #[test]
+    fn item_writes_post_fields_and_patch_them() {
+        let mut f = Map::new();
+        f.insert("Title".into(), json!("Fix login"));
+        let c = create_item_request("host,s,w", "l1", f.clone());
+        assert_eq!(c.method, Method::POST);
+        assert_eq!(
+            c.url,
+            "https://graph.microsoft.com/v1.0/sites/host,s,w/lists/l1/items"
+        );
+        assert_eq!(
+            c.body,
+            crate::graph::WriteBody::Json(json!({"fields": {"Title": "Fix login"}}))
+        );
+        let u = update_item_request("s", "l1", "7", f);
+        assert_eq!(u.method, Method::PATCH);
+        assert!(u.url.ends_with("/lists/l1/items/7/fields"));
+        assert_eq!(
+            u.body,
+            crate::graph::WriteBody::Json(json!({"Title": "Fix login"}))
+        );
     }
 
     #[test]

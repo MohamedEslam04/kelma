@@ -1771,6 +1771,13 @@ impl Engine {
         let Some(item) = self.drive_one() else {
             return Ok(());
         };
+        self.drive_share_open(item).await
+    }
+
+    /// Opens the Share dialog for `item`, which need not be the OneDrive view's selection
+    /// (Meeting Recaps shares a recording this way). The dialog lives in the OneDrive view.
+    pub(super) async fn drive_share_open(self: &Arc<Self>, item: DriveItem) -> anyhow::Result<()> {
+        self.ui.open_view("onedrive".into());
         self.drive.lock().unwrap().share = Some(Share {
             item: item.clone(),
             role: Role::Write,

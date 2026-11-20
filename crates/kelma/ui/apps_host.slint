@@ -7,6 +7,7 @@ import { StoreView } from "apps_store_view.slint";
 import { TasksView } from "apps_tasks.slint";
 import { FlowsView } from "apps_flows.slint";
 import { NotesView, ListsView } from "apps_notes.slint";
+import { RecapsView } from "apps_recaps.slint";
 
 // An app kelma has no screen for: its page opens in Teams on the web.
 component HostView inherits Rectangle {
@@ -42,5 +43,6 @@ export component AppsHost inherits Rectangle {
     if root.view == "workflows": FlowsView { }
     if root.view == "onenote": NotesView { }
     if root.view == "lists": ListsView { }
+    if root.view == "recaps": RecapsView { }
     if root.view == "app": HostView { }
 }

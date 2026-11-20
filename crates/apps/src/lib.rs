@@ -5,8 +5,9 @@
 //! Everything reads the Teams app service on the middle tier (`beta/users/apps/…`) with the
 //! client's Teams credentials; the org catalog comes from Graph (`AppCatalog.Read.All`). Graph's
 //! `TeamsAppInstallation.*ForUser` is not granted, so the user's apps come from the app service
-//! too. Install, uninstall, update and pin requests are only built (dry run), never sent.
-//! Parsers and request builders are pure functions with their own tests.
+//! too. Install, uninstall, update and pin requests are built here and sent with `api::send`
+//! (not yet sent against a real account). Parsers and request builders are pure functions with
+//! their own tests.
 
 pub mod api;
 pub mod bar;

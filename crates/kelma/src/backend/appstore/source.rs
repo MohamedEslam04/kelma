@@ -1,5 +1,6 @@
-//! Where the app screens read from: the live services (reads only) or, in demo mode and in the
-//! tests, the synthetic answers of `fixtures`, parsed by the same functions.
+//! Where the app screens read from and write to: the live services or, in demo mode and in the
+//! tests, the synthetic answers of `fixtures` (parsed by the same functions) and a log of the
+//! writes that would have been sent. Offline, nothing leaves the process.
 
 use super::fixtures as fx;
 use crate::backend::Engine;
@@ -7,9 +8,11 @@ use app_store::{
     AppDefinition, AppPolicy, CatalogApp, InstalledApps, SearchHit, StoreHome, YourApp,
 };
 use std::sync::atomic::Ordering;
+use teams_proto::graph::Write;
 use teams_proto::lists::{Column, ListItem, Site, SpList};
 use teams_proto::onenote::{Notebook, Page, Section};
 use teams_proto::planner::{Bucket, Plan, PlannerTask, TodoList, TodoTask};
+use teams_proto::recaps::{RecapMeeting, RecapResource, RecordingFile};
 use teams_proto::time::now_ms;
 use teams_proto::workflows::{Flow, FlowEnvironment, FlowRun};
 
@@ -27,6 +30,30 @@ impl Engine {
         } else {
             app_store::api::base(&self.client).await
         }
+    }
+
+    // -- writes --
+
+    /// Sends a Graph or Power Automate change. Offline it is only logged.
+    pub(super) async fn src_write(&self, context: &'static str, w: Write) -> Res<()> {
+        tracing::info!(write = %w.describe(), "app write");
+        if self.apps_offline() {
+            self.apps.lock().unwrap().sent.push(w.describe());
+            return Ok(());
+        }
+        self.client.send_write(context, &w).await?;
+        Ok(())
+    }
+
+    /// Sends an app service change (install, remove, update, pin). Offline it is only logged.
+    pub(super) async fn src_send(&self, context: &'static str, req: app_store::Request) -> Res<()> {
+        tracing::info!(write = %req.describe(), "app write");
+        if self.apps_offline() {
+            self.apps.lock().unwrap().sent.push(req.describe());
+            return Ok(());
+        }
+        app_store::api::send(&self.client, context, &req).await?;
+        Ok(())
     }
 
     pub(super) async fn src_installed(&self) -> Res<InstalledApps> {
@@ -239,5 +266,84 @@ impl Engine {
             return Ok(teams_proto::lists::parse_items(&fx::list_items()));
         }
         Ok(self.client.list_items(site, list, 1).await?)
+    }
+
+    // -- Meeting Recaps --
+
+    /// The meetings of the last 30 days that have a recording or transcript, and where the list
+    /// came from. The meeting content service first; when it fails or has nothing, the
+    /// recordings in the user's OneDrive.
+    pub(super) async fn src_recaps(&self) -> Res<(Vec<RecapMeeting>, &'static str)> {
+        const MCPS: &str = "From the meeting content service.";
+        if self.apps_offline() {
+            let v = fx::recap_meetings(now_ms());
+            return Ok((teams_proto::recaps::parse_meetings(&v), MCPS));
+        }
+        match self.client.recap_meetings(30).await {
+            Ok(m) if !m.is_empty() => return Ok((m, MCPS)),
+            Ok(_) => {}
+            Err(e) => {
+                tracing::info!(err = %e, "meeting content service failed, using OneDrive recordings")
+            }
+        }
+        let files: Vec<RecordingFile> = onedrive::around::meeting_recordings(&self.client)
+            .await?
+            .into_iter()
+            .map(|r| RecordingFile {
+                id: r.item.id,
+                drive_id: r.item.drive_id,
+                name: r.item.name,
+                web_url: r.item.web_url,
+                modified_ms: r.item.modified_ms,
+            })
+            .collect();
+        let cutoff = now_ms() - 30 * 86_400_000;
+        let mut meetings = teams_proto::recaps::meetings_from_files(&files);
+        meetings.retain(|m| m.start_ms.is_none_or(|s| s >= cutoff));
+        Ok((meetings, "From the recordings in your OneDrive."))
+    }
+
+    /// The transcript of a meeting as text: a `.vtt` file of the Recordings folder, else the
+    /// transcripts SharePoint keeps with the recording.
+    pub(super) async fn src_transcript(
+        &self,
+        transcript: Option<&RecapResource>,
+        recording: Option<&RecapResource>,
+    ) -> Res<String> {
+        use teams_proto::recaps::{parse_vtt, transcript_text};
+        let vtt = if self.apps_offline() {
+            fx::transcript_vtt().to_owned()
+        } else if let Some(t) = transcript.filter(|t| t.name.to_lowercase().ends_with(".vtt")) {
+            let (Some(d), Some(i)) = (&t.drive_id, &t.item_id) else {
+                anyhow::bail!("the transcript file has no drive location");
+            };
+            self.client.drive_file_text(d, i).await?
+        } else {
+            let r = recording
+                .or(transcript)
+                .ok_or_else(|| anyhow::anyhow!("there is no recording or transcript"))?;
+            let (Some(d), Some(i), Some(u)) = (&r.drive_id, &r.item_id, &r.web_url) else {
+                anyhow::bail!("the recording has no SharePoint location");
+            };
+            self.client.sharepoint_transcript(u, d, i).await?
+        };
+        let text = transcript_text(&parse_vtt(&vtt));
+        if text.is_empty() {
+            anyhow::bail!("the transcript has no readable text");
+        }
+        Ok(text)
+    }
+
+    /// Where the meeting's notes tab opens, from the meeting chat's tabs.
+    pub(super) async fn src_meeting_notes(&self, thread_id: &str) -> Res<Option<String>> {
+        if thread_id.is_empty() {
+            return Ok(None);
+        }
+        let tabs = if self.apps_offline() {
+            teams_proto::channel_tabs::parse_tabs(&fx::meeting_tabs())
+        } else {
+            self.client.chat_tabs(thread_id).await?
+        };
+        Ok(teams_proto::recaps::notes_link(&tabs))
     }
 }

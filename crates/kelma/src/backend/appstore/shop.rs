@@ -1,9 +1,12 @@
 //! The Store: home, search, categories, the app page, Manage your apps and the Store settings.
-//! Add, remove and update only show the request Teams would get; kelma never sends it.
+//! Add, remove and update open the confirm dialog and, once confirmed, send the app service's
+//! request (see `form.rs`); the banner says whether the service accepted it.
 
 use super::Apps;
+use super::form::{self, Pending};
 use super::view::{
-    AppPage, Card, Nav, PermItem, StoreData, cert_text, letter, price_text, tile_color, works_text,
+    AppPage, Card, Nav, PermItem, Row, StoreData, cert_text, letter, price_text, tile_color,
+    works_text,
 };
 use crate::backend::Engine;
 use app_store::{
@@ -12,6 +15,7 @@ use app_store::{
     uninstall_request, update_request,
 };
 use std::sync::Arc;
+use store::{ConvFilter, ConvKind};
 
 /// "Devices" in the Store links out to the certified hardware list.
 const DEVICES_URL: &str = "https://www.microsoft.com/microsoft-teams/across-devices/devices";
@@ -679,26 +683,42 @@ impl Engine {
         self.apps.lock().unwrap().def(id).cloned()
     }
 
-    /// Shows the request an install, uninstall or update would send. It is never sent.
-    fn shop_show_request(
-        self: &Arc<Self>,
-        title: String,
-        req: &app_store::Request,
-        note: &str,
-        link: String,
-    ) {
-        tracing::info!(request = %req.dry_run().replace('\n', " "), "app change not sent");
-        self.ui.apps_install(
+    /// The places an app can be added to besides the user: the teams, group chats or meeting
+    /// chats kelma knows, as the dialog's choices (`id` is the thread id the request needs).
+    fn install_choices(&self, target: &str) -> Vec<Row> {
+        let Ok(st) = self.store.lock() else {
+            return Vec::new();
+        };
+        let row = |id: String, title: String| Row {
+            id,
             title,
-            format!(
-                "{}\n\n{note}\nNothing was sent. kelma does not change your apps; use Open in \
-                 Teams to do it there.",
-                req.dry_run()
-            ),
-            link,
-        );
+            ..Default::default()
+        };
+        match target {
+            "team" => st
+                .teams()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| row(t.id, t.name))
+                .collect(),
+            other => {
+                let kind = if other == "meeting" {
+                    ConvKind::Meeting
+                } else {
+                    ConvKind::Group
+                };
+                st.conversations(ConvFilter::Chats, 500)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|c| c.kind == kind)
+                    .map(|c| row(c.id, c.title))
+                    .collect()
+            }
+        }
     }
 
+    /// Opens the Add dialog. For the user it is a confirmation; for a team, a chat or a meeting
+    /// it also asks which one.
     pub(super) async fn shop_add(self: &Arc<Self>, target: &str) -> anyhow::Result<()> {
         let Some(def) = self
             .apps
@@ -711,32 +731,50 @@ impl Engine {
         else {
             return Ok(());
         };
-        let (t, label, note) = match target {
+        let target = match target {
+            "team" | "chat" | "meeting" => target,
+            _ => "me",
+        };
+        let (title, body) = match target {
             "team" => (
-                Target::Team("<team id>".into()),
-                "to a team",
-                "Pick the team in Teams.",
+                format!("Add {} to a team", def.name),
+                "Pick the team. The app is added to that team for everyone in it.",
             ),
             "chat" => (
-                Target::Chat("<chat id>".into()),
-                "to a chat",
-                "Pick the chat in Teams.",
+                format!("Add {} to a chat", def.name),
+                "Pick the group chat. The app is added to that chat for everyone in it.",
             ),
             "meeting" => (
-                Target::Meeting("<meeting chat id>".into()),
-                "to a meeting",
-                "Pick the meeting in Teams.",
+                format!("Add {} to a meeting", def.name),
+                "Pick the meeting. The app is added to the meeting's chat.",
             ),
-            _ => (Target::Me, "for you", ""),
+            _ => (
+                format!("Add {} for you", def.name),
+                "The app is added to your Teams apps, for you only. You can remove it in Manage \
+                 your apps.",
+            ),
         };
-        let base = self.apps_base().await;
-        let req = install_request(&base, &t, &def.raw);
-        self.shop_show_request(
-            format!("Add {} {label}", def.name),
-            &req,
-            note,
-            def.share_link(),
-        );
+        let mut spec = form::confirm(title, body.to_owned(), "Add", false);
+        spec.link_label = "Open in Teams on the web".into();
+        if target != "me" {
+            spec.choices = self.install_choices(target);
+            if spec.choices.is_empty() {
+                spec.body = format!(
+                    "kelma has no {} to pick from yet. Open the app in Teams on the web to add \
+                     it there.",
+                    match target {
+                        "team" => "teams",
+                        "chat" => "group chats",
+                        _ => "meetings",
+                    }
+                );
+            }
+        }
+        let pending = Pending::Install {
+            app: def.id.clone(),
+            target: target.to_owned(),
+        };
+        self.form_open(pending, spec, def.share_link());
         Ok(())
     }
 
@@ -744,9 +782,32 @@ impl Engine {
         let Some(def) = self.shop_def(id) else {
             return Ok(());
         };
-        let base = self.apps_base().await;
-        let req = uninstall_request(&base, &Target::Me, id);
-        self.shop_show_request(format!("Remove {}", def.name), &req, "", def.share_link());
+        let permanent = self
+            .apps
+            .lock()
+            .unwrap()
+            .installed
+            .as_ref()
+            .is_some_and(|i| {
+                i.entitlements.iter().any(|e| {
+                    e.id == id && e.state == app_store::EntitlementState::InstalledAndPermanent
+                })
+            });
+        if permanent {
+            self.ui
+                .banner(format!("{} is built in and cannot be removed.", def.name));
+            return Ok(());
+        }
+        let spec = form::confirm(
+            format!("Remove {}?", def.name),
+            format!(
+                "{} is removed from your Teams apps. You can add it again from the Store.",
+                def.name
+            ),
+            "Remove",
+            true,
+        );
+        self.form_open(Pending::Remove(id.to_owned()), spec, def.share_link());
         Ok(())
     }
 
@@ -754,10 +815,109 @@ impl Engine {
         let Some(def) = self.shop_def(id) else {
             return Ok(());
         };
+        let spec = form::confirm(
+            format!("Update {}?", def.name),
+            format!("{} is updated to version {}.", def.name, def.version),
+            "Update",
+            false,
+        );
+        self.form_open(Pending::Update(id.to_owned()), spec, def.share_link());
+        Ok(())
+    }
+
+    /// Sends one install, remove or update, then reloads the user's apps. The banner says what
+    /// happened: done, or the error the service gave.
+    async fn shop_apply(
+        self: &Arc<Self>,
+        req: app_store::Request,
+        done: String,
+        failed: String,
+    ) -> Result<(), String> {
+        match self.src_send("app change", req).await {
+            Ok(()) => {
+                self.ui.banner(done);
+                // The service is the truth: take the new list of apps from it.
+                if let Err(err) = self.apps_load().await {
+                    tracing::warn!(%err, "reloading the apps failed");
+                }
+                self.shop_refresh_open_page().await;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "{failed}");
+                self.ui.banner(format!("{failed}: {err}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Shows the page the Store is on again after a change (Manage your apps reloads its list).
+    async fn shop_refresh_open_page(self: &Arc<Self>) {
+        let manage = self.apps.lock().unwrap().shop.page == "manage";
+        if manage {
+            let _ = self.shop_manage().await;
+        } else {
+            self.shop_push();
+        }
+    }
+
+    pub(super) async fn shop_do_install(
+        self: &Arc<Self>,
+        app: &str,
+        target: &str,
+        choice: Option<&str>,
+    ) -> Result<(), String> {
+        let def = self
+            .shop_def(app)
+            .ok_or("This app is not in the Store listing.")?;
+        let t = match (target, choice) {
+            ("team", Some(c)) => Target::Team(c.to_owned()),
+            ("chat", Some(c)) => Target::Chat(c.to_owned()),
+            ("meeting", Some(c)) => Target::Meeting(c.to_owned()),
+            ("me", _) => Target::Me,
+            _ => return Err("Pick one first.".into()),
+        };
+        let base = self.apps_base().await;
+        let req = install_request(&base, &t, &def.raw);
+        let place = match target {
+            "team" => " to the team",
+            "chat" => " to the chat",
+            "meeting" => " to the meeting",
+            _ => "",
+        };
+        self.shop_apply(
+            req,
+            format!("Added {}{place}.", def.name),
+            format!("Could not add {}", def.name),
+        )
+        .await
+    }
+
+    pub(super) async fn shop_do_remove(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        let def = self
+            .shop_def(id)
+            .ok_or("This app is not in the Store listing.")?;
+        let base = self.apps_base().await;
+        let req = uninstall_request(&base, &Target::Me, id);
+        self.shop_apply(
+            req,
+            format!("Removed {}.", def.name),
+            format!("Could not remove {}", def.name),
+        )
+        .await
+    }
+
+    pub(super) async fn shop_do_update(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        let def = self
+            .shop_def(id)
+            .ok_or("This app is not in the Store listing.")?;
         let base = self.apps_base().await;
         let req = update_request(&base, &Target::Me, id, &def.version);
-        self.shop_show_request(format!("Update {}", def.name), &req, "", def.share_link());
-        Ok(())
+        self.shop_apply(
+            req,
+            format!("Updated {} to version {}.", def.name, def.version),
+            format!("Could not update {}", def.name),
+        )
+        .await
     }
 
     pub(super) fn shop_share(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {

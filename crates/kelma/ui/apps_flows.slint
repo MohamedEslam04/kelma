@@ -1,10 +1,10 @@
-// Workflows (read only): your flows and the run history of the selected one. kelma has no
-// button that turns a flow on or off or runs it.
+// Workflows: your flows and the run history of the selected one, with Run (a manual flow) and
+// Turn on or off for the selected flow.
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
 import { FlowsStore, AppRow } from "apps_store.slint";
-import { KitBadge, KitNote } from "apps_kit.slint";
+import { KitBadge, KitButton, KitNote } from "apps_kit.slint";
 
 component FlowRowView inherits Rectangle {
     in property <AppRow> f;
@@ -79,6 +79,7 @@ export component FlowsView inherits Rectangle {
                 HorizontalLayout {
                     padding-left: 20px;
                     padding-right: 16px;
+                    spacing: 8px;
                     Text {
                         text: FlowsStore.selected-name == "" ? "Run history" : "Run history of " + FlowsStore.selected-name;
                         color: Theme.fg;
@@ -86,10 +87,13 @@ export component FlowsView inherits Rectangle {
                         font-weight: 700;
                         vertical-alignment: center;
                         overflow: elide;
+                        horizontal-stretch: 1;
                     }
+                    KitButton { y: 12px; label: "Run"; primary: true; enabled: FlowsStore.can-run; clicked => { FlowsStore.command("flow-run", FlowsStore.selected-id); } }
+                    KitButton { y: 12px; label: FlowsStore.selected-on ? "Turn off" : "Turn on"; enabled: FlowsStore.can-toggle; clicked => { FlowsStore.command("flow-toggle", FlowsStore.selected-id); } }
                 }
             }
-            KitNote { text: "Read only. kelma does not turn flows on or off or run them; do that in Power Automate."; text-size: 12px; }
+            KitNote { text: "Run starts a flow with a button trigger once. Turn on or off changes whether a flow runs on its trigger. Building flows is done in Power Automate."; text-size: 12px; }
             if FlowsStore.loading: KitNote { text: "Loading…"; }
             if FlowsStore.status != "": KitNote { text: FlowsStore.status; }
             ScrollView {

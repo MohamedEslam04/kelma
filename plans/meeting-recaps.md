@@ -47,6 +47,16 @@ kelma shows what the user's license allows and labels the rest.
 - [ ] **R2.2 Share recap.** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). Copy link and share by email; deleting the recap is for organizers only.
 - [ ] **R2.3 Audio and video recap.** DEFERRED: needs test tenant (recaps need test meetings, not allowed on the work account). Play them when they exist (`Recordings/AudioRecaps`). Generating them stays in Teams.
 
+## Status (2026-11-20, build and offline tests only)
+
+A native Meeting Recaps screen (rail or "…": the installed Meeting Recaps app opens it) is built; it is not ticked because nothing was checked on a real tenant.
+- **R1.1 list.** The last 30 days of meetings with a recording or transcript, a search box (subject, organizer), the newest first. From MCPS (UNVERIFIED audience and geo), else from the OneDrive `Recordings` files. Not built: All or Followed (no endpoint known), the grid view, filters for date and people, the greeting.
+- **R1.2 recording.** "Play recording" opens the recording in the browser (SharePoint or Stream); kelma has no player, so no seek, speed, captions, speaker timeline or mentions.
+- **R1.3 transcript.** Speaker, time and text of the WebVTT, shown as text. Not built: search, click to seek, download. The SharePoint `streamContent` path is UNVERIFIED; a `.docx` transcript is not read.
+- **Meeting notes** link from the meeting chat's "Notes" tab (UNVERIFIED tab name). **Share** opens the OneDrive share dialog for the recording.
+- **R2 AI recap.** Not built, by license: the screen says "Not available" (or "Available in Teams", with an Open link when the service sends a URL, if the meeting has an `AISummary`).
+- Endpoints and their status: `docs/protocol.md`, "Meeting Recaps". Tests: `teams_proto::recaps`, `backend::appstore::recaps`, `meeting_recaps_list_meetings_with_a_recording_or_transcript_and_open_their_parts`.
+
 ## Order
 
 R1.1, R1.3 and R1.2, then R0 and R2.

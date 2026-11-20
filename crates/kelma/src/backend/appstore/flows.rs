@@ -1,10 +1,14 @@
-//! Workflows (Power Automate), read only: your flows and a flow's run history. kelma never turns
-//! a flow on or off and never runs one.
+//! Workflows (Power Automate): your flows and a flow's run history, with Run (a manual flow) and
+//! Turn on or off. The write requests are UNVERIFIED against a real account (see
+//! `teams_proto::workflows`), so a refusal is shown as it came.
 
+use super::form::{self, Pending};
 use super::view::{FlowsData, Row, day, duration, moment};
 use crate::backend::Engine;
 use std::sync::Arc;
-use teams_proto::workflows::{Flow, FlowEnvironment, FlowRun};
+use teams_proto::workflows::{
+    Flow, FlowEnvironment, FlowRun, run_request, start_request, stop_request,
+};
 
 #[derive(Default)]
 pub struct Flows {
@@ -36,6 +40,11 @@ fn run_tone(status: &str) -> &'static str {
         "Running" | "Waiting" => "warn",
         _ => "",
     }
+}
+
+/// A flow with a button trigger can be run by hand.
+fn is_manual(f: &Flow) -> bool {
+    matches!(f.trigger.as_deref(), Some("Button" | "Manual" | "Request"))
 }
 
 impl Flows {
@@ -103,8 +112,12 @@ impl Flows {
                 .map(|e| e.display_name.clone())
                 .unwrap_or_default(),
             selected_name: selected.map(|f| f.display_name.clone()).unwrap_or_default(),
+            selected_id: selected.map(|f| f.id.clone()).unwrap_or_default(),
             status,
             loading: self.loading || self.runs_loading,
+            can_run: selected.is_some_and(|f| f.is_on() && is_manual(f)),
+            can_toggle: selected.is_some_and(|f| matches!(f.state.as_str(), "Started" | "Stopped")),
+            selected_on: selected.is_some_and(Flow::is_on),
         }
     }
 }
@@ -202,6 +215,101 @@ impl Engine {
     }
 }
 
+impl Engine {
+    /// The selected flow and the environment it lives in.
+    fn flow_target(&self, id: &str) -> Option<(Flow, String)> {
+        let a = self.apps.lock().unwrap();
+        let f = a.flows.flows.iter().find(|f| f.id == id)?.clone();
+        Some((f, a.flows.env.as_ref()?.name.clone()))
+    }
+
+    pub(super) fn flows_begin_run(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let Some((f, _)) = self.flow_target(id) else {
+            return Ok(());
+        };
+        let spec = form::confirm(
+            format!("Run {}?", f.display_name),
+            "The flow starts once now, as you.".into(),
+            "Run",
+            false,
+        );
+        self.form_open(Pending::FlowRun(id.to_owned()), spec, String::new());
+        Ok(())
+    }
+
+    pub(super) fn flows_begin_toggle(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let Some((f, _)) = self.flow_target(id) else {
+            return Ok(());
+        };
+        let (verb, body) = if f.is_on() {
+            (
+                "Turn off",
+                "It stops running on its trigger until you turn it on again.",
+            )
+        } else {
+            ("Turn on", "It starts running on its trigger.")
+        };
+        let spec = form::confirm(
+            format!("{verb} {}?", f.display_name),
+            body.into(),
+            verb,
+            f.is_on(),
+        );
+        self.form_open(Pending::FlowToggle(id.to_owned()), spec, String::new());
+        Ok(())
+    }
+
+    pub(super) async fn flows_do_run(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        let (f, env) = self
+            .flow_target(id)
+            .ok_or("This flow is not in the list.")?;
+        match self.src_write("run flow", run_request(&env, id)).await {
+            Ok(()) => {
+                self.ui.banner(format!("Started {}.", f.display_name));
+                let _ = self.flows_select(id).await;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "run flow failed");
+                self.ui
+                    .banner(format!("Could not run {}: {err}", f.display_name));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) async fn flows_do_toggle(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        let (f, env) = self
+            .flow_target(id)
+            .ok_or("This flow is not in the list.")?;
+        let (w, done, failed) = if f.is_on() {
+            (
+                stop_request(&env, id),
+                format!("Turned off {}.", f.display_name),
+                format!("Could not turn off {}", f.display_name),
+            )
+        } else {
+            (
+                start_request(&env, id),
+                format!("Turned on {}.", f.display_name),
+                format!("Could not turn on {}", f.display_name),
+            )
+        };
+        match self.src_write("flow state", w).await {
+            Ok(()) => {
+                self.ui.banner(done);
+                // The service decides the state: read the list again.
+                self.apps.lock().unwrap().flows.loaded = false;
+                let _ = self.flows_refresh().await;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "{failed}");
+                self.ui.banner(format!("{failed}: {err}"));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,7 +327,7 @@ mod tests {
         };
         let d = f.data();
         let badges: Vec<&str> = d.flows.iter().map(|r| r.badge.as_str()).collect();
-        assert_eq!(badges, ["On", "On", "Off"]);
+        assert_eq!(badges, ["On", "On", "Off", "On"]);
         assert!(d.flows[0].selected && !d.flows[1].selected);
         assert_eq!(d.flows[2].subtitle, "Manual button · 2 actions");
         assert_eq!(d.flows[1].subtitle, "Scheduled · 1 action");
@@ -230,5 +338,16 @@ mod tests {
         );
         assert_eq!(d.runs[0].subtitle, "4 s");
         assert!(d.selected_name.starts_with("Post a message"));
+        // Only a flow with a button trigger that is on can be run by hand.
+        assert!(!d.can_run && d.can_toggle && d.selected_on);
+        let mut f = f;
+        f.selected = Some("flow-4".into());
+        assert!(f.data().can_run);
+        f.selected = Some("flow-3".into());
+        let d = f.data();
+        assert!(
+            !d.can_run && d.can_toggle && !d.selected_on,
+            "off: turn on, no run"
+        );
     }
 }
