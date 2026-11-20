@@ -2,6 +2,8 @@
 // (`src/backend/call.rs`). Commands go back through `command(name, argument)`.
 
 export struct CallPerson {
+    // Their MRI ("" when unknown), for "Give control" and the like.
+    id: string,
     name: string,
     initials: string,
     muted: bool,
@@ -75,6 +77,11 @@ export global CallStore {
     in property <string> presenter;
     in property <image> content-video;
     in property <bool> has-content;
+    // Remote control of a shared screen is offered (KELMA_REMOTE_CONTROL=1), where it stands
+    // ("" | requested | incoming | controlling | controlled) and the other person's name.
+    in property <bool> remote-control;
+    in property <string> control-mode;
+    in property <string> control-name;
     // The pre-join microphone switch.
     in property <bool> prejoin-mic: true;
     // Shown only when the call state says the meeting is recorded.
@@ -133,7 +140,10 @@ export global CallStore {
     // (name, argument): join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
     // hold, transfer-open, find (query), invite (MRI), transfer (MRI), share, camera,
     // prejoin-camera, leave, close, rejoin, dismiss-error, captions (on|off), recording
-    // (start|stop), transcription (start|stop), dismiss-notice, resume, end-held. See
+    // (start|stop), transcription (start|stop), dismiss-notice, resume, end-held,
+    // control-request, control-release, control-give (MRI), control-allow, control-deny,
+    // control-take-back, control-key (key text), control-input (move x y | down b | up b |
+    // scroll dx dy | key-down text | key-up text). See
     // `backend/call.rs` `CallCmd::parse`.
     callback command(string, string);
     // The conversation is a meeting's chat (its header shows Join).

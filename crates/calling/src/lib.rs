@@ -30,6 +30,7 @@ pub mod invitation;
 pub mod media;
 pub mod ngc_trouter;
 pub mod relay;
+pub mod remote_control;
 pub mod signaling;
 pub mod types;
 pub mod video;

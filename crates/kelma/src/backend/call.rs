@@ -30,6 +30,8 @@ pub(crate) mod camera;
 #[cfg(feature = "calls")]
 pub(crate) mod live;
 #[cfg(feature = "calls")]
+pub(crate) mod remote_control;
+#[cfg(feature = "calls")]
 pub(crate) mod remote_video;
 #[cfg(feature = "calls")]
 pub(crate) mod share;
@@ -238,6 +240,13 @@ pub enum Event {
     /// Who else shares a screen now (their name), or nobody (empty).
     #[cfg(any(test, feature = "calls"))]
     Presenter(String),
+    /// Remote control of a shared screen: `mode` is "" | requested | incoming | controlling |
+    /// controlled, `name` the other person.
+    #[cfg(any(test, feature = "calls"))]
+    Control {
+        mode: &'static str,
+        name: String,
+    },
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.
@@ -277,7 +286,89 @@ pub enum Control {
     },
     /// Turn the camera on (the Camera portal may ask) or off.
     Camera(bool),
+    /// Remote control of a shared screen (`KELMA_REMOTE_CONTROL=1`).
+    RemoteControl(ControlAction),
     Leave,
+}
+
+/// What the call window asks of remote control.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlAction {
+    /// "Request control" of the screen someone else shares.
+    Request,
+    /// Give control back, or withdraw our request.
+    Release,
+    /// "Give control › <person>" of the screen we share.
+    Give { mri: String, name: String },
+    /// Allow (`true`) or deny a viewer's request.
+    Answer(bool),
+    /// "Take back control".
+    TakeBack,
+    /// A key pressed in our window while someone controls our screen (Slint's key text).
+    LocalKey(String),
+    /// Our input on the presenter's picture while we control it.
+    Input(ControlInput),
+}
+
+/// The controller's input on the shared picture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlInput {
+    /// The pointer at a point of the picture, in ten-thousandths of its width and height.
+    Move { x: u16, y: u16 },
+    /// A button (Slint's numbering: 1 left, 2 right, 3 middle) pressed or released.
+    Button { button: u8, pressed: bool },
+    /// Scrolling, in pixels (positive: right, down).
+    Scroll { dx: i32, dy: i32 },
+    /// A key as Slint names it.
+    Key { text: String, pressed: bool },
+}
+
+impl ControlInput {
+    /// `CallStore.command("control-input", ...)`: `move <x> <y>` (0..1), `down <button>`,
+    /// `up <button>`, `scroll <dx> <dy>`, `key-down <text>`, `key-up <text>`.
+    pub fn parse(arg: &str) -> Option<ControlInput> {
+        let (kind, rest) = arg.split_once(' ').unwrap_or((arg, ""));
+        let two = || {
+            let (a, b) = rest.split_once(' ')?;
+            Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?))
+        };
+        let unit = |v: f32| (v.clamp(0.0, 1.0) * 10_000.0).round() as u16;
+        Some(match kind {
+            "move" => {
+                let (x, y) = two().filter(|(x, y)| x.is_finite() && y.is_finite())?;
+                ControlInput::Move {
+                    x: unit(x),
+                    y: unit(y),
+                }
+            }
+            "down" | "up" => ControlInput::Button {
+                button: rest.trim().parse().ok()?,
+                pressed: kind == "down",
+            },
+            "scroll" => {
+                let (dx, dy) = two().filter(|(x, y)| x.is_finite() && y.is_finite())?;
+                ControlInput::Scroll {
+                    dx: dx.round() as i32,
+                    dy: dy.round() as i32,
+                }
+            }
+            "key-down" | "key-up" if !rest.is_empty() => ControlInput::Key {
+                text: rest.to_owned(),
+                pressed: kind == "key-down",
+            },
+            _ => return None,
+        })
+    }
+}
+
+/// Whether calls offer remote control (`KELMA_REMOTE_CONTROL` set to anything but `0`). The
+/// wire format is a guess (`docs/protocol-calls.md`, Remote control), so it is opt-in.
+pub fn remote_control_wanted() -> bool {
+    remote_control_wanted_by(std::env::var_os("KELMA_REMOTE_CONTROL").as_deref())
+}
+
+fn remote_control_wanted_by(v: Option<&std::ffi::OsStr>) -> bool {
+    v.is_some_and(|v| !v.is_empty() && v != "0")
 }
 
 /// A person the call window's people search found (the invite box, the transfer dialog).
@@ -401,6 +492,11 @@ pub struct CallData {
     pub camera: bool,
     /// Who else shares a screen (their name), or empty.
     pub presenter: String,
+    /// Remote control is offered (`KELMA_REMOTE_CONTROL=1`).
+    pub remote_control: bool,
+    /// "" | requested | incoming | controlling | controlled, and the other person's name.
+    pub control_mode: String,
+    pub control_name: String,
     pub prejoin_mic: bool,
     pub prejoin_camera: bool,
     pub recording: bool,
@@ -461,6 +557,10 @@ pub struct CallModel {
     pub prejoin_camera: bool,
     /// Who else shares a screen now, or empty.
     pub presenter: String,
+    /// Remote control: "" | requested | incoming | controlling | controlled.
+    pub control_mode: String,
+    /// The other person of remote control.
+    pub control_name: String,
     pub recording: bool,
     pub transcribing: bool,
     /// Live captions are on (asked for, and not refused).
@@ -629,6 +729,11 @@ impl CallModel {
             }
             #[cfg(any(test, feature = "calls"))]
             Event::Presenter(name) => return replace(&mut self.presenter, name),
+            #[cfg(any(test, feature = "calls"))]
+            Event::Control { mode, name } => {
+                let m = replace(&mut self.control_mode, mode.to_owned());
+                return replace(&mut self.control_name, name) || m;
+            }
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
                 self.end(reason, now);
@@ -648,6 +753,8 @@ impl CallModel {
         self.can_camera = false;
         self.camera = false;
         self.presenter.clear();
+        self.control_mode.clear();
+        self.control_name.clear();
         self.recording = false;
         self.transcribing = false;
         self.notice.clear();
@@ -754,6 +861,25 @@ impl CallModel {
         }
         (self.phase.active() && (self.can_camera || self.camera))
             .then_some(Control::Camera(!self.camera))
+    }
+
+    /// A remote-control command while a call runs. "Give control" takes the person's name from
+    /// the roster.
+    pub fn remote_control(&self, a: ControlAction) -> Option<Control> {
+        if !self.phase.active() {
+            return None;
+        }
+        let a = match a {
+            ControlAction::Give { mri, .. } => {
+                let p = self.roster.iter().find(|p| p.mri == mri && !p.me)?;
+                ControlAction::Give {
+                    name: p.name.clone(),
+                    mri,
+                }
+            }
+            a => a,
+        };
+        Some(Control::RemoteControl(a))
     }
 
     /// The hand toggle. Returns the new state while a call runs.
@@ -870,6 +996,9 @@ impl CallModel {
             } else {
                 String::new()
             },
+            remote_control: remote_control_wanted(),
+            control_mode: self.control_mode.clone(),
+            control_name: self.control_name.clone(),
             prejoin_mic: self.mic_on,
             prejoin_camera: self.prejoin_camera,
             recording: self.recording,
@@ -1006,6 +1135,8 @@ pub enum CallCmd {
     Resume,
     /// The "On hold" bar's End: ends the call on hold.
     EndHeld,
+    /// Remote control of a shared screen.
+    Control(ControlAction),
 }
 
 impl CallCmd {
@@ -1037,6 +1168,19 @@ impl CallCmd {
             "dismiss-notice" => CallCmd::DismissNotice,
             "resume" => CallCmd::Resume,
             "end-held" => CallCmd::EndHeld,
+            "control-request" => CallCmd::Control(ControlAction::Request),
+            "control-release" => CallCmd::Control(ControlAction::Release),
+            "control-give" if !arg.is_empty() => CallCmd::Control(ControlAction::Give {
+                mri: arg.into(),
+                name: String::new(),
+            }),
+            "control-allow" => CallCmd::Control(ControlAction::Answer(true)),
+            "control-deny" => CallCmd::Control(ControlAction::Answer(false)),
+            "control-take-back" => CallCmd::Control(ControlAction::TakeBack),
+            "control-key" if !arg.is_empty() => {
+                CallCmd::Control(ControlAction::LocalKey(arg.into()))
+            }
+            "control-input" => CallCmd::Control(ControlAction::Input(ControlInput::parse(arg)?)),
             _ => return None,
         })
     }
@@ -1533,6 +1677,7 @@ impl CallManager {
                     }
                     return;
                 }
+                CallCmd::Control(a) => m.remote_control(a),
                 CallCmd::EndHeld => {
                     let shown_on_hold = m.held;
                     drop(m);
@@ -1945,6 +2090,7 @@ impl CallHandle for FakeHandle {
             Control::Hold(h) => format!("hold {}", if *h { "on" } else { "off" }),
             Control::AddPerson { mri, .. } => format!("add {mri}"),
             Control::Transfer { mri, .. } => format!("transfer {mri}"),
+            Control::RemoteControl(a) => format!("control {a:?}"),
             Control::Leave => "leave".into(),
         };
         self.log.lock().unwrap().push(line);
@@ -2210,6 +2356,98 @@ mod tests {
         m.leave(now);
         assert!(!m.camera && !m.can_camera);
         assert_eq!(m.toggle_camera(), None);
+    }
+
+    #[test]
+    fn remote_control_is_opt_in_and_its_commands_parse() {
+        assert!(!remote_control_wanted_by(None));
+        assert!(!remote_control_wanted_by(Some("0".as_ref())));
+        assert!(remote_control_wanted_by(Some("1".as_ref())));
+        assert_eq!(
+            CallCmd::parse("control-request", ""),
+            Some(CallCmd::Control(ControlAction::Request))
+        );
+        assert_eq!(
+            CallCmd::parse("control-allow", ""),
+            Some(CallCmd::Control(ControlAction::Answer(true)))
+        );
+        assert_eq!(CallCmd::parse("control-give", ""), None);
+        assert_eq!(
+            CallCmd::parse("control-input", "move 0.5 1.7"),
+            Some(CallCmd::Control(ControlAction::Input(ControlInput::Move {
+                x: 5000,
+                y: 10000
+            })))
+        );
+        assert_eq!(
+            ControlInput::parse("down 1"),
+            Some(ControlInput::Button {
+                button: 1,
+                pressed: true
+            })
+        );
+        assert_eq!(
+            ControlInput::parse("scroll 0 -40.4"),
+            Some(ControlInput::Scroll { dx: 0, dy: -40 })
+        );
+        assert_eq!(
+            ControlInput::parse("key-up  "),
+            Some(ControlInput::Key {
+                text: " ".into(),
+                pressed: false
+            }),
+            "the space key"
+        );
+        assert_eq!(ControlInput::parse("key-down"), None);
+        assert_eq!(ControlInput::parse("move 0.5"), None);
+        assert_eq!(ControlInput::parse("move NaN 0"), None);
+        assert_eq!(ControlInput::parse("jump"), None);
+    }
+
+    #[test]
+    fn give_control_names_the_person_and_the_banner_follows_the_driver() {
+        let now = Instant::now();
+        let mut m = CallModel::default();
+        assert_eq!(m.remote_control(ControlAction::TakeBack), None, "no call");
+        m.adopted(
+            CallKind::Direct {
+                peer_name: "Ada".into(),
+                chat_id: String::new(),
+            },
+            Devices::default(),
+            now,
+        );
+        m.apply(
+            Event::Roster(vec![Person {
+                mri: "8:a".into(),
+                name: "Ada".into(),
+                ..Default::default()
+            }]),
+            now,
+        );
+        let give = |mri: &str| ControlAction::Give {
+            mri: mri.into(),
+            name: String::new(),
+        };
+        assert_eq!(
+            m.remote_control(give("8:a")),
+            Some(Control::RemoteControl(ControlAction::Give {
+                mri: "8:a".into(),
+                name: "Ada".into()
+            }))
+        );
+        assert_eq!(m.remote_control(give("8:nobody")), None);
+        assert!(m.apply(
+            Event::Control {
+                mode: "controlled",
+                name: "Ada".into()
+            },
+            now
+        ));
+        assert_eq!(m.data(now).control_mode, "controlled");
+        assert_eq!(m.data(now).control_name, "Ada");
+        m.leave(now);
+        assert_eq!(m.data(now).control_mode, "");
     }
 
     #[test]

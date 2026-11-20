@@ -143,6 +143,24 @@ pub struct MediaSession {
     state: Arc<StateTx>,
     /// Whether the session has the data channel (and answers the `x-data` line with it).
     data: bool,
+    /// The data channel, for sending (remote control input, UNVERIFIED).
+    data_channel: Option<Arc<dyn DataChannel>>,
+}
+
+/// Sends whole messages on the session's data channel. Cheap to clone.
+#[derive(Clone)]
+pub struct DataSender {
+    channel: Arc<dyn DataChannel>,
+}
+
+impl DataSender {
+    /// Queues one message; it does not wait for the peer.
+    pub async fn send(&self, message: &[u8]) -> Result<()> {
+        self.channel
+            .send(bytes::BytesMut::from(message))
+            .await
+            .map_err(media_err("data channel send"))
+    }
 }
 
 /// Sends our Opus packets, one 20 ms frame each. Cheap to clone into the audio task.
@@ -306,6 +324,7 @@ impl MediaSession {
         for role in options.video.iter().copied() {
             video.push(VideoSender::add_to(&pc, role).await?);
         }
+        let mut data_channel = None;
         if options.data_channel {
             let channel = pc
                 .create_data_channel(
@@ -314,6 +333,7 @@ impl MediaSession {
                 )
                 .await
                 .map_err(media_err("data channel"))?;
+            data_channel = Some(Arc::clone(&channel));
             tokio::spawn(read_data_channel(channel, data_tx));
         }
         let mut slots = Vec::new();
@@ -337,6 +357,7 @@ impl MediaSession {
                 gathered,
                 state,
                 data: options.data_channel,
+                data_channel,
             },
             MediaEvents {
                 state: state_rx,
@@ -443,6 +464,13 @@ impl MediaSession {
         Ok(sdp::to_teams_answer_with_data(
             &local, offer, &roles, self.data,
         ))
+    }
+
+    /// A handle for sending on the data channel, when the session has one.
+    pub fn data_sender(&self) -> Option<DataSender> {
+        self.data_channel
+            .clone()
+            .map(|channel| DataSender { channel })
     }
 
     /// A handle for sending our Opus packets from another task.

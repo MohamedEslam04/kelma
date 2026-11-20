@@ -67,8 +67,9 @@ devices = ["dep:cpal"]
 # Echo cancellation, noise suppression and AGC on the microphone path (pure Rust, no system deps).
 aec = ["dep:sonora"]
 # Screen sharing: the ScreenCast portal and the H.264 encoder. Runtime needs xdg-desktop-portal and
-# GStreamer's `pipewiresrc` (gstreamer1-plugins / pipewire-gstreamer).
-screen-share = ["dep:openh264", "dep:ashpd"]
+# GStreamer's `pipewiresrc` (gstreamer1-plugins / pipewire-gstreamer). The RemoteDesktop portal
+# (remote control of a share, `video::remote_input`) is the same crate, no new library.
+screen-share = ["dep:openh264", "dep:ashpd", "ashpd/remote_desktop"]
 # Camera video: the Camera portal (or a V4L2 device) through the same GStreamer child and H.264
 # encoder, and the OpenH264 decoder for the other side's video. Runtime needs GStreamer's
 # `pipewiresrc` (portal) or `v4l2src` (gstreamer1-plugins-good) and `decodebin`.

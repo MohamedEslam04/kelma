@@ -9,11 +9,15 @@
 //! The camera will reuse this path with `VideoRole::MainVideo` and a camera frame source.
 
 use calling::media::{MediaOptions, MediaSession};
+use calling::signaling::content_sharing::{
+    ADD_MODALITY_FAILURE, ADD_MODALITY_SUCCESS, SESSION_END, SESSION_UPDATE, SharingSession, new_id,
+};
 use calling::signaling::video::{
     MediaDescription, negotiation_tag, parse_sender_controls, video_modalities,
 };
 use calling::signaling::{CallSession, NgcClient};
 use calling::video::h264::{EncoderSettings, H264Encoder};
+use calling::video::remote_input::{InputInjector, pick_with_control};
 use calling::video::screencast::{CaptureSettings, ScreenCapture, ShareKind, pick};
 use calling::video::{VideoRole, pump};
 use calling::{Links, SdpBlob};
@@ -47,12 +51,37 @@ pub fn media_options() -> MediaOptions {
     }
 }
 
+/// What the picker hands back: the capture, and the remote-control injector when the share was
+/// started in a combined RemoteDesktop session ([`super::remote_control::wanted`]).
+pub struct Picked {
+    pub capture: ScreenCapture,
+    pub injector: Option<InputInjector>,
+}
+
 /// What the share tasks report to the call loop.
 pub enum ShareMsg {
     /// The picker closed: a capture, `None` when cancelled, or why it failed.
-    Picked(Result<Option<Box<ScreenCapture>>, String>),
+    Picked(Result<Option<Box<Picked>>, String>),
     /// The capture ended on its own (the user stopped it from the desktop's indicator).
     Ended,
+    /// The meeting did not grant the content-sharing session in time (correlation id).
+    GrantTimeout(String),
+}
+
+/// How long a meeting may take to grant the content-sharing session before the share is sent
+/// anyway (UNVERIFIED: the web client waits for the grant).
+const GRANT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What a content-sharing callback changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionNews {
+    /// The session we asked for was granted: the share can go out.
+    Granted,
+    /// The meeting refused it.
+    Refused,
+    /// Our session ended (someone else presents now, or the meeting ended it).
+    Ended,
+    Nothing,
 }
 
 /// One call's share state.
@@ -66,6 +95,12 @@ pub struct Share {
     request_id: u64,
     /// What the UI was last told: (available, sharing).
     shown: Option<(bool, bool)>,
+    /// The meeting's content-sharing session we present in (never merged into the call's links).
+    pub session: Option<SharingSession>,
+    /// The correlation id of the session we asked for, until it is granted.
+    asking: Option<String>,
+    /// Drives our screen for the person we gave control to (combined portal session).
+    pub injector: Option<InputInjector>,
 }
 
 impl Share {
@@ -81,11 +116,26 @@ impl Share {
         }
         self.picking = true;
         let tx = tx.clone();
+        let with_control = super::remote_control::wanted();
         tokio::spawn(async move {
-            let r = pick(ShareKind::Any, CaptureSettings::default())
-                .await
-                .map(|c| c.map(Box::new))
-                .map_err(|e| e.to_string());
+            let (kind, settings) = (ShareKind::Any, CaptureSettings::default());
+            let r = if with_control {
+                // One consent for the screen and for being controlled (RemoteDesktop portal).
+                pick_with_control(kind, settings).await.map(|p| {
+                    p.map(|(capture, injector)| Picked {
+                        capture,
+                        injector: Some(injector),
+                    })
+                })
+            } else {
+                pick(kind, settings).await.map(|c| {
+                    c.map(|capture| Picked {
+                        capture,
+                        injector: None,
+                    })
+                })
+            };
+            let r = r.map(|p| p.map(Box::new)).map_err(|e| e.to_string());
             let _ = tx.send(ShareMsg::Picked(r));
         });
     }
@@ -116,10 +166,13 @@ impl Share {
         Ok(())
     }
 
-    /// Stops the capture and the encoder. True when something was being shared.
+    /// Stops the capture and the encoder. True when something was being shared. The
+    /// content-sharing session is given back by the caller ([`leave_session`]).
     pub async fn stop(&mut self) -> bool {
         self.picking = false;
         self.keyframes = None;
+        self.injector = None;
+        self.asking = None;
         if let Some(e) = self.encoder.take() {
             e.abort();
         }
@@ -142,6 +195,35 @@ impl Share {
             && let Some(k) = &self.keyframes
         {
             let _ = k.send(());
+        }
+    }
+
+    /// A conversation callback about the content-sharing session (`event` is its name).
+    pub fn session_frame(&mut self, event: &str, body: &serde_json::Value) -> SessionNews {
+        match event {
+            ADD_MODALITY_SUCCESS | SESSION_UPDATE => {
+                let corr = self
+                    .asking
+                    .clone()
+                    .or_else(|| self.session.as_ref().map(|s| s.correlation_id.clone()));
+                let Some(corr) = corr else {
+                    return SessionNews::Nothing;
+                };
+                match SharingSession::read(&corr, body) {
+                    Some(granted) => {
+                        self.session = Some(granted);
+                        if self.asking.take().is_some() {
+                            SessionNews::Granted
+                        } else {
+                            SessionNews::Nothing
+                        }
+                    }
+                    None => SessionNews::Nothing,
+                }
+            }
+            ADD_MODALITY_FAILURE if self.asking.take().is_some() => SessionNews::Refused,
+            SESSION_END if self.session.take().is_some() => SessionNews::Ended,
+            _ => SessionNews::Nothing,
         }
     }
 
@@ -178,6 +260,59 @@ pub(super) fn update_link(links: &Links) -> Option<String> {
                 .get("callLeg")
                 .map(|leg| format!("{}/updateMediaDescriptions", leg.trim_end_matches('/')))
         })
+}
+
+/// Asks a meeting for its content-sharing session before our share goes out (see
+/// `calling::signaling::content_sharing`, UNVERIFIED). Returns true when the share can go out
+/// now: the grant came in the answer, or the call names no `addModality` link (the share then
+/// goes out without a session, as before). Otherwise the grant comes on a callback
+/// ([`Share::session_frame`]) or [`ShareMsg::GrantTimeout`] fires.
+pub async fn start_session(
+    ngc: &NgcClient,
+    s: &CallSession,
+    links: &Links,
+    share: &mut Share,
+    tx: &mpsc::UnboundedSender<ShareMsg>,
+) -> anyhow::Result<bool> {
+    let Some(url) = links.get("addModality") else {
+        tracing::info!("no addModality link: sharing without a content-sharing session");
+        return Ok(true);
+    };
+    let correlation = new_id();
+    let answer = ngc
+        .start_content_sharing(s, url, &correlation, &new_id())
+        .await?;
+    if let Some(granted) = SharingSession::read(&correlation, &answer.body) {
+        share.session = Some(granted);
+        return Ok(true);
+    }
+    share.asking = Some(correlation.clone());
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(GRANT_WAIT).await;
+        let _ = tx.send(ShareMsg::GrantTimeout(correlation));
+    });
+    Ok(false)
+}
+
+/// The grant did not come: stop waiting for it (true when we still were).
+pub fn grant_timed_out(share: &mut Share, correlation: &str) -> bool {
+    if share.asking.as_deref() == Some(correlation) {
+        share.asking = None;
+        true
+    } else {
+        false
+    }
+}
+
+/// Gives the content-sharing session back on its own `leave` link, if we hold one.
+pub async fn leave_session(ngc: &NgcClient, s: &CallSession, share: &mut Share) {
+    share.asking = None;
+    if let Some(session) = share.session.take()
+        && let Err(e) = ngc.leave_content_sharing(s, &session).await
+    {
+        tracing::warn!("content-sharing session not given back: {e:#}");
+    }
 }
 
 /// Tells a meeting's media server that our sharing line sends (or stopped).
@@ -262,6 +397,74 @@ mod tests {
             update_link(&links).as_deref(),
             Some("https://cc.example.invalid/u")
         );
+    }
+
+    #[test]
+    fn a_session_is_granted_by_its_callback_and_ended_by_its_end() {
+        let mut s = Share {
+            asking: Some("corr".into()),
+            ..Default::default()
+        };
+        assert!(s.asking.is_some());
+        let grant = serde_json::json!({"links": {"leave": "https://x/cs-leave"}});
+        assert_eq!(
+            s.session_frame("conversationUpdate", &grant),
+            SessionNews::Nothing
+        );
+        assert_eq!(
+            s.session_frame("contentSharingUpdate", &grant),
+            SessionNews::Granted
+        );
+        assert!(!s.asking.is_some());
+        assert_eq!(
+            s.session.as_ref().and_then(|x| x.leave()),
+            Some("https://x/cs-leave")
+        );
+        assert_eq!(s.session.as_ref().unwrap().correlation_id, "corr");
+        // A later update refreshes the links; nothing to send again.
+        assert_eq!(
+            s.session_frame("contentSharingUpdate", &grant),
+            SessionNews::Nothing
+        );
+        assert_eq!(
+            s.session_frame("contentSharingEnd", &grant),
+            SessionNews::Ended
+        );
+        assert!(s.session.is_none());
+        assert_eq!(
+            s.session_frame("contentSharingEnd", &grant),
+            SessionNews::Nothing
+        );
+    }
+
+    #[test]
+    fn a_refused_or_late_grant_stops_the_wait_once() {
+        let mut s = Share {
+            asking: Some("c1".into()),
+            ..Default::default()
+        };
+        assert!(!grant_timed_out(&mut s, "c0"), "an older ask");
+        assert!(grant_timed_out(&mut s, "c1"));
+        assert!(!grant_timed_out(&mut s, "c1"));
+        s.asking = Some("c2".into());
+        let nothing = serde_json::json!({});
+        assert_eq!(
+            s.session_frame("addModalityFailure", &nothing),
+            SessionNews::Refused
+        );
+        assert_eq!(
+            s.session_frame("addModalityFailure", &nothing),
+            SessionNews::Nothing
+        );
+        // Without an ask, a stray grant is not ours.
+        assert_eq!(
+            s.session_frame(
+                "addModalitySuccess",
+                &serde_json::json!({"links": {"leave": "x"}})
+            ),
+            SessionNews::Nothing
+        );
+        assert!(s.session.is_none());
     }
 
     #[test]

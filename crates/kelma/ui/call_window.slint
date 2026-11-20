@@ -158,14 +158,26 @@ component TopBar inherits Rectangle {
                 clicked => { CallStore.menu = CallStore.menu == "devices" ? "" : "devices"; }
             }
         }
-        CallButton {
-            icon: @image-url("icons/screen-share.svg");
-            label: CallStore.sharing ? "Stop sharing" : "Share";
-            checkable: true;
-            active: CallStore.sharing;
-            enabled: CallStore.can-share || CallStore.sharing;
-            tip: CallStore.can-share || CallStore.sharing ? "" : "Screen sharing isn't available in this call";
-            clicked => { CallStore.command("share", ""); }
+        HorizontalLayout {
+            CallButton {
+                icon: @image-url("icons/screen-share.svg");
+                label: CallStore.sharing ? "Stop sharing" : "Share";
+                checkable: true;
+                active: CallStore.sharing;
+                enabled: CallStore.can-share || CallStore.sharing;
+                tip: CallStore.can-share || CallStore.sharing ? "" : "Screen sharing isn't available in this call";
+                clicked => { CallStore.command("share", ""); }
+            }
+            // Give control (remote control of our share).
+            if CallStore.remote-control && CallStore.sharing: CallButton {
+                width: 22px;
+                icon: @image-url("icons/chevron-down.svg");
+                label: "";
+                tip: "Give control";
+                active: CallStore.menu == "share";
+                accessible-label: "Sharing options";
+                clicked => { CallStore.menu = CallStore.menu == "share" ? "" : "share"; }
+            }
         }
         CallButton {
             icon: @image-url("icons/call-end.svg");
@@ -203,6 +215,136 @@ component Banner inherits Rectangle {
             accessible-label: root.dismiss-label;
             y: 1px;
             clicked => { CallStore.command(root.dismiss, ""); }
+        }
+    }
+}
+
+// Remote control's banners: who controls whose screen, and a viewer's request to ours.
+component ControlBanner inherits Rectangle {
+    property <string> mode: CallStore.control-mode;
+    property <string> who: CallStore.control-name != "" ? CallStore.control-name : "Someone";
+    height: 40px;
+    background: mode == "incoming" ? #3d3e66 : mode == "requested" ? #3d3e66 : #8a5a00;
+    accessible-role: text;
+    accessible-label: msg.text;
+    // While someone controls our screen, a key pressed here takes control back (Escape twice
+    // always does).
+    if root.mode == "controlled": FocusScope {
+        width: 0px;
+        height: 0px;
+        init => { self.focus(); }
+        key-pressed(e) => {
+            CallStore.command("control-key", e.text);
+            reject
+        }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 8px;
+        spacing: 8px;
+        msg := Text {
+            text: root.mode == "controlled" ? @tr("{} is controlling your screen", root.who)
+                : root.mode == "controlling" ? @tr("You're controlling {}'s screen", root.who)
+                : root.mode == "incoming" ? @tr("{} wants control of your screen", root.who)
+                : @tr("You asked {} for control", root.who);
+            color: #ffffff;
+            font-size: 13px * Theme.font-scale;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.mode == "controlled": CallAction {
+            label: "Take back";
+            primary: true;
+            y: 3px;
+            clicked => { CallStore.command("control-take-back", ""); }
+        }
+        if root.mode == "controlling": CallAction {
+            label: "Release";
+            y: 3px;
+            clicked => { CallStore.command("control-release", ""); }
+        }
+        if root.mode == "requested": CallAction {
+            label: "Cancel request";
+            y: 3px;
+            clicked => { CallStore.command("control-release", ""); }
+        }
+        if root.mode == "incoming": CallAction {
+            label: "Allow";
+            primary: true;
+            y: 3px;
+            clicked => { CallStore.command("control-allow", ""); }
+        }
+        if root.mode == "incoming": CallAction {
+            label: "Deny";
+            y: 3px;
+            clicked => { CallStore.command("control-deny", ""); }
+        }
+    }
+}
+
+component ShareMenuItem inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+    height: 32px;
+    border-radius: 3px;
+    background: touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Text {
+        x: 8px;
+        text: root.label;
+        color: Theme.fg;
+        font-size: 13px * Theme.font-scale;
+        vertical-alignment: center;
+        overflow: elide;
+        width: parent.width - 16px;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The Share chevron's dropdown: give control of our screen to someone in the call, or take it
+// back.
+component ShareMenu inherits Rectangle {
+    width: 240px;
+    height: card.preferred-height;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: #00000080;
+    accessible-role: list;
+    accessible-label: "Give control";
+    card := VerticalLayout {
+        padding: 6px;
+        spacing: 2px;
+        if CallStore.control-mode == "controlled": ShareMenuItem {
+            label: "Take back control";
+            clicked => {
+                CallStore.command("control-take-back", "");
+                CallStore.menu = "";
+            }
+        }
+        Text {
+            text: "Give control";
+            color: Theme.fg-subtle;
+            font-size: 12px * Theme.font-scale;
+            height: 24px;
+            vertical-alignment: center;
+        }
+        for p in CallStore.people: ShareMenuItem {
+            visible: !p.me && !p.lobby && p.id != "";
+            height: self.visible ? 32px : 0px;
+            label: p.name;
+            clicked => {
+                CallStore.command("control-give", p.id);
+                CallStore.menu = "";
+            }
         }
     }
 }
@@ -271,18 +413,30 @@ component Tile inherits Rectangle {
     }
 }
 
-// A shared screen on the whole stage, and who presents it.
+// A shared screen on the whole stage, and who presents it. While we control it, our pointer,
+// wheel and keys over the picture go to the presenter as points of the picture (0..1).
 component ContentStage inherits Rectangle {
     property <string> who: CallStore.presenter != "" ? CallStore.presenter
         : CallStore.kind == "direct" ? CallStore.title : "Someone";
+    property <bool> controlling: CallStore.control-mode == "controlling";
     VerticalLayout {
         padding: 16px;
         spacing: 8px;
-        Rectangle {
+        screen := Rectangle {
+            // Where the picture is drawn inside (image-fit contain), for normalized points.
+            property <float> iw: max(1, CallStore.content-video.width);
+            property <float> ih: max(1, CallStore.content-video.height);
+            property <float> scale: min(self.width / 1px / iw, self.height / 1px / ih);
+            property <length> dw: iw * scale * 1px;
+            property <length> dh: ih * scale * 1px;
+            property <length> ox: (self.width - dw) / 2;
+            property <length> oy: (self.height - dh) / 2;
             vertical-stretch: 1;
             border-radius: 8px;
             clip: true;
             background: #000000;
+            border-width: root.controlling ? 2px : 0px;
+            border-color: Theme.accent;
             if CallStore.has-content: Image {
                 source: CallStore.content-video;
                 width: parent.width;
@@ -295,6 +449,37 @@ component ContentStage inherits Rectangle {
                 text: "Waiting for the shared screen…";
                 color: Theme.fg-muted;
                 font-size: 14px * Theme.font-scale;
+            }
+            if root.controlling && CallStore.has-content: keys := FocusScope {
+                init => { self.focus(); }
+                key-pressed(e) => {
+                    CallStore.command("control-input", "key-down " + e.text);
+                    accept
+                }
+                key-released(e) => {
+                    CallStore.command("control-input", "key-up " + e.text);
+                    accept
+                }
+                TouchArea {
+                    mouse-cursor: crosshair;
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.move {
+                            CallStore.command("control-input", "move "
+                                + ((self.mouse-x - screen.ox) / screen.dw) + " "
+                                + ((self.mouse-y - screen.oy) / screen.dh));
+                        } else if e.kind == PointerEventKind.down || e.kind == PointerEventKind.up {
+                            keys.focus();
+                            CallStore.command("control-input", (e.kind == PointerEventKind.down ? "down " : "up ")
+                                + (e.button == PointerEventButton.left ? "1"
+                                    : e.button == PointerEventButton.right ? "2"
+                                    : e.button == PointerEventButton.middle ? "3" : "0"));
+                        }
+                    }
+                    scroll-event(e) => {
+                        CallStore.command("control-input", "scroll " + (e.delta-x / 1px) + " " + (-e.delta-y / 1px));
+                        accept
+                    }
+                }
             }
         }
         HorizontalLayout {
@@ -314,6 +499,20 @@ component ContentStage inherits Rectangle {
                 font-weight: 600;
                 overflow: elide;
                 accessible-role: text;
+                horizontal-stretch: 1;
+            }
+            // Remote control (KELMA_REMOTE_CONTROL=1): ask the presenter, or give it back.
+            if CallStore.remote-control && CallStore.presenter != "" && CallStore.control-mode == "": CallAction {
+                label: "Request control";
+                clicked => { CallStore.command("control-request", ""); }
+            }
+            if CallStore.control-mode == "requested": CallAction {
+                label: "Cancel request";
+                clicked => { CallStore.command("control-release", ""); }
+            }
+            if root.controlling: CallAction {
+                label: "Release control";
+                clicked => { CallStore.command("control-release", ""); }
             }
         }
     }
@@ -557,6 +756,7 @@ component InCall inherits Rectangle {
             dismiss: "dismiss-notice";
             dismiss-label: "Dismiss notice";
         }
+        if CallStore.control-mode != "": ControlBanner { }
         HorizontalLayout {
             Stage { horizontal-stretch: 1; }
             if CallStore.panel == "people": PeoplePanel { width: 320px; }
@@ -582,6 +782,12 @@ component InCall inherits Rectangle {
         y: 64px;
         z: 30;
         width: 340px;
+    }
+    // The Share chevron's dropdown (Give control).
+    if CallStore.menu == "share": ShareMenu {
+        x: root.width - self.width - 12px;
+        y: 64px;
+        z: 30;
     }
     // The mic button's dropdown.
     if CallStore.menu == "devices" || CallStore.menu == "card-mic" || CallStore.menu == "card-speaker": Rectangle {

@@ -16,24 +16,29 @@
 
 use super::bots::Bots;
 use super::camera::{self, Camera, CameraMsg};
+use super::remote_control::{self, Ctx, RemoteControl, Step};
 use super::remote_video::{self, RemoteVideo};
-use super::share::{self, Share, ShareMsg};
+use super::share::{self, Picked, SessionNews, Share, ShareMsg};
 use super::{
-    CallDriver, CallHandle, Caption, Control, Device, Devices, Event, EventSink, JoinOptions,
-    JoinTarget, Link, Person, Phase, live_phase, recording_state,
+    CallDriver, CallHandle, Caption, Control, ControlAction, Device, Devices, Event, EventSink,
+    JoinOptions, JoinTarget, Link, Person, Phase, live_phase, recording_state,
 };
 use anyhow::Context;
 use calling::audio::{
     AudioProcessor, Capture, Playback, echo_cancelled, spawn_capture_encoder,
     spawn_decoder_playback,
 };
-use calling::captions::{CAPTIONS_DATA_ID, Depacketizer, parse_caption_message};
+use calling::captions::{CAPTIONS_DATA_ID, DataMessage, Depacketizer, parse_caption_message};
 use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::{AudioSender, MediaEvents, MediaOptions, MediaSession, MediaState};
 use calling::ngc_trouter::{CallPush, NgcEvent, NgcTrouter};
+use calling::remote_control::{
+    CONTROL_DATA_ID, ControlMessage, NgcControlChannel, decode, parse_session_message,
+};
 use calling::signaling::call_ops::{
     TransferOutcome, hold_offer, keep_media_running, parse_transfer_completion,
 };
+use calling::signaling::content_sharing::{SESSION_UPDATE, is_session_event};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::roster::{Presence, roster_snapshot};
 use calling::signaling::{CallSession, Controls, NgcClient, Roster};
@@ -42,7 +47,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use teams_proto::Client;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
@@ -492,6 +497,7 @@ async fn join_meeting(
         bots,
         camera: Camera::default(),
         video,
+        control: RemoteControl::default(),
     };
     Ok((call, events, pushes))
 }
@@ -545,6 +551,7 @@ pub fn adopt(
             bots: Bots::new(None, false),
             camera: Camera::default(),
             video: RemoteVideo::default(),
+            control: RemoteControl::default(),
         };
         // A direct call's sharing line shows the other side's screen (no subscription).
         call.video.negotiated(&call.media, "").await;
@@ -749,12 +756,9 @@ fn media_options(meeting: bool) -> MediaOptions {
     }
 }
 
-/// The captions in one data-channel frame, once the message it ends is whole. A caption without
+/// The captions in one whole data-channel message (none for another data id). A caption without
 /// the speaker's name takes it from the roster by the speaker's id.
-fn captions_in(dp: &mut Depacketizer, frame: &[u8], roster: &Roster) -> Vec<Caption> {
-    let Some(msg) = dp.push(frame) else {
-        return Vec::new();
-    };
+fn captions_of(msg: DataMessage, roster: &Roster) -> Vec<Caption> {
     if msg.data_id != CAPTIONS_DATA_ID {
         return Vec::new();
     }
@@ -840,6 +844,8 @@ struct Call {
     camera: Camera,
     /// Other people's video: the 1:1 camera, a shared screen, the meeting gallery.
     video: RemoteVideo,
+    /// Remote control of a shared screen (`KELMA_REMOTE_CONTROL=1`).
+    control: RemoteControl,
 }
 
 impl Call {
@@ -919,7 +925,8 @@ impl Call {
                 }
             }
             // Share and Camera are handled by the run loop, which owns their channels.
-            Control::Share(_) | Control::Camera(_) | Control::Leave => {}
+            Control::Share(_) | Control::Camera(_) | Control::RemoteControl(_) | Control::Leave => {
+            }
             Control::Captions(_) | Control::Recording(_) | Control::Transcription(_) => {
                 self.bots.ask(&c);
                 self.step_bots(sink).await;
@@ -1071,12 +1078,23 @@ impl Call {
                     None | Some(Control::Leave) => break None,
                     Some(Control::Share(on)) => self.share_control(on, &share_tx, &sink).await,
                     Some(Control::Camera(on)) => self.camera_control(on, &camera_tx, &sink).await,
+                    Some(Control::RemoteControl(a)) => self.control_action(a, &sink).await,
                     Some(c) => self.control(c, &mut audio, &sink).await,
                 },
                 Some(m) = share_rx.recv() => self.share_msg(m, &share_tx, &sink).await,
                 Some(frame) = data_rx.recv() => {
-                    for c in captions_in(&mut depacketizer, &frame, &self.roster) {
-                        sink.send(Event::Caption(c));
+                    if let Some(msg) = depacketizer.push(&frame) {
+                        if msg.data_id == CONTROL_DATA_ID {
+                            // Remote control (UNVERIFIED data id and payload).
+                            let m = serde_json::from_slice(&msg.payload).ok().and_then(|v| decode(&v));
+                            if let Some(m) = m {
+                                self.control_message(m, &sink).await;
+                            }
+                        } else {
+                            for c in captions_of(msg, &self.roster) {
+                                sink.send(Event::Caption(c));
+                            }
+                        }
                     }
                 }
                 Some(m) = camera_rx.recv() => self.camera_msg(m, &camera_tx, &sink).await,
@@ -1122,6 +1140,7 @@ impl Call {
                             if let Some(ev) = swapped {
                                 // The share was sent on the old session's line.
                                 if self.share.stop().await {
+                                    share::leave_session(&self.ngc, &self.s, &mut self.share).await;
                                     sink.send(Event::Error("Screen sharing stopped: the call's media restarted.".into()));
                                 }
                                 // So was the camera: it comes back on the new session's line.
@@ -1161,6 +1180,11 @@ impl Call {
                                 sink.send(ev);
                             }
                             self.step_bots(&sink).await;
+                        }
+                        CallEvent::Other { scope, event, body }
+                            if scope == "conversation" && is_session_event(&event) =>
+                        {
+                            self.session_frame(&event, &body, &sink).await;
                         }
                         CallEvent::Other { event, body, .. } if event == "addParticipantFailure" => {
                             // The recorder bot's invitation when one is pending, else a person
@@ -1229,6 +1253,14 @@ impl Call {
             if let Some((available, sharing)) = self.share.changed(can_share) {
                 sink.send(Event::Share { available, sharing });
             }
+            if remote_control::wanted() {
+                // Control ends with our share, or with the presenter's.
+                let step = self.control.machine.context(&self.control_ctx());
+                self.apply_control(step, &sink).await;
+                if let Some(ev) = self.control.changed() {
+                    sink.send(ev);
+                }
+            }
             let can_camera = self.link == Link::Connected
                 && camera::available(&self.media, &self.links, self.meeting);
             if can_camera && std::mem::take(&mut camera_wanted) {
@@ -1265,6 +1297,7 @@ impl Call {
             k.abort();
         }
         self.share.stop().await;
+        self.control.stop();
         self.camera.stop(&sink).await;
         self.video.stop(&sink);
         audio.stop();
@@ -1300,9 +1333,13 @@ impl Call {
         sink: &EventSink,
     ) {
         match m {
-            ShareMsg::Picked(Ok(Some(capture))) => {
-                match self.share.start(*capture, &self.media, tx) {
-                    Ok(()) => self.tell_share(true, sink).await,
+            ShareMsg::Picked(Ok(Some(picked))) => {
+                let Picked { capture, injector } = *picked;
+                match self.share.start(capture, &self.media, tx) {
+                    Ok(()) => {
+                        self.control.set_injector(injector);
+                        self.share_started(tx, sink).await;
+                    }
                     Err(e) => {
                         tracing::warn!(%e, "screen share not started");
                         self.share.stop().await;
@@ -1321,6 +1358,142 @@ impl Call {
                     self.tell_share(false, sink).await;
                 }
             }
+            ShareMsg::GrantTimeout(correlation) => {
+                if share::grant_timed_out(&mut self.share, &correlation) && self.share.sharing() {
+                    tracing::warn!(
+                        "the meeting granted no content-sharing session: sharing anyway"
+                    );
+                    self.tell_share(true, sink).await;
+                }
+            }
+        }
+    }
+
+    /// Our capture runs: a meeting is asked for its content-sharing session first, and the
+    /// share goes out once it is granted (or the call has no session to ask for).
+    async fn share_started(&mut self, tx: &mpsc::UnboundedSender<ShareMsg>, sink: &EventSink) {
+        if !self.meeting {
+            return self.tell_share(true, sink).await;
+        }
+        match share::start_session(&self.ngc, &self.s, &self.links, &mut self.share, tx).await {
+            Ok(true) => self.tell_share(true, sink).await,
+            Ok(false) => tracing::info!("waiting for the meeting to grant the sharing session"),
+            Err(e) => {
+                tracing::warn!("no content-sharing session: {e:#}");
+                self.tell_share(true, sink).await;
+            }
+        }
+    }
+
+    /// A callback of the content-sharing session (`addModalitySuccess`, `contentSharingUpdate`,
+    /// `contentSharingEnd`, `addModalityFailure`).
+    async fn session_frame(&mut self, event: &str, body: &serde_json::Value, sink: &EventSink) {
+        match self.share.session_frame(event, body) {
+            SessionNews::Granted => {
+                if self.share.sharing() {
+                    self.tell_share(true, sink).await;
+                }
+            }
+            SessionNews::Refused => {
+                if self.share.stop().await {
+                    sink.send(Event::Error("The meeting didn't let you present.".into()));
+                }
+            }
+            SessionNews::Ended => {
+                if self.share.stop().await {
+                    self.tell_share(false, sink).await;
+                    sink.send(Event::Error(
+                        "You stopped presenting: someone else is presenting now.".into(),
+                    ));
+                }
+            }
+            SessionNews::Nothing => {}
+        }
+        if remote_control::wanted()
+            && event == SESSION_UPDATE
+            && let Some(m) = parse_session_message(body)
+        {
+            self.control_message(m, sink).await;
+        }
+    }
+
+    /// What remote control needs to know of the call.
+    fn control_ctx(&self) -> Ctx {
+        let me = &self.s.me.mri;
+        Ctx {
+            can_give: self.share.sharing() && self.control.can_inject(),
+            // From the roster: a 1:1 call has none, so control is a meeting feature for now.
+            presenter: remote_video::presenter_mri(&self.roster, me).map(|mri| {
+                let name = self.person_name(&mri);
+                (mri, name)
+            }),
+        }
+    }
+
+    fn person_name(&self, mri: &str) -> String {
+        match self.roster.get(mri).map(|p| p.display_name.as_str()) {
+            Some(n) if !n.is_empty() => n.to_owned(),
+            _ => "Someone".into(),
+        }
+    }
+
+    /// A remote-control command of the call window.
+    async fn control_action(&mut self, a: ControlAction, sink: &EventSink) {
+        if !remote_control::wanted() {
+            return;
+        }
+        let ctx = self.control_ctx();
+        let step = self
+            .control
+            .machine
+            .local(&a, &self.s.me.mri, &ctx, Instant::now());
+        self.apply_control(step, sink).await;
+        if let Some(ev) = self.control.changed() {
+            sink.send(ev);
+        }
+    }
+
+    /// A remote-control message from the other side.
+    async fn control_message(&mut self, m: ControlMessage, sink: &EventSink) {
+        if !remote_control::wanted() {
+            return;
+        }
+        let ctx = self.control_ctx();
+        let me = self.s.me.mri.clone();
+        let step = {
+            let roster = &self.roster;
+            let name_of = |mri: &str| match roster.get(mri).map(|p| p.display_name.as_str()) {
+                Some(n) if !n.is_empty() => n.to_owned(),
+                _ => "Someone".into(),
+            };
+            self.control
+                .machine
+                .remote(m, &me, &ctx, name_of, Instant::now())
+        };
+        self.apply_control(step, sink).await;
+        if let Some(ev) = self.control.changed() {
+            sink.send(ev);
+        }
+    }
+
+    /// Carries a remote-control step out over the best-guess transport.
+    async fn apply_control(&mut self, step: Step, sink: &EventSink) {
+        if step == Step::default() {
+            return;
+        }
+        let presenter_links = remote_video::presenter_mri(&self.roster, &self.s.me.mri)
+            .and_then(|mri| self.roster.get(&mri).map(|p| p.sharing_links.clone()))
+            .unwrap_or_default();
+        let channel = NgcControlChannel {
+            ngc: self.ngc.clone(),
+            s: self.s.clone(),
+            own: self.share.session.clone(),
+            presenter_links,
+            data: self.media.data_sender(),
+            sequence: self.control.next_sequence(),
+        };
+        for ev in self.control.apply(step, &channel).await {
+            sink.send(ev);
         }
     }
 
@@ -1353,10 +1526,14 @@ impl Call {
                 }
             }
         };
+        if !sending {
+            share::leave_session(&self.ngc, &self.s, &mut self.share).await;
+        }
         if let Err(e) = r {
             tracing::warn!("share not signalled: {e:#}");
             if sending {
                 self.share.stop().await;
+                share::leave_session(&self.ngc, &self.s, &mut self.share).await;
                 sink.send(Event::Error(
                     "Others can't see your screen: the call refused the share.".into(),
                 ));

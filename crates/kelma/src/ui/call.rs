@@ -75,6 +75,9 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     }
     s.set_presenter(d.presenter.into());
     follow_share(&s, was_shared);
+    s.set_remote_control(d.remote_control);
+    s.set_control_mode(d.control_mode.into());
+    s.set_control_name(d.control_name.into());
     s.set_prejoin_mic(d.prejoin_mic);
     s.set_prejoin_camera(d.prejoin_camera);
     s.set_recording(d.recording);
@@ -169,6 +172,7 @@ fn photo_images(photos: &HashMap<String, Pixels>) -> HashMap<String, Image> {
 fn call_person(p: Person, images: &HashMap<String, Image>, video: bool) -> CallPerson {
     let photo = images.get(&p.mri);
     CallPerson {
+        id: p.mri.clone().into(),
         has_photo: photo.is_some(),
         photo: photo.cloned().unwrap_or_default(),
         video,

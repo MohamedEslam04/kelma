@@ -19,6 +19,8 @@ mod gst;
 pub mod h264;
 pub mod receive;
 #[cfg(feature = "screen-share")]
+pub mod remote_input;
+#[cfg(feature = "screen-share")]
 pub mod screencast;
 
 use crate::{Error, Modality, Result};
