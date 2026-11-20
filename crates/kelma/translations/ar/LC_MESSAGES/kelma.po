@@ -1481,9 +1481,6 @@ msgstr "ساعة واحدة"
 msgid "2 hours"
 msgstr "ساعتان"
 
-msgid "Until tomorrow 9:00"
-msgstr "حتى الغد الساعة 9:00"
-
 msgid "Until I turn it off"
 msgstr "حتى أوقفه"
 
