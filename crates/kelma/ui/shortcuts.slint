@@ -15,12 +15,18 @@ export global ShortcutApi {
 component Row inherits Rectangle {
     in property <string> keys;
     in property <string> what;
+    // A row that does what it says when clicked (the command palette).
+    in property <bool> link: false;
+    callback activated();
     height: 28px;
+    border-radius: 4px;
+    background: root.link && ta.has-hover ? Theme.surface-hover : transparent;
     HorizontalLayout {
         spacing: 12px;
         Text { text: root.keys; color: Theme.mention; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; width: 190px; overflow: elide; }
         Text { text: root.what; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
     }
+    ta := TouchArea { enabled: root.link; mouse-cursor: root.link ? MouseCursor.pointer : MouseCursor.default; clicked => { root.activated(); } }
 }
 
 component Heading inherits Text {
@@ -31,6 +37,7 @@ component Heading inherits Text {
 
 export component ShortcutsDialog inherits Rectangle {
     callback close();
+    callback open-palette();
     background: #000000b0;
     accessible-role: groupbox;
     accessible-label: "Keyboard shortcuts";
@@ -66,6 +73,7 @@ export component ShortcutsDialog inherits Rectangle {
                     spacing: 0px;
                     Heading { text: "General"; height: 28px; vertical-alignment: bottom; }
                     Row { keys: "Ctrl+."; what: "Show keyboard shortcuts"; }
+                    Row { keys: "Ctrl+Shift+P"; what: "Command palette"; link: true; activated => { root.open-palette(); } }
                     Row { keys: "Ctrl+Alt+E"; what: "Search"; }
                     Row { keys: "Ctrl+Alt+G"; what: "Go to a chat or channel"; }
                     Row { keys: "Alt+Shift+N"; what: "New chat"; }

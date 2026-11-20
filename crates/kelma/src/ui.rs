@@ -36,6 +36,7 @@ mod find;
 mod gifs;
 mod lists;
 mod media;
+mod palette;
 mod people;
 mod remind;
 pub(crate) mod settings;
@@ -214,6 +215,7 @@ fn picker_model(query: &str) -> ModelRc<EmojiItem> {
 
 /// Wires what the UI thread answers by itself, without the engine: the "More reactions" search.
 pub fn install_local(window: &AppWindow) {
+    palette::wire(window);
     window.set_picker_items(picker_model(""));
     let weak = window.as_weak();
     window.on_picker_search(move |q| {

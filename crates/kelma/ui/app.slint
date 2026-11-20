@@ -29,6 +29,7 @@ import { RemindStore, RemindPanel } from "remind.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
 import { AddTabDialog, FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
 import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
+import { CommandPalette, PaletteApi, PaletteStore, PaletteItem } from "palette.slint";
 import { MediaStore, ImageViewer } from "media.slint";
 import { AppsStore } from "apps_store.slint";
 import { RailApps, AppsOverlays } from "apps_rail.slint";
@@ -48,6 +49,7 @@ export { EmojiApi } from "composer.slint";
 export { SpellApi, SpellWord } from "spelling.slint";
 export { FormatApi, FormatEdit } from "composer_format.slint";
 export { ShortcutApi } from "shortcuts.slint";
+export { PaletteApi, PaletteStore, PaletteAction, PaletteItem } from "palette.slint";
 export { MentionApi } from "mention_picker.slint";
 export { SnippetApi, SnippetStore, SnippetItem } from "snippet_picker.slint";
 export { PeopleStore } from "people.slint";
@@ -265,6 +267,68 @@ export component AppWindow inherits Window {
     in property <int> anchor-index: -1;
 
 
+    // The command palette runs the same things the rail, the shortcuts and Settings run.
+    function leave-settings() {
+        if SettingsStore.open { SettingsStore.close(); }
+    }
+    // The palette's input had the keyboard focus and is gone: hand the keys back to the window
+    // (and to the composer in a chat) so the shortcuts keep working.
+    function palette-done() {
+        PaletteStore.restore-tick += 1;
+        if root.view == "chat" { root.focus-tick += 1; }
+    }
+    function run-palette(item: PaletteItem) {
+        PaletteStore.open = false;
+        if item.kind == "chat" {
+            root.leave-settings();
+            root.view = "chat";
+            root.select-chat(item.id);
+            root.palette-done();
+        } else {
+            PaletteStore.recents = PaletteApi.push-recent(PaletteStore.recents, item.id);
+            root.run-palette-action(item.cmd, item.arg);
+        }
+    }
+    function run-palette-action(cmd: string, arg: string) {
+        if cmd == "go" {
+            root.leave-settings();
+            root.view = arg;
+            if arg == "activity" { root.activity-refresh(); }
+            if arg == "onedrive" { DriveStore.command("enter", ""); }
+            if arg == "calls" { CallsPageStore.command("open", ""); }
+            root.palette-done();
+        }
+        if cmd == "new-chat" {
+            root.leave-settings();
+            root.view = "chat";
+            PeopleStore.new-chat-open = true;
+            PeopleStore.command("new-chat-open", "");
+        }
+        if cmd == "search" {
+            root.leave-settings();
+            root.view = "search";
+            FindStore.focus-tick += 1;
+        }
+        // The quick switcher (Ctrl+Alt+G).
+        if cmd == "goto" {
+            root.leave-settings();
+            root.view = "search";
+            FindStore.command("search-tab", "chats");
+            FindStore.focus-tick += 1;
+        }
+        if cmd == "mark-all-read" { root.mark-all-read(); root.palette-done(); }
+        if cmd == "settings" { SettingsStore.show(arg); }
+        if cmd == "toggle-theme" { SettingsStore.command("theme", SettingsStore.theme-shown == "dark" ? "light" : "dark"); root.palette-done(); }
+        if cmd == "shortcuts" { root.shortcuts-open = true; root.palette-done(); }
+        if cmd == "report-problem" { SettingsStore.command("report-problem", ""); root.palette-done(); }
+        if cmd == "status" { SettingsStore.command("status", arg); root.palette-done(); }
+        // Opens the profile menu on its own confirmation, so nothing signs out by itself.
+        if cmd == "sign-out" {
+            SettingsStore.open-profile();
+            SettingsStore.confirm-sign-out = true;
+        }
+    }
+
     if root.login-state != "ready": LoginView {
         state: root.login-state;
         user-code: root.user-code;
@@ -276,6 +340,9 @@ export component AppWindow inherits Window {
     }
 
     if root.login-state == "ready": win-keys := FocusScope {
+        // The command palette closed: take the keys back (a chat hands them to the composer).
+        property <int> palette-restore: PaletteStore.restore-tick;
+        changed palette-restore => { if root.view != "chat" { self.focus(); } }
         // Shift+Esc marks every chat read, wherever the focus is. The Activity view handles it
         // itself (marks every Activity item read).
         capture-key-pressed(event) => {
@@ -327,6 +394,7 @@ export component AppWindow inherits Window {
         }
         function run-shortcut(a: string) {
             if a == "shortcuts" { root.shortcuts-open = !root.shortcuts-open; }
+            if a == "palette" { PaletteStore.open = !PaletteStore.open; }
             if a == "goto" {
                 root.view = "search";
                 FindStore.command("search-tab", "chats");
@@ -1134,6 +1202,18 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
         close => { root.shortcuts-open = false; }
+        open-palette => { root.shortcuts-open = false; PaletteStore.open = true; }
+    }
+
+    if root.login-state == "ready" && PaletteStore.open: CommandPalette {
+        z: 210;
+        width: root.width;
+        height: root.height;
+        chats-favorites: root.chats-favorites;
+        chats-main: root.chats-main;
+        chats-channels: root.chats-channels;
+        run(item) => { root.run-palette(item); }
+        close => { PaletteStore.open = false; root.palette-done(); }
     }
 
     if root.login-state == "ready" && root.picker-open: Rectangle {

@@ -39,6 +39,7 @@ mod language;
 mod lists;
 mod media;
 pub(crate) mod overflow;
+mod palette;
 mod people;
 mod saved;
 mod settings;
