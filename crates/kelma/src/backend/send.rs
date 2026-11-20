@@ -162,10 +162,9 @@ impl Engine {
         Ok(())
     }
 
+    /// Reacts to any stored message, not only one of the open chat (the Activity preview and
+    /// the pop-out window react too): a channel reply is addressed in its thread.
     pub(super) async fn react(self: &Arc<Self>, msg_id: &str, key: &str) -> anyhow::Result<()> {
-        let Some(target) = self.current_target() else {
-            return Ok(());
-        };
         let row = self.store.lock().unwrap().message(msg_id)?;
         let Some(mut row) = row else { return Ok(()) };
         let mut props: Value =
@@ -181,10 +180,9 @@ impl Engine {
                     .as_array()
                     .is_some_and(|u| u.iter().any(|x| x == self.me.as_str()))
         });
-        let conv_for_msg = if row.parent_id.is_some() {
-            target.clone()
-        } else {
-            row.conversation_id.clone()
+        let conv_for_msg = match &row.parent_id {
+            Some(root) => format!("{};messageid={root}", row.conversation_id),
+            None => row.conversation_id.clone(),
         };
         if mine {
             self.client

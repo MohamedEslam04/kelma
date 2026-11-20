@@ -104,7 +104,7 @@ export component ParticipantsPanel inherits Rectangle {
                         HorizontalLayout {
                             padding-left: 6px;
                             spacing: 10px;
-                            Avatar { initials: r.initials; tone: r.color; img: r.avatar; has-img: r.has-avatar; size: 30px; y: 7px; }
+                            Avatar { initials: r.initials; tone: r.color; img: r.avatar; has-img: r.has-avatar; presence: r.presence; size: 30px; y: 7px; }
                             VerticalLayout {
                                 alignment: center;
                                 Text { text: r.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
@@ -151,7 +151,7 @@ export component ParticipantsPanel inherits Rectangle {
                         HorizontalLayout {
                             padding-left: 6px;
                             spacing: 10px;
-                            Avatar { initials: m.initials; tone: m.color; img: m.avatar; has-img: m.has-avatar; size: 30px; y: 7px; }
+                            Avatar { initials: m.initials; tone: m.color; img: m.avatar; has-img: m.has-avatar; presence: m.presence; size: 30px; y: 7px; }
                             VerticalLayout {
                                 alignment: center;
                                 Text { text: m.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }

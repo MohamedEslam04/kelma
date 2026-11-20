@@ -52,6 +52,8 @@ export global TeamsStore {
     in-out property <string> sort: "az";    // az | za | people | channels
     in-out property <string> query;
     in property <[TTeam]> teams;
+    // Every team, whatever the page's filter and search (the sidebar's team menu).
+    in property <[TTeam]> all-teams;
     in property <[TStat]> stats;
     in property <bool> loading;
     in property <string> error;

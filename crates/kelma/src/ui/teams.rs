@@ -140,6 +140,7 @@ fn set_dialog(s: &TeamsStore<'_>, d: DialogData) {
 fn set(w: &AppWindow, d: TeamsData) {
     let s = w.global::<TeamsStore>();
     s.set_teams(model(d.teams.into_iter().map(team).collect()));
+    s.set_all_teams(model(d.all_teams.into_iter().map(team).collect()));
     s.set_stats(model(
         d.stats
             .into_iter()

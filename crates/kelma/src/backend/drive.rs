@@ -3,6 +3,7 @@
 //! pushes the result to the UI.
 
 mod chip;
+pub(super) use chip::file_card_labels;
 mod cmd;
 pub(crate) mod state;
 

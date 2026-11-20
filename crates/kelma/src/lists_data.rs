@@ -65,6 +65,8 @@ pub struct ChannelMenuData {
     pub level: &'static str,
     pub private: bool,
     pub hidden: bool,
+    /// Pinned to the top of its team.
+    pub pinned: bool,
 }
 
 /// Names and ids of the places "Move to section" offers.

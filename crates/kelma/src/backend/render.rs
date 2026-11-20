@@ -5,8 +5,8 @@ use super::outbox::{PENDING_PREFIX, row_from_outbox};
 use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
-    ChatData, FileData, HeaderData, MsgData, Pixels, ReactData, Scroll, TeamData, color_for,
-    initials,
+    ChatData, FileData, HeaderData, LoopData, MsgData, Pixels, ReactData, Scroll, TeamData,
+    color_for, initials,
 };
 use crate::markdown::{reaction_emoji, render_blocks};
 use serde_json::{Value, json};
@@ -67,6 +67,9 @@ impl Engine {
         }
         if d.activity || d.chats || d.messages {
             self.render_activity(d.activity || d.chats, d.activity || d.messages);
+        }
+        if d.messages {
+            self.render_popout();
         }
     }
 
@@ -561,6 +564,8 @@ impl Engine {
             .collect();
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
+        // Where a file card opens (Settings > Files and links), read once and only when needed.
+        let open_in = std::cell::OnceCell::new();
         for (i, r) in visible.iter().copied().enumerate() {
             let system = system_text(r);
             let props: Value =
@@ -568,7 +573,17 @@ impl Engine {
             let mine = r.sender_mri == self.me;
             let shown = self.translated_html(&r.id);
             let html = shown.as_deref().unwrap_or(&r.content_html);
-            let mut parsed = render_blocks(&render::parse_teams_html(html));
+            let rich = render::parse_teams_html(html);
+            let urls = render::links(&rich);
+            let loops: Vec<LoopData> = urls
+                .iter()
+                .filter(|u| render::is_loop_link(u))
+                .map(|u| LoopData {
+                    url: u.clone(),
+                    title: render::loop_title(u),
+                })
+                .collect();
+            let mut parsed = render_blocks(&rich);
             // Headings, tables and colors (the plan's 5.4): the richer model draws the body.
             crate::markdown::upgrade_rich(&mut parsed, html);
             let headline = props
@@ -618,10 +633,17 @@ impl Engine {
                                 .and_then(Value::as_str)
                                 .unwrap_or_default()
                                 .to_uppercase();
+                            let url = f.get("url")?.as_str()?.to_string();
+                            let ext = if ext.is_empty() { "FILE".into() } else { ext };
+                            let pref = *open_in
+                                .get_or_init(|| super::settings::files_prefs().open_office_in);
+                            let (place, detail) = super::drive::file_card_labels(&url, &ext, pref);
                             Some(FileData {
-                                url: f.get("url")?.as_str()?.to_string(),
-                                ext: if ext.is_empty() { "FILE".into() } else { ext },
+                                url,
+                                ext,
                                 name,
+                                place,
+                                detail,
                             })
                         })
                         .collect()
@@ -635,7 +657,9 @@ impl Engine {
                 mine,
                 has_text,
             );
-            let links = self.link_cards(&props);
+            let mut links = self.link_cards(&props);
+            // A Loop component gets its own card instead of a link preview.
+            links.retain(|l| !loops.iter().any(|x| x.url == l.url));
             let sender = if r.sender_name.is_empty() {
                 self.store
                     .lock()
@@ -717,6 +741,9 @@ impl Engine {
                 translate: tr.state,
                 translate_from: tr.from,
                 links,
+                pinned: self.is_pinned(&r.conversation_id, &r.id),
+                urls,
+                loops,
             });
             prev = Some(r);
         }

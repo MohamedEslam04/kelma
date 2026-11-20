@@ -19,10 +19,12 @@ import { PeopleStore } from "people.slint";
 import { NewChatPane } from "new_chat.slint";
 import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
 import { PinnedBanner } from "pinned_banner.slint";
+import { ImmersiveReader } from "reader.slint";
 import { ProfileCard } from "profile_card.slint";
 import { TeamsStore } from "teams_store.slint";
 import { TeamsPage } from "teams_page.slint";
 import { TeamsDialogs } from "teams_dialogs.slint";
+export { ChatWindow } from "chat_window.slint";
 import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
 import { RemindStore, RemindPanel } from "remind.slint";
@@ -45,7 +47,7 @@ import { ChatHeaderStore, HeaderMoreButton, RemoveHistoryConfirm } from "chat_he
 import { TopBarStore, TopSearch, SearchDropdown, NavButtons, MoreButton, MoreMenu } from "topbar.slint";
 
 export { Theme } from "theme.slint";
-export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, Msg, ChannelRow, TeamRow } from "types.slint";
+export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, LoopCard, Msg, ChannelRow, TeamRow } from "types.slint";
 export { EmojiApi } from "composer.slint";
 export { SpellApi, SpellWord } from "spelling.slint";
 export { FormatApi, FormatEdit } from "composer_format.slint";
@@ -156,6 +158,11 @@ export component AppWindow inherits Window {
     in-out property <length> menu-x;
     in-out property <length> menu-y;
     in-out property <Msg> menu-msg;
+    // The menu was opened from the Activity preview (not the open chat).
+    in-out property <bool> menu-preview: false;
+    // Immersive Reader of a message.
+    in-out property <bool> reader-open: false;
+    in-out property <Msg> reader-msg;
     in-out property <bool> picker-open: false;
     in-out property <length> picker-x;
     in-out property <length> picker-y;
@@ -655,6 +662,21 @@ export component AppWindow inherits Window {
                     go-to => { root.view = "chat"; root.activity-go-to(); }
                     send-reply(t) => { root.activity-reply(t); }
                     open-url(u) => { root.open-url(u); }
+                    react(id, k) => { root.react(id, k); }
+                    more-reactions(id, x, y) => {
+                        root.picker-msg-id = id;
+                        root.picker-x = x;
+                        root.picker-y = y;
+                        root.picker-open = true;
+                        root.picker-search("");
+                    }
+                    menu(m, x, y) => {
+                        root.menu-msg = m;
+                        root.menu-preview = true;
+                        root.menu-x = x;
+                        root.menu-y = y;
+                        root.menu-open = true;
+                    }
                     notification-settings => { root.activity-settings(); }
                     dismiss-banner => { root.dismiss-banner(); }
                 }
@@ -950,6 +972,7 @@ export component AppWindow inherits Window {
                                     }
                                     menu(x, y) => {
                                         root.menu-msg = m;
+                                        root.menu-preview = false;
                                         root.menu-x = x;
                                         root.menu-y = y;
                                         root.menu-open = true;
@@ -989,6 +1012,7 @@ export component AppWindow inherits Window {
                             }
                             menu(m, x, y) => {
                                 root.menu-msg = m;
+                                root.menu-preview = false;
                                 root.menu-x = x;
                                 root.menu-y = y;
                                 root.menu-open = true;
@@ -1182,8 +1206,18 @@ export component AppWindow inherits Window {
             translate: root.menu-msg.translate;
             translate-message => { root.menu-open = false; MediaStore.command("translate", root.menu-msg.id); }
             see-original => { root.menu-open = false; MediaStore.command("original", root.menu-msg.id); }
-            can-pin: !root.current-is-channel;
-            can-follow: root.current-is-channel && root.thread-root == "";
+            // Channel posts offer it too; that write is not known yet and says so (actions.rs).
+            can-pin: true;
+            can-follow: !root.menu-preview && root.current-is-channel && root.thread-root == "";
+            pinned: root.menu-msg.pinned;
+            urls: root.menu-msg.urls;
+            preview: root.menu-preview;
+            unpin => { root.menu-open = false; PeopleStore.command("pin-unpin", root.menu-msg.id); }
+            open-link(u) => { root.menu-open = false; root.open-url(u); }
+            copy-link-url(u) => { root.menu-open = false; MediaStore.command("link-copy", u); }
+            immersive-reader => { root.menu-open = false; root.reader-msg = root.menu-msg; root.reader-open = true; }
+            share-outlook => { root.menu-open = false; MediaStore.command("outlook", root.menu-msg.id); }
+            report => { root.menu-open = false; MediaStore.command("report", root.menu-msg.id); }
             following: FindStore.menu-following;
             // One follow path for channel posts: the same call as the post card's menu.
             toggle-follow => {
@@ -1213,6 +1247,17 @@ export component AppWindow inherits Window {
             edit => { root.menu-open = false; root.edit(root.menu-msg.id); }
             delete => { root.menu-open = false; root.delete(root.menu-msg.id); }
         }
+    }
+
+    if root.login-state == "ready" && root.reader-open: ImmersiveReader {
+        z: 190;
+        width: root.width;
+        height: root.height;
+        sender: root.reader-msg.sender;
+        time: root.reader-msg.time;
+        text: root.reader-msg.plain;
+        rtl: root.reader-msg.rtl;
+        close => { root.reader-open = false; }
     }
 
     if root.login-state == "ready" && root.shortcuts-open: ShortcutsDialog {

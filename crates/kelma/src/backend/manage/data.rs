@@ -104,6 +104,8 @@ pub struct DialogData {
 #[derive(Clone, Debug, Default)]
 pub struct TeamsData {
     pub teams: Vec<TeamRowData>,
+    /// Every team, whatever the filter and search (the sidebar's team menu).
+    pub all_teams: Vec<TeamRowData>,
     pub stats: Vec<(String, String)>,
     pub loading: bool,
     pub error: String,

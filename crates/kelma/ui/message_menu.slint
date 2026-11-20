@@ -31,6 +31,7 @@ component MenuItem inherits Rectangle {
             font-size: 13px * Theme.font-scale;
             vertical-alignment: center;
             horizontal-stretch: 1;
+            overflow: elide;
         }
         if root.chevron: Icon {
             source: @image-url("icons/chevron-right.svg");
@@ -55,6 +56,18 @@ export component MessageMenu inherits Rectangle {
     in property <bool> following: false;
     // Translation state of the message (`Msg.translate`).
     in property <string> translate: "";
+    // Pinned for everyone: Unpin instead of Pin.
+    in property <bool> pinned: false;
+    // The links in the text (Open link, Copy link).
+    in property <[string]> urls;
+    // Opened from the Activity preview: only what works outside the open chat.
+    in property <bool> preview: false;
+    callback unpin();
+    callback open-link(string);
+    callback copy-link-url(string);
+    callback immersive-reader();
+    callback share-outlook();
+    callback report();
     callback toggle-follow();
     callback translate-message();
     callback see-original();
@@ -75,6 +88,9 @@ export component MessageMenu inherits Rectangle {
     property <bool> forward-open: false;
     // Whether the Remind me entry shows its choices.
     property <bool> remind-open: false;
+    // With several links, Open link and Copy link list them.
+    property <bool> open-links: false;
+    property <bool> copy-links: false;
 
     width: 240px;
     height: items.preferred-height + 12px;
@@ -93,8 +109,8 @@ export component MessageMenu inherits Rectangle {
             if event.text == "r" || event.text == "R" { root.reply(); return accept; }
             if event.text == "f" || event.text == "F" { root.forward-one(); return accept; }
             if (event.text == "s" || event.text == "S") && !root.mine { root.toggle-save(); return accept; }
-            if (event.text == "p" || event.text == "P") && root.can-pin { root.pin(); return accept; }
-            if event.text == "u" || event.text == "U" { root.mark-unread(); return accept; }
+            if (event.text == "p" || event.text == "P") && root.can-pin { if root.pinned { root.unpin(); } else { root.pin(); } return accept; }
+            if (event.text == "u" || event.text == "U") && !root.preview { root.mark-unread(); return accept; }
             reject
         }
     }
@@ -102,17 +118,33 @@ export component MessageMenu inherits Rectangle {
     items := VerticalLayout {
         padding: 6px;
         spacing: 0px;
-        MenuItem { label: @tr("Reply with quote"); icon: @image-url("icons/quote.svg"); clicked => { root.reply(); } }
-        MenuItem { label: @tr("Forward"); icon: @image-url("icons/forward.svg"); chevron: true; clicked => { root.forward-open = !root.forward-open; } }
+        if !root.preview: MenuItem { label: @tr("Reply with quote"); icon: @image-url("icons/quote.svg"); clicked => { root.reply(); } }
+        MenuItem { label: @tr("Forward"); icon: @image-url("icons/forward.svg"); chevron: !root.preview; clicked => { if root.preview { root.forward-one(); } else { root.forward-open = !root.forward-open; } } }
         if root.forward-open: MenuItem { label: @tr("This message"); indent: true; clicked => { root.forward-one(); } }
         if root.forward-open: MenuItem { label: @tr("Multiple messages"); indent: true; clicked => { root.forward-many(); } }
         MenuItem { label: @tr("Copy message link"); icon: @image-url("icons/link.svg"); clicked => { root.copy-link(); } }
+        // A right click cannot tell which link was under the pointer, so every link is offered.
+        if root.urls.length > 0: MenuItem {
+            label: @tr("Open link");
+            icon: @image-url("icons/open.svg");
+            chevron: root.urls.length > 1;
+            clicked => { if root.urls.length == 1 { root.open-link(root.urls[0]); } else { root.open-links = !root.open-links; } }
+        }
+        if root.open-links: VerticalLayout { for u in root.urls: MenuItem { label: u; indent: true; clicked => { root.open-link(u); } } }
+        if root.urls.length > 0: MenuItem {
+            label: @tr("Copy link");
+            icon: @image-url("icons/copy.svg");
+            chevron: root.urls.length > 1;
+            clicked => { if root.urls.length == 1 { root.copy-link-url(root.urls[0]); } else { root.copy-links = !root.copy-links; } }
+        }
+        if root.copy-links: VerticalLayout { for u in root.urls: MenuItem { label: u; indent: true; clicked => { root.copy-link-url(u); } } }
         if !root.mine: MenuItem {
             label: root.saved ? @tr("Unsave this message") : @tr("Save this message");
             icon: @image-url("icons/star.svg");
             clicked => { root.toggle-save(); }
         }
-        if root.can-pin: MenuItem { label: @tr("Pin for everyone"); icon: @image-url("icons/pin.svg"); clicked => { root.pin(); } }
+        if root.can-pin && !root.pinned: MenuItem { label: @tr("Pin for everyone"); icon: @image-url("icons/pin.svg"); clicked => { root.pin(); } }
+        if root.pinned: MenuItem { label: @tr("Unpin"); icon: @image-url("icons/pin.svg"); clicked => { root.unpin(); } }
         if root.can-follow: MenuItem {
             label: root.following ? @tr("Unfollow thread") : @tr("Follow thread");
             icon: @image-url("icons/thread.svg");
@@ -120,13 +152,16 @@ export component MessageMenu inherits Rectangle {
         }
         if root.translate == "shown": MenuItem { label: @tr("See original"); icon: @image-url("icons/translate.svg"); clicked => { root.see-original(); } }
         if root.translate != "" && root.translate != "shown" && root.translate != "busy": MenuItem { label: @tr("Translate"); icon: @image-url("icons/translate.svg"); clicked => { root.translate-message(); } }
-        MenuItem { label: @tr("Mark as unread"); icon: @image-url("icons/unread.svg"); clicked => { root.mark-unread(); } }
+        if !root.preview: MenuItem { label: @tr("Mark as unread"); icon: @image-url("icons/unread.svg"); clicked => { root.mark-unread(); } }
         MenuItem { label: @tr("Remind me"); icon: @image-url("icons/history.svg"); chevron: true; clicked => { root.remind-open = !root.remind-open; } }
         if root.remind-open: MenuItem { label: @tr("In 20 minutes"); indent: true; clicked => { root.remind("20m"); } }
         if root.remind-open: MenuItem { label: @tr("In 1 hour"); indent: true; clicked => { root.remind("1h"); } }
         if root.remind-open: MenuItem { label: @tr("In 3 hours"); indent: true; clicked => { root.remind("3h"); } }
         if root.remind-open: MenuItem { label: @tr("Tomorrow at 9:00"); indent: true; clicked => { root.remind("tomorrow"); } }
-        if root.mine: MenuItem { label: @tr("Edit"); icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
-        if root.mine: MenuItem { label: @tr("Delete"); icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }
+        MenuItem { label: @tr("Immersive Reader"); icon: @image-url("icons/eye.svg"); clicked => { root.immersive-reader(); } }
+        MenuItem { label: @tr("Share to Outlook"); icon: @image-url("icons/share.svg"); clicked => { root.share-outlook(); } }
+        if !root.mine: MenuItem { label: @tr("Report this message"); icon: @image-url("icons/info.svg"); clicked => { root.report(); } }
+        if root.mine && !root.preview: MenuItem { label: @tr("Edit"); icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
+        if root.mine && !root.preview: MenuItem { label: @tr("Delete"); icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }
     }
 }

@@ -64,7 +64,88 @@ pub fn chip_open_plan(url: &str, ext: &str, pref: OpenFilesIn) -> ChipOpen {
     }
 }
 
+/// The file card's "Open in …" place and its second line: `OneDrive` for a personal site,
+/// `SharePoint` for a team site, `""` elsewhere; the line says where a click opens the file.
+pub fn file_card_labels(url: &str, ext: &str, pref: OpenFilesIn) -> (&'static str, &'static str) {
+    let place = if !teams_proto::images::is_sharepoint_url(url) {
+        ""
+    } else if url
+        .split('/')
+        .nth(2)
+        .is_some_and(|h| h.to_ascii_lowercase().contains("-my.sharepoint."))
+    {
+        "OneDrive"
+    } else {
+        "SharePoint"
+    };
+    let detail = match chip_open_plan(url, ext, pref) {
+        ChipOpen::Browser => "Opens in the browser",
+        ChipOpen::Desktop => "Opens in the desktop app",
+        ChipOpen::Kelma => "Opens in kelma",
+    };
+    (place, detail)
+}
+
+/// A free name for `name` in `dir`: `name`, then `name (1).ext`, `name (2).ext`, ...
+fn free_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s, format!(".{e}")),
+        _ => (name, String::new()),
+    };
+    (1..1000)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
+}
+
 impl Engine {
+    /// The file card's "…" menu: `download` (to the Downloads folder), `copy` (the link),
+    /// `share` (the OneDrive share dialog) or `web` (open in OneDrive or SharePoint). `url` is
+    /// the file's address as posted.
+    pub(in crate::backend) async fn file_card_action(
+        self: &Arc<Self>,
+        action: &str,
+        url: &str,
+    ) -> anyhow::Result<()> {
+        match action {
+            "copy" => {
+                arboard::Clipboard::new()?.set_text(url.to_string())?;
+                self.ui.banner("Link copied".into());
+            }
+            "web" => drive_open_web_url(url),
+            "download" | "share" if self.drive_offline() => {
+                self.ui
+                    .banner("This needs a connection to OneDrive or SharePoint".into());
+            }
+            "download" => {
+                let item = browse::item_from_share(&self.client, url).await?;
+                if item.is_folder {
+                    anyhow::bail!("That link is a folder; open it in the browser instead");
+                }
+                self.ui.banner(format!("Downloading {}...", item.name));
+                let bytes = super::ops::download(&self.client, &item).await?;
+                let dir = diag::default_output_dir();
+                let path = free_path(&dir, &super::sanitize_file_name(&item.name));
+                let shown = path.clone();
+                tokio::task::spawn_blocking(move || std::fs::write(path, bytes)).await??;
+                self.ui.banner(format!("Saved to {}", shown.display()));
+            }
+            "share" => {
+                let item = browse::item_from_share(&self.client, url).await?;
+                // The share dialog belongs to the Files view: bring it up first.
+                self.drive_cmd(DriveCmd::Enter).await?;
+                self.ui.show_view("onedrive");
+                self.drive_share_open(item).await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// A file chip was clicked (`arg` is `<TYPE>:<url>`).
     pub(in crate::backend) async fn open_file_chip(self: &Arc<Self>, arg: &str) {
         let Some((ext, url)) = parse_chip(arg) else {
@@ -108,6 +189,38 @@ mod tests {
 
     const SP: &str = "https://contoso-my.sharepoint.com/:w:/p/ann/EabcDEF?e=x1";
     const SP_NAMED: &str = "https://contoso.sharepoint.com/sites/t/Shared%20Documents/plan.xlsx";
+
+    #[test]
+    fn file_card_names_the_place_and_where_a_click_opens() {
+        assert_eq!(
+            file_card_labels(SP, "DOCX", Desktop),
+            ("OneDrive", "Opens in the desktop app")
+        );
+        assert_eq!(
+            file_card_labels(SP_NAMED, "XLSX", Kelma),
+            ("SharePoint", "Opens in kelma")
+        );
+        assert_eq!(
+            file_card_labels(SP_NAMED, "PDF", Kelma),
+            ("SharePoint", "Opens in the browser")
+        );
+        assert_eq!(
+            file_card_labels("https://example.com/a.zip", "ZIP", Desktop),
+            ("", "Opens in the browser")
+        );
+    }
+
+    #[test]
+    fn downloads_never_overwrite_a_file() {
+        let dir = std::env::temp_dir().join(format!("kelma-free-path-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(free_path(&dir, "plan.docx"), dir.join("plan.docx"));
+        std::fs::write(dir.join("plan.docx"), b"x").unwrap();
+        assert_eq!(free_path(&dir, "plan.docx"), dir.join("plan (1).docx"));
+        std::fs::write(dir.join("notes"), b"x").unwrap();
+        assert_eq!(free_path(&dir, "notes"), dir.join("notes (1)"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn chip_text_is_split_into_type_and_address() {

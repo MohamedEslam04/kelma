@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Msg } from "types.slint";
-import { Avatar, FileCard, Icon, IconButton, ReactionChip } from "widgets.slint";
+import { Avatar, FileCard, Icon, IconButton, LoopCardView, ReactionChip } from "widgets.slint";
 import { CardView } from "card_view.slint";
 import { LinkCardView, MediaStore } from "media.slint";
 
@@ -256,10 +256,19 @@ export component MessageRow inherits TouchArea {
                         open(u) => { root.open-url(u); }
                     }
 
+                    // Loop components are cards, not bare links.
+                    for l in root.m.loops: LoopCardView {
+                        title: l.title;
+                        url: l.url;
+                        min-width: min(320px, root.max-bubble - 28px);
+                        open(u) => { root.open-url(u); }
+                    }
+
                     for f in root.m.files: FileCard {
                         f: f;
                         min-width: 280px;
                         open => { root.open-url("kelma-file:" + f.ext + ":" + f.url); }
+                        action(a) => { MediaStore.command("file", a + "\u{1f}" + f.url); }
                     }
 
                     if root.m.reactions.length > 0: HorizontalLayout {

@@ -336,6 +336,25 @@ component CommunitiesTab inherits Rectangle {
 }
 
 // The whole page, drawn over the area right of the rail. `go(id, title)` opens a channel in Teams.
+// The team menu, shared by "Your teams and channels" and the Teams list in the sidebar.
+export component TeamMenuItems inherits VerticalLayout {
+    in property <TTeam> t;
+    callback go(string, string);
+    // Closes the menu; called after each action.
+    callback done();
+    TMenuItem { label: "Go to team"; clicked => { root.go(root.t.id, root.t.name); root.done(); } }
+    TMenuItem { label: "New channel"; clicked => { TeamsActions.open-dialog("new-channel", root.t.id, ""); root.done(); } }
+    TMenuItem { label: "Add members"; clicked => { TeamsActions.open-dialog("members", root.t.id, ""); root.done(); } }
+    TMenuItem { label: "Manage team"; clicked => { TeamsActions.open-dialog("manage-team", root.t.id, ""); root.done(); } }
+    TMenuItem { label: "Manage team tags"; clicked => { TeamsActions.open-dialog("tags", root.t.id, ""); root.done(); } }
+    TMenuItem { label: "Deleted channels"; clicked => { TeamsActions.open-dialog("deleted", root.t.id, ""); root.done(); } }
+    TMenuItem { label: root.t.shown ? "Hide team" : "Show team"; clicked => { TeamsStore.command("team-show", root.t.id + "\u{1f}" + (root.t.shown ? "0" : "1")); root.done(); } }
+    TMenuItem { label: "Get link to team"; clicked => { TeamsStore.command("team-link", root.t.id); root.done(); } }
+    TMenuItem { label: "Leave the team"; danger: true; clicked => { TeamsActions.confirm("Leave " + root.t.name + "?", "leave-team", root.t.id); root.done(); } }
+    if root.t.owner: TMenuItem { label: root.t.archived ? "Restore team from the archive" : "Archive team"; clicked => { TeamsActions.confirm((root.t.archived ? "Restore " : "Archive ") + root.t.name + "?", "team-archive", root.t.id + "\u{1f}" + (root.t.archived ? "0" : "1")); root.done(); } }
+    if root.t.owner: TMenuItem { label: "Delete the team"; danger: true; clicked => { TeamsActions.confirm("Delete " + root.t.name + "? Its group stays in the recycle bin for 30 days.", "team-delete", root.t.id); root.done(); } }
+}
+
 export component TeamsPage inherits Rectangle {
     callback go(string, string);
     background: Theme.main;
@@ -484,18 +503,10 @@ export component TeamsPage inherits Rectangle {
                     TMenuItem { label: "Discover public teams"; clicked => { root.menu = ""; root.set-tab("discover"); } }
                     TMenuItem { label: "Join communities"; clicked => { root.menu = ""; root.set-tab("communities"); } }
                 }
-                if root.menu == "team": VerticalLayout {
-                    TMenuItem { label: "Go to team"; clicked => { root.menu = ""; root.go(root.menu-team.id, root.menu-team.name); } }
-                    TMenuItem { label: "New channel"; clicked => { root.open-and-close("new-channel", root.menu-team.id, ""); } }
-                    TMenuItem { label: "Add members"; clicked => { root.open-and-close("members", root.menu-team.id, ""); } }
-                    TMenuItem { label: "Manage team"; clicked => { root.open-and-close("manage-team", root.menu-team.id, ""); } }
-                    TMenuItem { label: "Manage team tags"; clicked => { root.open-and-close("tags", root.menu-team.id, ""); } }
-                    TMenuItem { label: "Deleted channels"; clicked => { root.open-and-close("deleted", root.menu-team.id, ""); } }
-                    TMenuItem { label: root.menu-team.shown ? "Hide team" : "Show team"; clicked => { root.run-and-close("team-show", root.menu-team.id + "\u{1f}" + (root.menu-team.shown ? "0" : "1")); } }
-                    TMenuItem { label: "Get link to team"; clicked => { root.run-and-close("team-link", root.menu-team.id); } }
-                    TMenuItem { label: "Leave the team"; danger: true; clicked => { root.ask("Leave " + root.menu-team.name + "?", "leave-team", root.menu-team.id); } }
-                    if root.menu-team.owner: TMenuItem { label: root.menu-team.archived ? "Restore team from the archive" : "Archive team"; clicked => { root.ask((root.menu-team.archived ? "Restore " : "Archive ") + root.menu-team.name + "?", "team-archive", root.menu-team.id + "\u{1f}" + (root.menu-team.archived ? "0" : "1")); } }
-                    if root.menu-team.owner: TMenuItem { label: "Delete the team"; danger: true; clicked => { root.ask("Delete " + root.menu-team.name + "? Its group stays in the recycle bin for 30 days.", "team-delete", root.menu-team.id); } }
+                if root.menu == "team": TeamMenuItems {
+                    t: root.menu-team;
+                    go(id, name) => { root.go(id, name); }
+                    done => { root.menu = ""; }
                 }
                 if root.menu == "channel": VerticalLayout {
                     TMenuItem { label: "Go to channel"; clicked => { root.menu = ""; root.go(root.menu-channel.id, root.menu-team.name + " › " + root.menu-channel.name); } }

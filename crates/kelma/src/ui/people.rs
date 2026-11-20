@@ -16,6 +16,7 @@ fn person(d: PersonData) -> PersonItem {
         avatar,
         has_avatar,
         kind: d.kind.into(),
+        presence: d.presence.into(),
     }
 }
 
