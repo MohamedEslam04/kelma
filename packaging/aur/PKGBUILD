@@ -53,7 +53,9 @@ check() {
 package() {
   cd "${_pkgname}"
   install -Dm755 target/release/kelma "${pkgdir}/usr/bin/kelma"
-  install -Dm644 packaging/kelma.desktop "${pkgdir}/usr/share/applications/kelma.desktop"
-  install -Dm644 packaging/kelma.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/kelma.svg"
+  local id=io.github.mohamedeslam04.kelma
+  install -Dm644 "packaging/${id}.desktop" "${pkgdir}/usr/share/applications/${id}.desktop"
+  install -Dm644 "packaging/${id}.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/${id}.svg"
+  install -Dm644 "packaging/${id}.metainfo.xml" "${pkgdir}/usr/share/metainfo/${id}.metainfo.xml"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

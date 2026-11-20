@@ -8,6 +8,11 @@
 //!   manager shows as a badge on the launcher ([`launcher`]).
 //! * [`autostart`] writes and removes `$XDG_CONFIG_HOME/autostart/kelma.desktop`.
 
+/// kelma's application id: the name of its desktop file and icon, its Wayland app id and X11
+/// window class, and the id it registers with the desktop portal. Reverse-DNS, because the portal
+/// and Flatpak take nothing else.
+pub const APP_ID: &str = "io.github.mohamedeslam04.kelma";
+
 pub mod autostart;
 pub mod icon;
 pub mod launcher;
@@ -54,7 +59,7 @@ impl Default for TrayOptions {
         Self {
             id: "kelma".into(),
             title: "kelma".into(),
-            icon_name: "kelma".into(),
+            icon_name: APP_ID.into(),
             launcher_uri: launcher::APP_URI.into(),
             muted: false,
             sync_launcher_badge: true,

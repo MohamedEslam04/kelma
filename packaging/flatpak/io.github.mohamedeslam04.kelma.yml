@@ -22,6 +22,11 @@ finish-args:
   - --filesystem=xdg-run/pipewire-0
   # Desktop notifications.
   - --talk-name=org.freedesktop.Notifications
+  # The tray icon (StatusNotifierItem, named after the pid, which is 2 inside the sandbox) and the
+  # screen-lock check that keeps the presence Away while the screen is locked.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.kde.StatusNotifierItem-2-1
+  - --talk-name=org.freedesktop.ScreenSaver
   # The refresh token lives in the Secret Service (GNOME Keyring or KWallet).
   - --talk-name=org.freedesktop.secrets
   # Portals (file chooser, open URI, camera, screencast) need no extra permission:
@@ -44,10 +49,9 @@ modules:
     build-commands:
       - cargo --offline build --release --locked -p kelma
       - install -Dm755 target/release/kelma /app/bin/kelma
-      - install -Dm644 packaging/kelma.desktop /app/share/applications/${FLATPAK_ID}.desktop
-      - desktop-file-edit --set-icon=${FLATPAK_ID} /app/share/applications/${FLATPAK_ID}.desktop
-      - install -Dm644 packaging/kelma.svg /app/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
-      - install -Dm644 packaging/flatpak/${FLATPAK_ID}.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+      - install -Dm644 packaging/${FLATPAK_ID}.desktop /app/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm644 packaging/${FLATPAK_ID}.svg /app/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
+      - install -Dm644 packaging/${FLATPAK_ID}.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
     sources:
       # For a local build. Flathub would use a git source pinned to a tag instead:
       #   - type: git

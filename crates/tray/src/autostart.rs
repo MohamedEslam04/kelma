@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 pub const FILE_NAME: &str = "kelma.desktop";
 
 /// The desktop entry the app ships; the autostart file reuses its descriptive fields.
-const PACKAGED_ENTRY: &str = include_str!("../../../packaging/kelma.desktop");
+const PACKAGED_ENTRY: &str =
+    include_str!("../../../packaging/io.github.mohamedeslam04.kelma.desktop");
 
 /// Content of the autostart entry running `exec`, with `hidden_flag` (for example `--hidden`)
 /// appended so the window stays in the tray at login.
@@ -150,8 +151,8 @@ mod tests {
         assert!(c.starts_with("[Desktop Entry]\n"));
         assert_eq!(field(&c, "Type"), Some("Application"));
         assert_eq!(field(&c, "Name"), Some("kelma"));
-        assert_eq!(field(&c, "Icon"), Some("kelma"));
-        assert_eq!(field(&c, "StartupWMClass"), Some("kelma"));
+        assert_eq!(field(&c, "Icon"), Some(crate::APP_ID));
+        assert_eq!(field(&c, "StartupWMClass"), Some(crate::APP_ID));
         assert_eq!(field(&c, "Terminal"), Some("false"));
         assert_eq!(field(&c, "Exec"), Some("kelma --hidden"));
         assert_eq!(field(&c, "X-GNOME-Autostart-enabled"), Some("true"));
