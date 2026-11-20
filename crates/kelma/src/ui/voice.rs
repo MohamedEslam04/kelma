@@ -1,7 +1,7 @@
 //! UI-thread side of voice messages: fills `VoiceStore` (the player in chat rows) and
 //! `VoiceRecStore` (the recorder in the composer), and wires their callbacks to `Cmd::Voice`.
 
-use super::{model, UiHandle};
+use super::{UiHandle, model};
 use crate::backend::{Cmd, VoiceCmd};
 use crate::{AppWindow, VoiceRecStore, VoiceStore};
 use slint::ComponentHandle;

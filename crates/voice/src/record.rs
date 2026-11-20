@@ -44,7 +44,8 @@ impl Capture {
             return;
         }
         let room = self.max_samples - self.samples.len();
-        self.samples.extend_from_slice(&mono[..mono.len().min(room)]);
+        self.samples
+            .extend_from_slice(&mono[..mono.len().min(room)]);
         if self.is_full() {
             self.paused = true;
         }

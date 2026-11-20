@@ -52,7 +52,6 @@ mod people_presence;
 mod photo;
 pub(crate) mod quiet;
 mod remind;
-mod voice_messages;
 mod render;
 pub(crate) mod ringtone;
 mod scheduled;
@@ -63,6 +62,7 @@ mod stickers;
 mod sync;
 mod unread;
 mod util;
+mod voice_messages;
 
 pub use activity::ActivityCmd;
 #[cfg(test)]
@@ -98,8 +98,8 @@ pub use media::MediaCmd;
 pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
 pub use remind::{RemindCmd, ReminderData, SnoozedData};
-pub use voice_messages::VoiceCmd;
 pub use scheduled::{ScheduledCmd, ScheduledData};
+pub use voice_messages::VoiceCmd;
 
 /// Commands sent by the UI.
 #[derive(Debug, Clone)]

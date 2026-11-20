@@ -680,7 +680,9 @@ async fn main() -> Result<()> {
         Some("ams-meta") => {
             // Prints the metadata of AMS objects (structure discovery): type, views, filename.
             // Usage: ams-meta <host, e.g. us-api.asm.skype.com> <object id>...
-            let host = args.get(1).context("usage: ams-meta <host> <object id>...")?;
+            let host = args
+                .get(1)
+                .context("usage: ams-meta <host> <object id>...")?;
             let (client, _) = connect(&paths).await?;
             for id in &args[2..] {
                 let url = format!("https://{host}/v1/objects/{id}");

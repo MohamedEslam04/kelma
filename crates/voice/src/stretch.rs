@@ -41,9 +41,7 @@ impl Stretcher {
     pub fn new(sample_rate: u32, speed: f32) -> Self {
         let frame = (((f64::from(sample_rate) * FRAME_SECONDS) as usize) & !1).max(MIN_FRAME);
         let window = (0..frame)
-            .map(|n| {
-                (0.5 - 0.5 * (std::f64::consts::TAU * n as f64 / frame as f64).cos()) as f32
-            })
+            .map(|n| (0.5 - 0.5 * (std::f64::consts::TAU * n as f64 / frame as f64).cos()) as f32)
             .collect();
         Self {
             speed,
@@ -127,9 +125,8 @@ impl Stretcher {
             }
         };
         self.tail.clear();
-        self.tail.extend(
-            (0..hop).map(|j| at(start + (hop + j) as isize) * self.window[hop + j]),
-        );
+        self.tail
+            .extend((0..hop).map(|j| at(start + (hop + j) as isize) * self.window[hop + j]));
         self.previous = Some(start);
         self.anchor += hop as f64 * f64::from(self.speed);
     }

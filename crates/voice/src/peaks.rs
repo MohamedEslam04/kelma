@@ -33,7 +33,10 @@ pub(crate) fn rms(samples: &[f32]) -> f32 {
         }
     }
     let sum: f64 = lanes.iter().map(|&lane| f64::from(lane)).sum::<f64>()
-        + rest.iter().map(|&s| f64::from(s) * f64::from(s)).sum::<f64>();
+        + rest
+            .iter()
+            .map(|&s| f64::from(s) * f64::from(s))
+            .sum::<f64>();
     (sum / samples.len() as f64).sqrt() as f32
 }
 

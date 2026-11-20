@@ -182,7 +182,10 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         let text = args.join(" ");
-        assert!(text.contains("-f f32le -ar 48000 -ac 1 -i pipe:0"), "{text}");
+        assert!(
+            text.contains("-f f32le -ar 48000 -ac 1 -i pipe:0"),
+            "{text}"
+        );
         assert!(text.contains("-c:a aac"), "{text}");
         assert!(text.contains("-ar 44100 -ac 1"), "{text}");
         assert!(text.ends_with("-f mp4 /tmp/out.m4a"), "{text}");

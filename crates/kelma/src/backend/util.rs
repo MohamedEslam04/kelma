@@ -213,7 +213,10 @@ mod tests {
         );
         let refused = anyhow::Error::from(teams_proto::Error::status("messages", 403, "no"));
         assert_eq!(shown_error(&refused), "messages: HTTP 403: no");
-        assert_eq!(shown_error(&anyhow::anyhow!("This conversation was deleted.")), "This conversation was deleted.");
+        assert_eq!(
+            shown_error(&anyhow::anyhow!("This conversation was deleted.")),
+            "This conversation was deleted."
+        );
     }
     use serde_json::{Value, json};
 

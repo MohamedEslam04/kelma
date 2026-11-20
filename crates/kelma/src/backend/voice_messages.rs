@@ -432,7 +432,12 @@ impl Engine {
     }
 
     /// Moves within the message playing, or starts another one at `fraction`.
-    async fn voice_seek(self: &Arc<Self>, key: String, url: String, fraction: f32) -> anyhow::Result<()> {
+    async fn voice_seek(
+        self: &Arc<Self>,
+        key: String,
+        url: String,
+        fraction: f32,
+    ) -> anyhow::Result<()> {
         {
             let mut st = self.voice.lock().unwrap();
             if let Some(player) = st.player.as_mut() {
@@ -447,7 +452,12 @@ impl Engine {
     }
 
     /// Fetches and decodes a message if needed, then plays it from `fraction` of its length.
-    async fn voice_play(self: &Arc<Self>, key: String, url: String, fraction: f32) -> anyhow::Result<()> {
+    async fn voice_play(
+        self: &Arc<Self>,
+        key: String,
+        url: String,
+        fraction: f32,
+    ) -> anyhow::Result<()> {
         let cached = {
             let mut st = self.voice.lock().unwrap();
             if st.recorder.is_some() {
@@ -560,7 +570,8 @@ impl Engine {
         };
         if clip.duration() < SHORTEST {
             done(self);
-            self.ui.info("Hold on a little longer: the recording was too short to send.".into());
+            self.ui
+                .info("Hold on a little longer: the recording was too short to send.".into());
             return Ok(());
         }
         let duration_ms = clip.duration().as_millis() as u64;
@@ -744,6 +755,9 @@ mod tests {
         }
         assert_eq!(list.len(), PLAYED_MAX);
         assert_eq!(list.first().map(String::as_str), Some("0"));
-        assert_eq!(list.last().map(String::as_str), Some(&*(PLAYED_MAX - 1).to_string()));
+        assert_eq!(
+            list.last().map(String::as_str),
+            Some(&*(PLAYED_MAX - 1).to_string())
+        );
     }
 }

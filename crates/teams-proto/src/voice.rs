@@ -120,7 +120,12 @@ mod tests {
         // The span in the body names the card.
         let id = card["cardClientId"].as_str().unwrap();
         assert_eq!(id.len(), 32);
-        assert!(b["content"].as_str().unwrap().contains(&format!("itemid=\"{id}\"")));
+        assert!(
+            b["content"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("itemid=\"{id}\""))
+        );
         // The same message id gives the same card id (a retry), another one does not.
         let again = voice_message_body("0-x-y", 14_200, "Me", "1795092143150");
         assert_eq!(again["properties"]["cards"], b["properties"]["cards"]);

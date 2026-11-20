@@ -536,7 +536,11 @@ mod tests {
         let mut feeder = DeviceFeeder::new(2 * RATE, 2);
         let mut out = vec![0.0; 2 * 1600];
         feeder.fill(&shared, &mut out);
-        assert!(out.iter().all(|&s| (s - 0.5).abs() < 1e-3), "{:?}", &out[..8]);
+        assert!(
+            out.iter().all(|&s| (s - 0.5).abs() < 1e-3),
+            "{:?}",
+            &out[..8]
+        );
         // 1600 device frames are 800 clip samples = 100 ms.
         let position = locked(&shared).state().position;
         assert!(near(position, Duration::from_millis(100)), "{position:?}");

@@ -313,7 +313,9 @@ pub fn split_voice(html: &str) -> Option<(String, Vec<VoiceClip>)> {
             .and_then(|(m, s)| Some(m.parse::<u64>().ok()? * 60 + s.parse::<u64>().ok()?))
             .unwrap_or(0);
         clips.push(VoiceClip {
-            url: link[..link_end].replace("&quot;", "\"").replace("&amp;", "&"),
+            url: link[..link_end]
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&"),
             duration_ms: seconds * 1000,
         });
         rest.push_str(&tail[..at]);
@@ -435,8 +437,14 @@ mod tests {
         };
         let html = format!(
             "<div>before</div>{}{}<p>after</p>",
-            card("https://us-api.asm.skype.com/v1/objects/0-a/views/audio", "PT1M5S"),
-            card("https://us-api.asm.skype.com/v1/objects/0-b/views/audio?x=1&y=2", "PT9S"),
+            card(
+                "https://us-api.asm.skype.com/v1/objects/0-a/views/audio",
+                "PT1M5S"
+            ),
+            card(
+                "https://us-api.asm.skype.com/v1/objects/0-b/views/audio?x=1&y=2",
+                "PT9S"
+            ),
         );
         let (rest, clips) = split_voice(&html).unwrap();
         assert_eq!(rest, "<div>before</div><p>after</p>");

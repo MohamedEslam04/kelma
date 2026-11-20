@@ -104,6 +104,9 @@ mod tests {
             .unwrap_err();
         let shown = Error::from(err).to_string();
         assert!(shown.starts_with("http: "), "{shown}");
-        assert!(!shown.contains("127.0.0.1") && !shown.contains("19:secret"), "{shown}");
+        assert!(
+            !shown.contains("127.0.0.1") && !shown.contains("19:secret"),
+            "{shown}"
+        );
     }
 }

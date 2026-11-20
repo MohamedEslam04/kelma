@@ -9,7 +9,8 @@ use teams_proto::model::Message;
 use teams_proto::time::now_ms;
 
 /// Shown when a chat opens from the cache because Teams did not answer.
-const OPEN_OFFLINE: &str = "Couldn't refresh this chat. Showing saved messages; kelma will try again.";
+const OPEN_OFFLINE: &str =
+    "Couldn't refresh this chat. Showing saved messages; kelma will try again.";
 
 /// Waits between the retries of [`Engine::retry_history`].
 const HISTORY_RETRY: [std::time::Duration; 3] = [

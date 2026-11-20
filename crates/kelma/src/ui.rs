@@ -41,10 +41,10 @@ mod palette;
 mod people;
 pub(crate) mod popout;
 mod remind;
-mod voice;
 pub(crate) mod settings;
 mod teams;
 pub(crate) mod topbar;
+mod voice;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
