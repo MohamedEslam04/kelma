@@ -34,6 +34,7 @@ pub(crate) mod composer_apps;
 mod drafts;
 pub(crate) mod drive;
 pub(crate) mod engage;
+pub(crate) mod expiry;
 mod find;
 mod gifs;
 mod in_order;
@@ -48,6 +49,7 @@ mod people;
 #[cfg(test)]
 mod people_live;
 mod people_presence;
+mod photo;
 pub(crate) mod quiet;
 mod remind;
 mod render;
@@ -429,6 +431,7 @@ impl Engine {
         #[cfg(feature = "calls")]
         self.start_calls();
         self.start_notify_prefs();
+        self.start_my_photo();
         self.start_my_presence();
         self.start_people_presence();
         self.start_reminders();

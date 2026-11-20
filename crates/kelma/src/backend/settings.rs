@@ -92,6 +92,18 @@ pub struct CallsPrefs {
     pub ask_feedback: call_feedback::Ask,
 }
 
+static LINK_PREVIEWS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Whether messages show a card for their links (Settings › Chats › Link previews).
+pub fn link_previews() -> bool {
+    LINK_PREVIEWS.load(Ordering::Relaxed)
+}
+
+/// Applies the saved choice to the message renderer.
+pub fn set_link_previews(on: bool) {
+    LINK_PREVIEWS.store(on, Ordering::Relaxed);
+}
+
 fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
     std::fs::read(path)
         .ok()
@@ -841,8 +853,9 @@ pub fn dry_run_remove(middle_tier: &str, list: ContactList, mri: &str) -> Planne
 // ---------------------------------------------------------------------------------------------
 // Find in Settings.
 
-pub const PAGES: [(&str, &str); 10] = [
+pub const PAGES: [(&str, &str); 11] = [
     ("general", "General"),
+    ("chats", "Chats"),
     ("accounts", "Accounts and orgs"),
     ("privacy", "Privacy"),
     ("notifications", "Notifications and activity"),
@@ -883,6 +896,23 @@ const INDEX: &[(&str, &str, &str)] = &[
     ("general", "Date format", "day month year"),
     ("general", "Time format", "clock 12 24 hour"),
     ("general", "Time zone", "timezone region"),
+    (
+        "chats",
+        "When I open a chat take me to",
+        "newest last read first unread divider open",
+    ),
+    (
+        "chats",
+        "Press Enter to send",
+        "enter send new line composer return",
+    ),
+    ("chats", "Read receipts", "seen read"),
+    ("chats", "Link previews", "url cards preview website"),
+    (
+        "chats",
+        "Snippets",
+        "quick replies saved reply template slash canned",
+    ),
     ("general", "Translation", "translate"),
     (
         "general",
@@ -920,7 +950,7 @@ const INDEX: &[(&str, &str, &str)] = &[
     (
         "notifications",
         "Pause notifications",
-        "mute quiet do not disturb",
+        "mute quiet do not disturb hour tomorrow duration",
     ),
     ("notifications", "Test notification", "banner toast"),
     ("notifications", "Chat messages", "notification banner feed"),
@@ -1356,12 +1386,20 @@ pub struct ServerData {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsCmd {
     /// Forces my status (`Available`, `Busy`, `DoNotDisturb`, `BeRightBack`, `Away`, `Offline`);
-    /// an empty value resets it to automatic. Then reads the profile menu again.
-    SetStatus(String),
+    /// an empty value resets it to automatic. The second value is when the status ends
+    /// (`desiredExpirationTime`, UTC text), `None` for never. Then reads the profile menu again.
+    SetStatus(String, Option<String>),
     /// Pins my work location for today: `office`, `remote`, or `clear`.
     SetWorkLocation(String),
-    /// Sets my status message (until cleared); an empty text clears it.
-    SetStatusNote(String),
+    /// Sets my status message; an empty text clears it. Then when it is cleared (UTC text, `None`
+    /// for never) and whether it also shows when people message me.
+    SetStatusNote(String, Option<String>, bool),
+    /// Opens a file picker and makes the picture my profile photo (Graph; UNVERIFIED).
+    ChangePhoto,
+    /// Removes my profile photo (Graph beta; UNVERIFIED).
+    RemovePhoto,
+    /// "When I open a chat take me to".
+    SetOpenChatAt(session::OpenChatAt),
     /// Sends a Teams settings change (notifications, privacy, a contact list), then reads the
     /// settings again.
     Apply(teams_proto::user_settings::PlannedRequest),
@@ -1411,9 +1449,15 @@ impl Engine {
                 }
                 self.settings_reload(true).await;
             }
-            SettingsCmd::SetStatus(_)
+            SettingsCmd::ChangePhoto => self.change_photo().await,
+            SettingsCmd::RemovePhoto => self.remove_photo().await,
+            SettingsCmd::SetOpenChatAt(at) => {
+                self.cfg.lock().unwrap().open_chat_at = at;
+                self.save_cfg();
+            }
+            SettingsCmd::SetStatus(..)
             | SettingsCmd::SetWorkLocation(_)
-            | SettingsCmd::SetStatusNote(_) => {
+            | SettingsCmd::SetStatusNote(..) => {
                 let turn = self.settings_writes.lock().await;
                 let r = self.set_my_presence(&cmd).await;
                 drop(turn);
@@ -1451,13 +1495,16 @@ impl Engine {
         }
         let c = &self.client;
         match cmd {
-            SettingsCmd::SetStatus(s) if s.is_empty() => c.reset_presence().await?,
-            SettingsCmd::SetStatus(s) => {
+            SettingsCmd::SetStatus(s, _) if s.is_empty() => c.reset_presence().await?,
+            SettingsCmd::SetStatus(s, until) => {
                 let a = teams_proto::presence::Availability::from_wire(s)
                     .ok_or_else(|| anyhow::anyhow!("unknown status {s}"))?;
-                c.set_presence(a, None).await?;
+                c.set_presence(a, until.as_deref()).await?;
             }
-            SettingsCmd::SetStatusNote(text) => c.set_status_note(text.trim(), None, false).await?,
+            SettingsCmd::SetStatusNote(text, until, show) => {
+                c.set_status_note(text.trim(), until.as_deref(), *show)
+                    .await?
+            }
             SettingsCmd::SetWorkLocation(w) => {
                 let pin = work_location_pin(w)
                     .ok_or_else(|| anyhow::anyhow!("unknown work location {w}"))?;
@@ -1802,6 +1849,27 @@ mod tests {
         assert!(find("CAPTIONS").iter().all(|f| f.page == "accessibility"));
         assert!(find("block calls").iter().any(|f| f.page == "privacy"));
         assert!(find("zzz").is_empty());
+    }
+
+    #[test]
+    fn the_chats_page_is_listed_after_general_and_its_settings_are_found() {
+        assert_eq!(page_title("chats"), "Chats");
+        let keys: Vec<_> = PAGES.iter().map(|(k, _)| *k).collect();
+        assert_eq!(&keys[..2], ["general", "chats"]);
+        let on_chats = |q: &str| {
+            find(q)
+                .into_iter()
+                .filter(|f| f.page == "chats")
+                .map(|f| f.label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(on_chats("link preview"), ["Link previews"]);
+        assert_eq!(
+            on_chats("when i open a chat"),
+            ["When I open a chat take me to"]
+        );
+        assert_eq!(on_chats("enter"), ["Press Enter to send"]);
+        assert!(on_chats("read receipts").contains(&"Read receipts"));
     }
 
     #[test]

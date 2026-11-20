@@ -16,7 +16,6 @@ use super::Engine;
 use ::calendar::{
     Calendar, CalendarInfo, Date, Event, EventCache, EventDetail, EventFilter, Rsvp, View, Weekday,
 };
-use chrono::{Local, TimeZone};
 use grid::DAY_MS;
 pub use grid::{CalData, Ctx};
 #[cfg(test)]
@@ -50,12 +49,10 @@ const SNOOZE_MS: i64 = 5 * 60_000;
 const SCALES: [u32; 3] = [15, 30, 60];
 const GRAPH_EVENTS: &str = "https://graph.microsoft.com/v1.0/me/events";
 
-/// Milliseconds local time is ahead of UTC at the UTC instant `ms`.
+/// Milliseconds local time is ahead of UTC at the UTC instant `ms`, in the time zone chosen in
+/// Settings (the system zone when none is).
 fn local_offset(ms: i64) -> i64 {
-    Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map_or(0, |t| i64::from(t.offset().local_minus_utc()) * 1000)
+    appearance::formats::offset_ms(ms)
 }
 
 pub fn today() -> Date {

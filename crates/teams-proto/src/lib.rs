@@ -33,6 +33,7 @@ pub mod model;
 pub mod mt;
 pub mod onenote;
 pub mod people;
+pub mod photo;
 pub mod planner;
 pub mod posts;
 pub mod presence;

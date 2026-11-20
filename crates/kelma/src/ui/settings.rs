@@ -15,11 +15,13 @@
 //! refresh-license, restart, sign-out, view-account, report-problem, check-updates, check-now,
 //! release-notes, status, work-location, status-note, banner-photo, banner-actions, notify-sound,
 //! meeting-chat, check-spelling, quiet-on, quiet-day, quiet-start, quiet-end, focus,
-//! focus-duration, keyword-add, keyword-remove.
+//! focus-duration, keyword-add, keyword-remove, open-chat-at, link-previews, photo-change,
+//! photo-remove, check-updates-menu.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
 use crate::backend::call_feedback::Ask;
+use crate::backend::expiry;
 use crate::backend::settings::{
     self as st, DeviceLists, Local, Look, OpenFilesIn, ServerData, SettingsCmd,
 };
@@ -30,6 +32,7 @@ use crate::{
 };
 use app_store::DevicePermission;
 use appearance::{Density, PortalChange, PortalSettings, Rgb, Theme as ThemeChoice};
+use session::OpenChatAt;
 use slint::{ComponentHandle, ModelRc, SharedString};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -201,6 +204,8 @@ struct Ctl {
     update_auto_done: bool,
     /// The release page of the newer version found, for "Release notes".
     update_url: Option<String>,
+    /// "When I open a chat take me to", as the engine has it.
+    open_chat_at: OpenChatAt,
 }
 
 type Shared = Rc<RefCell<Ctl>>;
@@ -273,6 +278,11 @@ pub fn install(
     env: SettingsEnv,
 ) {
     let mut local = Local::load(&env.paths.config_dir);
+    let open_chat_at = env
+        .paths
+        .load_config()
+        .map(|c| c.open_chat_at)
+        .unwrap_or_default();
     // The autostart entry is the truth: it may have been added or removed outside kelma.
     local.general.auto_start = (env.hooks.autostart.get)();
     let portal = if env.portal { read_portal() } else { None };
@@ -294,6 +304,7 @@ pub fn install(
         checking: false,
         update_auto_done: false,
         update_url: None,
+        open_chat_at,
     }));
     CTL.with(|c| *c.borrow_mut() = Some(shared.clone()));
     {
@@ -432,6 +443,7 @@ fn apply_general(g: &appearance::GeneralPrefs) {
     appearance::formats::set_from(g);
     crate::language::apply(g);
     crate::tray_wiring::set_keep_running(g.keep_running_on_close);
+    st::set_link_previews(g.link_previews);
 }
 
 fn toggles(rows: Vec<st::ToggleRow>) -> ModelRc<SToggle> {
@@ -503,6 +515,11 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_keywords(model(
         gp.keyword_alerts.iter().map(|k| s(k.as_str())).collect(),
     ));
+    g.set_link_previews(gp.link_previews);
+    g.set_open_chat_at(s(match c.open_chat_at {
+        OpenChatAt::FirstUnread => "last-read",
+        OpenChatAt::Newest => "newest",
+    }));
 
     let x = &l.a11y;
     g.set_high_contrast(s(st::switch_slug(x.high_contrast)));
@@ -601,6 +618,18 @@ fn push_server(w: &AppWindow, c: &Ctl) {
             .collect(),
     ));
     g.set_paused(n.is_some_and(|n| n.paused_until().is_some()));
+    g.set_pause_until(s(n
+        .and_then(|n| n.paused_until())
+        .and_then(teams_proto::time::parse_iso_ms)
+        .and_then(appearance::formats::local)
+        .map(|t| {
+            format!(
+                "Paused until {} {}",
+                t.format(appearance::formats::date_pattern(false)),
+                t.format(appearance::formats::time_pattern())
+            )
+        })
+        .unwrap_or_default()));
     g.set_notify_sounds(toggles(st::sound_rows(n)));
     g.set_meeting_chat(s(st::meeting_chat_slug(n)));
     let status = match d {
@@ -713,6 +742,16 @@ impl UiHandle {
     /// A message from the engine for the Settings window and the profile menu.
     pub fn settings_notice(&self, text: String) {
         self.run(move |w| notice(&w, text));
+    }
+
+    /// My profile photo (`None`: none), for the top bar and the profile menu.
+    pub fn settings_photo(&self, photo: Option<crate::data::Pixels>) {
+        self.run(move |w| {
+            let (image, has) = super::img(&photo);
+            let g = w.global::<SettingsStore>();
+            g.set_me_photo(image);
+            g.set_me_has_photo(has);
+        });
     }
 
     /// "Refresh license and restart" finished in the engine: restart, or say why not.
@@ -1097,11 +1136,26 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 };
                 st::dry_run_notify(&base, &current, kind, delivery)
             } else {
-                let until = bit(arg).then(|| {
-                    (chrono::Utc::now() + chrono::Duration::days(1))
-                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-                        .to_string()
-                });
+                // `off`, `1h`, `2h`, `tomorrow` or `custom` U+001F text. The first switch only
+                // knew 0 and 1: 1 meant a day.
+                let (choice, custom) = match parts[0] {
+                    "0" | "" => ("off", ""),
+                    "1" => ("tomorrow", ""),
+                    c => (c, parts.get(1).copied().unwrap_or("")),
+                };
+                let until = if choice == "off" {
+                    None
+                } else {
+                    match expiry::expiry_iso(choice, custom) {
+                        Ok(t) => t,
+                        Err(why) => {
+                            notice(w, why);
+                            push_server(w, &c);
+                            return;
+                        }
+                    }
+                };
+                g.set_pause_custom_open(false);
                 st::dry_run_pause(&base, &current, until)
             };
             write_or_plan(w, &mut c, req);
@@ -1420,19 +1474,98 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             push_accounts(w, &c);
         }
         // --- Profile menu: my status and work location (sent to Teams) ---
-        "status" | "work-location" | "status-note" => {
+        "status" | "work-location" | "status-note" | "photo-change" | "photo-remove" => {
             let c = shared.borrow();
             let Some(tx) = &c.tx else {
-                notice(w, "Not signed in, so your status can't change.");
+                notice(w, "Not signed in, so your profile can't change.");
                 return;
             };
             let cmd = match name {
-                "status" => SettingsCmd::SetStatus(arg.to_string()),
-                "status-note" => SettingsCmd::SetStatusNote(arg.to_string()),
+                // An empty status resets it; a forced one ends after "Reset status after".
+                "status" => {
+                    let until = if arg.is_empty() {
+                        Ok(None)
+                    } else {
+                        expiry::expiry_iso(&g.get_status_duration(), &g.get_status_custom())
+                    };
+                    match until {
+                        Ok(until) => SettingsCmd::SetStatus(arg.to_string(), until),
+                        Err(why) => {
+                            notice(w, why);
+                            return;
+                        }
+                    }
+                }
+                "status-note" => {
+                    let until = if arg.trim().is_empty() {
+                        Ok(None)
+                    } else {
+                        expiry::expiry_iso(&g.get_note_clear_after(), "")
+                    };
+                    match until {
+                        Ok(until) => SettingsCmd::SetStatusNote(
+                            arg.to_string(),
+                            until,
+                            g.get_note_show_when_messaged(),
+                        ),
+                        Err(why) => {
+                            notice(w, why);
+                            return;
+                        }
+                    }
+                }
+                "photo-change" => SettingsCmd::ChangePhoto,
+                "photo-remove" => SettingsCmd::RemovePhoto,
                 _ => SettingsCmd::SetWorkLocation(arg.to_string()),
             };
             let _ = tx.send(Cmd::Settings(cmd));
-            g.set_status_open(false);
+            // The photo answers with its own notice; the status options close.
+            if !name.starts_with("photo") {
+                g.set_status_open(false);
+            }
+        }
+        // --- Chats (local, and where a chat opens: kept by the engine) ---
+        "open-chat-at" => {
+            let mut c = shared.borrow_mut();
+            let at = if arg == "newest" {
+                OpenChatAt::Newest
+            } else {
+                OpenChatAt::FirstUnread
+            };
+            c.open_chat_at = at;
+            if let Some(tx) = &c.tx {
+                let _ = tx.send(Cmd::Settings(SettingsCmd::SetOpenChatAt(at)));
+            }
+            push_local(w, &c);
+            notice(w, "Saved.");
+        }
+        "link-previews" => {
+            let mut c = shared.borrow_mut();
+            c.local.general.link_previews = bit(arg);
+            let r = c.local.save_general();
+            if c.env.apply_globals {
+                apply_general(&c.local.general);
+            }
+            if let Some(tx) = &c.tx {
+                // Messages already drawn keep their cards until the engine draws them again.
+                let _ = tx.send(Cmd::Settings(SettingsCmd::Redraw));
+            }
+            push_local(w, &c);
+            saved(w, r);
+        }
+        // The top bar menu's "Check for updates": the check is opt-in, so with the switch off it
+        // only opens About, where the switch is.
+        "check-updates-menu" => {
+            let on = shared.borrow().local.general.check_updates;
+            g.invoke_show(s("about"));
+            if on {
+                check_updates(w, &mut shared.borrow_mut(), true);
+            } else {
+                notice(
+                    w,
+                    "Update checks are off. Turn on \"Check for updates\" to let kelma ask GitHub for the latest release.",
+                );
+            }
         }
         "refresh-license" => {
             let c = shared.borrow();

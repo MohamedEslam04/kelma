@@ -670,6 +670,9 @@ impl Engine {
     /// The preview cards of a message from its stored `links`. Thumbnails come from the preview
     /// service one at a time; a card shows without its picture until it is there.
     pub(super) fn link_cards(self: &Arc<Self>, props: &Value) -> Vec<LinkData> {
+        if !super::settings::link_previews() {
+            return Vec::new();
+        }
         links_from_props(props)
             .into_iter()
             .take(MAX_CARDS)

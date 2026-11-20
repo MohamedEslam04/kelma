@@ -222,8 +222,8 @@ fn profile_menu_shows_who_is_signed_in_and_opens_settings() {
     assert_eq!(value_of(app, "Name"), "Test User");
     assert_eq!(value_of(app, "Email"), "test.user@example.invalid");
     assert_eq!(value_of(app, "Status message"), "", "read-only, none set");
-    let photo = control(app, "Change profile photo (not available yet)");
-    assert_eq!(photo.accessible_enabled(), Some(false));
+    let photo = control(app, "Change profile photo");
+    assert_eq!(photo.accessible_enabled(), Some(true));
 
     press(app, "Settings");
     assert!(!store(app).get_profile_open());
@@ -237,13 +237,14 @@ fn the_profile_menu_sets_my_status_and_work_location_through_the_engine() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let ui = window_with(Home::new("status").with_accounts(), Some(tx), false);
     let app = &ui.app;
+    app.window().set_size(LogicalSize::new(1200., 2600.));
     press(app, "Profile menu");
     while rx.try_recv().is_ok() {}
     press(app, "Set status");
     press(app, "Busy");
     assert!(matches!(
         rx.try_recv(),
-        Ok(Cmd::Settings(SettingsCmd::SetStatus(s))) if s == "Busy"
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s, None))) if s == "Busy"
     ));
     // Picking closes the options; reset sends an empty status.
     assert!(!store(app).get_status_open());
@@ -251,13 +252,13 @@ fn the_profile_menu_sets_my_status_and_work_location_through_the_engine() {
     press(app, "Reset status");
     assert!(matches!(
         rx.try_recv(),
-        Ok(Cmd::Settings(SettingsCmd::SetStatus(s))) if s.is_empty()
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s, None))) if s.is_empty()
     ));
     press(app, "Set status");
     press(app, "Clear message");
     assert!(matches!(
         rx.try_recv(),
-        Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t))) if t.is_empty()
+        Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t, None, false))) if t.is_empty()
     ));
     press(app, "Set status");
     press(app, "In the office");
@@ -277,6 +278,315 @@ fn the_profile_menu_sets_my_status_and_work_location_through_the_engine() {
     assert_eq!(value_of(app, "Presence"), "Busy");
 }
 
+/// The time a planned pause ends, from the request text.
+fn pause_time(run: &str) -> i64 {
+    let i = run.find("temporarilyPauseUntil").expect("a pause time");
+    let rest = &run[i..];
+    let j = rest.find("20").expect("a year");
+    teams_proto::time::parse_iso_ms(&rest[j..j + 24]).expect("an ISO time")
+}
+
+#[test]
+fn a_status_ends_after_the_chosen_duration_and_a_bad_custom_time_is_refused() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("status-for").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    // Tall enough that the whole list of options is on screen (the menu scrolls otherwise).
+    app.window().set_size(LogicalSize::new(1200., 2600.));
+    press(app, "Profile menu");
+    press(app, "Set status");
+    while rx.try_recv().is_ok() {}
+
+    // Never is the default: no end.
+    assert_eq!(store(app).get_status_duration(), "never");
+    press(app, "Reset status after: 1 hour");
+    assert_eq!(store(app).get_status_duration(), "1h");
+    press(app, "Busy");
+    let Ok(Cmd::Settings(SettingsCmd::SetStatus(status, Some(until)))) = rx.try_recv() else {
+        panic!("a status that ends");
+    };
+    assert_eq!(status, "Busy");
+    let ms = teams_proto::time::parse_iso_ms(&until).unwrap();
+    assert!((ms - (teams_proto::time::now_ms() + 3_600_000)).abs() < 60_000);
+
+    // A custom time in the past is refused with words and nothing is sent.
+    press(app, "Set status");
+    press(app, "Reset status after: Custom");
+    control(app, "Reset at").set_accessible_value("2000-01-01 10:00");
+    press(app, "Busy");
+    assert!(rx.try_recv().is_err());
+    assert!(
+        store(app).get_notice().contains("future"),
+        "{}",
+        store(app).get_notice()
+    );
+    // A time ahead goes out as a UTC time (the options stayed open after the refusal).
+    control(app, "Reset at").set_accessible_value("2099-12-31 17:30");
+    press(app, "Do not disturb");
+    let Ok(Cmd::Settings(SettingsCmd::SetStatus(status, Some(until)))) = rx.try_recv() else {
+        panic!("a custom end");
+    };
+    assert_eq!(status, "DoNotDisturb");
+    assert!(
+        ["2099-12-30T", "2099-12-31T", "2100-01-01T"]
+            .iter()
+            .any(|d| until.starts_with(d)),
+        "{until}"
+    );
+    assert!(until.ends_with('Z'));
+
+    // Resetting never has an end.
+    press(app, "Set status");
+    press(app, "Reset status");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s, None))) if s.is_empty()
+    ));
+}
+
+#[test]
+fn a_status_message_clears_after_the_chosen_time_and_can_show_when_people_message_me() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("note-for").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    // Tall enough that the whole list of options is on screen (the menu scrolls otherwise).
+    app.window().set_size(LogicalSize::new(1200., 2600.));
+    press(app, "Profile menu");
+    press(app, "Set status");
+    while rx.try_recv().is_ok() {}
+
+    control(app, "New status message").set_accessible_value("Heads down");
+    press(app, "Save message");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t, None, false))) if t == "Heads down"
+    ));
+
+    press(app, "Set status");
+    control(app, "New status message").set_accessible_value("Out for lunch");
+    press(app, "Clear message after: 4 hours");
+    press(app, "Show when people message me");
+    press(app, "Save message");
+    let Ok(Cmd::Settings(SettingsCmd::SetStatusNote(text, Some(until), true))) = rx.try_recv()
+    else {
+        panic!("a message that clears and shows");
+    };
+    assert_eq!(text, "Out for lunch");
+    let ms = teams_proto::time::parse_iso_ms(&until).unwrap();
+    assert!((ms - (teams_proto::time::now_ms() + 4 * 3_600_000)).abs() < 60_000);
+
+    // Clearing the message never has an end.
+    press(app, "Set status");
+    press(app, "Clear message");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t, None, _))) if t.is_empty()
+    ));
+}
+
+#[test]
+fn the_profile_menu_changes_and_removes_the_photo_and_shows_it() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("photo").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    press(app, "Profile menu");
+    while rx.try_recv().is_ok() {}
+    assert!(!store(app).get_me_has_photo());
+    assert!(
+        ElementHandle::find_by_accessible_label(app, "Remove photo")
+            .next()
+            .is_none(),
+        "nothing to remove yet"
+    );
+    press(app, "Change profile photo");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::ChangePhoto))
+    ));
+
+    // The engine's answer: the photo shows, and can be removed.
+    UiHandle::new(app.as_weak()).settings_photo(Some(
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(2, 2),
+    ));
+    assert!(store(app).get_me_has_photo());
+    press(app, "Remove photo");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::RemovePhoto))
+    ));
+    UiHandle::new(app.as_weak()).settings_photo(None);
+    assert!(!store(app).get_me_has_photo());
+    UiHandle::new(app.as_weak()).settings_notice("Teams did not take the photo: 403".into());
+    assert_eq!(
+        value_of(app, "Profile notice"),
+        "Teams did not take the photo: 403"
+    );
+}
+
+#[test]
+fn the_profile_menu_has_saved_zoom_and_keyboard_shortcuts() {
+    let ui = window(Home::new("profile-more").with_accounts());
+    let app = &ui.app;
+    let quick = Log::default();
+    let q = quick.clone();
+    app.global::<crate::FindStore>()
+        .on_command(move |n, a| q.borrow_mut().push(format!("{n} {a}")));
+    app.set_view("calendar".into());
+
+    press(app, "Profile menu");
+    press(app, "Zoom in");
+    assert!((app.global::<Theme>().get_font_scale() - 1.05).abs() < 1e-6);
+    assert_eq!(value_of(app, "Zoom level"), "105%");
+    press(app, "Zoom out");
+    assert_eq!(value_of(app, "Zoom level"), "100%");
+
+    press(app, "Keyboard shortcuts");
+    assert!(app.get_shortcuts_open());
+    assert!(!store(app).get_profile_open());
+
+    press(app, "Profile menu");
+    press(app, "Saved");
+    assert!(!store(app).get_profile_open());
+    assert_eq!(app.get_view(), "chat");
+    assert_eq!(*quick.borrow(), ["quick saved"]);
+}
+
+#[test]
+fn pausing_notifications_takes_a_duration_instead_of_a_plain_switch() {
+    let ui = window(Home::new("pause"));
+    let app = &ui.app;
+    open_page(app, "notifications");
+    UiHandle::new(app.as_weak()).settings_server(server(PrivacySettings::default()));
+    let newest = || store(app).get_dry_runs().row_data(0).unwrap().to_string();
+    let now = teams_proto::time::now_ms();
+
+    for (pill, hours) in [("1 hour", 1), ("2 hours", 2)] {
+        press(app, &format!("Pause notifications: {pill}"));
+        let until = pause_time(&newest());
+        assert!(
+            (until - (now + hours * 3_600_000)).abs() < 120_000,
+            "{pill}"
+        );
+    }
+    // Until tomorrow is 8:00 the next morning, local time.
+    press(app, "Pause notifications: Until tomorrow");
+    let until = pause_time(&newest());
+    assert!(until > now && until <= now + 33 * 3_600_000);
+    use chrono::Timelike;
+    assert_eq!(
+        appearance::formats::local(until).unwrap().hour(),
+        8,
+        "8:00 in the morning"
+    );
+
+    // Custom: a box and a button; a time in the past is refused.
+    press(app, "Pause notifications: Custom");
+    control(app, "Pause until").set_accessible_value("2000-01-01 10:00");
+    let before = store(app).get_dry_runs().row_count();
+    press(app, "Pause notifications until then");
+    assert_eq!(store(app).get_dry_runs().row_count(), before);
+    assert!(store(app).get_notice().contains("future"));
+    control(app, "Pause until").set_accessible_value("2099-12-31 17:30");
+    press(app, "Pause notifications until then");
+    assert!(
+        newest().contains("2099-12-3") || newest().contains("2100-01-01"),
+        "{}",
+        newest()
+    );
+
+    // Off ends the pause: the request has no pause time.
+    press(app, "Pause notifications: Off");
+    assert!(!newest().contains("temporarilyPauseUntil"), "{}", newest());
+}
+
+#[test]
+fn a_paused_state_from_teams_shows_when_it_ends() {
+    let ui = window(Home::new("paused-shown"));
+    let app = &ui.app;
+    open_page(app, "notifications");
+    let mut d = server(PrivacySettings::default());
+    d.notifications = Some(NotificationSettings::from_properties(&serde_json::json!({
+        "userPersonalSettings": serde_json::json!({
+            "toastSettings": {"temporarilyPauseUntil": "2099-06-01T12:00:00.000Z"},
+        }).to_string()
+    })));
+    UiHandle::new(app.as_weak()).settings_server(d);
+    assert!(store(app).get_paused());
+    assert!(
+        store(app).get_pause_until().starts_with("Paused until"),
+        "{}",
+        store(app).get_pause_until()
+    );
+    assert!(!checked(app, "Pause notifications: Off"));
+}
+
+#[test]
+fn the_chats_page_sets_where_a_chat_opens_enter_to_send_receipts_and_link_previews() {
+    use crate::PeopleStore;
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let home = Home::new("chats-page");
+    let config = home.paths().config_dir;
+    let ui = window_with(home, Some(tx), false);
+    let app = &ui.app;
+    let enter_log = Log::default();
+    {
+        let l = enter_log.clone();
+        app.on_set_enter_sends(move |on| l.borrow_mut().push(format!("enter-sends {on}")));
+    }
+    let people = Log::default();
+    {
+        let l = people.clone();
+        app.global::<PeopleStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    open_page(app, "chats");
+    while rx.try_recv().is_ok() {}
+    assert_eq!(value_of(app, "Settings page"), "Chats");
+    assert!(checked(app, "When I open a chat take me to: Last read"));
+
+    press(app, "When I open a chat take me to: Newest message");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetOpenChatAt(
+            session::OpenChatAt::Newest
+        )))
+    ));
+    assert_eq!(store(app).get_open_chat_at(), "newest");
+    assert!(checked(
+        app,
+        "When I open a chat take me to: Newest message"
+    ));
+
+    assert!(app.get_enter_sends());
+    press(app, "Press Enter to send");
+    assert!(!app.get_enter_sends());
+    assert_eq!(*enter_log.borrow(), ["enter-sends false"]);
+
+    press(app, "Read receipts");
+    assert_eq!(*people.borrow(), ["receipts off"]);
+
+    assert!(checked(app, "Link previews"));
+    press(app, "Link previews");
+    assert!(!Local::load(&config).general.link_previews);
+    assert!(
+        matches!(rx.try_recv(), Ok(Cmd::Settings(SettingsCmd::Redraw))),
+        "the messages are drawn again without their cards"
+    );
+}
+
+#[test]
+fn find_in_settings_reaches_the_chats_page() {
+    let ui = window(Home::new("chats-find"));
+    let app = &ui.app;
+    open_page(app, "general");
+    control(app, "Find in Settings").set_accessible_value("link preview");
+    press(app, "Result: Link previews in Chats");
+    assert_eq!(value_of(app, "Settings page"), "Chats");
+}
 #[test]
 fn activity_notification_settings_entry_opens_the_notifications_page() {
     let ui = window(Home::new("activity"));

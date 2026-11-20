@@ -278,6 +278,9 @@ pub struct GeneralPrefs {
     /// Words and phrases that raise a banner when someone writes them, even in a muted chat.
     #[serde(deserialize_with = "lenient")]
     pub keyword_alerts: Vec<String>,
+    /// Messages show a card for the links in them (title, description, picture).
+    #[serde(deserialize_with = "lenient")]
+    pub link_previews: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -298,6 +301,7 @@ impl Default for GeneralPrefs {
             focus_until_ms: None,
             focus_duration: FocusDuration::default(),
             keyword_alerts: Vec::new(),
+            link_previews: true,
         }
     }
 }
@@ -343,6 +347,19 @@ mod tests {
         assert!(p.check_updates);
         let p: GeneralPrefs = serde_json::from_str(r#"{"check_updates":"yes"}"#).unwrap();
         assert!(!p.check_updates, "a bad value means off");
+    }
+
+    #[test]
+    fn link_previews_are_on_unless_turned_off_and_old_files_still_load() {
+        assert!(GeneralPrefs::default().link_previews);
+        let old = r#"{"language":"ar","auto_start":true}"#;
+        assert!(
+            serde_json::from_str::<GeneralPrefs>(old)
+                .unwrap()
+                .link_previews
+        );
+        let off: GeneralPrefs = serde_json::from_str(r#"{"link_previews":false}"#).unwrap();
+        assert!(!off.link_previews);
     }
 
     #[test]
@@ -556,6 +573,7 @@ mod tests {
             focus_until_ms: Some(FOCUS_FOREVER),
             focus_duration: FocusDuration::Tomorrow,
             keyword_alerts: vec!["deploy".into(), "نشر".into()],
+            link_previews: false,
         };
         p.save_to(&path).unwrap();
         assert_eq!(GeneralPrefs::load_from(&path), p);

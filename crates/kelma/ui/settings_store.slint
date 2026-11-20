@@ -43,6 +43,16 @@ export global SettingsStore {
     in-out property <string> me-work-location; // office | remote | ""
     in-out property <bool> status-open: false;
     in-out property <bool> confirm-sign-out: false;
+    // My photo (top bar and profile menu); `me-has-photo` is false until one was read.
+    in-out property <image> me-photo;
+    in-out property <bool> me-has-photo: false;
+    // "Reset status after" (never | 30m | 1h | 2h | today | week | custom) and the custom time.
+    in-out property <string> status-duration: "never";
+    in-out property <string> status-custom;
+    // The status message's "Clear after" (never | today | 1h | 4h | week) and "Show when people
+    // message me".
+    in-out property <string> note-clear-after: "never";
+    in-out property <bool> note-show-when-messaged: false;
 
     // --- Appearance (9.3) ---
     in-out property <string> theme: "system"; // light | dark | system
@@ -63,6 +73,11 @@ export global SettingsStore {
     in-out property <string> system-time-zone;
     in-out property <[SToggle]> startup;
 
+    // --- Chats ---
+    // When a chat opens: last-read (at the first unread message) | newest.
+    in-out property <string> open-chat-at: "last-read";
+    in-out property <bool> link-previews: true;
+
     // --- Accessibility (X1.3) ---
     in-out property <string> high-contrast: "auto"; // auto | on | off
     in-out property <string> reduced-motion: "auto";
@@ -73,6 +88,9 @@ export global SettingsStore {
     // --- Notifications and activity (9.1) ---
     in-out property <[SNotify]> notify;
     in-out property <bool> paused: false;
+    // "Paused until 14:30" while paused; the custom pause time box.
+    in-out property <string> pause-until;
+    in-out property <bool> pause-custom-open: false;
     in-out property <string> notify-status;
 
     // --- Privacy (X1.5) ---

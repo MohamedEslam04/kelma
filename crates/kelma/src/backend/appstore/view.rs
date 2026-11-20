@@ -329,13 +329,17 @@ pub fn cert_text(c: Certification) -> &'static str {
     }
 }
 
-/// A day as `Nov 20` (the year is added for another year than now).
+/// A day as `Nov 20` (the year is added for another year than now), in the time zone chosen in
+/// Settings.
 pub fn day(ms: i64) -> String {
-    use chrono::{Datelike, Local, TimeZone};
-    let Some(t) = Local.timestamp_millis_opt(ms).single() else {
+    use chrono::Datelike;
+    let (Some(t), Some(now)) = (
+        appearance::formats::local(ms),
+        appearance::formats::local_now(),
+    ) else {
         return String::new();
     };
-    if t.year() == Local::now().year() {
+    if t.year() == now.year() {
         t.format("%b %-d").to_string()
     } else {
         t.format("%b %-d, %Y").to_string()
@@ -344,10 +348,7 @@ pub fn day(ms: i64) -> String {
 
 /// A moment as `Nov 20, 14:03`.
 pub fn moment(ms: i64) -> String {
-    use chrono::{Local, TimeZone};
-    Local
-        .timestamp_millis_opt(ms)
-        .single()
+    appearance::formats::local(ms)
         .map(|t| t.format("%b %-d, %H:%M").to_string())
         .unwrap_or_default()
 }
