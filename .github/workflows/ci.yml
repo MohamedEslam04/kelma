@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     # Feature branches too: local builds are memory-bound, so CI does the full check.
-    branches: [main, 'feat/**']
+    branches: [main, dev, 'feat/**']
   pull_request:
 
 # A newer push to the same branch cancels the older run.
