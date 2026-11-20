@@ -208,6 +208,10 @@ impl Engine {
             from,
         };
         let page = self.client.global_search(&self.me, &q, &opts).await;
+        // A second quick "Show more" asked for the same page: only the first answer counts.
+        if self.find.lock().unwrap().global_more.get(kind) != from.get(kind) {
+            return;
+        }
         self.apply_page(seq, kind, page);
     }
 

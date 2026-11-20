@@ -1342,7 +1342,8 @@ impl Engine {
             .await;
         {
             let mut f = self.find.lock().unwrap();
-            if f.quick_seq != seq {
+            // A newer view, or a second quick "Show more" that already took this page.
+            if f.quick_seq != seq || f.quick_from != from {
                 return;
             }
             match page {
@@ -1535,13 +1536,24 @@ impl Engine {
             .find(|h| h.id() == id)
             .cloned();
         if let Some(h) = hit {
-            self.apply_follow(&h.conv, &h.root, false).await?;
-            self.find
-                .lock()
-                .unwrap()
-                .quick_hits
-                .retain(|x| x.id() != id);
+            // The row leaves the list at once (a following command sees it gone), and comes back
+            // where it was when the service refuses.
+            let at = {
+                let mut f = self.find.lock().unwrap();
+                let at = f.quick_hits.iter().position(|x| x.id() == id);
+                f.quick_hits.retain(|x| x.id() != id);
+                at
+            };
             self.push_quick(false);
+            if let Err(err) = self.apply_follow(&h.conv, &h.root, false).await {
+                if let Some(at) = at {
+                    let mut f = self.find.lock().unwrap();
+                    let at = at.min(f.quick_hits.len());
+                    f.quick_hits.insert(at, h);
+                }
+                self.push_quick(false);
+                return Err(err);
+            }
         }
         Ok(())
     }
@@ -1570,14 +1582,27 @@ impl Engine {
         root: &str,
         follow: bool,
     ) -> anyhow::Result<()> {
-        if !self.offline.load(Ordering::Relaxed) {
-            self.client.set_thread_follow(conv, root, follow).await?;
-        }
-        self.find
+        // Here first, so a menu or the Followed view opened right after shows the new state; put
+        // back when the service refuses (unless another follow changed it meanwhile).
+        let key = (conv.to_string(), root.to_string());
+        let before = self
+            .find
             .lock()
             .unwrap()
             .follow_override
-            .insert((conv.to_string(), root.to_string()), follow);
+            .insert(key.clone(), follow);
+        if !self.offline.load(Ordering::Relaxed)
+            && let Err(err) = self.client.set_thread_follow(conv, root, follow).await
+        {
+            let mut f = self.find.lock().unwrap();
+            if f.follow_override.get(&key) == Some(&follow) {
+                match before {
+                    Some(b) => f.follow_override.insert(key, b),
+                    None => f.follow_override.remove(&key),
+                };
+            }
+            return Err(err.into());
+        }
         Ok(())
     }
 
