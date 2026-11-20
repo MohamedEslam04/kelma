@@ -33,6 +33,28 @@ use crate::types::{CallInvitation, Links, Modality, SdpBlob};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// What the banner says when the caller gave up before our answer got through.
+pub const ENDED_BEFORE_ANSWER: &str = "The call ended before you answered.";
+
+/// Plain words for a failed answer. The service refuses an attach to a ring that is over with a
+/// 412 (or 487), whose body is an `operationFailure` with `code` 487 ("canceled"): that is the
+/// caller giving up, not a fault. The raw status and body belong in the log only.
+pub fn answer_error_text(e: &Error) -> String {
+    match e {
+        Error::Status { op, status, body } => {
+            let over = matches!(status, 412 | 487)
+                || serde_json::from_str::<serde_json::Value>(body)
+                    .is_ok_and(|v| v.pointer("/operationFailure/code") == Some(&487.into()));
+            if over {
+                ENDED_BEFORE_ANSWER.to_owned()
+            } else {
+                format!("{op}: HTTP {status}")
+            }
+        }
+        other => other.to_string(),
+    }
+}
+
 /// How long we wait for the caller's answer to our offer.
 pub const ANSWER_WAIT: Duration = Duration::from_secs(20);
 /// How long an attach may take (one that asks for media must not hold a ringing call).
