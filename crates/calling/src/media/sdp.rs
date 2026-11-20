@@ -689,37 +689,59 @@ fn in_offer_order(
     out
 }
 
-/// A port-0 stand-in for `section`: its kind and mid only.
+/// A port-0 stand-in for `section`: its kind, mid and label only.
 fn stub_of(section: &[String]) -> Option<Vec<String>> {
     let m = MediaLine::parse(&section[0])?;
     let mut stub = vec![format!("m={} 0 {MS_PROFILE} {STUB_PAYLOAD}", m.kind)];
-    stub.extend(
-        section
-            .iter()
-            .find_map(|l| attr(l, "mid"))
-            .map(|mid| format!("a=mid:{mid}")),
-    );
+    for name in ["mid", "label"] {
+        stub.extend(
+            section
+                .iter()
+                .find_map(|l| attr(l, name))
+                .map(|v| format!("a={name}:{v}")),
+        );
+    }
     Some(stub)
 }
 
+/// The label a section of our own (webrtc-rs) SDP carries: its `a=label`, else the stream id
+/// of its `a=msid` when that names a video role.
+fn own_label(section: &[String]) -> Option<&str> {
+    section.iter().find_map(|l| attr(l, "label")).or_else(|| {
+        section
+            .iter()
+            .find_map(|l| attr(l, "msid"))
+            .and_then(|v| v.split_whitespace().next())
+            .and_then(VideoRole::from_label)
+            .map(VideoRole::label)
+    })
+}
+
 /// Our offer's sections laid out as `negotiated`'s: ours where a section has the same mid and
-/// kind, else a stub; ours beyond them go.
+/// kind, else a stub; ours beyond them go. A section the other side declined with a stub that
+/// names no mid (a browser's answer to a line it refused, live 2026-11-20) is ours again when
+/// one of our sections of its kind and label has a mid `negotiated` does not name: the line is
+/// offered anew on its own mid instead of being lost (a share re-offer then has no sharing line).
 fn in_negotiated_order(ours: Vec<Vec<String>>, negotiated: &Parsed) -> Vec<Vec<String>> {
-    let key = |s: &[String]| {
-        let kind = MediaLine::parse(&s[0]).map(|m| m.kind.to_owned());
-        (
-            kind,
-            s.iter().find_map(|l| attr(l, "mid")).map(str::to_owned),
-        )
-    };
+    let kind = |s: &[String]| MediaLine::parse(&s[0]).map(|m| m.kind.to_owned());
+    let mid = |s: &[String]| s.iter().find_map(|l| attr(l, "mid")).map(str::to_owned);
+    let named: Vec<String> = negotiated.sections.iter().filter_map(|s| mid(s)).collect();
     let mut ours: Vec<Option<Vec<String>>> = ours.into_iter().map(Some).collect();
     negotiated
         .sections
         .iter()
         .filter_map(|theirs| {
-            let want = key(theirs);
+            let matches = |s: &Vec<String>| match mid(theirs) {
+                Some(m) => kind(s) == kind(theirs) && mid(s) == Some(m),
+                None => {
+                    kind(s) == kind(theirs)
+                        && mid(s).is_some_and(|m| !named.contains(&m))
+                        && own_label(s).is_some()
+                        && own_label(s) == theirs.iter().find_map(|l| attr(l, "label"))
+                }
+            };
             ours.iter_mut()
-                .find(|s| s.as_ref().is_some_and(|s| key(s) == want))
+                .find(|s| s.as_ref().is_some_and(matches))
                 .and_then(Option::take)
                 .or_else(|| stub_of(theirs))
         })
@@ -856,6 +878,8 @@ fn to_teams(
         // profile, mid and label, names payload 34, and the service refuses anything more
         // (`SdpParsingFailure`). `c=` because the session level has none.
         if m.port == "0" {
+            // A stub keeps the label it came with (the negotiated line's).
+            let label = section.iter().find_map(|l| attr(l, "label")).or(label);
             out.push(format!("m={} 0 {MS_PROFILE} {STUB_PAYLOAD}", m.kind));
             out.push("c=IN IP4 0.0.0.0".to_owned());
             out.extend(mid.map(|mid| format!("a=mid:{mid}")));

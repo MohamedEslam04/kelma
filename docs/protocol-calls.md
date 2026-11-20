@@ -398,7 +398,10 @@ What kelma does with this (`calling::video`, `calling::media`, `calling::signali
 - Meeting: start/stop is `UpdateMediaDescriptions` (`sendonly` + label, tag `;ss_1`), on the
   `updateMediaDescriptions` link, else `{callLeg}/updateMediaDescriptions`.
   1:1: start/stop is a `mediaNegotiation` re-offer with `ScreenSharer`, the sharing line
-  `sendonly` (stop: `inactive`).
+  `sendonly` (stop: `inactive`) and the camera line as the camera is (`recvonly` off). A browser
+  that refused the sharing line (a port-0 stub with its label and no mid, seen after a hold on
+  2026-11-20) gets it offered again on its own mid and label; the stub kept for a line not
+  offered again keeps its label.
 - A `controlVideoStreaming` callback with `KeyFrame=1` forces a keyframe; otherwise one goes out
   every 2 s.
 - Capture: the ScreenCast portal (`ashpd`, monitors and windows, cursor embedded), the PipeWire
