@@ -5,11 +5,11 @@
 use super::Engine;
 use super::util::chat_time;
 use crate::data::{color_for, initials};
-use crate::find_data::{HitData, PickData, highlight_md, matches_all, terms_of};
+use crate::find_data::{HitData, PickData, highlight_md, marked_md, matches_all, terms_of};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use store::{ConvFilter, ConvKind, ConversationRow, MessageRow};
+use store::{ConvFilter, ConvKind, ConversationRow, LocalFilters, LocalHit, MessageRow};
 use teams_proto::global_search::Paging;
 use teams_proto::search::{MessageHit, SearchFilters, mentions_query};
 use teams_proto::time::now_ms;
@@ -210,6 +210,9 @@ pub(super) struct Hit {
     place: String,
     /// Plain text to show a snippet of.
     text: String,
+    /// A snippet the cache's search index cut and marked (`store::MARK_START`…), shown instead
+    /// of highlighting `text`; empty for the other hits.
+    marked: String,
     url: String,
 }
 
@@ -457,6 +460,7 @@ impl Engine {
             name,
             place: self.location_of(&h.conversation_id, &h.topic, &h.team_name),
             text: h.snippet.clone(),
+            marked: String::new(),
             url: String::new(),
         }
     }
@@ -477,6 +481,7 @@ impl Engine {
             name,
             place: self.location_of(&m.conversation_id, "", ""),
             text: plain_of(m),
+            marked: String::new(),
             url: String::new(),
         }
     }
@@ -493,6 +498,7 @@ impl Engine {
             _ => (name.clone(), h.place.clone()),
         };
         let snippet = match h.kind {
+            "message" | "thread" if !h.marked.is_empty() => marked_md(&h.marked),
             "message" | "thread" => highlight_md(&h.text, terms, 160),
             _ => String::new(),
         };
@@ -604,7 +610,7 @@ impl Engine {
         let since = date.since_ms(now_ms());
         let filtered = in_conv.is_some() || person.is_some() || date != Date::Any;
         let mut hits = self.local_message_hits(
-            &terms,
+            &q,
             in_conv.as_ref().map(|(id, _)| id.as_str()),
             person.as_ref().map(|(m, _)| m.as_str()),
             since,
@@ -674,30 +680,49 @@ impl Engine {
         self.push_search(false);
     }
 
-    /// Messages of the cache that contain every term.
+    /// Messages of the cache with a word starting with each word of `q`, from the cache's
+    /// full-text index (`Store::search_messages_local`), newest first. No network: offline
+    /// these are the results.
     fn local_message_hits(
         &self,
-        terms: &[String],
+        q: &str,
         in_conv: Option<&str>,
         person: Option<&str>,
         since: i64,
     ) -> Vec<Hit> {
-        let Some(needle) = longest(terms) else {
-            return vec![];
+        let filters = LocalFilters {
+            conversation: in_conv,
+            sender: person,
+            since_ms: Some(since),
         };
-        let rows = self
+        let found = self
             .store
             .lock()
             .unwrap()
-            .messages_containing(in_conv, needle, CACHE_SCAN)
+            .search_messages_local(q, &filters, TAB_MAX)
             .unwrap_or_default();
-        rows.iter()
-            .filter(|m| !m.message_type.starts_with("Control/"))
-            .filter(|m| person.is_none_or(|p| m.sender_mri == p))
-            .filter(|m| m.compose_ms >= since)
-            .filter(|m| matches_all(&plain_of(m), terms))
-            .map(|m| self.hit_from_row(m))
-            .collect()
+        found.iter().map(|h| self.hit_from_local(h)).collect()
+    }
+
+    fn hit_from_local(&self, h: &LocalHit) -> Hit {
+        let name = if h.sender_name.is_empty() {
+            self.user_name(&h.sender_mri).unwrap_or_default()
+        } else {
+            h.sender_name.clone()
+        };
+        Hit {
+            kind: "message",
+            conv: h.conversation_id.clone(),
+            message: h.message_id.clone(),
+            root: h.parent_id.clone().unwrap_or_default(),
+            time_ms: h.compose_ms,
+            mri: h.sender_mri.clone(),
+            name,
+            place: self.location_of(&h.conversation_id, "", ""),
+            text: h.snippet.replace([store::MARK_START, store::MARK_END], ""),
+            marked: h.snippet.clone(),
+            url: String::new(),
+        }
     }
 
     /// Channels, group chats and meetings whose name (or team) contains every term.
@@ -1230,6 +1255,7 @@ impl Engine {
                     name,
                     place: self.location_of(&m.conversation_id, "", ""),
                     text: m.preview.clone(),
+                    marked: String::new(),
                     url: String::new(),
                 }
             })
@@ -1684,6 +1710,130 @@ mod tests {
             time_ms: ms,
             ..Default::default()
         }
+    }
+
+    /// An offline engine (as in `in_order`'s tests) whose cache holds `msgs` as
+    /// `(id, conversation, sender MRI, age in days, html)`.
+    fn engine_with(msgs: &[(&str, &str, &str, i64, &str)]) -> (Arc<Engine>, crate::AppWindow) {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = crate::AppWindow::new().unwrap();
+        let ui = crate::ui::UiHandle::new(slint::ComponentHandle::as_weak(&window));
+        let store = store::Store::open_in_memory().unwrap();
+        let now = now_ms();
+        for (id, conv, mri, days, html) in msgs {
+            store
+                .upsert_message(&MessageRow {
+                    id: (*id).into(),
+                    conversation_id: (*conv).into(),
+                    parent_id: None,
+                    sender_mri: (*mri).into(),
+                    sender_name: "Test Sender".into(),
+                    compose_ms: now - days * 86_400_000 - id.len() as i64,
+                    edited_ms: None,
+                    deleted: false,
+                    message_type: "RichText/Html".into(),
+                    content_html: (*html).into(),
+                    client_message_id: None,
+                    reactions_json: "[]".into(),
+                })
+                .unwrap();
+        }
+        let e = Engine::new(
+            teams_proto::Client::offline("test").unwrap(),
+            store,
+            session::Config::default(),
+            ui,
+            "8:me".into(),
+            "Me".into(),
+        );
+        e.offline.store(true, Ordering::Relaxed);
+        (e, window)
+    }
+
+    fn message_ids(e: &Engine) -> Vec<String> {
+        let f = e.find.lock().unwrap();
+        f.hits
+            .iter()
+            .filter(|h| h.kind == "message")
+            .map(|h| h.message.clone())
+            .collect()
+    }
+
+    #[test]
+    fn an_offline_search_shows_the_cached_matches_with_the_filters() {
+        let (e, _window) = engine_with(&[
+            (
+                "1",
+                "19:a",
+                "8:orgid:x",
+                0,
+                "<p>The <b>budget</b> is final</p>",
+            ),
+            ("2", "19:b", "8:orgid:y", 3, "<p>budgets for Q3</p>"),
+            ("3", "19:a", "8:orgid:y", 40, "<p>old budget draft</p>"),
+            ("4", "19:a", "8:orgid:x", 0, "<p>ميزانيةُ المشروع</p>"),
+            ("5", "19:a", "8:orgid:x", 0, "<p>lunch</p>"),
+        ]);
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(
+            e.clone()
+                .handle(super::super::Cmd::Find(FindCmd::Search("budg".into()))),
+        );
+        assert_eq!(
+            message_ids(&e),
+            ["1", "2", "3"],
+            "prefix matches, newest first"
+        );
+        {
+            let f = e.find.lock().unwrap();
+            assert!(f.searched, "offline is not an error");
+            let first = f.hits.iter().find(|h| h.message == "1").unwrap();
+            assert_eq!(first.conv, "19:a");
+            assert_eq!(first.text, "The budget is final");
+            assert_eq!(
+                first.marked,
+                format!(
+                    "The {}budget{} is final",
+                    store::MARK_START,
+                    store::MARK_END
+                )
+            );
+        }
+
+        // Arabic without tashkeel and with the plain teh marbuta form.
+        rt.block_on(
+            e.clone()
+                .handle(super::super::Cmd::Find(FindCmd::Search("ميزانيه".into()))),
+        );
+        assert_eq!(message_ids(&e), ["4"]);
+
+        // The In, From and date filters narrow the cached matches.
+        e.find.lock().unwrap().query = "budget".into();
+        e.find.lock().unwrap().in_conv = Some(("19:a".into(), "A".into()));
+        rt.block_on(e.run_search());
+        assert_eq!(message_ids(&e), ["1", "3"]);
+        e.find.lock().unwrap().person = Some(("8:orgid:y".into(), "Y".into()));
+        rt.block_on(e.run_search());
+        assert_eq!(message_ids(&e), ["3"]);
+        e.find.lock().unwrap().in_conv = None;
+        e.find.lock().unwrap().date = Date::Week;
+        rt.block_on(e.run_search());
+        assert_eq!(message_ids(&e), ["2"]);
+
+        // A server answer for the same message does not add a second row.
+        let mut f = e.find.lock().unwrap();
+        let server = Hit {
+            marked: String::new(),
+            ..f.hits[0].clone()
+        };
+        let before = f.hits.len();
+        merge_messages(&mut f.hits, vec![server]);
+        assert_eq!(f.hits.len(), before);
+        assert!(!f.hits[0].marked.is_empty(), "the cache's marked row stays");
     }
 
     #[test]
