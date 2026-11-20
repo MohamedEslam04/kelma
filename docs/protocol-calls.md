@@ -691,11 +691,31 @@ channel, "give/request control".
   frames are read in both shapes.
 
 **Local half (built, independent of the wire):**
-- Give control: with `KELMA_REMOTE_CONTROL=1` Share opens ONE xdg-desktop-portal session that
-  is both RemoteDesktop and ScreenCast (`calling::video::remote_input::pick_with_control`), so
-  KDE asks once for the screen and for input. `InputInjector` maps a normalized point onto the
-  shared stream (`NotifyPointerMotionAbsolute` on its PipeWire node), and sends buttons (evdev
-  `BTN_*`), scrolling and keys (keysyms). Injection runs on its own task.
+- Share never asks for control, as Teams (regardless of `KELMA_REMOTE_CONTROL`): it is always
+  the plain ScreenCast picker (`screencast::pick`, `ShareKind::Any` = monitor or window, one
+  source, cursor embedded). Input consent is asked LATER, when control is granted ("Give
+  control" or Allow on a viewer's request; `Machine::needs_input_consent`), once per share:
+  `calling::video::remote_input::request_control` opens a RemoteDesktop session
+  (`select_devices` keyboard + pointer). The portal only accepts `NotifyPointerMotionAbsolute`
+  for a stream of the SAME RemoteDesktop session, so that session also selects a screen source
+  (it cannot reuse the share's ScreenCast stream, which belongs to another session); its stream
+  is never captured, only used as the pointer's coordinate space. `control_target` places the
+  shared picture inside it: same size (the user picked the same screen or window again) is the
+  picture itself; a monitor inside a bigger stream (KDE hands the whole desktop when it shows no
+  picker) is offset by the difference of the two stream positions; anything else (a window in a
+  bigger stream) is refused, so no click lands where the viewer can't see. If the user declines
+  the dialog the grant is not made ("kelma needs permission to control your screen") and a
+  viewer's request is denied. The session ends with the share. `InputInjector` sends buttons
+  (evdev `BTN_*`), scrolling and keys (keysyms). Injection runs on its own task.
+  UNVERIFIED live (KDE Plasma Wayland, two monitors): whether KDE shows its picker for the
+  second session or a bare Approve dialog (the earlier combined session showed no picker and
+  shared both monitors, 3840x1080); that the second session leaves the share running; that
+  stream sizes (pixels) and positions (logical) share units for the monitor offset; a second
+  "sharing" indicator while controlled. A window share can only be controlled if the user picks
+  that same window again.
+- Share sources: screens (one monitor) and windows, whatever the desktop's picker offers.
+  Sharing a single browser TAB is a browser-only feature (Teams web captures with
+  `getDisplayMedia`); a native app can only offer screens and windows.
 - The controller's own cursor (as Teams): while someone controls our screen, their pointer is
   drawn as a separate arrow with their name and photo (`calling::video::control_overlay`), on a
   wlr-layer-shell surface on the overlay layer (click-through: empty input region, no keyboard

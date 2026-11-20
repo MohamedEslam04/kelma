@@ -16,8 +16,9 @@ use calling::signaling::video::{
     JOIN_REQUEST_ID, meeting_descriptions, negotiation_tag, parse_sender_controls, video_modalities,
 };
 use calling::signaling::{CallSession, NgcClient};
+use calling::video::control_overlay::ShareArea;
 use calling::video::h264::{EncoderSettings, H264Encoder};
-use calling::video::remote_input::{InputInjector, pick_with_control};
+use calling::video::remote_input::{InputInjector, request_control};
 use calling::video::screencast::{CaptureSettings, ScreenCapture, ShareKind, pick};
 use calling::video::{VideoRole, pump};
 use calling::{Links, SdpBlob};
@@ -51,17 +52,13 @@ pub fn media_options() -> MediaOptions {
     }
 }
 
-/// What the picker hands back: the capture, and the remote-control injector when the share was
-/// started in a combined RemoteDesktop session ([`super::remote_control::wanted`]).
-pub struct Picked {
-    pub capture: ScreenCapture,
-    pub injector: Option<InputInjector>,
-}
-
 /// What the share tasks report to the call loop.
 pub enum ShareMsg {
     /// The picker closed: a capture, `None` when cancelled, or why it failed.
-    Picked(Result<Option<Box<Picked>>, String>),
+    Picked(Result<Option<Box<ScreenCapture>>, String>),
+    /// The desktop answered the input-consent question asked when control was granted
+    /// ([`ask_input`]): the injector, `None` when declined, or why it failed.
+    Input(Result<Option<Box<InputInjector>>, String>),
     /// The capture ended on its own (the user stopped it from the desktop's indicator).
     Ended,
     /// The meeting did not grant the content-sharing session in time (correlation id).
@@ -84,6 +81,19 @@ pub enum SessionNews {
     Nothing,
 }
 
+/// Asks the desktop for permission to drive the shared screen `area`; the answer comes as
+/// [`ShareMsg::Input`].
+pub fn ask_input(area: ShareArea, tx: &mpsc::UnboundedSender<ShareMsg>) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let r = request_control(area)
+            .await
+            .map(|i| i.map(Box::new))
+            .map_err(|e| e.to_string());
+        let _ = tx.send(ShareMsg::Input(r));
+    });
+}
+
 /// One call's share state.
 #[derive(Default)]
 pub struct Share {
@@ -99,8 +109,6 @@ pub struct Share {
     pub session: Option<SharingSession>,
     /// The correlation id of the session we asked for, until it is granted.
     asking: Option<String>,
-    /// Drives our screen for the person we gave control to (combined portal session).
-    pub injector: Option<InputInjector>,
 }
 
 impl Share {
@@ -109,33 +117,26 @@ impl Share {
     }
 
     /// Opens the desktop's picker without blocking the call; the result comes as
-    /// [`ShareMsg::Picked`].
+    /// [`ShareMsg::Picked`]. Always the plain ScreenCast picker (one screen or window): sharing
+    /// never asks for control, that is asked when it is granted ([`ask_input`]).
     pub fn pick(&mut self, tx: &mpsc::UnboundedSender<ShareMsg>) {
+        self.pick_via(tx, pick);
+    }
+
+    /// [`Share::pick`] with the picker given, so a test can stand in for the desktop.
+    fn pick_via<F, Fut>(&mut self, tx: &mpsc::UnboundedSender<ShareMsg>, picker: F)
+    where
+        F: FnOnce(ShareKind, CaptureSettings) -> Fut + Send + 'static,
+        Fut: Future<Output = calling::Result<Option<ScreenCapture>>> + Send,
+    {
         if self.picking || self.sharing() {
             return;
         }
         self.picking = true;
         let tx = tx.clone();
-        let with_control = super::remote_control::wanted();
         tokio::spawn(async move {
-            let (kind, settings) = (ShareKind::Any, CaptureSettings::default());
-            let r = if with_control {
-                // One consent for the screen and for being controlled (RemoteDesktop portal).
-                pick_with_control(kind, settings).await.map(|p| {
-                    p.map(|(capture, injector)| Picked {
-                        capture,
-                        injector: Some(injector),
-                    })
-                })
-            } else {
-                pick(kind, settings).await.map(|c| {
-                    c.map(|capture| Picked {
-                        capture,
-                        injector: None,
-                    })
-                })
-            };
-            let r = r.map(|p| p.map(Box::new)).map_err(|e| e.to_string());
+            let r = picker(ShareKind::Any, CaptureSettings::default()).await;
+            let r = r.map(|c| c.map(Box::new)).map_err(|e| e.to_string());
             let _ = tx.send(ShareMsg::Picked(r));
         });
     }
@@ -171,7 +172,6 @@ impl Share {
     pub async fn stop(&mut self) -> bool {
         self.picking = false;
         self.keyframes = None;
-        self.injector = None;
         self.asking = None;
         if let Some(e) = self.encoder.take() {
             e.abort();
@@ -442,6 +442,21 @@ pub async fn reoffer_direct(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whatever `KELMA_REMOTE_CONTROL` says, Share asks the plain picker for one screen or
+    /// window ([`ShareKind::Any`]); the picker's type has no way to hand back an injector.
+    #[tokio::test]
+    async fn sharing_only_uses_the_plain_picker_for_a_screen_or_a_window() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (asked_tx, asked_rx) = std::sync::mpsc::channel();
+        let mut share = Share::default();
+        share.pick_via(&tx, move |kind, _| async move {
+            asked_tx.send(kind).unwrap();
+            Ok(None)
+        });
+        assert!(matches!(rx.recv().await, Some(ShareMsg::Picked(Ok(None)))));
+        assert_eq!(asked_rx.recv().unwrap(), ShareKind::Any);
+    }
 
     #[test]
     fn sharing_is_opt_in_until_verified_live() {

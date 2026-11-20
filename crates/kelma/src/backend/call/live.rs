@@ -18,7 +18,7 @@ use super::bots::Bots;
 use super::camera::{self, Camera, CameraMsg};
 use super::remote_control::{self, Ctx, RemoteControl, Step};
 use super::remote_video::{self, RemoteVideo};
-use super::share::{self, Picked, Sending, SessionNews, Share, ShareMsg};
+use super::share::{self, Sending, SessionNews, Share, ShareMsg};
 use super::{
     CallDriver, CallHandle, Caption, Control, ControlAction, Device, Devices, Event, EventSink,
     JoinOptions, JoinTarget, Link, Person, Phase, live_phase, recording_state,
@@ -42,6 +42,7 @@ use calling::signaling::content_sharing::{SESSION_UPDATE, is_session_event};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::roster::{Presence, roster_snapshot};
 use calling::signaling::{CallSession, Controls, NgcClient, Roster};
+use calling::video::remote_input::InputInjector;
 use calling::{CallInvitation, IceServer, Links, Modality, OpusPacket, SdpBlob};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -1186,7 +1187,7 @@ impl Call {
                     None | Some(Control::Leave) => break None,
                     Some(Control::Share(on)) => self.share_control(on, &share_tx, &sink).await,
                     Some(Control::Camera(on)) => self.camera_control(on, &camera_tx, &sink).await,
-                    Some(Control::Remote(a)) => self.control_action(a, &sink).await,
+                    Some(Control::Remote(a)) => self.control_action(a, &share_tx, &sink).await,
                     Some(c) => self.control(c, &mut audio, &sink).await,
                 },
                 Some(m) = share_rx.recv() => self.share_msg(m, &share_tx, &sink).await,
@@ -1372,6 +1373,10 @@ impl Call {
                 sink.send(Event::Share { available, sharing });
             }
             if remote_control::wanted() {
+                if !self.share.sharing() {
+                    // The desktop's input consent was for that share.
+                    self.control.set_share(None);
+                }
                 // Control ends with our share, or with the presenter's.
                 let step = self.control.machine.context(&self.control_ctx());
                 self.apply_control(step, &sink).await;
@@ -1453,11 +1458,11 @@ impl Call {
         sink: &EventSink,
     ) {
         match m {
-            ShareMsg::Picked(Ok(Some(picked))) => {
-                let Picked { capture, injector } = *picked;
-                match self.share.start(capture, &self.media, tx) {
+            ShareMsg::Picked(Ok(Some(capture))) => {
+                let area = capture.area;
+                match self.share.start(*capture, &self.media, tx) {
                     Ok(()) => {
-                        self.control.set_injector(injector);
+                        self.control.set_share(Some(area));
                         self.share_started(tx, sink).await;
                     }
                     Err(e) => {
@@ -1473,6 +1478,7 @@ impl Call {
                 tracing::warn!(%e, "screen capture failed");
                 sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
             }
+            ShareMsg::Input(input) => self.input_answered(input, sink).await,
             ShareMsg::Ended => {
                 if self.share.stop().await {
                     self.tell_share(false, sink).await;
@@ -1541,7 +1547,8 @@ impl Call {
     fn control_ctx(&self) -> Ctx {
         let me = &self.s.me.mri;
         Ctx {
-            can_give: self.share.sharing() && self.control.can_inject(),
+            can_give: self.share.sharing(),
+            input_allowed: self.control.can_inject(),
             // From the roster: a 1:1 call has none, so control is a meeting feature for now.
             presenter: remote_video::presenter_mri(&self.roster, me).map(|mri| {
                 let name = self.person_name(&mri);
@@ -1558,10 +1565,31 @@ impl Call {
     }
 
     /// A remote-control command of the call window.
-    async fn control_action(&mut self, a: ControlAction, sink: &EventSink) {
+    async fn control_action(
+        &mut self,
+        a: ControlAction,
+        tx: &mpsc::UnboundedSender<ShareMsg>,
+        sink: &EventSink,
+    ) {
         if !remote_control::wanted() {
             return;
         }
+        let ctx = self.control_ctx();
+        if self.control.machine.needs_input_consent(&a, &ctx) {
+            // Granting control is when the desktop is asked to allow input (not at share
+            // time); the grant goes ahead once it says yes (`input_answered`).
+            if let Some(area) = self.control.share_area()
+                && self.control.asking.is_none()
+            {
+                self.control.asking = Some(a);
+                share::ask_input(area, tx);
+            }
+            return;
+        }
+        self.run_control_action(a, sink).await;
+    }
+
+    async fn run_control_action(&mut self, a: ControlAction, sink: &EventSink) {
         let ctx = self.control_ctx();
         let step = self
             .control
@@ -1569,6 +1597,39 @@ impl Call {
             .local(&a, &self.s.me.mri, &ctx, Instant::now());
         self.apply_control(step, sink).await;
         self.control_changed(sink);
+    }
+
+    /// The desktop answered the input-consent question: carry the waiting grant out, or turn it
+    /// down.
+    async fn input_answered(
+        &mut self,
+        input: Result<Option<Box<InputInjector>>, String>,
+        sink: &EventSink,
+    ) {
+        let waiting = self.control.asking.take();
+        match (input, waiting) {
+            (Ok(Some(injector)), Some(waiting)) if self.share.sharing() => {
+                self.control.set_injector(Some(*injector));
+                self.run_control_action(waiting, sink).await;
+            }
+            (input, waiting) => {
+                match input {
+                    Ok(Some(injector)) => injector.close().await,
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(%e, "remote control not allowed"),
+                }
+                if let Some(waiting) = waiting {
+                    sink.send(Event::Error(
+                        "kelma needs permission to control your screen.".into(),
+                    ));
+                    // A viewer who asked is told no.
+                    if matches!(waiting, ControlAction::Answer(true)) {
+                        self.run_control_action(ControlAction::Answer(false), sink)
+                            .await;
+                    }
+                }
+            }
+        }
     }
 
     /// A remote-control message from the other side.

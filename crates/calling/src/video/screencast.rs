@@ -10,11 +10,8 @@
 
 use std::process::Stdio;
 
-use std::sync::Arc;
-
 use ashpd::desktop::PersistMode;
 use ashpd::desktop::Session;
-use ashpd::desktop::remote_desktop::RemoteDesktop;
 use ashpd::desktop::screencast::{
     CursorMode, IsScreencastSession, Screencast, SelectSourcesOptions, SourceType, Stream,
 };
@@ -22,6 +19,7 @@ use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use super::control_overlay::ShareArea;
 use super::{I420Frame, fit_within};
 use crate::{Error, Result};
 
@@ -62,25 +60,11 @@ pub struct ScreenCapture {
     pub frames: mpsc::Receiver<I420Frame>,
     /// The size of every frame.
     pub size: (u32, u32),
+    /// What the chosen screen or window covers, as the portal described its stream.
+    pub area: ShareArea,
     child: Child,
     reader: JoinHandle<()>,
-    session: Option<PortalSession>,
-}
-
-/// The portal session a capture runs in: ScreenCast alone, or a RemoteDesktop session that
-/// also lets [`super::remote_input::InputInjector`] drive the screen.
-pub(crate) enum PortalSession {
-    Cast(Session<Screencast>),
-    Remote(Arc<Session<RemoteDesktop>>),
-}
-
-impl PortalSession {
-    async fn close(&self) {
-        let _ = match self {
-            PortalSession::Cast(s) => s.close().await,
-            PortalSession::Remote(s) => s.close().await,
-        };
-    }
+    session: Option<Session<Screencast>>,
 }
 
 impl ScreenCapture {
@@ -95,7 +79,7 @@ impl ScreenCapture {
         self.reader.abort();
         let _ = self.child.kill().await;
         if let Some(session) = self.session.take() {
-            session.close().await;
+            let _ = session.close().await;
         }
     }
 }
@@ -148,7 +132,7 @@ pub async fn pick(kind: ShareKind, settings: CaptureSettings) -> Result<Option<S
             return Err(e);
         }
     };
-    capture.session = Some(PortalSession::Cast(session));
+    capture.session = Some(session);
     Ok(Some(capture))
 }
 
@@ -186,7 +170,7 @@ pub(crate) fn stream_size(stream: &Stream) -> (u32, u32) {
         .unwrap_or(FALLBACK_SIZE)
 }
 
-/// Starts GStreamer on a stream the portal started; the caller attaches the session.
+/// Starts GStreamer on a stream the portal started; the caller keeps the session.
 pub(crate) async fn capture_stream(
     proxy: &Screencast,
     session: &Session<impl IsScreencastSession>,
@@ -200,15 +184,14 @@ pub(crate) async fn capture_stream(
         .await
         .map_err(portal_err)?;
     let size = fit_within(source, settings.max_size);
-    let capture = spawn_gstreamer(Stdio::from(fd), node, size, settings.fps)?;
+    let area = ShareArea {
+        monitor: stream.source_type() == Some(SourceType::MONITOR),
+        position: stream.position(),
+        size: source,
+    };
+    let capture = spawn_gstreamer(Stdio::from(fd), node, size, area, settings.fps)?;
     tracing::info!(node, ?source, ?size, "screen capture started");
     Ok(capture)
-}
-
-impl ScreenCapture {
-    pub(crate) fn attach(&mut self, session: PortalSession) {
-        self.session = Some(session);
-    }
 }
 
 /// The `gst-launch-1.0` arguments reading PipeWire node `node` through fd 0 as I420 frames of
@@ -251,6 +234,7 @@ fn spawn_gstreamer(
     pipewire: Stdio,
     node: u32,
     size: (u32, u32),
+    area: ShareArea,
     fps: u32,
 ) -> Result<ScreenCapture> {
     let g = super::gst::spawn(
@@ -262,6 +246,7 @@ fn spawn_gstreamer(
     Ok(ScreenCapture {
         frames: g.frames,
         size,
+        area,
         child: g.child,
         reader: g.reader,
         session: None,
