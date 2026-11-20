@@ -562,9 +562,9 @@ impl Engine {
                 }));
             }
             CallsCmd::VoicemailCallBack(id) => {
-                return Ok(in_order::rest(async move {
-                    e.voicemail_call_back(&id).await
-                }));
+                return Ok(in_order::rest(
+                    async move { e.voicemail_call_back(&id).await },
+                ));
             }
             CallsCmd::Hide(id) => {
                 hide_call(&mut self.cfg.lock().unwrap().hidden_calls, &self.me, &id);
@@ -667,9 +667,7 @@ impl Engine {
                         .is_some_and(|e| e.eq_ignore_ascii_case(&email))
                 });
                 match person {
-                    Some(p) => {
-                        self.direct_call_cmd(DirectCallCmd::DialPerson(p.mri))?
-                    }
+                    Some(p) => self.direct_call_cmd(DirectCallCmd::DialPerson(p.mri))?,
                     None => self
                         .ui
                         .banner("Couldn't find the person who left this voicemail.".into()),
