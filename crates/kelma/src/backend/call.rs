@@ -15,6 +15,7 @@
 
 use super::Engine;
 use super::call_feedback::{self, Feedback};
+use super::in_order::{self, Rest};
 use crate::data::Pixels;
 use crate::ui::UiHandle;
 #[cfg(any(test, feature = "calls"))]
@@ -1772,9 +1773,9 @@ impl CallManager {
                     m.close();
                     None
                 }
-                // Keeps the answer and closes the ended screen in one command: the engine runs
-                // every command in its own task, so a separate `close` could run first and leave
-                // no ended screen for the answer.
+                // Keeps the answer and closes the ended screen in one command, so the answer
+                // never depends on the order commands run in (a separate `close` once ran first,
+                // before the call commands had their ordered lane, and left nothing to answer).
                 CallCmd::Feedback(f) => {
                     let ended = m.close();
                     let (kind, call) = (m.kind.name(), m.duration.unwrap_or_default());
@@ -2043,7 +2044,9 @@ impl CallManager {
 }
 
 impl Engine {
-    pub(super) async fn call_cmd(self: &Arc<Self>, c: CallCmd) -> anyhow::Result<()> {
+    /// The ordered part of a call window command (see `in_order`); a people search's answer
+    /// comes back as the rest.
+    pub(super) fn call_cmd(self: &Arc<Self>, c: CallCmd) -> anyhow::Result<Option<Rest>> {
         match c {
             CallCmd::JoinChat(thread) => {
                 let title = {
@@ -2062,37 +2065,45 @@ impl Engine {
                 self.calls
                     .prejoin(title, JoinTarget::Chat(thread.clone()), thread);
             }
-            CallCmd::Find(q) => {
-                let seq = self.calls.find_started();
-                let q = q.trim();
-                if q.is_empty() {
-                    self.calls.found(seq, Vec::new());
-                    return Ok(());
-                }
-                // Tests answer with `CallManager::test_found`.
-                if cfg!(test) {
-                    return Ok(());
-                }
-                match self.client.search_people(&self.me, q).await {
-                    Ok(people) => {
-                        let found = people
-                            .into_iter()
-                            .filter(|p| p.mri != self.me)
-                            .map(|p| Found {
-                                subtitle: p.job_title.or(p.email).unwrap_or_default(),
-                                mri: p.mri,
-                                name: p.display_name,
-                            })
-                            .collect();
-                        self.calls.found(seq, found);
-                    }
-                    // The box keeps what it showed.
-                    Err(e) => tracing::warn!(%e, "people search for the call failed"),
-                }
-            }
+            CallCmd::Find(q) => return Ok(self.call_find(&q)),
             other => self.calls.command(other),
         }
-        Ok(())
+        Ok(None)
+    }
+
+    /// Add people and Transfer's search: it starts here, in order with the commands around it, and
+    /// the answer is shown when it comes (unless a newer search started).
+    fn call_find(self: &Arc<Self>, q: &str) -> Option<Rest> {
+        let seq = self.calls.find_started();
+        let q = q.trim().to_owned();
+        if q.is_empty() {
+            self.calls.found(seq, Vec::new());
+            return None;
+        }
+        // Tests answer with `CallManager::test_found`.
+        if cfg!(test) {
+            return None;
+        }
+        let e = self.clone();
+        in_order::rest(async move {
+            match e.client.search_people(&e.me, &q).await {
+                Ok(people) => {
+                    let found = people
+                        .into_iter()
+                        .filter(|p| p.mri != e.me)
+                        .map(|p| Found {
+                            subtitle: p.job_title.or(p.email).unwrap_or_default(),
+                            mri: p.mri,
+                            name: p.display_name,
+                        })
+                        .collect();
+                    e.calls.found(seq, found);
+                }
+                // The box keeps what it showed.
+                Err(err) => tracing::warn!(%err, "people search for the call failed"),
+            }
+            Ok(())
+        })
     }
 
     /// The calendar's Join for a meeting link: the pre-join screen. False when native calls are

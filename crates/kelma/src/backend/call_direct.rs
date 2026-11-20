@@ -454,7 +454,8 @@ impl Engine {
         });
     }
 
-    pub(super) async fn direct_call_cmd(self: &Arc<Self>, c: CallCmd) -> anyhow::Result<()> {
+    /// Runs in order with the other call commands (`in_order`): nothing here waits on the network.
+    pub(super) fn direct_call_cmd(self: &Arc<Self>, c: CallCmd) -> anyhow::Result<()> {
         match c {
             CallCmd::Accept { video } => self.accept_incoming(video, None),
             CallCmd::AcceptWaiting(current) => self.accept_incoming(false, Some(current)),

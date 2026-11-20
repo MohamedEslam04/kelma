@@ -14,6 +14,7 @@
 
 use super::Engine;
 use super::call_direct::CallCmd as DirectCallCmd;
+use super::in_order::{self, Rest};
 use crate::data::{Pixels, color_for, initials};
 use calling::history::{CallDirection, CallOutcome, CallRecord};
 use calling::voicemail::Voicemail;
@@ -389,21 +390,32 @@ impl Engine {
         self.ui.calls_page(CallsData { speed, ..data });
     }
 
-    pub(super) async fn calls_page_cmd(self: &Arc<Self>, c: CallsCmd) -> anyhow::Result<()> {
+    /// The ordered part of a Calls page command (see `in_order`); what waits on the network comes
+    /// back as the rest.
+    pub(super) fn calls_page_cmd(self: &Arc<Self>, c: CallsCmd) -> anyhow::Result<Option<Rest>> {
+        let e = self.clone();
         match c {
-            CallsCmd::Open => self.calls_page_load().await,
+            CallsCmd::Open => {
+                return Ok(in_order::rest(async move {
+                    e.calls_page_load().await;
+                    Ok(())
+                }));
+            }
             CallsCmd::Filter(f) => {
                 self.calls_state().filter = f;
                 self.push_calls_page();
             }
-            CallsCmd::Query(q) => self.calls_page_search(q).await?,
+            CallsCmd::Query(q) => return Ok(self.calls_page_search(&q)),
             CallsCmd::Call(mri) => {
                 self.calls_state().results.clear();
                 self.push_calls_page();
-                self.direct_call_cmd(DirectCallCmd::DialPerson(mri)).await?;
+                self.direct_call_cmd(DirectCallCmd::DialPerson(mri))?;
             }
             CallsCmd::Chat(mri) => {
-                self.open_with(&[mri], "", false).await?;
+                return Ok(in_order::rest(async move {
+                    e.open_with(&[mri], "", false).await?;
+                    Ok(())
+                }));
             }
             CallsCmd::SpeedToggle(mri) => {
                 let found = {
@@ -434,21 +446,21 @@ impl Engine {
                 self.save_cfg();
                 self.push_calls_page();
             }
-            CallsCmd::VoicemailPlay(id) => self.voicemail_play(&id).await?,
+            CallsCmd::VoicemailPlay(id) => {
+                return Ok(in_order::rest(async move { e.voicemail_play(&id).await }));
+            }
             CallsCmd::VoicemailRead(id) => {
-                calling::voicemail::mark_read(&self.client, &id, true).await?;
-                if let Some(v) = self
-                    .calls_state()
-                    .voicemails
-                    .iter_mut()
-                    .find(|v| v.id == id)
-                {
-                    v.read = true;
-                }
-                self.push_calls_page();
+                return Ok(in_order::rest(async move {
+                    calling::voicemail::mark_read(&e.client, &id, true).await?;
+                    if let Some(v) = e.calls_state().voicemails.iter_mut().find(|v| v.id == id) {
+                        v.read = true;
+                    }
+                    e.push_calls_page();
+                    Ok(())
+                }));
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     async fn calls_page_load(self: &Arc<Self>) {
@@ -496,7 +508,9 @@ impl Engine {
         });
     }
 
-    async fn calls_page_search(self: &Arc<Self>, q: String) -> anyhow::Result<()> {
+    /// A search starts here, in order with the commands around it; its answer is dropped when a
+    /// newer search started meanwhile.
+    fn calls_page_search(self: &Arc<Self>, q: &str) -> Option<Rest> {
         let seq = {
             let mut s = self.calls_state();
             s.seq += 1;
@@ -507,18 +521,21 @@ impl Engine {
         };
         if q.trim().is_empty() {
             self.push_calls_page();
-            return Ok(());
+            return None;
         }
-        let found = self.client.search_people(&self.me, q.trim()).await?;
-        {
-            let mut s = self.calls_state();
-            if s.seq != seq {
-                return Ok(());
+        let (e, q) = (self.clone(), q.trim().to_owned());
+        in_order::rest(async move {
+            let found = e.client.search_people(&e.me, &q).await?;
+            {
+                let mut s = e.calls_state();
+                if s.seq != seq {
+                    return Ok(());
+                }
+                s.results = found.into_iter().filter(|p| p.mri != e.me).collect();
             }
-            s.results = found.into_iter().filter(|p| p.mri != self.me).collect();
-        }
-        self.push_calls_page();
-        Ok(())
+            e.push_calls_page();
+            Ok(())
+        })
     }
 
     async fn voicemail_play(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
