@@ -824,6 +824,26 @@ fn hold_toggles_to_resume_and_back() {
     assert!(c.shows("Hold") && !cs(&c.h.app).get_held());
 }
 
+#[cfg(feature = "calls")]
+#[test]
+fn a_refused_hold_re_offer_keeps_the_call_and_hold_available() {
+    use crate::backend::call::live::Reoffer;
+    let c = CallHarness::new();
+    c.direct();
+    click(&c.button("Hold"));
+    assert!(cs(&c.h.app).get_held());
+    // `call/rejection` to the hold re-offer (488/3102): the call goes on with the hold undone.
+    for ev in Reoffer::Hold(true).refused() {
+        c.fake.emit(ev);
+    }
+    assert_eq!(c.phase(), "connected");
+    assert!(!cs(&c.h.app).get_held());
+    assert!(c.shows("Couldn't put the call on hold."));
+    click(&c.button("Hold"));
+    assert!(cs(&c.h.app).get_held());
+    assert_eq!(c.fake.calls(), ["hold on", "hold on"]);
+}
+
 #[test]
 fn the_invite_box_rings_a_person_into_the_call() {
     let c = CallHarness::new();

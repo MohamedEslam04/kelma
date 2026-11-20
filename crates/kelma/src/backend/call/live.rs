@@ -491,6 +491,7 @@ async fn join_meeting(
         meeting: true,
         keep_alive: None,
         pending_offer: None,
+        reoffer: None,
         transferring: None,
         link: Link::New,
         share: Share::default(),
@@ -545,6 +546,7 @@ pub fn adopt(
             meeting: false,
             keep_alive: None,
             pending_offer: None,
+            reoffer: None,
             transferring: None,
             link: Link::Connected,
             share: Share::default(),
@@ -818,6 +820,40 @@ fn people(roster: &Roster, me: &str, talk: &Talk, video: &RemoteVideo) -> Vec<Pe
         .collect()
 }
 
+/// A re-offer of ours whose answer is due, and what it asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reoffer {
+    /// Hold (`true`) or resume.
+    Hold(bool),
+    /// Camera on or off (1:1).
+    Camera(bool),
+    /// Share started or stopped (1:1).
+    Share(bool),
+}
+
+impl Reoffer {
+    /// What the UI hears when the other side refused it: the control back as it was, and why.
+    pub(crate) fn refused(self) -> Vec<Event> {
+        match self {
+            Reoffer::Hold(on) => vec![
+                Event::Held(!on),
+                Event::Error(if on {
+                    "Couldn't put the call on hold.".into()
+                } else {
+                    "Couldn't resume the call.".into()
+                }),
+            ],
+            Reoffer::Camera(true) => vec![Event::Error(
+                "Others can't see your video: the call refused it.".into(),
+            )],
+            Reoffer::Share(true) => vec![Event::Error(
+                "Others can't see your screen: the call refused the share.".into(),
+            )],
+            Reoffer::Camera(false) | Reoffer::Share(false) => Vec::new(),
+        }
+    }
+}
+
 /// One joined call.
 struct Call {
     hub: Arc<Hub>,
@@ -839,6 +875,9 @@ struct Call {
     /// Our re-offer (hold, resume) as the media session made it, while its answer is due on the
     /// `call/mediaAnswer` callback.
     pending_offer: Option<String>,
+    /// Our re-offer (hold, resume, camera, share) while its answer is due: a `call/rejection`
+    /// then refuses only it, and the call goes on ([`Reoffer::refused`]).
+    reoffer: Option<Reoffer>,
     /// Who we are transferring the call to, until `call/transferCompletion`.
     transferring: Option<String>,
     camera: Camera,
@@ -979,17 +1018,39 @@ impl Call {
                 self.apply_reoffer_answer(&answer, &ours, &Links::default(), sink)
                     .await
             }
-            Ok((ours, None)) => self.pending_offer = Some(ours),
+            Ok((ours, None)) => {
+                self.pending_offer = Some(ours);
+                self.reoffer = Some(Reoffer::Hold(on));
+            }
             Err(e) => {
                 tracing::warn!("hold {on} failed: {e:#}");
-                audio.held.store(!on, Ordering::Relaxed);
-                sink.send(Event::Held(!on));
-                sink.send(Event::Error(if on {
-                    "Couldn't put the call on hold.".into()
-                } else {
-                    "Couldn't resume the call.".into()
-                }));
+                self.refused(Reoffer::Hold(on), audio, sink).await;
             }
+        }
+    }
+
+    /// Puts back what our refused re-offer changed (`call/rejection`, or its request failed):
+    /// webrtc-rs's pending offer is rolled back, so the session can answer the other side's
+    /// next offer, and the hold, camera or share is undone. The call goes on.
+    async fn refused(&mut self, reoffer: Reoffer, audio: &Audio, sink: &EventSink) {
+        if let Err(e) = self.media.rollback_offer().await {
+            tracing::warn!(%e, "refused re-offer not rolled back");
+        }
+        self.pending_offer = None;
+        self.answered = true;
+        match reoffer {
+            Reoffer::Hold(on) => audio.held.store(!on, Ordering::Relaxed),
+            Reoffer::Camera(true) => {
+                self.camera.stop(sink).await;
+            }
+            Reoffer::Share(true) => {
+                self.share.stop().await;
+                share::leave_session(&self.ngc, &self.s, &mut self.share).await;
+            }
+            Reoffer::Camera(false) | Reoffer::Share(false) => {}
+        }
+        for ev in reoffer.refused() {
+            sink.send(ev);
         }
     }
 
@@ -1128,6 +1189,7 @@ impl Call {
                             self.start_keep_alive(keep_alive_interval_s);
                         }
                         CallEvent::MediaAnswer { answer, links } => {
+                            self.reoffer = None;
                             match self.pending_offer.take() {
                                 Some(ours) => self.apply_reoffer_answer(&answer, &ours, &links, &sink).await,
                                 None => roster_changed |= self.apply_answer(&answer).await,
@@ -1157,6 +1219,15 @@ impl Call {
                             in_lobby = false;
                             // The lines may have changed: the subscriptions start over.
                             roster_changed = true;
+                        }
+                        // Our re-offer refused (a browser that can't answer it: 488/3102
+                        // `CallEndReasonMediaAnswerError`), not the call: it goes on, and the
+                        // other side's recovery offer comes as `call/mediaRenegotiation`.
+                        CallEvent::Rejected(r) if self.reoffer.is_some() => {
+                            tracing::warn!(code = r.code, sub = r.sub_code, phrase = %r.phrase, "re-offer refused");
+                            if let Some(reoffer) = self.reoffer.take() {
+                                self.refused(reoffer, &audio, &sink).await;
+                            }
                         }
                         CallEvent::Rejected(r) | CallEvent::Ended(r) => {
                             tracing::info!(code = r.code, sub = r.sub_code, "call ended by the service");
@@ -1522,9 +1593,15 @@ impl Call {
                     self.apply_answer(&a).await;
                     Ok(())
                 }
-                Ok(None) => Ok(()),
+                Ok(None) => {
+                    self.reoffer = Some(Reoffer::Share(sending));
+                    Ok(())
+                }
                 Err(e) => {
                     self.answered = true;
+                    if let Err(e) = self.media.rollback_offer().await {
+                        tracing::warn!(%e, "unsent re-offer not rolled back");
+                    }
                     Err(e)
                 }
             }
@@ -1613,9 +1690,15 @@ impl Call {
                     self.apply_answer(&a).await;
                     Ok(())
                 }
-                Ok(None) => Ok(()),
+                Ok(None) => {
+                    self.reoffer = Some(Reoffer::Camera(on));
+                    Ok(())
+                }
                 Err(e) => {
                     self.answered = true;
+                    if let Err(e) = self.media.rollback_offer().await {
+                        tracing::warn!(%e, "unsent re-offer not rolled back");
+                    }
                     Err(e)
                 }
             }
@@ -1731,6 +1814,35 @@ impl Call {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_refused_re_offer_puts_its_control_back() {
+        assert_eq!(
+            Reoffer::Hold(true).refused(),
+            [
+                Event::Held(false),
+                Event::Error("Couldn't put the call on hold.".into())
+            ]
+        );
+        assert_eq!(
+            Reoffer::Hold(false).refused(),
+            [
+                Event::Held(true),
+                Event::Error("Couldn't resume the call.".into())
+            ]
+        );
+        assert!(matches!(
+            Reoffer::Camera(true).refused().as_slice(),
+            [Event::Error(_)]
+        ));
+        assert!(matches!(
+            Reoffer::Share(true).refused().as_slice(),
+            [Event::Error(_)]
+        ));
+        // Turning off: already off here, nothing to put back.
+        assert!(Reoffer::Camera(false).refused().is_empty());
+        assert!(Reoffer::Share(false).refused().is_empty());
+    }
 
     #[test]
     fn a_direct_call_learns_its_controller_from_the_conversation_push() {
