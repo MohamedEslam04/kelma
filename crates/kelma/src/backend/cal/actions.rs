@@ -227,6 +227,23 @@ impl Engine {
         s.open.as_deref().and_then(|id| s.find(id)).cloned()
     }
 
+    /// Takes a turn at opening the event form; see [`Self::cal_form_current`].
+    pub(in crate::backend) fn cal_form_ticket(&self) -> u64 {
+        let mut s = self.cal.lock();
+        s.form_seq += 1;
+        s.form_seq
+    }
+
+    /// No form command came after the one holding `ticket`: it may still open its form.
+    pub(in crate::backend) fn cal_form_current(&self, ticket: u64) -> bool {
+        self.cal.lock().form_seq == ticket
+    }
+
+    /// The event `id` is still the open one (a peek at another event came meanwhile otherwise).
+    pub(in crate::backend) fn cal_still_open(&self, id: &str) -> bool {
+        self.cal.lock().open.as_deref() == Some(id)
+    }
+
     /// Changes the cached event `id` as it is now, not as it was when a request for it started,
     /// so two quick changes to one event (Show as, then a category) both stay. Nothing happens
     /// when the event left the cache meanwhile.
@@ -522,18 +539,30 @@ impl Engine {
             Ok(d) => {
                 let mut data = model::detail_data(&d);
                 // As the organizer of a meeting, also read the times attendees proposed.
+                let mut proposals = None;
                 if d.is_organizer && !d.event.attendees.is_empty() {
                     match event_proposals(&self.client, &e.id).await {
                         Ok(p) => {
                             data.proposals = model::proposal_rows(&p, &d.event, &local_offset);
-                            self.cal.lock().proposals = p;
+                            proposals = Some(p);
                         }
                         Err(err) => tracing::warn!(%err, "event proposals failed"),
                     }
                 }
-                self.cal.lock().detail = Some(d);
+                // A peek at another event while this loaded: its details are not this one's.
+                {
+                    let mut s = self.cal.lock();
+                    if s.open.as_deref() != Some(e.id.as_str()) {
+                        return;
+                    }
+                    if let Some(p) = proposals {
+                        s.proposals = p;
+                    }
+                    s.detail = Some(d);
+                }
                 self.ui.cal_detail(data);
             }
+            Err(_) if !self.cal_still_open(&e.id) => {}
             Err(err) => {
                 tracing::warn!(%err, "event detail failed");
                 self.ui.cal_detail(DetailData {
@@ -652,6 +681,7 @@ impl Engine {
         let Some(e) = self.cal_open_event() else {
             return;
         };
+        let ticket = self.cal_form_ticket();
         let target = if series && !duplicate {
             target_id(&e, true).to_string()
         } else {
@@ -677,6 +707,10 @@ impl Engine {
                 }
             }
         };
+        // New, or another Edit, sent while the event loaded opened its own form.
+        if !self.cal_form_current(ticket) {
+            return;
+        }
         let mut fields = FormFields::from_event(&ev, &plain, &local_offset, series && !duplicate);
         let (heading, editing) = if duplicate {
             fields.repeat = "none".into();
@@ -1050,6 +1084,7 @@ impl Engine {
         let categories = {
             let mut s = self.cal.lock();
             s.editing = None;
+            s.form_seq += 1;
             s.panels().categories
         };
         let mut fields = FormFields::blank(date, start_min);
@@ -1086,6 +1121,7 @@ impl Engine {
             return;
         }
         let (date, min) = default_slot(&self.cal.lock());
+        let ticket = self.cal_form_ticket();
         let channels = if kind == "channel" {
             if self.is_offline() {
                 vec!["Design › General".to_string()]
@@ -1109,6 +1145,10 @@ impl Engine {
         } else {
             vec![]
         };
+        // Another form command came while the channels loaded: its form stays.
+        if !self.cal_form_current(ticket) {
+            return;
+        }
         self.cal_open_blank(date, min, kind == "channel", channels);
     }
 
@@ -1368,6 +1408,8 @@ impl Engine {
     // ---- around the calendar ----
 
     async fn cal_meet_now(self: &Arc<Self>, subject: &str) {
+        // Until this meeting exists, Copy link has nothing to copy (not the last meeting's link).
+        self.cal.lock().meet_link = None;
         if self.is_offline() {
             self.ui
                 .cal_prompt_error("Demo mode: no meeting is created.".into());
@@ -1567,6 +1609,7 @@ impl Engine {
 
     /// "Schedule a meeting" in a chat header: the form opens with the chat's other members.
     async fn cal_from_chat(self: &Arc<Self>, chat_id: &str, title: &str) {
+        let ticket = self.cal_form_ticket();
         let fallback = || super::super::util::one_on_one_members(chat_id);
         let members: Vec<String> = if self.is_offline() {
             fallback()
@@ -1609,6 +1652,9 @@ impl Engine {
             date_min.1,
             &forms::local_tz(),
         );
+        if !self.cal_form_current(ticket) {
+            return;
+        }
         let categories = {
             let mut s = self.cal.lock();
             s.editing = None;

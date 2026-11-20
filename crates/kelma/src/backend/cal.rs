@@ -418,6 +418,9 @@ struct Inner {
     editing: Option<Editing>,
     pending_move: Option<PendingMove>,
     meet_link: Option<String>,
+    /// Bumped by every command that opens the event form (New, Edit, Duplicate, a meeting from a
+    /// chat), so a form still loading never replaces one opened after it.
+    form_seq: u64,
     room_lists: Vec<(String, String)>,
     last_panels: Option<Panels>,
 }
@@ -479,6 +482,7 @@ impl CalState {
             editing: None,
             pending_move: None,
             meet_link: None,
+            form_seq: 0,
             room_lists: Vec::new(),
             last_panels: None,
         }))
@@ -797,12 +801,38 @@ impl Engine {
     /// Puts an event in the cache and reads one back (tests of the command order).
     #[cfg(test)]
     pub(super) fn calendar_put_for_test(&self, e: Event) {
-        self.cal.lock().cache.apply(vec![::calendar::EventChange::Upsert(e)]);
+        self.cal
+            .lock()
+            .cache
+            .apply(vec![::calendar::EventChange::Upsert(e)]);
     }
 
     #[cfg(test)]
     pub(super) fn calendar_event_for_test(&self, id: &str) -> Option<Event> {
         self.cal.lock().find(id).cloned()
+    }
+
+    /// A reminder's snooze time and whether it is done (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn calendar_reminder_for_test(
+        &self,
+        id: &str,
+        start_ms: i64,
+    ) -> (Option<i64>, bool) {
+        let s = self.cal.lock();
+        let k = (id.to_owned(), start_ms);
+        (s.snoozed.get(&k).copied(), s.fired.contains(&k))
+    }
+
+    /// Meet now's link, read and set (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn calendar_meet_link_for_test(&self) -> Option<String> {
+        self.cal.lock().meet_link.clone()
+    }
+
+    #[cfg(test)]
+    pub(super) fn calendar_set_meet_link_for_test(&self, link: &str) {
+        self.cal.lock().meet_link = Some(link.to_owned());
     }
 
     pub(super) fn start_calendar(self: &Arc<Self>) {
@@ -1130,19 +1160,23 @@ impl Engine {
     /// `POST /me/events/{id}/snoozeReminder`: remind again in five minutes.
     async fn snooze_reminder(&self, id: String, start_ms: i64) -> anyhow::Result<()> {
         let until = now_ms() + SNOOZE_MS;
+        // Here first, so a Dismiss pressed right after wins, then the server.
+        self.cal
+            .lock()
+            .snoozed
+            .insert((id.clone(), start_ms), until);
         self.reminder_call(&id, "snoozeReminder", Some(&snooze_body(until)))
-            .await?;
-        self.cal.lock().snoozed.insert((id, start_ms), until);
-        Ok(())
+            .await
     }
 
     /// `POST /me/events/{id}/dismissReminder`.
     async fn dismiss_reminder(&self, id: String, start_ms: i64) -> anyhow::Result<()> {
-        self.reminder_call(&id, "dismissReminder", None).await?;
-        let mut s = self.cal.lock();
-        s.snoozed.remove(&(id.clone(), start_ms));
-        s.fired.insert((id, start_ms));
-        Ok(())
+        {
+            let mut s = self.cal.lock();
+            s.snoozed.remove(&(id.clone(), start_ms));
+            s.fired.insert((id.clone(), start_ms));
+        }
+        self.reminder_call(&id, "dismissReminder", None).await
     }
 }
 
