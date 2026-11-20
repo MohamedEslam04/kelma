@@ -1259,3 +1259,84 @@ msgstr "وضع علامة كمقروء"
 
 msgid "Play"
 msgstr "تشغيل"
+
+msgid "Quiet hours"
+msgstr "ساعات الهدوء"
+
+msgid "No banners and no notification sound during these hours. Messages still arrive and unread counts still update. This applies to this computer only."
+msgstr "لا إشعارات منبثقة ولا صوت إشعارات خلال هذه الساعات. تستمر الرسائل في الوصول وتتحدث أعداد غير المقروء. ينطبق هذا على هذا الكمبيوتر فقط."
+
+msgid "Turn on quiet hours"
+msgstr "تفعيل ساعات الهدوء"
+
+msgid "Mon"
+msgstr "الإثنين"
+
+msgid "Tue"
+msgstr "الثلاثاء"
+
+msgid "Wed"
+msgstr "الأربعاء"
+
+msgid "Thu"
+msgstr "الخميس"
+
+msgid "Fri"
+msgstr "الجمعة"
+
+msgid "Sat"
+msgstr "السبت"
+
+msgid "Sun"
+msgstr "الأحد"
+
+msgid "From"
+msgstr "من"
+
+msgid "To"
+msgstr "إلى"
+
+msgid "Focus mode"
+msgstr "وضع التركيز"
+
+msgid "Only @mentions of you, urgent messages, priority people, calls and your keywords still show a banner. Your Teams status does not change."
+msgstr "تظهر الإشعارات المنبثقة فقط للإشارات إليك @ والرسائل العاجلة والأشخاص ذوي الأولوية والمكالمات وكلماتك المفتاحية. لا تتغير حالتك في Teams."
+
+msgid "Turn on for"
+msgstr "تفعيله لمدة"
+
+msgid "1 hour"
+msgstr "ساعة واحدة"
+
+msgid "2 hours"
+msgstr "ساعتان"
+
+msgid "Until tomorrow 9:00"
+msgstr "حتى الغد الساعة 9:00"
+
+msgid "Until I turn it off"
+msgstr "حتى أوقفه"
+
+msgid "Keyword alerts"
+msgstr "تنبيهات الكلمات المفتاحية"
+
+msgid "A message from someone else with one of these words or phrases shows a banner, even in a muted chat, but not during quiet hours. Focus mode lets them through."
+msgstr "تظهر رسالة من شخص آخر تحتوي على إحدى هذه الكلمات أو العبارات كإشعار منبثق حتى في محادثة مكتومة، لكن ليس خلال ساعات الهدوء. يسمح وضع التركيز بمرورها."
+
+msgid "Add a word or phrase"
+msgstr "أضف كلمة أو عبارة"
+
+msgid "No keywords yet."
+msgstr "لا توجد كلمات مفتاحية بعد."
+
+msgid "Until you turn it off"
+msgstr "حتى توقفه"
+
+msgid "Until {}"
+msgstr "حتى {}"
+
+msgid "Until tomorrow {}"
+msgstr "حتى الغد {}"
+
+msgid "Focus"
+msgstr "التركيز"

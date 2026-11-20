@@ -34,6 +34,8 @@ pub enum TrayEvent {
     Open,
     /// The Mute notifications checkmark was toggled; carries the new state.
     ToggleMute(bool),
+    /// The Focus mode checkmark was toggled; carries the new state. The app decides for how long.
+    ToggleFocus(bool),
     /// The Quit menu entry.
     Quit,
 }
@@ -70,6 +72,7 @@ impl Default for TrayOptions {
 enum Cmd {
     Unread(u32),
     Muted(bool),
+    Focus(bool),
     Launcher(u32),
     Shutdown,
 }
@@ -110,6 +113,7 @@ struct SniTray {
     opts: TrayOptions,
     unread: u32,
     muted: bool,
+    focus: bool,
     events: Sender<TrayEvent>,
 }
 
@@ -157,7 +161,7 @@ impl ksni::Tray for SniTray {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::{CheckmarkItem, StandardItem};
         use menu::MenuEntry;
-        menu::menu_model(self.muted)
+        menu::menu_model(self.muted, self.focus)
             .into_iter()
             .map(|entry| match entry {
                 MenuEntry::Separator => ksni::MenuItem::Separator,
@@ -198,6 +202,10 @@ impl SniTray {
             menu::MenuAction::ToggleMute => {
                 self.muted = !self.muted;
                 TrayEvent::ToggleMute(self.muted)
+            }
+            menu::MenuAction::ToggleFocus => {
+                self.focus = !self.focus;
+                TrayEvent::ToggleFocus(self.focus)
             }
             menu::MenuAction::Quit => TrayEvent::Quit,
         };
@@ -292,6 +300,11 @@ impl TrayHandle {
         let _ = self.inner.cmds.send(Cmd::Muted(muted));
     }
 
+    /// Set the state of the Focus mode checkmark (when the app changes it elsewhere).
+    pub fn set_focus(&self, focus: bool) {
+        let _ = self.inner.cmds.send(Cmd::Focus(focus));
+    }
+
     /// Set only the launcher (task manager) badge; 0 hides it.
     pub fn set_launcher_count(&self, count: u32) {
         let _ = self.inner.cmds.send(Cmd::Launcher(count));
@@ -342,6 +355,7 @@ fn worker(
         let tray = SniTray {
             unread: 0,
             muted: opts.muted,
+            focus: false,
             events,
             opts,
         };
@@ -375,6 +389,11 @@ fn worker(
                 Cmd::Muted(m) => {
                     if let Ok(h) = &handle {
                         h.update(|t| t.muted = m).await;
+                    }
+                }
+                Cmd::Focus(f) => {
+                    if let Ok(h) = &handle {
+                        h.update(|t| t.focus = f).await;
                     }
                 }
                 Cmd::Launcher(n) => emit(n).await,
@@ -413,6 +432,7 @@ mod tests {
             opts: TrayOptions::default(),
             unread: 0,
             muted,
+            focus: false,
             events: tx,
         };
         (t, rx)
@@ -425,6 +445,7 @@ mod tests {
         t.run(menu::MenuAction::Open);
         t.run(menu::MenuAction::ToggleMute);
         t.run(menu::MenuAction::ToggleMute);
+        t.run(menu::MenuAction::ToggleFocus);
         t.run(menu::MenuAction::Quit);
         let got: Vec<_> = rx.try_iter().collect();
         assert_eq!(
@@ -433,10 +454,11 @@ mod tests {
                 TrayEvent::Open,
                 TrayEvent::ToggleMute(true),
                 TrayEvent::ToggleMute(false),
+                TrayEvent::ToggleFocus(true),
                 TrayEvent::Quit
             ]
         );
-        assert_eq!(t.menu().len(), 4);
+        assert_eq!(t.menu().len(), 5);
     }
 
     #[test]

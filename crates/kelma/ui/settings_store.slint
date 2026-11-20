@@ -123,9 +123,28 @@ export global SettingsStore {
     in-out property <[SToggle]> notify-sounds;
     in-out property <string> meeting-chat;
     in-out property <bool> banner-actions: true;
+    // Quiet hours, Focus mode and keyword alerts (all local to this device).
+    in-out property <bool> quiet-on: false;
+    in-out property <[bool]> quiet-days: [true, true, true, true, true, true, true]; // Monday first
+    in-out property <string> quiet-start: "22:00";
+    in-out property <string> quiet-end: "07:00";
+    in-out property <bool> focus-on: false;
+    // "" | forever | today | later, with the end time as HH:MM for today and later.
+    in-out property <string> focus-end-kind: "";
+    in-out property <string> focus-end-time: "";
+    in-out property <string> focus-duration: "1h"; // 1h | 2h | tomorrow | manual
+    in-out property <[string]> keywords;
     in-out property <bool> update-checking: false;
     in-out property <bool> update-available: false;
     in-out property <string> update-status;
+
+    // The line under the Focus switch and in the indicator's description; "" when Focus is off.
+    pure public function focus-label() -> string {
+        return root.focus-end-kind == "forever" ? @tr("Until you turn it off")
+            : root.focus-end-kind == "today" ? @tr("Until {}", root.focus-end-time)
+            : root.focus-end-kind == "later" ? @tr("Until tomorrow {}", root.focus-end-time)
+            : "";
+    }
 
     // (name, argument). See `ui/settings.rs` for the list.
     callback command(string, string);

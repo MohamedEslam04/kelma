@@ -14,7 +14,8 @@
 //! call-feedback, open-files, perm, switch-account, switch-org, add-account, remove-account,
 //! refresh-license, restart, sign-out, view-account, report-problem, check-updates, check-now,
 //! release-notes, status, work-location, status-note, banner-photo, banner-actions, notify-sound,
-//! meeting-chat.
+//! meeting-chat, quiet-on, quiet-day, quiet-start, quiet-end, focus, focus-duration, keyword-add,
+//! keyword-remove.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
@@ -214,6 +215,42 @@ fn ctl() -> Option<Shared> {
 
 fn s(v: impl Into<SharedString>) -> SharedString {
     v.into()
+}
+
+fn focus_slug(d: appearance::general::FocusDuration) -> &'static str {
+    use appearance::general::FocusDuration as D;
+    match d {
+        D::Hour1 => "1h",
+        D::Hour2 => "2h",
+        D::Tomorrow => "tomorrow",
+        D::Manual => "manual",
+    }
+}
+
+/// Shows Focus mode in the top bar indicator and on the Notifications page: off (`None` or an
+/// end in the past), running until I turn it off, or until a time today or tomorrow.
+pub fn show_focus(w: &AppWindow, until_ms: Option<i64>) {
+    use chrono::{Local, TimeZone};
+    let g = w.global::<SettingsStore>();
+    let now = Local::now();
+    let (kind, time) = match until_ms.filter(|u| *u > now.timestamp_millis()) {
+        None => ("", String::new()),
+        Some(appearance::general::FOCUS_FOREVER) => ("forever", String::new()),
+        Some(u) => match Local.timestamp_millis_opt(u).single() {
+            Some(t) => (
+                if t.date_naive() == now.date_naive() {
+                    "today"
+                } else {
+                    "later"
+                },
+                t.format("%H:%M").to_string(),
+            ),
+            None => ("forever", String::new()),
+        },
+    };
+    g.set_focus_on(!kind.is_empty());
+    g.set_focus_end_kind(s(kind));
+    g.set_focus_end_time(s(time));
 }
 
 fn bit(a: &str) -> bool {
@@ -452,6 +489,16 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_check_updates(gp.check_updates);
     g.set_banner_photo(gp.banner_photo);
     g.set_banner_actions(gp.banner_actions);
+    show_focus(w, crate::backend::quiet::focus_until(gp));
+    let q = &gp.quiet_hours;
+    g.set_quiet_on(q.enabled);
+    g.set_quiet_days(model(q.days.to_vec()));
+    g.set_quiet_start(s(teams_proto::user_settings::format_clock(q.start_min)));
+    g.set_quiet_end(s(teams_proto::user_settings::format_clock(q.end_min)));
+    g.set_focus_duration(s(focus_slug(gp.focus_duration)));
+    g.set_keywords(model(
+        gp.keyword_alerts.iter().map(|k| s(k.as_str())).collect(),
+    ));
 
     let x = &l.a11y;
     g.set_high_contrast(s(st::switch_slug(x.high_contrast)));
@@ -1207,6 +1254,81 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 c.local.general.banner_photo = bit(arg);
             } else {
                 c.local.general.banner_actions = bit(arg);
+            }
+            let r = c.local.save_general();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        // --- Quiet hours, Focus mode and keyword alerts (local; see backend/quiet.rs) ---
+        "quiet-on" | "quiet-day" | "quiet-start" | "quiet-end" => {
+            let mut c = shared.borrow_mut();
+            let q = &mut c.local.general.quiet_hours;
+            match name {
+                "quiet-on" => q.enabled = bit(arg),
+                "quiet-day" => {
+                    if let Some(d) = arg.parse::<usize>().ok().and_then(|i| q.days.get_mut(i)) {
+                        *d = !*d;
+                    }
+                }
+                _ => match teams_proto::user_settings::parse_clock(arg.trim()) {
+                    Some(m) if name == "quiet-start" => q.start_min = m,
+                    Some(m) => q.end_min = m,
+                    None => {
+                        push_local(w, &c);
+                        notice(w, "Write the time like 22:00.");
+                        return;
+                    }
+                },
+            }
+            let r = c.local.save_general();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "focus" => {
+            let mut c = shared.borrow_mut();
+            let now = chrono::Local::now();
+            let until = bit(arg).then(|| {
+                crate::backend::quiet::focus_end(
+                    c.local.general.focus_duration,
+                    now.naive_local(),
+                    now.timestamp_millis(),
+                )
+            });
+            crate::backend::quiet::set_focus(until);
+            c.local.general.focus_until_ms = until;
+            let r = c.local.save_general();
+            push_local(w, &c);
+            crate::tray_wiring::apply_focus(w, until);
+            saved(w, r);
+        }
+        "focus-duration" => {
+            use appearance::general::FocusDuration as D;
+            let Some(d) = [D::Hour1, D::Hour2, D::Tomorrow, D::Manual]
+                .into_iter()
+                .find(|d| focus_slug(*d) == arg)
+            else {
+                return;
+            };
+            let mut c = shared.borrow_mut();
+            c.local.general.focus_duration = d;
+            let r = c.local.save_general();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "keyword-add" | "keyword-remove" => {
+            let mut c = shared.borrow_mut();
+            let words = &mut c.local.general.keyword_alerts;
+            let word = arg.split_whitespace().collect::<Vec<_>>().join(" ");
+            if name == "keyword-add" {
+                let known = words.iter().any(|k| {
+                    crate::backend::quiet::normalise(k) == crate::backend::quiet::normalise(&word)
+                });
+                if word.is_empty() || known {
+                    return;
+                }
+                words.push(word);
+            } else {
+                words.retain(|k| *k != word);
             }
             let r = c.local.save_general();
             push_local(w, &c);

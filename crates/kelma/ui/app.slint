@@ -3,7 +3,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ActivityRow, ChatRow, ComposerEmoji, EmojiItem, Msg, PendingAttachment, Recipient, TeamRow } from "types.slint";
-import { Avatar, Icon, IconButton } from "widgets.slint";
+import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { MessageRow } from "message_row.slint";
 import { Composer, EmojiApi } from "composer.slint";
@@ -395,6 +395,14 @@ export component AppWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 if !root.connected: Text { text: @tr("Reconnecting…"); color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                // Focus mode (banners held back, this device only): click to turn it off.
+                if SettingsStore.focus-on: Pill {
+                    y: 11px;
+                    label: @tr("Focus");
+                    active: true;
+                    accessible-description: SettingsStore.focus-label();
+                    clicked => { SettingsStore.command("focus", "0"); }
+                }
                 Avatar { initials: root.me-initials; size: 30px; y: 9px; TouchArea { accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } mouse-cursor: pointer; clicked => { SettingsStore.open-profile(); } } }
             }
         }

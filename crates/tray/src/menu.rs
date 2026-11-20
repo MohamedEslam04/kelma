@@ -5,6 +5,7 @@
 pub enum MenuAction {
     Open,
     ToggleMute,
+    ToggleFocus,
     Quit,
 }
 
@@ -21,8 +22,8 @@ pub enum MenuEntry {
     Separator,
 }
 
-/// Open, Mute notifications (checkmark), separator, Quit.
-pub fn menu_model(muted: bool) -> Vec<MenuEntry> {
+/// Open, Mute notifications and Focus mode (checkmarks), separator, Quit.
+pub fn menu_model(muted: bool, focus: bool) -> Vec<MenuEntry> {
     vec![
         MenuEntry::Item {
             label: "Open kelma",
@@ -35,6 +36,12 @@ pub fn menu_model(muted: bool) -> Vec<MenuEntry> {
             icon: "notifications-disabled",
             checked: Some(muted),
             action: MenuAction::ToggleMute,
+        },
+        MenuEntry::Item {
+            label: "Focus mode",
+            icon: "user-away",
+            checked: Some(focus),
+            action: MenuAction::ToggleFocus,
         },
         MenuEntry::Separator,
         MenuEntry::Item {
@@ -51,9 +58,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn menu_has_open_mute_separator_quit_in_order() {
-        let m = menu_model(false);
-        assert_eq!(m.len(), 4);
+    fn menu_has_open_mute_focus_separator_quit_in_order() {
+        let m = menu_model(false, false);
+        assert_eq!(m.len(), 5);
         assert!(matches!(
             &m[0],
             MenuEntry::Item {
@@ -72,9 +79,18 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(m[2], MenuEntry::Separator);
         assert!(matches!(
-            &m[3],
+            &m[2],
+            MenuEntry::Item {
+                label: "Focus mode",
+                action: MenuAction::ToggleFocus,
+                checked: Some(false),
+                ..
+            }
+        ));
+        assert_eq!(m[3], MenuEntry::Separator);
+        assert!(matches!(
+            &m[4],
             MenuEntry::Item {
                 label: "Quit",
                 action: MenuAction::Quit,
@@ -85,14 +101,16 @@ mod tests {
     }
 
     #[test]
-    fn mute_checkmark_follows_state() {
-        let m = menu_model(true);
-        assert!(matches!(
-            &m[1],
-            MenuEntry::Item {
-                checked: Some(true),
-                ..
-            }
-        ));
+    fn mute_and_focus_checkmarks_follow_state() {
+        let m = menu_model(true, true);
+        for i in [1, 2] {
+            assert!(matches!(
+                &m[i],
+                MenuEntry::Item {
+                    checked: Some(true),
+                    ..
+                }
+            ));
+        }
     }
 }

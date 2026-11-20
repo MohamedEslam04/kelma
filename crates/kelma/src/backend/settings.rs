@@ -154,9 +154,12 @@ impl Local {
     }
 
     pub fn save_general(&self) -> anyhow::Result<()> {
-        Ok(self
-            .general
-            .save_to(&self.dir.join(appearance::general::FILE_NAME))?)
+        // Focus mode can be switched from the tray; this copy of the preferences may be older.
+        let mut general = self.general.clone();
+        if let Some(until) = super::quiet::focus_override() {
+            general.focus_until_ms = until;
+        }
+        Ok(general.save_to(&self.dir.join(appearance::general::FILE_NAME))?)
     }
 
     pub fn save_a11y(&self) -> anyhow::Result<()> {
@@ -862,6 +865,21 @@ pub fn page_title(key: &str) -> &'static str {
 /// Every setting by page, with extra words people search for.
 const INDEX: &[(&str, &str, &str)] = &[
     ("general", "App language", "locale arabic english"),
+    (
+        "notifications",
+        "Turn on quiet hours",
+        "quiet hours schedule night do not disturb silent",
+    ),
+    (
+        "notifications",
+        "Focus mode",
+        "focus concentrate do not disturb mute banners",
+    ),
+    (
+        "notifications",
+        "Keyword alerts",
+        "keyword word phrase alert notify",
+    ),
     ("general", "Date format", "day month year"),
     ("general", "Time format", "clock 12 24 hour"),
     ("general", "Time zone", "timezone region"),
@@ -1144,6 +1162,50 @@ pub fn banner_decision(
     }
 }
 
+/// THE pause check for desktop notifications, and the only one `quiet::should_banner` relies on:
+/// the tray's Mute or an unfinished "Pause notifications" from Teams. Paused means no banner at
+/// all, keyword alerts and Focus exceptions included. A different pause source (a local
+/// pause-until time, say) changes only this function.
+pub fn notifications_paused(now: chrono::DateTime<chrono::Utc>) -> bool {
+    matches!(
+        banner_decision(
+            remembered_notification_settings().as_ref(),
+            Kind::ChatMessage,
+            crate::tray_wiring::notifications_muted(),
+            now,
+        ),
+        Banner::Hidden(Hidden::Muted | Hidden::Paused)
+    )
+}
+
+/// Whether banners carry the message text ("Show message and content previews"; on until Teams
+/// says otherwise).
+pub fn previews_enabled() -> bool {
+    remembered_notification_settings()
+        .and_then(|n| {
+            n.to_value()
+                .pointer("/toastSettings/ShowPreviewInToasts")
+                .and_then(serde_json::Value::as_bool)
+        })
+        .unwrap_or(true)
+}
+
+/// The people with priority access, as last read from Teams (the Focus mode exception).
+static PRIORITY_PEOPLE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Remembers the priority-access people (their MRIs).
+pub fn remember_priority_people(mris: Vec<String>) {
+    *PRIORITY_PEOPLE.lock().unwrap_or_else(|e| e.into_inner()) = mris;
+}
+
+pub fn is_priority_person(mri: &str) -> bool {
+    PRIORITY_PEOPLE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|m| m == mri)
+}
+
 /// The routing for one incoming message with the settings read from Teams and the tray mute: the
 /// call `live.rs` makes. `None`: no banner; `Some(preview)`: show it, with the text or without.
 /// The work location for a profile menu value.
@@ -1372,6 +1434,7 @@ impl Engine {
         }
         if remember {
             remember_notification_settings(data.notifications.clone());
+            remember_priority_people(data.priority.iter().map(|(m, _)| m.clone()).collect());
         }
         self.ui.settings_server(data);
     }
@@ -1423,6 +1486,9 @@ impl Engine {
                         NotificationSettings::from_properties(&p),
                     )),
                     Err(err) => tracing::debug!(%err, "notification settings not read"),
+                }
+                if let Ok(v) = us::contacts(&e.client, ContactList::Priority).await {
+                    remember_priority_people(v);
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(600)).await;
             }

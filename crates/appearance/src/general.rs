@@ -171,6 +171,64 @@ fn de_time_zone<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Er
     Ok(s.map(|z| z.trim().to_string()).filter(|z| !z.is_empty()))
 }
 
+/// A local do-not-disturb schedule for banners and sounds. Teams has no server quiet hours (see
+/// `teams_proto::user_settings`), so this device keeps its own. `days` are the days a window
+/// starts on, Monday first, so a Friday 22:00 to 07:00 window also covers early Saturday.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QuietHoursPrefs {
+    #[serde(deserialize_with = "lenient")]
+    pub enabled: bool,
+    #[serde(deserialize_with = "lenient_days")]
+    pub days: [bool; 7],
+    /// Start, in minutes after midnight.
+    #[serde(deserialize_with = "lenient_minutes")]
+    pub start_min: u16,
+    /// End, in minutes after midnight. At or before the start it means the next day.
+    #[serde(deserialize_with = "lenient_minutes")]
+    pub end_min: u16,
+}
+
+impl Default for QuietHoursPrefs {
+    fn default() -> Self {
+        QuietHoursPrefs {
+            enabled: false,
+            days: [true; 7],
+            start_min: 22 * 60,
+            end_min: 7 * 60,
+        }
+    }
+}
+
+fn lenient_days<'de, D: Deserializer<'de>>(d: D) -> Result<[bool; 7], D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(<[bool; 7]>::deserialize(v).unwrap_or([true; 7]))
+}
+
+fn lenient_minutes<'de, D: Deserializer<'de>>(d: D) -> Result<u16, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(u16::deserialize(v)
+        .ok()
+        .filter(|m| *m < 24 * 60)
+        .unwrap_or(0))
+}
+
+/// How long turning Focus mode on lasts (from Settings or the tray).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FocusDuration {
+    #[default]
+    Hour1,
+    Hour2,
+    /// Until 9:00 the next morning.
+    Tomorrow,
+    /// Until the user turns it off.
+    Manual,
+}
+
+/// `GeneralPrefs::focus_until_ms` when Focus mode runs until the user turns it off.
+pub const FOCUS_FOREVER: i64 = i64::MAX;
+
 /// General preferences kept on this machine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -204,6 +262,19 @@ pub struct GeneralPrefs {
     /// Message notifications have Reply and Like buttons (where the desktop supports buttons).
     #[serde(deserialize_with = "lenient")]
     pub banner_actions: bool,
+    /// Quiet hours: no banners and no notification sound on this device.
+    #[serde(deserialize_with = "lenient")]
+    pub quiet_hours: QuietHoursPrefs,
+    /// Focus mode runs until this time (ms since the epoch, [`FOCUS_FOREVER`] for "until I turn
+    /// it off"). `None` or a time in the past: off. Local only; it never touches the Teams status.
+    #[serde(deserialize_with = "lenient")]
+    pub focus_until_ms: Option<i64>,
+    /// How long turning Focus mode on lasts.
+    #[serde(deserialize_with = "lenient")]
+    pub focus_duration: FocusDuration,
+    /// Words and phrases that raise a banner when someone writes them, even in a muted chat.
+    #[serde(deserialize_with = "lenient")]
+    pub keyword_alerts: Vec<String>,
 }
 
 impl Default for GeneralPrefs {
@@ -219,6 +290,10 @@ impl Default for GeneralPrefs {
             check_updates: false,
             banner_photo: true,
             banner_actions: true,
+            quiet_hours: QuietHoursPrefs::default(),
+            focus_until_ms: None,
+            focus_duration: FocusDuration::default(),
+            keyword_alerts: Vec::new(),
         }
     }
 }
@@ -408,6 +483,46 @@ mod tests {
     }
 
     #[test]
+    fn quiet_hours_focus_and_keywords_default_off_and_old_files_still_load() {
+        let d = GeneralPrefs::default();
+        assert!(!d.quiet_hours.enabled);
+        assert!(d.focus_until_ms.is_none() && d.keyword_alerts.is_empty());
+        // A file written before these fields existed.
+        let old = r#"{"language":"ar","banner_photo":false,"keep_running_on_close":true}"#;
+        let p: GeneralPrefs = serde_json::from_str(old).unwrap();
+        assert_eq!(p.quiet_hours, QuietHoursPrefs::default());
+        assert_eq!(p.focus_duration, FocusDuration::Hour1);
+        assert!(!p.banner_photo && p.keep_running_on_close);
+        // Saved values come back.
+        let p: GeneralPrefs = serde_json::from_str(
+            r#"{"quiet_hours":{"enabled":true,"days":[true,false,false,false,false,false,true],"start_min":1380,"end_min":420},
+                "focus_until_ms":1700000000000,"focus_duration":"manual","keyword_alerts":["deploy","نشر"]}"#,
+        )
+        .unwrap();
+        assert!(p.quiet_hours.enabled && p.quiet_hours.days[6] && !p.quiet_hours.days[1]);
+        assert_eq!(
+            (p.quiet_hours.start_min, p.quiet_hours.end_min),
+            (1380, 420)
+        );
+        assert_eq!(p.focus_until_ms, Some(1_700_000_000_000));
+        assert_eq!(p.focus_duration, FocusDuration::Manual);
+        assert_eq!(p.keyword_alerts, ["deploy", "نشر"]);
+        // A bad value only resets its own field.
+        let p: GeneralPrefs = serde_json::from_str(
+            r#"{"quiet_hours":{"enabled":true,"days":"x","start_min":99999},"focus_until_ms":"soon","focus_duration":"weird","keyword_alerts":3,"auto_start":true}"#,
+        )
+        .unwrap();
+        assert!(p.quiet_hours.enabled);
+        assert_eq!(p.quiet_hours.days, [true; 7]);
+        assert_eq!(p.quiet_hours.start_min, 0);
+        assert_eq!(p.focus_until_ms, None);
+        assert_eq!(p.focus_duration, FocusDuration::Hour1);
+        assert!(p.keyword_alerts.is_empty() && p.auto_start);
+        let p: GeneralPrefs = serde_json::from_str(r#"{"quiet_hours":"nope"}"#).unwrap();
+        assert_eq!(p.quiet_hours, QuietHoursPrefs::default());
+    }
+
+    #[test]
     fn round_trip_and_corrupt_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
@@ -423,6 +538,15 @@ mod tests {
             check_updates: true,
             banner_photo: false,
             banner_actions: true,
+            quiet_hours: QuietHoursPrefs {
+                enabled: true,
+                days: [true, true, true, true, true, false, false],
+                start_min: 22 * 60,
+                end_min: 7 * 60,
+            },
+            focus_until_ms: Some(FOCUS_FOREVER),
+            focus_duration: FocusDuration::Tomorrow,
+            keyword_alerts: vec!["deploy".into(), "نشر".into()],
         };
         p.save_to(&path).unwrap();
         assert_eq!(GeneralPrefs::load_from(&path), p);

@@ -48,6 +48,7 @@ mod people;
 #[cfg(test)]
 mod people_live;
 mod people_presence;
+pub(crate) mod quiet;
 mod render;
 mod scheduled;
 mod send;
