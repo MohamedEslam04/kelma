@@ -818,7 +818,7 @@ fn toolbar_attach_menu_offers_cloud_files_and_this_device() {
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 6, "emoji, attach, more, GIF, voice message, apps");
+    assert_eq!(tb.len(), 7, "emoji, attach, more, GIF, Loop, apps, voice message");
 
     tb[1].mock_single_click(PointerEventButton::Left);
     assert_eq!(find_label(&app, "Attach cloud files").len(), 1);

@@ -59,6 +59,8 @@ component LoopInput inherits Rectangle {
         font-weight: root.bold ? 700 : 400;
         single-line: true;
         horizontal-alignment: Theme.start-align;
+        // The field above speaks for it.
+        accessible-role: none;
         edited => { root.edited(self.text); }
     }
     if root.text == "": Text {

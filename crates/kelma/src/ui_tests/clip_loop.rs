@@ -129,10 +129,15 @@ impl Clips {
     }
 }
 
+/// Presses the button labelled `label` (its text has the same label).
 fn press(app: &AppWindow, label: &str) {
     let found = find_label(app, label);
-    assert!(!found.is_empty(), "no {label:?}");
-    found[0].invoke_accessible_default_action();
+    let button = found
+        .iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+        .or(found.first())
+        .unwrap_or_else(|| panic!("no {label:?}"));
+    button.invoke_accessible_default_action();
 }
 
 #[test]
@@ -241,9 +246,33 @@ fn sending_a_take_queues_it_and_the_chat_shows_a_clip_card() {
         .expect("a row with a clip card");
     assert_eq!(clip.duration_ms, 9_000);
     assert!(clip.has_thumb, "the pending clip shows its first picture");
-    assert!(!find_label(&c.h.app, "Play video clip, 0:09").is_empty());
     let _ = std::fs::remove_dir_all(
         std::env::temp_dir().join(format!("kelma-clip-tests-{}", std::process::id())),
+    );
+}
+
+#[test]
+fn a_clip_card_plays_its_clip() {
+    let mut m = msg("m1", "", false);
+    m.videos = ModelRc::new(VecModel::from(vec![crate::VideoClipItem {
+        key: "0-x".into(),
+        url: "https://eu-api.asm.skype.com/v1/objects/0-x/views/video".into(),
+        duration_ms: 65_000,
+        ..Default::default()
+    }]));
+    let app = app_with_messages(vec![m]);
+    let played = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let p = played.clone();
+        app.global::<ClipStore>()
+            .on_play(move |u| p.borrow_mut().push(u.into()));
+    }
+    let card = find_label(&app, "Play video clip, 1:05");
+    assert_eq!(card.len(), 1);
+    click(&card[0]);
+    assert_eq!(
+        *played.borrow(),
+        ["https://eu-api.asm.skype.com/v1/objects/0-x/views/video"]
     );
 }
 
@@ -374,13 +403,28 @@ fn clip_recorder_and_loop_editor_fit_narrow_windows() {
     let app = &c.h.app;
     for width in WIDTHS {
         resize(app, width);
-        click(&loop_button(app));
-        press(app, "Task list");
-        assert_fits(app, width, "Loop task list");
         for b in toolbar(app) {
             assert!(on_screen(&b, width), "toolbar button at {width}px");
         }
+        let has_loop_button = find_label(app, "Loop paragraph")
+            .iter()
+            .any(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button));
+        if width < 860. {
+            // GIF and Loop fold into the "…" menu.
+            assert!(!has_loop_button, "no Loop button in the toolbar at {width}px");
+            assert_eq!(toolbar(app).len(), 5, "emoji, attach, more, apps, voice message");
+            click(&toolbar(app)[2]);
+            assert!(!find_label(app, "GIF").is_empty(), "GIF is in the menu");
+            press(app, "Loop paragraph");
+        } else {
+            assert!(has_loop_button);
+            click(&loop_button(app));
+        }
+        assert!(app.global::<LoopStore>().get_open(), "{width}px");
+        press(app, "Task list");
+        assert_fits(app, width, "Loop task list");
         press(app, "Delete Loop paragraph");
+
         c.open();
         assert_eq!(c.state(), "ready");
         assert_fits(app, width, "clip recorder");
