@@ -184,8 +184,16 @@ fn details_text(i: &DriveItem, favorite: bool) -> String {
         if ms <= 0 {
             "unknown".to_owned()
         } else {
-            chrono::DateTime::from_timestamp_millis(ms + local_offset(ms))
-                .map_or_else(String::new, |t| t.format("%Y-%m-%d %H:%M").to_string())
+            chrono::DateTime::from_timestamp_millis(ms + local_offset(ms)).map_or_else(
+                String::new,
+                |t| {
+                    format!(
+                        "{} {}",
+                        t.format("%Y-%m-%d"),
+                        appearance::formats::time_of(&t)
+                    )
+                },
+            )
         }
     };
     let kind = FileKind::of(i).as_str();

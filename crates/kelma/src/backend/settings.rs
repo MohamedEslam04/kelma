@@ -465,14 +465,13 @@ pub fn date_from_slug(s: &str) -> Option<DateFormat> {
 
 pub fn time_slug(t: TimeFormat) -> &'static str {
     match t {
-        TimeFormat::Auto => "auto",
-        TimeFormat::H12 => "h12",
+        TimeFormat::Auto | TimeFormat::H12 => "h12",
         TimeFormat::H24 => "h24",
     }
 }
 
 pub fn time_from_slug(s: &str) -> Option<TimeFormat> {
-    [TimeFormat::Auto, TimeFormat::H12, TimeFormat::H24]
+    [TimeFormat::H12, TimeFormat::H24]
         .into_iter()
         .find(|t| time_slug(*t) == s)
 }
@@ -1435,11 +1434,21 @@ impl Engine {
     pub(super) async fn settings_cmd(self: &Arc<Self>, cmd: SettingsCmd) -> anyhow::Result<()> {
         match cmd {
             SettingsCmd::Load => self.settings_reload(true).await,
-            SettingsCmd::Redraw => self.mark(|d| {
-                d.chats = true;
-                d.messages = true;
-                d.teams = true;
-            }),
+            SettingsCmd::Redraw => {
+                self.mark(|d| {
+                    d.chats = true;
+                    d.messages = true;
+                    d.teams = true;
+                    d.header = true;
+                    d.activity = true;
+                });
+                // The panels that are not part of the render loop write their times again.
+                self.push_calendar();
+                self.remind_push();
+                self.push_scheduled();
+                #[cfg(feature = "calls")]
+                self.push_calls_page();
+            }
             SettingsCmd::RefreshLicense => {
                 let r = self.refresh_license().await.map_err(|e| e.to_string());
                 self.ui.settings_license(r);

@@ -247,6 +247,7 @@ export component Composer inherits Rectangle {
             SendStore.pick-day = 1;
             SendStore.pick-minutes = 480;
         }
+        SendStore.open();
         schedule-popup.show();
     }
 
@@ -622,10 +623,10 @@ export component Composer inherits Rectangle {
     }
 
     schedule-popup := PopupWindow {
-        x: parent.width - 340px;
-        y: parent.height - 256px;
-        width: 300px;
-        height: 196px;
+        x: max(8px, parent.width - 360px);
+        y: parent.height - 382px;
+        width: 320px;
+        height: 322px;
         close-policy: close-on-click-outside;
         SchedulePicker {
             done => {

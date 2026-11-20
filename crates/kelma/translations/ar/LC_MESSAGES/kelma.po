@@ -1144,8 +1144,8 @@ msgstr "اتباع اللغة"
 msgid "Time format"
 msgstr "تنسيق الوقت"
 
-msgid "Used for times in the chat list, on messages and in OneDrive."
-msgstr "يُستخدم للأوقات في قائمة الدردشات وعلى الرسائل وفي OneDrive."
+msgid "Used for every clock time: chats, the calendar, reminders, scheduled messages and OneDrive."
+msgstr "يُستخدم لكل الأوقات: الدردشات والتقويم والتذكيرات والرسائل المجدولة وOneDrive."
 
 msgid "Time zone"
 msgstr "المنطقة الزمنية"
@@ -2004,3 +2004,15 @@ msgstr "حتى الغد {}"
 
 msgid "Focus"
 msgstr "التركيز"
+
+msgid "AM"
+msgstr "ص"
+
+msgid "PM"
+msgstr "م"
+
+msgid "12-hour (1:30 PM)"
+msgstr "12 ساعة (1:30 م)"
+
+msgid "24-hour (13:30)"
+msgstr "24 ساعة (13:30)"

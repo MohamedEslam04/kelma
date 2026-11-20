@@ -2,6 +2,7 @@
 // views read, and the CalForm global the new-event form edits. Kept apart from the views so the
 // peek, form and dialog files can import it without an import cycle.
 
+import { Theme } from "theme.slint";
 export struct CalDay { iso: string, label: string, number: int, today: bool, weekend: bool, pin: string }
 
 export struct CalBlock {
@@ -275,8 +276,14 @@ export global CalForm {
 
 // Formatting and color helpers the calendar files share.
 export global CalFmt {
+    // A time of day: "4:30 PM", or "16:30" on the 24-hour clock (Theme.h24).
     public pure function hhmm(min: int) -> string {
-        return (Math.floor(min / 60) < 10 ? "0" : "") + Math.floor(min / 60) + ":" + (Math.mod(min, 60) < 10 ? "0" : "") + Math.mod(min, 60);
+        return Theme.h24 ? (Math.floor(min / 60) < 10 ? "0" : "") + Math.floor(min / 60) + ":" + (Math.mod(min, 60) < 10 ? "0" : "") + Math.mod(min, 60)
+            : (Math.mod(Math.floor(min / 60) + 11, 12) + 1) + ":" + (Math.mod(min, 60) < 10 ? "0" : "") + Math.mod(min, 60) + " " + (Math.mod(Math.floor(min / 60), 24) < 12 ? @tr("AM") : @tr("PM"));
+    }
+    // A whole hour of the time axis: "4 PM", or "16:00".
+    public pure function hour-label(h: int) -> string {
+        return Theme.h24 ? (h < 10 ? "0" : "") + h + ":00" : (Math.mod(h + 11, 12) + 1) + " " + (h < 12 ? @tr("AM") : @tr("PM"));
     }
     public pure function slot-color(state: int) -> color {
         return state == 2 ? #5b5fc7 : (state == 1 ? #5b5fc780 : (state == 3 ? #b146c2 : (state == 4 ? #5b5fc740 : (state == 5 ? #3a3a3a : #1c1c1c))));

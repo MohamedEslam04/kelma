@@ -200,9 +200,13 @@ where
     };
     let days = (due.date_naive() - now.date_naive()).num_days();
     match days {
-        0 => format!("Today {}", due.format("%H:%M")),
-        1 => format!("Tomorrow {}", due.format("%H:%M")),
-        _ => due.format("%a %-d %b %H:%M").to_string(),
+        0 => format!("Today {}", appearance::formats::time_of(&due)),
+        1 => format!("Tomorrow {}", appearance::formats::time_of(&due)),
+        _ => format!(
+            "{} {}",
+            due.format("%a %-d %b"),
+            appearance::formats::time_of(&due)
+        ),
     }
 }
 
@@ -641,15 +645,15 @@ mod tests {
         let now = ms(&tz, 2026, 11, 20, 10, 0);
         assert_eq!(
             when_label(ms(&tz, 2026, 11, 20, 14, 30), now, &tz),
-            "Today 14:30"
+            format!("Today {}", appearance::formats::clock(14 * 60 + 30))
         );
         assert_eq!(
             when_label(ms(&tz, 2026, 11, 21, 9, 0), now, &tz),
-            "Tomorrow 09:00"
+            format!("Tomorrow {}", appearance::formats::clock(9 * 60))
         );
         assert_eq!(
             when_label(ms(&tz, 2026, 11, 23, 9, 0), now, &tz),
-            "Mon 23 Nov 09:00"
+            format!("Mon 23 Nov {}", appearance::formats::clock(9 * 60))
         );
     }
 

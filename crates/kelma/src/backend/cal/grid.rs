@@ -445,7 +445,7 @@ fn second_labels(second_min: i32, local_min: i32) -> Vec<String> {
     (0..24)
         .map(|h| {
             let m = (h * 60 + second_min - local_min).rem_euclid(24 * 60);
-            format!("{:02}:{:02}", m / 60, m % 60)
+            appearance::formats::hour(m)
         })
         .collect()
 }
@@ -466,7 +466,7 @@ fn is_weekend(d: Date) -> bool {
 
 pub(super) fn hhmm(ms: i64, off: Offset) -> String {
     let m = local_minutes(ms, off);
-    format!("{:02}:{:02}", m / 60, m % 60)
+    appearance::formats::clock(m as i32)
 }
 
 fn title_of(e: &Event) -> String {
@@ -1043,7 +1043,11 @@ mod tests {
             "Mon..Fri, the 18th is the third"
         );
         assert_eq!((block("a").start_min, block("a").dur_min), (540, 60));
-        assert_eq!(block("b").time, "09:30 – 10:30");
+        let (a, b) = (
+            appearance::formats::clock(9 * 60 + 30),
+            appearance::formats::clock(10 * 60 + 30),
+        );
+        assert_eq!(block("b").time, format!("{a} – {b}"));
     }
 
     #[test]
@@ -1052,7 +1056,11 @@ mod tests {
         let e = ev("a", 0, 9.0, 10.0, 2, json!({}));
         let data = build(&[&e], &ctx(View::Week, &plus(2)));
         assert_eq!(data.blocks[0].start_min, 540);
-        assert_eq!(data.blocks[0].time, "09:00 – 10:00");
+        let (a, b) = (
+            appearance::formats::clock(9 * 60),
+            appearance::formats::clock(10 * 60),
+        );
+        assert_eq!(data.blocks[0].time, format!("{a} – {b}"));
         assert_eq!(data.blocks[0].col, 2, "week starts Monday");
     }
 
@@ -1148,7 +1156,7 @@ mod tests {
         assert_eq!(data.days.len(), 7);
         let cell = data.month.iter().find(|c| c.iso == "2026-11-18").unwrap();
         assert_eq!((cell.items.len(), cell.more), (3, 2));
-        assert_eq!(cell.items[0].time, "09:00");
+        assert_eq!(cell.items[0].time, appearance::formats::clock(9 * 60));
         assert!(cell.today && cell.in_month);
         assert!(!data.month[0].in_month, "Oct 26 is outside November");
     }
@@ -1282,10 +1290,15 @@ mod tests {
         assert_eq!(d.second_title, "UTC+05:00");
         assert_eq!(d.second_labels.len(), 24);
         assert_eq!(
-            d.second_labels[9], "12:00",
+            d.second_labels[9],
+            appearance::formats::hour(12 * 60),
             "09:00 in UTC+2 is 12:00 in UTC+5"
         );
-        assert_eq!(d.second_labels[22], "01:00", "wraps past midnight");
+        assert_eq!(
+            d.second_labels[22],
+            appearance::formats::hour(60),
+            "wraps past midnight"
+        );
         let neg = Prefs {
             second_tz_min: Some(-(9 * 60 + 30)),
             ..Prefs::default()

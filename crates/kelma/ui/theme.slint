@@ -24,6 +24,8 @@ export global Theme {
     in-out property <bool> compact: false;
     in-out property <bool> high-contrast: false;
     in-out property <bool> reduced-motion: false;
+    // 24-hour clock (Settings > General > Time format); the time labels drawn here follow it.
+    in-out property <bool> h24: false;
     // Right-to-left interface language. It follows the selected translation: the Arabic catalogue
     // answers "rtl" to this message and every other language leaves "ltr" (see src/language.rs).
     // Slint does not mirror layouts, so only text alignment follows it (`start-align`).

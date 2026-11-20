@@ -6,6 +6,8 @@
 use super::*;
 use crate::SendStore;
 use crate::backend::ScheduledCmd;
+use crate::send_options::{day_label, month_title, resolve, time_label, when_label};
+use chrono::{Datelike, Local};
 use i_slint_backend_testing::AccessibleRole;
 use teams_proto::delivery::Importance;
 
@@ -186,17 +188,21 @@ fn schedule_message_picks_tomorrow_at_eight_and_shows_the_banner() {
     assert!(!find_label(&h.app, "Send this message on").is_empty());
     assert_eq!(ss(&h.app).get_pick_day(), 1);
     assert_eq!(ss(&h.app).get_pick_minutes(), 480);
-    assert!(!find_label(&h.app, "8:00 AM").is_empty());
-    // Later by half an hour, then back.
-    click(&button(&h.app, "Later time"));
-    assert!(!find_label(&h.app, "8:30 AM").is_empty());
-    click(&button(&h.app, "Earlier time"));
+    assert_eq!(time_value(&h.app), time_label(480));
+    // Later by an hour, then back.
+    click(&button(&h.app, "Later hour"));
+    assert_eq!(ss(&h.app).get_pick_minutes(), 540);
+    click(&button(&h.app, "Earlier hour"));
+    assert_eq!(ss(&h.app).get_pick_minutes(), 480);
     click(&button(&h.app, "Continue"));
     let at = ss(&h.app).get_schedule_at().to_string();
     let at_ms: i64 = at.parse().expect("a time");
     assert!(at_ms > teams_proto::time::now_ms());
     let label = ss(&h.app).get_schedule_label().to_string();
-    assert!(label.ends_with(" at 8:00 AM"), "{label}");
+    assert!(
+        label.ends_with(&format!(" at {}", time_label(480))),
+        "{label}"
+    );
     let banner = format!("Select Send to deliver on {label}");
     assert!(!find_label(&h.app, &banner).is_empty());
 
@@ -403,4 +409,313 @@ fn a_refused_schedule_shows_no_bubble_and_puts_the_text_back() {
         banner.starts_with("Couldn't schedule the message"),
         "{banner}"
     );
+}
+// ---- The schedule picker: any time, quick choices, the month calendar ----
+
+fn open_picker(app: &AppWindow) {
+    click(&button(app, "Send options"));
+    click(&button(app, "Schedule message"));
+    assert!(!find_label(app, "Send this message on").is_empty());
+}
+
+fn time_field(app: &AppWindow) -> ElementHandle {
+    ElementHandle::find_by_element_id(app, "SchedulePicker::time-input")
+        .next()
+        .expect("the time field")
+}
+
+/// What the time field shows.
+fn time_value(app: &AppWindow) -> String {
+    time_field(app).accessible_value().unwrap().to_string()
+}
+
+fn press(app: &AppWindow, k: Key) {
+    key(app, k, true);
+    key(app, k, false);
+}
+
+/// Clicks the time field, replaces what it holds with `text` and presses Enter.
+fn type_time(app: &AppWindow, text: &str) {
+    click(&time_field(app));
+    for _ in 0..30 {
+        press(app, Key::Backspace);
+        press(app, Key::Delete);
+    }
+    type_text(app, text);
+    enter(app);
+}
+
+/// An arrow key, with Shift held when `shift`.
+fn arrow(app: &AppWindow, k: Key, shift: bool) {
+    if shift {
+        key(app, Key::Shift, true);
+    }
+    press(app, k);
+    if shift {
+        key(app, Key::Shift, false);
+    }
+}
+
+#[test]
+fn typing_8_34_pm_sets_the_minutes_to_1234() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    type_time(&app, "8:34 PM");
+    assert_eq!(ss(&app).get_pick_minutes(), 1234);
+    assert_eq!(time_value(&app), time_label(1234));
+    assert!(!ss(&app).get_time_error());
+    // Other ways to write a time, Arabic digits among them.
+    type_time(&app, "835");
+    assert_eq!(ss(&app).get_pick_minutes(), 8 * 60 + 35);
+    type_time(&app, "20:35");
+    assert_eq!(ss(&app).get_pick_minutes(), 1235);
+    type_time(&app, "٨:٣٥ ص");
+    assert_eq!(ss(&app).get_pick_minutes(), 8 * 60 + 35);
+}
+
+#[test]
+fn a_time_that_is_not_one_shows_an_error_and_keeps_the_last_good_time() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    type_time(&app, "9:15 PM");
+    assert_eq!(ss(&app).get_pick_minutes(), 21 * 60 + 15);
+    type_time(&app, "25:99");
+    assert_eq!(ss(&app).get_pick_minutes(), 21 * 60 + 15, "kept");
+    assert!(ss(&app).get_time_error());
+    assert!(!find_label(&app, "Not a time. Try 8:35 PM or 20:35.").is_empty());
+    assert_eq!(button(&app, "Continue").accessible_enabled(), Some(false));
+    // A good time takes the error away.
+    type_time(&app, "10:05 PM");
+    assert!(!ss(&app).get_time_error());
+    assert_eq!(ss(&app).get_pick_minutes(), 22 * 60 + 5);
+    assert!(find_label(&app, "Not a time. Try 8:35 PM or 20:35.").is_empty());
+    assert_eq!(button(&app, "Continue").accessible_enabled(), Some(true));
+}
+
+#[test]
+fn up_and_down_move_the_time_by_a_minute_and_shift_by_fifteen() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    assert_eq!(ss(&app).get_pick_minutes(), 480);
+    click(&time_field(&app));
+    arrow(&app, Key::UpArrow, false);
+    assert_eq!(ss(&app).get_pick_minutes(), 481);
+    arrow(&app, Key::UpArrow, true);
+    assert_eq!(ss(&app).get_pick_minutes(), 496, "Shift+Up adds 15");
+    arrow(&app, Key::DownArrow, true);
+    arrow(&app, Key::DownArrow, false);
+    assert_eq!(ss(&app).get_pick_minutes(), 480);
+    assert_eq!(time_value(&app), time_label(480));
+    // Around midnight: the day stays.
+    ss(&app).set_pick_minutes(0);
+    arrow(&app, Key::DownArrow, false);
+    assert_eq!(ss(&app).get_pick_minutes(), 1439);
+    assert_eq!(ss(&app).get_pick_day(), 1);
+}
+
+#[test]
+fn the_hour_and_minute_steppers_move_by_one_each() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    click(&button(&app, "Later minute"));
+    assert_eq!(ss(&app).get_pick_minutes(), 481);
+    click(&button(&app, "Earlier minute"));
+    click(&button(&app, "Later hour"));
+    assert_eq!(ss(&app).get_pick_minutes(), 540);
+    click(&button(&app, "Earlier hour"));
+    click(&button(&app, "Earlier hour"));
+    assert_eq!(ss(&app).get_pick_minutes(), 420);
+    assert_eq!(time_value(&app), time_label(420));
+    // Text that is not a time is dropped by a step.
+    click(&time_field(&app));
+    type_text(&app, "x");
+    click(&button(&app, "Later minute"));
+    assert_eq!(ss(&app).get_pick_minutes(), 421);
+    assert_eq!(time_value(&app), time_label(421));
+}
+
+#[test]
+fn a_quick_choice_fills_the_day_and_the_time() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    ss(&app).set_pick_day(5);
+    ss(&app).set_pick_minutes(0);
+    click(&button(&app, &format!("Tomorrow {}", time_label(9 * 60))));
+    assert_eq!(ss(&app).get_pick_day(), 1);
+    assert_eq!(ss(&app).get_pick_minutes(), 9 * 60);
+    assert_eq!(time_value(&app), time_label(9 * 60));
+    assert_eq!(button(&app, "Continue").accessible_enabled(), Some(true));
+
+    // "In 1 hour" is an hour from now, in whole minutes.
+    let before = Local::now();
+    click(&button(&app, "In 1 hour"));
+    let (day, minutes) = (ss(&app).get_pick_day(), ss(&app).get_pick_minutes());
+    let at = resolve(day, minutes, before).expect("in the future");
+    let wait = (at - before.timestamp_millis()) / 60_000;
+    assert!((59..=61).contains(&wait), "{wait} minutes ahead");
+
+    // The Monday choice is the next Monday (not offered on a Sunday).
+    let to_monday = 7 - Local::now().weekday().num_days_from_monday() as i32;
+    let monday = buttons(&app, &format!("Monday {}", time_label(9 * 60)))
+        .into_iter()
+        .next();
+    if to_monday == 1 {
+        assert!(monday.is_none());
+    } else if to_monday < 7 {
+        click(&monday.expect("the Monday choice"));
+        assert_eq!(ss(&app).get_pick_day(), to_monday);
+        assert_eq!(ss(&app).get_pick_minutes(), 9 * 60);
+    }
+}
+
+#[test]
+fn a_time_today_that_has_passed_disables_continue() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    ss(&app).set_pick_day(0);
+    type_time(&app, "12:00 AM");
+    assert_eq!(ss(&app).get_pick_minutes(), 0);
+    assert!(!find_label(&app, "Pick a time in the future").is_empty());
+    let cont = button(&app, "Continue");
+    assert_eq!(cont.accessible_enabled(), Some(false));
+    click(&cont);
+    assert_eq!(ss(&app).get_schedule_at(), "");
+    assert!(
+        !find_label(&app, "Send this message on").is_empty(),
+        "still open"
+    );
+    // The same time tomorrow is fine.
+    click(&button(&app, "Later day"));
+    assert!(find_label(&app, "Pick a time in the future").is_empty());
+    assert_eq!(button(&app, "Continue").accessible_enabled(), Some(true));
+}
+
+#[test]
+fn the_summary_line_reads_the_full_day_and_time() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    type_time(&app, "8:35 PM");
+    let ms = resolve(1, 20 * 60 + 35, Local::now()).unwrap();
+    let summary = format!("Sends {}", when_label(ms));
+    assert!(summary.ends_with(&format!(" at {}", time_label(20 * 60 + 35))));
+    assert!(summary.contains(&day_label(1, Local::now())));
+    assert_eq!(find_label(&app, &summary).len(), 1, "{summary}");
+    click(&button(&app, "Continue"));
+    assert_eq!(ss(&app).get_schedule_at(), ms.to_string());
+    assert_eq!(ss(&app).get_schedule_label(), when_label(ms));
+}
+
+#[test]
+fn pressing_enter_on_a_taken_time_continues() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    type_time(&app, "8:35 PM");
+    assert_eq!(
+        ss(&app).get_schedule_at(),
+        "",
+        "the first Enter takes the time"
+    );
+    enter(&app);
+    assert_ne!(ss(&app).get_schedule_at(), "");
+}
+
+#[test]
+fn clicking_continue_takes_a_typed_time_first() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    click(&time_field(&app));
+    type_text(&app, "9:41 PM");
+    click(&button(&app, "Continue"));
+    let label = ss(&app).get_schedule_label().to_string();
+    let want = format!(" at {}", time_label(21 * 60 + 41));
+    assert!(label.ends_with(&want), "{label}");
+}
+
+#[test]
+fn the_date_label_opens_a_month_calendar_for_today_through_sixty_days() {
+    let app = app_with_messages(vec![]);
+    open_picker(&app);
+    let now = Local::now();
+    click(&button(&app, &day_label(1, now)));
+    assert!(ss(&app).get_cal_open());
+    assert!(!find_label(&app, &month_title(0, now)).is_empty());
+    assert!(
+        buttons(&app, "Previous month").is_empty(),
+        "not before this month"
+    );
+    // Past days cannot be picked.
+    if let Some(yesterday) = buttons(&app, &day_label(-1, now)).into_iter().next() {
+        assert_eq!(yesterday.accessible_enabled(), Some(false));
+        click(&yesterday);
+        assert!(ss(&app).get_cal_open());
+        assert_eq!(ss(&app).get_pick_day(), 1);
+    }
+    // The next months are there up to the one with day 60.
+    let mut months = 0;
+    while let Some(next) = buttons(&app, "Next month").into_iter().next() {
+        click(&next);
+        months += 1;
+        assert!(months < 6);
+    }
+    assert_eq!(
+        months,
+        crate::send_options::month_of_day(crate::send_options::MAX_DAYS, now)
+    );
+    // The last allowed day is on, the one after it is off.
+    let last = buttons(&app, &day_label(60, now));
+    assert_eq!(last.last().unwrap().accessible_enabled(), Some(true));
+    if let Some(after) = buttons(&app, &day_label(61, now)).into_iter().next() {
+        assert_eq!(after.accessible_enabled(), Some(false));
+    }
+    click(&button(&app, "Back"));
+    assert!(!ss(&app).get_cal_open());
+    assert_eq!(ss(&app).get_pick_day(), 1);
+
+    // Pick a day: three days from now.
+    click(&button(&app, &day_label(1, now)));
+    click(&button(&app, &day_label(3, now)));
+    assert_eq!(ss(&app).get_pick_day(), 3);
+    assert!(!ss(&app).get_cal_open(), "the calendar closes");
+}
+
+#[test]
+fn the_picker_fits_a_760_by_600_window_and_its_text_stays_inside() {
+    let app = app_with_messages(vec![]);
+    app.window().set_size(LogicalSize::new(760., 600.));
+    open_picker(&app);
+    let inside_window = |e: &ElementHandle, what: &str| {
+        let (p, s) = (e.absolute_position(), e.size());
+        assert!(
+            p.x >= 0. && p.y >= 0. && p.x + s.width <= 760. && p.y + s.height <= 600.,
+            "{what} sticks out of the window: {p:?} {s:?}"
+        );
+    };
+    let picker = |app: &AppWindow| {
+        ElementHandle::find_by_accessible_label(app, "Send this message on")
+            .find(|e| e.accessible_role() == Some(AccessibleRole::Groupbox))
+            .expect("the picker")
+    };
+    let p = picker(&app);
+    inside_window(&p, "the picker");
+    super::overflow::assert_texts_inside(&p, "the picker");
+    for name in [
+        "Cancel",
+        "Continue",
+        "Earlier day",
+        "Later day",
+        "Later hour",
+        "Later minute",
+    ] {
+        inside_window(&button(&app, name), name);
+    }
+    inside_window(&time_field(&app), "the time field");
+    for q in ss(&app).get_quick().iter() {
+        inside_window(&button(&app, &q.label), &q.label);
+    }
+    // The calendar view, too.
+    click(&button(&app, &day_label(1, Local::now())));
+    let p = picker(&app);
+    inside_window(&p, "the picker with the calendar");
+    super::overflow::assert_texts_inside(&p, "the calendar");
+    inside_window(&button(&app, "Back"), "Back");
 }

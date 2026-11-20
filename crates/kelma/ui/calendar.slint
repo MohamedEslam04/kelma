@@ -303,7 +303,7 @@ component TimeGrid inherits Rectangle {
             x: root.gutters - root.gutter;
             y: h * root.pph - 7px;
             width: root.gutter - 8px;
-            text: h == 0 ? "" : (h < 10 ? "0" + h + ":00" : h + ":00");
+            text: h == 0 ? "" : CalFmt.hour-label(h);
             color: Theme.fg-subtle;
             font-size: 11px * Theme.font-scale;
             horizontal-alignment: right;

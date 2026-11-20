@@ -807,8 +807,8 @@ impl Inner {
                 .collect(),
             settings: SettingsData {
                 first_day: i32::from(self.settings.first_day),
-                work_start: forms::hm(ws.max(0) as u32),
-                work_end: forms::hm(we.max(0) as u32),
+                work_start: forms::shown(ws.max(0) as u32),
+                work_end: forms::shown(we.max(0) as u32),
                 weekends: self.settings.show_weekends,
                 week_numbers: self.settings.week_numbers,
                 // A zone, else the old fixed offset in minutes, as the dialog sends it back.
@@ -1752,7 +1752,7 @@ mod tests {
         let p = g.panels().settings;
         assert_eq!(
             (p.work_start.as_str(), p.second_tz.as_str()),
-            ("08:00", "-300")
+            (appearance::formats::clock(8 * 60).as_str(), "-300")
         );
         assert!(!p.weekends && p.week_numbers);
         g.mailbox_hours = Some((7 * 60, 15 * 60));

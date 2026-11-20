@@ -807,7 +807,7 @@ fn local_preferences_round_trip_through_the_temp_home() {
     open_page(app, "files");
     press(app, "Open Word, Excel and PowerPoint files in: Desktop app");
     open_page(app, "general");
-    press(app, "Time format: 13:30");
+    press(app, "Time format: 24-hour (13:30)");
     press(app, "Start kelma when I sign in");
     open_page(app, "devices");
     press(app, "Microphone: Default microphone (default)");
@@ -1002,6 +1002,7 @@ fn notification_look_switches_start_on_and_save() {
 
 #[test]
 fn quiet_hours_and_keyword_alerts_save_to_the_temp_home() {
+    let _turn = TIME_FORMAT.lock().unwrap_or_else(|e| e.into_inner());
     let home = Home::new("quiet-keywords");
     let dir = home.paths().config_dir;
     let ui = window(home);
@@ -1017,7 +1018,10 @@ fn quiet_hours_and_keyword_alerts_save_to_the_temp_home() {
     let q = Local::load(&dir).general.quiet_hours;
     assert!(q.enabled && q.days[0] && !q.days[5]);
     assert_eq!((q.start_min, q.end_min), (23 * 60 + 15, 6 * 60 + 30));
-    assert_eq!(store(app).get_quiet_start().as_str(), "23:15");
+    assert_eq!(
+        store(app).get_quiet_start().as_str(),
+        appearance::formats::clock(23 * 60 + 15)
+    );
 
     cmd("keyword-add", "  Deploy   window ");
     cmd("keyword-add", "deploy window"); // the same words again
@@ -1310,16 +1314,63 @@ fn the_test_notification_button_raises_a_desktop_notification() {
     assert!(store(app).get_notice().contains("test notification"));
 }
 
+/// The tests that change the process-wide time format take turns.
+static TIME_FORMAT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn switching_the_time_format_changes_the_time_on_a_message() {
+    let _turn = TIME_FORMAT.lock().unwrap_or_else(|e| e.into_inner());
+    let set = |f: appearance::TimeFormat| {
+        appearance::formats::set_from(&appearance::GeneralPrefs {
+            time_format: f,
+            ..Default::default()
+        })
+    };
+    let h = Harness::new();
+    let run = h.runner();
+    h.select(BACKEND);
+    let first = |h: &Harness| {
+        h.app
+            .get_messages()
+            .iter()
+            .map(|m| m.time.to_string())
+            .find(|t| !t.is_empty())
+            .expect("a message with a time")
+    };
+    // 12-hour is the default: "4:14 PM".
+    set(appearance::TimeFormat::default());
+    run(Cmd::Settings(crate::backend::settings::SettingsCmd::Redraw));
+    let twelve = first(&h);
+    assert!(
+        twelve.ends_with(" AM") || twelve.ends_with(" PM"),
+        "{twelve}"
+    );
+    // Switched to 24-hour and redrawn: "16:14", the same minute.
+    set(appearance::TimeFormat::H24);
+    run(Cmd::Settings(crate::backend::settings::SettingsCmd::Redraw));
+    let twenty_four = first(&h);
+    let digits_only = twenty_four.chars().all(|c| c.is_ascii_digit() || c == ':');
+    assert!(digits_only && twenty_four.len() == 5, "{twenty_four}");
+    assert_eq!(
+        crate::send_options::parse_time(&twelve),
+        crate::send_options::parse_time(&twenty_four)
+    );
+    set(appearance::TimeFormat::default());
+}
+
 #[test]
 fn time_format_and_keep_running_reach_the_helpers_that_read_them() {
+    let _turn = TIME_FORMAT.lock().unwrap_or_else(|e| e.into_inner());
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let ui = window_with(Home::new("general-globals"), Some(tx), true);
     let app = &ui.app;
     open_page(app, "general");
     while rx.try_recv().is_ok() {}
 
-    press(app, "Time format: 1:30 PM");
-    assert_eq!(appearance::formats::time_pattern(), "%-I:%M %p");
+    assert!(!appearance::formats::is_h24(), "12-hour is the default");
+    press(app, "Time format: 24-hour (13:30)");
+    assert!(appearance::formats::is_h24());
+    assert!(app.global::<Theme>().get_h24(), "the drawn labels follow");
     assert!(
         matches!(
             rx.try_recv(),
@@ -1327,6 +1378,9 @@ fn time_format_and_keep_running_reach_the_helpers_that_read_them() {
         ),
         "the rows that show times are drawn again"
     );
+    press(app, "Time format: 12-hour (1:30 PM)");
+    assert!(!appearance::formats::is_h24());
+    assert!(!app.global::<Theme>().get_h24());
     press(app, "Date format: 31/12/2026");
     assert_eq!(appearance::formats::date_pattern(true), "%-d/%-m/%y");
 

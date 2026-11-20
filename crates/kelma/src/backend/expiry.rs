@@ -54,8 +54,16 @@ fn expiry_in<Z: TimeZone>(
         }
         "tomorrow" => Ok(at(zone, today + Duration::days(1), TOMORROW_HOUR, 0)),
         "custom" => {
-            let wall = NaiveDateTime::parse_from_str(custom.trim(), "%Y-%m-%d %H:%M")
-                .map_err(|_| "Write the time as 2026-12-31 17:30.".to_string())?;
+            // A date, then any time of day: 17:30, 5:30 pm, 1730.
+            let wall = custom
+                .trim()
+                .split_once(char::is_whitespace)
+                .and_then(|(day, time)| {
+                    let day = NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?;
+                    let m = crate::send_options::parse_time(time)? as u32;
+                    day.and_hms_opt(m / 60, m % 60, 0)
+                })
+                .ok_or_else(|| "Write the time as 2026-12-31 17:30.".to_string())?;
             match zone_instant(zone, wall) {
                 Some(t) if t > now => Ok(Some(t)),
                 Some(_) => Err("Pick a time in the future.".into()),
@@ -158,6 +166,17 @@ mod tests {
         assert_eq!(
             t(" 2026-11-21 00:00 ").unwrap().map(iso).as_deref(),
             Some("2026-11-20T15:00:00.000Z")
+        );
+        // Any time of day, as in the schedule picker: 12-hour, no colon, Arabic digits.
+        let evening = t("2026-12-31 5:30 pm").unwrap().map(iso);
+        assert_eq!(evening.as_deref(), Some("2026-12-31T08:30:00.000Z"));
+        assert_eq!(
+            t("2026-12-31 1734").unwrap().map(iso).as_deref(),
+            Some("2026-12-31T08:34:00.000Z")
+        );
+        assert_eq!(
+            t("2026-12-31 ١٧:٣٤").unwrap().map(iso).as_deref(),
+            Some("2026-12-31T08:34:00.000Z")
         );
         assert!(t("2026-11-20 09:00").unwrap_err().contains("future"));
         assert!(t("tomorrow noon").unwrap_err().contains("2026-12-31"));

@@ -136,7 +136,13 @@ impl Engine {
             .map(|c| c.title)
             .unwrap_or_default();
         let when = appearance::formats::local(row.compose_ms)
-            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .map(|t| {
+                format!(
+                    "{} {}",
+                    t.format("%Y-%m-%d"),
+                    appearance::formats::time_of(&t)
+                )
+            })
             .unwrap_or_default();
         let subject = serde_json::from_str::<serde_json::Value>(&row.reactions_json)
             .ok()

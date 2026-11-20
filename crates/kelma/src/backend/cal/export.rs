@@ -226,6 +226,7 @@ mod tests {
     fn the_agenda_groups_events_by_day_in_time_order_and_skips_cancelled_ones() {
         let evs = events();
         let refs: Vec<&Event> = evs.iter().collect();
+        let c = |m: i32| appearance::formats::clock(m);
         let lines = agenda_lines("November 16 - 20, 2026", &refs, &utc);
         assert_eq!(
             lines,
@@ -233,8 +234,13 @@ mod tests {
                 "November 16 - 20, 2026",
                 "",
                 "Wed, Nov 18 2026",
-                "  09:00 - 09:15  Standup",
-                "  12:00 - 13:00  Lunch (with Dana) (Café)",
+                format!("  {} - {}  Standup", c(9 * 60), c(9 * 60 + 15)).as_str(),
+                format!(
+                    "  {} - {}  Lunch (with Dana) (Café)",
+                    c(12 * 60),
+                    c(13 * 60)
+                )
+                .as_str(),
                 "",
                 "Thu, Nov 19 2026",
                 "  All day  Offsite",
