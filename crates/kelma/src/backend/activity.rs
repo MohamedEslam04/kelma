@@ -476,15 +476,20 @@ impl Engine {
                 .collect();
             self.ui.activity(rows);
             let current = self.view.lock().unwrap().current.clone();
-            let chats = self
+            // A snoozed chat leaves the unread counts until it comes back.
+            let snoozed = self.remind_snoozed();
+            let now = teams_proto::time::now_ms();
+            let unread_chats = self
                 .store
                 .lock()
                 .unwrap()
                 .conversations(ConvFilter::Unread, 300)
-                .unwrap_or_default()
-                .iter()
-                .filter(|c| c.kind != ConvKind::Channel && current.as_deref() != Some(&c.id))
-                .count();
+                .unwrap_or_default();
+            let chats =
+                super::remind::filter_snoozed(unread_chats, |c| c.id.as_str(), &snoozed, now)
+                    .iter()
+                    .filter(|c| c.kind != ConvKind::Channel && current.as_deref() != Some(&c.id))
+                    .count();
             self.ui.badges(unread as i32, chats as i32);
         }
         if preview && self.activity.lock().unwrap().selected.is_some() {

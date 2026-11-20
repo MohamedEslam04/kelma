@@ -65,12 +65,16 @@ export component MessageMenu inherits Rectangle {
     callback toggle-save();
     callback pin();
     callback mark-unread();
+    // "Remind me": 20m, 1h, 3h or tomorrow.
+    callback remind(string);
     callback follow();
     callback edit();
     callback delete();
 
     // Whether the Forward entry shows its two choices.
     property <bool> forward-open: false;
+    // Whether the Remind me entry shows its choices.
+    property <bool> remind-open: false;
 
     width: 240px;
     height: items.preferred-height + 12px;
@@ -117,6 +121,11 @@ export component MessageMenu inherits Rectangle {
         if root.translate == "shown": MenuItem { label: @tr("See original"); icon: @image-url("icons/translate.svg"); clicked => { root.see-original(); } }
         if root.translate != "" && root.translate != "shown" && root.translate != "busy": MenuItem { label: @tr("Translate"); icon: @image-url("icons/translate.svg"); clicked => { root.translate-message(); } }
         MenuItem { label: @tr("Mark as unread"); icon: @image-url("icons/unread.svg"); clicked => { root.mark-unread(); } }
+        MenuItem { label: @tr("Remind me"); icon: @image-url("icons/history.svg"); chevron: true; clicked => { root.remind-open = !root.remind-open; } }
+        if root.remind-open: MenuItem { label: @tr("In 20 minutes"); indent: true; clicked => { root.remind("20m"); } }
+        if root.remind-open: MenuItem { label: @tr("In 1 hour"); indent: true; clicked => { root.remind("1h"); } }
+        if root.remind-open: MenuItem { label: @tr("In 3 hours"); indent: true; clicked => { root.remind("3h"); } }
+        if root.remind-open: MenuItem { label: @tr("Tomorrow at 9:00"); indent: true; clicked => { root.remind("tomorrow"); } }
         if root.mine: MenuItem { label: @tr("Edit"); icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
         if root.mine: MenuItem { label: @tr("Delete"); icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }
     }

@@ -25,6 +25,7 @@ import { TeamsPage } from "teams_page.slint";
 import { TeamsDialogs } from "teams_dialogs.slint";
 import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
+import { RemindStore, RemindPanel } from "remind.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
 import { AddTabDialog, FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
 import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
@@ -50,6 +51,7 @@ export { ShortcutApi } from "shortcuts.slint";
 export { MentionApi } from "mention_picker.slint";
 export { PeopleStore } from "people.slint";
 export { ListStore, SectionRow, SectionChoice } from "lists.slint";
+export { RemindStore, ReminderRow, SnoozedRow } from "remind.slint";
 export { ChannelStore, PostItem } from "channel_posts.slint";
 export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
 export { MediaStore } from "media.slint";
@@ -1120,6 +1122,7 @@ export component AppWindow inherits Window {
             toggle-save => { root.menu-open = false; root.toggle-save(root.menu-msg.id); }
             pin => { root.menu-open = false; root.pin(root.menu-msg.id); }
             mark-unread => { root.menu-open = false; root.mark-unread(root.menu-msg.id); }
+            remind(delay) => { root.menu-open = false; RemindStore.command("remind", root.menu-msg.id + "\u{9}" + delay); }
             edit => { root.menu-open = false; root.edit(root.menu-msg.id); }
             delete => { root.menu-open = false; root.delete(root.menu-msg.id); }
         }
@@ -1302,6 +1305,18 @@ export component AppWindow inherits Window {
                 ListStore.dialog = "";
             }
             cancel => { ListStore.dialog = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && RemindStore.open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { clicked => { RemindStore.open = false; } }
+        RemindPanel {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+            close => { RemindStore.open = false; }
         }
     }
 

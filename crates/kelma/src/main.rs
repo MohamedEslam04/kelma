@@ -408,6 +408,14 @@ fn main() -> anyhow::Result<()> {
     }
     {
         let tx = tx.clone();
+        window.global::<RemindStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::RemindCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Remind(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
         window.global::<ListStore>().on_command(move |name, arg| {
             if let Some(c) = backend::ListsCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Lists(c));

@@ -6,6 +6,7 @@ import { ChannelMenu, ItemMenu, ListStore, OptionRow, SectionHead } from "lists.
 import { CommunitiesSection } from "teams_page.slint";
 import { TeamsStore } from "teams_store.slint";
 import { PeopleStore } from "people.slint";
+import { RemindStore } from "remind.slint";
 
 component MenuItem inherits Rectangle {
     in property <string> label;
@@ -319,7 +320,7 @@ export component Sidebar inherits Rectangle {
         x: parent.width - 240px;
         y: 48px;
         width: 228px;
-        height: 6 * 32px + 9px + 2 * 32px + 24px;
+        height: 6 * 32px + 9px + 4 * 32px + 24px;
         Rectangle {
             background: Theme.surface;
             border-radius: 6px;
@@ -342,6 +343,7 @@ export component Sidebar inherits Rectangle {
                 MenuItem { label: @tr("Mentions"); clicked => { root.quick-view("mentions"); } }
                 MenuItem { label: @tr("Saved"); clicked => { root.quick-view("saved"); } }
                 MenuItem { label: @tr("Followed threads"); clicked => { root.quick-view("followed"); } }
+                MenuItem { label: @tr("Reminders"); clicked => { RemindStore.open = true; RemindStore.command("refresh", ""); } }
             }
         }
     }

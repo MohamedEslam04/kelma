@@ -394,6 +394,10 @@ impl Engine {
 
     /// True when a new message in this chat or channel must not pop a notification.
     pub(super) fn lists_silenced(&self, conversation_id: &str) -> bool {
+        // A snoozed chat is silent until it comes back.
+        if self.remind_is_snoozed(conversation_id) {
+            return true;
+        }
         let st = self.lists.lock().unwrap();
         st.muted.contains(conversation_id)
             || st

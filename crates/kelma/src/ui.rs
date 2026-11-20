@@ -37,6 +37,7 @@ mod gifs;
 mod lists;
 mod media;
 mod people;
+mod remind;
 pub(crate) mod settings;
 mod teams;
 
