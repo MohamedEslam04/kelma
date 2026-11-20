@@ -287,12 +287,16 @@ export component CallsPage inherits Rectangle {
     property <CallHistoryItem> menu-item;
     property <length> menu-x;
     property <length> menu-y;
+    // The window's width (from app.slint): a narrow window gets a narrower left pane and the
+    // History filters without their title.
+    in property <length> window-width: 1400px;
+    property <bool> narrow: root.window-width < 900px;
     background: Theme.main;
 
     HorizontalLayout {
         // Left: Type a name, results, Speed dial.
         Rectangle {
-            width: 320px;
+            width: root.narrow ? 240px : 320px;
             background: Theme.sidebar;
             VerticalLayout {
                 padding: 12px;
@@ -383,7 +387,7 @@ export component CallsPage inherits Rectangle {
                 padding-left: 16px;
                 padding-right: 12px;
                 spacing: 8px;
-                Text { text: @tr("History"); color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
+                if !root.narrow: Text { text: @tr("History"); color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
                 for f in [
                     {key: "all", label: @tr("All")},
                     {key: "missed", label: @tr("Missed")},

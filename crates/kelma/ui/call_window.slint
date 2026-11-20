@@ -18,9 +18,11 @@ import { CallFeedback } from "call_feedback.slint";
 export { CallStore, CallPerson, CallCaption, CallFound, CallVideo }
 
 component TopBar inherits Rectangle {
+    // A narrow window: People, Hold, Transfer, Raise, React and View are in the More panel.
+    in property <bool> fold: false;
     callback open-chat();
-    // Where the View button starts, for the dropdown under it.
-    out property <length> view-x: view-btn.absolute-position.x - root.absolute-position.x;
+    // Where the View button starts, for the dropdown under it (set when it is clicked).
+    out property <length> view-x;
     height: 62px;
     background: Theme.topbar;
     HorizontalLayout {
@@ -69,7 +71,7 @@ component TopBar inherits Rectangle {
                 : (CallStore.chat-id != "" ? "Open the meeting chat" : "This meeting's chat isn't available here");
             clicked => { root.open-chat(); }
         }
-        CallButton {
+        if !root.fold: CallButton {
             icon: @image-url("icons/people.svg");
             label: "People";
             checkable: true;
@@ -77,7 +79,7 @@ component TopBar inherits Rectangle {
             clicked => { CallStore.panel = CallStore.panel == "people" ? "" : "people"; }
         }
         // A 1:1 call's Hold and Transfer (Teams has them under "..." > More actions).
-        if CallStore.kind == "direct": CallButton {
+        if CallStore.kind == "direct" && !root.fold: CallButton {
             icon: @image-url("icons/pause.svg");
             label: CallStore.held ? "Resume" : "Hold";
             checkable: true;
@@ -85,7 +87,7 @@ component TopBar inherits Rectangle {
             tip: CallStore.held ? "Take the call off hold" : "Put the call on hold";
             clicked => { CallStore.command("hold", ""); }
         }
-        if CallStore.kind == "direct": CallButton {
+        if CallStore.kind == "direct" && !root.fold: CallButton {
             icon: @image-url("icons/forward.svg");
             label: "Transfer";
             active: CallStore.menu == "transfer";
@@ -99,25 +101,28 @@ component TopBar inherits Rectangle {
                 }
             }
         }
-        CallButton {
+        if !root.fold: CallButton {
             icon: @image-url("icons/hand.svg");
             label: CallStore.hand ? "Lower" : "Raise";
             checkable: true;
             active: CallStore.hand;
             clicked => { CallStore.command("hand", ""); }
         }
-        CallButton {
+        if !root.fold: CallButton {
             icon: @image-url("icons/emoji.svg");
             label: "React";
             enabled: false;
             tip: "Reactions aren't available yet";
         }
-        view-btn := CallButton {
+        if !root.fold: CallButton {
             icon: @image-url("icons/grid.svg");
             label: "View";
             tip: "Gallery, speaker or focus on content";
             active: CallStore.menu == "view";
-            clicked => { CallStore.menu = CallStore.menu == "view" ? "" : "view"; }
+            clicked => {
+                root.view-x = self.absolute-position.x - root.absolute-position.x;
+                CallStore.menu = CallStore.menu == "view" ? "" : "view";
+            }
         }
         CallButton {
             icon: @image-url("icons/more.svg");
@@ -738,8 +743,10 @@ component TransferCard inherits Rectangle {
 
 component InCall inherits Rectangle {
     callback open-chat();
+    // Below this width the top bar's ~14 buttons do not fit: the less used ones go to More.
+    property <bool> fold: root.width < 820px;
     VerticalLayout {
-        bar := TopBar { open-chat => { root.open-chat(); } }
+        bar := TopBar { fold: root.fold; open-chat => { root.open-chat(); } }
         // A meeting on hold (call waiting) has the "On hold" bar instead, with its Resume.
         if CallStore.held && CallStore.kind == "direct": Banner {
             message: "You put the call on hold. Select Resume to continue.";
@@ -766,12 +773,12 @@ component InCall inherits Rectangle {
         HorizontalLayout {
             Stage { horizontal-stretch: 1; }
             if CallStore.panel == "people": PeoplePanel { width: 320px; }
-            if CallStore.panel == "more": MorePanel { width: 320px; }
+            if CallStore.panel == "more": MorePanel { width: 320px; fold: root.fold; }
         }
     }
     // The View button's dropdown, under the button.
     if CallStore.menu == "view": ViewMenu {
-        x: min(bar.view-x, root.width - self.width - 12px);
+        x: root.fold ? root.width - self.width - 332px : min(bar.view-x, root.width - self.width - 12px);
         y: 64px;
         z: 30;
     }

@@ -13,6 +13,8 @@ export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDev
 
 export component SettingsPage inherits Rectangle {
     background: Theme.main;
+    // A narrow window: a narrower page list and less padding, so the pages keep their room.
+    property <bool> narrow: root.width < 800px;
     // Chats › "Press Enter to send": the composer's own setting, kept by the window.
     in property <bool> enter-sends: true;
     callback set-enter-sends(bool);
@@ -47,7 +49,7 @@ export component SettingsPage inherits Rectangle {
         HorizontalLayout {
             // The page list.
             Rectangle {
-                width: 260px;
+                width: root.narrow ? 200px : 260px;
                 background: Theme.sidebar;
                 VerticalLayout {
                     padding: 12px;
@@ -84,6 +86,8 @@ export component SettingsPage inherits Rectangle {
                         }
                         if find-input.text == "": Text {
                             x: 32px;
+                            width: parent.width - 40px;
+                            overflow: elide;
                             text: @tr("Find in Settings (Ctrl+Alt+F)");
                             color: Theme.fg-subtle;
                             font-size: SFont.body;
@@ -123,8 +127,8 @@ export component SettingsPage inherits Rectangle {
                 horizontal-stretch: 1;
                 sv := ScrollView {
                     VerticalLayout {
-                        padding: 24px;
-                        padding-right: 32px;
+                        padding: root.narrow ? 16px : 24px;
+                        padding-right: root.narrow ? 16px : 32px;
                         spacing: 12px;
                         alignment: start;
                         if SettingsStore.query != "": VerticalLayout {

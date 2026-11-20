@@ -288,3 +288,119 @@ fn channel_posts_and_replies_are_not_scheduled() {
     click(&button(&app, "Send options"));
     assert!(buttons(&app, "Schedule message").is_empty());
 }
+
+/// The account's list as `GET /v1/users/ME/drafts?view=msnp24Equivalent` gives it: the message
+/// fields sit at the top level of each draft.
+fn listed(
+    conv: &str,
+    cmid: &str,
+    html: &str,
+    at: i64,
+) -> Vec<teams_proto::scheduled::ScheduledMessage> {
+    teams_proto::scheduled::parse_scheduled(&serde_json::json!({"drafts": [{
+        "id": format!("d-{cmid}"),
+        "draftType": "ScheduledDraft",
+        "innerThreadId": conv,
+        "draftDetails": {"sendAt": at.to_string()},
+        "content": html,
+        "clientmessageid": cmid,
+        "messagetype": "RichText/Html",
+        "properties": {},
+    }]}))
+}
+
+/// The bubble saying `label` carries `text` (what it reads out and what its text line shows) and
+/// both its lines (the "Sending on …" line and the text) are drawn with a size.
+fn bubble_shows(app: &AppWindow, label: &str, text: &str) -> bool {
+    let bubble = find_label(app, label);
+    assert_eq!(bubble.len(), 1, "one bubble saying {label}");
+    let items = ss(app).get_scheduled();
+    let shown: Vec<String> = items.iter().map(|s| s.text.to_string()).collect();
+    let lines = super::overflow::texts(&bubble[0]);
+    bubble[0].accessible_description().as_deref() == Some(text)
+        && shown == [text]
+        && lines.len() == 2
+        && lines
+            .iter()
+            .all(|t| t.size().height > 0. && t.size().width > 0.)
+}
+
+#[test]
+fn a_listed_scheduled_message_shows_its_text_in_the_bubble() {
+    let h = Harness::new();
+    h.select(BACKEND);
+    let at = teams_proto::time::now_ms() + 86_400_000;
+    let text = "this is a test of the spelling checker";
+    h.engine
+        .test_set_scheduled(listed(BACKEND, "c1", &format!("<p>{text}</p>"), at));
+    let label = crate::send_options::sending_label(at);
+    assert!(
+        bubble_shows(&h.app, &label, text),
+        "the bubble shows the text"
+    );
+}
+
+#[test]
+fn delete_on_a_listed_bubble_removes_it() {
+    let h = Harness::new();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    let at = teams_proto::time::now_ms() + 86_400_000;
+    h.engine
+        .test_set_scheduled(listed(BACKEND, "c1", "<p>later</p>", at));
+    let label = crate::send_options::sending_label(at);
+    assert_eq!(find_label(&h.app, &label).len(), 1);
+    click(&button(&h.app, "Delete"));
+    assert!(h.engine.test_scheduled().is_empty());
+    assert!(find_label(&h.app, &label).is_empty(), "the bubble is gone");
+    assert_eq!(h.app.get_banner(), "");
+}
+
+/// Online with the offline client: every account call fails, as a refused request would.
+fn go_online(h: &Harness) {
+    h.engine
+        .offline
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[test]
+fn a_failed_delete_keeps_the_bubble_and_says_so() {
+    let h = Harness::new();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    let at = teams_proto::time::now_ms() + 86_400_000;
+    h.engine
+        .test_set_scheduled(listed(BACKEND, "c1", "<p>later</p>", at));
+    go_online(&h);
+    click(&button(&h.app, "Delete"));
+    let label = crate::send_options::sending_label(at);
+    assert_eq!(find_label(&h.app, &label).len(), 1, "still waiting");
+    assert_eq!(h.engine.test_scheduled().len(), 1);
+    let banner = h.app.get_banner().to_string();
+    assert!(
+        banner.starts_with("Couldn't delete the scheduled message"),
+        "{banner}"
+    );
+}
+
+#[test]
+fn a_refused_schedule_shows_no_bubble_and_puts_the_text_back() {
+    let h = Harness::new();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    let at = teams_proto::time::now_ms() + 86_400_000;
+    ss(&h.app).set_schedule_at(at.to_string().into());
+    ss(&h.app).set_schedule_label(crate::send_options::when_label(at).into());
+    h.type_in_composer("see you tomorrow");
+    go_online(&h);
+    enter(&h.app);
+    assert!(h.engine.test_scheduled().is_empty());
+    let label = crate::send_options::sending_label(at);
+    assert!(find_label(&h.app, &label).is_empty(), "no bubble");
+    assert_eq!(h.app.get_draft(), "see you tomorrow");
+    let banner = h.app.get_banner().to_string();
+    assert!(
+        banner.starts_with("Couldn't schedule the message"),
+        "{banner}"
+    );
+}

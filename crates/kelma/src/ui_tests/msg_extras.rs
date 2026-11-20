@@ -296,3 +296,63 @@ fn pop_out_opens_the_chat_in_its_own_window_and_sends_from_there() {
         .invoke_command("popout".into(), "19:team1@thread.tacv2".into());
     assert_eq!(cw.get_conv_id(), BACKEND);
 }
+#[test]
+fn the_pop_out_opens_at_the_newest_message_follows_new_ones_and_has_a_send_button() {
+    use i_slint_backend_testing::AccessibleRole;
+    let h = Harness::new();
+    wire_media(&h);
+    let run = h.runner();
+    h.select(BACKEND);
+    // A long chat: far more than one window of messages.
+    for i in 0..40 {
+        // Rows of different heights, so the list's height estimate moves as rows show.
+        let text = if i % 5 == 0 {
+            format!("line {i} {}", super::overflow::LONG)
+        } else {
+            format!("line {i}")
+        };
+        run(Cmd::Send(text, String::new()));
+    }
+    h.app
+        .global::<MediaStore>()
+        .invoke_command("popout".into(), BACKEND.into());
+    let cw = crate::ui::popout::popout_window().expect("the pop-out window");
+    // The window gets its size once it is mapped, after the messages were set.
+    cw.window().set_size(LogicalSize::new(560., 680.));
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(
+        cw.get_at_newest(),
+        "the pop-out opens at the newest message"
+    );
+
+    // A Send button next to the box (Enter still sends).
+    let send = ElementHandle::find_by_accessible_label(&cw, "Send")
+        .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+        .expect("a Send button");
+    assert!(
+        super::responsive::on_screen(&send, 560.),
+        "Send on screen at {:?} {:?}",
+        send.absolute_position(),
+        send.size()
+    );
+    cw.set_draft("from the button".into());
+    click(&send);
+    assert_eq!(cw.get_draft(), "");
+    let msgs = cw.get_messages();
+    let last = msgs.row_data(msgs.row_count() - 1).unwrap();
+    assert_eq!(last.plain, "from the button");
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(
+        cw.get_at_newest(),
+        "still at the newest after a new message"
+    );
+
+    for m in h
+        .app
+        .get_messages()
+        .iter()
+        .filter(|m| m.id.starts_with("pending-"))
+    {
+        run(Cmd::DiscardSend(m.id.to_string()));
+    }
+}

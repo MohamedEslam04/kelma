@@ -1139,3 +1139,16 @@ fn a_w_apps_tab_opens_in_the_web_host_and_the_plain_link_stays_in_the_browser() 
         "{opened:?}"
     );
 }
+#[test]
+fn the_store_and_an_app_fit_a_narrow_window() {
+    use super::responsive::{WIDTHS, assert_fits, resize};
+    for width in WIDTHS {
+        let a = AppsHarness::open();
+        resize(&a.h.app, width);
+        a.send("store-open", "");
+        assert_fits(&a.h.app, width, "the apps store");
+        a.click_in("Planner", "AppCardView");
+        assert_eq!(a.store().get_store_page(), "app");
+        assert_fits(&a.h.app, width, "an app in the store");
+    }
+}

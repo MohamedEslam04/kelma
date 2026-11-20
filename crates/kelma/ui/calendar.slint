@@ -5,7 +5,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconButton, Pill } from "widgets.slint";
 import { CalStore, CalForm, CalFmt } from "calendar_store.slint";
-import { CalButton, CalCheck, CalScrim } from "calendar_widgets.slint";
+import { CalButton, CalCard, CalCheck, CalMenuItem, CalScrim } from "calendar_widgets.slint";
 import { EventPeek, EventFull } from "calendar_event.slint";
 import { EventForm } from "calendar_form.slint";
 import { AddCalendarMenu, FiltersPanel, MeetLinkDialog, MoreMenu, NewMenu, PromptDialog, RangePicker, SettingsDialog, ShareDialog, ViewsPanel, WorkLocationMenu } from "calendar_dialogs.slint";
@@ -151,7 +151,13 @@ component TimeGrid inherits Rectangle {
     property <length> gutters: root.gutter * (CalStore.second-labels.length > 0 ? 2 : 1);
     property <length> head-h: 46px;
     property <int> ncols: max(1, CalStore.days.length);
-    property <length> col-w: (root.width - root.gutters) / root.ncols;
+    // A day column is at least `min-col` wide. When the days do not fit, as many as fit show,
+    // with today in the middle (Teams goes to fewer days in a narrow window).
+    property <length> min-col: 96px;
+    property <int> fit: max(1, Math.floor((root.width - root.gutters) / root.min-col));
+    property <int> shown: min(root.ncols, root.fit);
+    property <int> first: root.ncols <= root.fit ? 0 : max(0, min(root.ncols - root.shown, max(0, CalStore.now-col) - Math.floor((root.shown - 1) / 2)));
+    property <length> col-w: (root.width - root.gutters) / root.shown;
     property <length> pph: CalStore.scale == 15 ? 96px : (CalStore.scale == 60 ? 48px : 64px);
     property <int> slots: CalStore.scale == 15 ? 96 : (CalStore.scale == 60 ? 24 : 48);
     property <int> per-hour: CalStore.scale == 15 ? 4 : (CalStore.scale == 60 ? 1 : 2);
@@ -168,7 +174,7 @@ component TimeGrid inherits Rectangle {
     property <length> drag-dy;
     property <int> snap: 15;
     property <int> d-steps: Math.round(root.drag-dy / root.pph * 60 / root.snap) * root.snap;
-    property <int> tgt-col: root.drag-mode == "move" ? max(0, min(root.ncols - 1, root.drag-col + Math.round(root.drag-dx / root.col-w))) : root.drag-col;
+    property <int> tgt-col: root.drag-mode == "move" ? max(root.first, min(root.first + root.shown - 1, root.drag-col + Math.round(root.drag-dx / root.col-w))) : root.drag-col;
     property <int> tgt-start: root.drag-mode == "move" ? max(0, min(24 * 60 - root.drag-dur, root.drag-start + root.d-steps)) : root.drag-start;
     property <int> tgt-dur: root.drag-mode == "resize" ? max(root.snap, min(24 * 60 - root.drag-start, root.drag-dur + root.d-steps)) : root.drag-dur;
 
@@ -199,8 +205,10 @@ component TimeGrid inherits Rectangle {
         if CalStore.second-title != "": Text { x: 0px; y: root.head-h - 16px; width: root.gutter - 6px; text: CalStore.second-title; color: Theme.fg-subtle; font-size: 9px * Theme.font-scale; horizontal-alignment: right; }
         if CalStore.week-label != "": Text { x: root.gutters - root.gutter; y: root.head-h - 16px; width: root.gutter - 6px; text: CalStore.week-label; color: Theme.fg-subtle; font-size: 9px * Theme.font-scale; horizontal-alignment: right; }
         for d[i] in CalStore.days: Rectangle {
-            x: root.gutters + i * root.col-w;
-            width: root.col-w;
+            property <bool> in-view: i >= root.first && i < root.first + root.shown;
+            x: root.gutters + max(0, i - root.first) * root.col-w;
+            width: self.in-view ? root.col-w : 0px;
+            visible: self.in-view;
             height: parent.height;
             background: d.today ? #1c1c33 : transparent;
             VerticalLayout {
@@ -233,10 +241,13 @@ component TimeGrid inherits Rectangle {
         width: parent.width;
         height: root.allday-h;
         for a in CalStore.all-day: CalBox {
+            property <int> from: max(a.col, root.first);
+            property <int> to: min(a.col + a.span, root.first + root.shown);
             compact: true;
-            x: root.gutters + a.col * root.col-w + 2px;
+            visible: self.to > self.from;
+            x: root.gutters + max(0, self.from - root.first) * root.col-w + 2px;
             y: 3px + a.row * 20px;
-            width: a.span * root.col-w - 4px;
+            width: max(0px, (self.to - self.from) * root.col-w - 4px);
             height: 18px;
             title: a.title;
             kind: a.kind;
@@ -261,8 +272,10 @@ component TimeGrid inherits Rectangle {
 
         // Day columns
         for d[i] in CalStore.days: Rectangle {
-            x: root.gutters + i * root.col-w;
-            width: root.col-w;
+            property <bool> in-view: i >= root.first && i < root.first + root.shown;
+            x: root.gutters + max(0, i - root.first) * root.col-w;
+            width: self.in-view ? root.col-w : 0px;
+            visible: self.in-view;
             height: 24 * root.pph;
             background: d.today ? #17172a : (d.weekend ? #181818 : transparent);
             // Outside work hours
@@ -284,7 +297,7 @@ component TimeGrid inherits Rectangle {
             height: 1px;
             background: Math.mod(s, root.per-hour) == 0 ? #3a3a3a : #262626;
         }
-        for i in root.ncols + 1: Rectangle { x: root.gutters + i * root.col-w; width: 1px; height: 24 * root.pph; background: Theme.border; }
+        for i in root.shown + 1: Rectangle { x: root.gutters + i * root.col-w; width: 1px; height: 24 * root.pph; background: Theme.border; }
         // Hour labels, and the second time zone's
         for h in 24: Text {
             x: root.gutters - root.gutter;
@@ -306,9 +319,11 @@ component TimeGrid inherits Rectangle {
         }
         // Events
         for b in CalStore.blocks: CalBox {
-            x: root.gutters + b.col * root.col-w + b.lane * ((root.col-w - 8px) / b.lanes) + 2px;
+            property <bool> in-view: b.col >= root.first && b.col < root.first + root.shown;
+            visible: self.in-view;
+            x: root.gutters + max(0, b.col - root.first) * root.col-w + b.lane * ((root.col-w - 8px) / b.lanes) + 2px;
             y: b.start-min * root.pph / 60 + 1px;
-            width: (root.col-w - 8px) / b.lanes - 2px;
+            width: self.in-view ? (root.col-w - 8px) / b.lanes - 2px : 0px;
             height: max(b.dur-min * root.pph / 60 - 2px, 16px);
             draggable: true;
             title: b.title;
@@ -349,7 +364,7 @@ component TimeGrid inherits Rectangle {
         }
         // Where a dragged event would land
         if root.drag-id != "": ghost := Rectangle {
-            x: root.gutters + root.tgt-col * root.col-w + 2px;
+            x: root.gutters + (root.tgt-col - root.first) * root.col-w + 2px;
             y: root.tgt-start * root.pph / 60;
             width: root.col-w - 4px;
             height: max(root.tgt-dur * root.pph / 60, 16px);
@@ -369,8 +384,8 @@ component TimeGrid inherits Rectangle {
             height: 1px;
             background: #e5484d80;
         }
-        if CalStore.now-min >= 0 && CalStore.now-col >= 0: now-line := Rectangle {
-            x: root.gutters + CalStore.now-col * root.col-w;
+        if CalStore.now-min >= 0 && CalStore.now-col >= root.first && CalStore.now-col < root.first + root.shown: now-line := Rectangle {
+            x: root.gutters + (CalStore.now-col - root.first) * root.col-w;
             y: CalStore.now-min * root.pph / 60 - 1px;
             width: root.col-w;
             height: 2px;
@@ -539,7 +554,14 @@ component CalendarsList inherits VerticalLayout {
 
 export component CalendarView inherits Rectangle {
     background: Theme.main;
+    // The window's width (from app.slint). The page's own width depends on what it shows, so
+    // the choices below go by the window's.
+    in property <length> window-width: 1400px;
+    // A narrow window: no left pane (its New event moves to the toolbar).
+    property <bool> narrow: root.window-width < 890px;
     // Where an event was clicked, in this view's coordinates, so the peek opens next to it.
+    property <[{key: string, label: string}]> views: [{key: "day", label: "Day"}, {key: "workweek", label: "Work week"}, {key: "week", label: "Week"}, {key: "month", label: "Month"}, {key: "split", label: "Split view"}];
+    property <string> view-label: CalStore.view-kind == "day" ? "Day" : CalStore.view-kind == "workweek" ? "Work week" : CalStore.view-kind == "week" ? "Week" : CalStore.view-kind == "month" ? "Month" : "Split view";
     function open-peek(id: string, ax: length, ay: length) {
         CalStore.peek-x = ax - root.absolute-position.x + 8px;
         CalStore.peek-y = ay - root.absolute-position.y;
@@ -550,7 +572,8 @@ export component CalendarView inherits Rectangle {
     HorizontalLayout {
         // Left: New event, mini month, calendars, time scale, days
         Rectangle {
-            width: 232px;
+            width: root.narrow ? 0px : 232px;
+            visible: !root.narrow;
             background: Theme.sidebar;
             ScrollView {
                 VerticalLayout {
@@ -597,20 +620,23 @@ export component CalendarView inherits Rectangle {
             }
         }
         VerticalLayout {
-            // Toolbar
-            Rectangle {
+            // Toolbar. Without room for the five view pills they fold into one "View" menu (with the
+            // saved views), so the month keeps its room.
+            toolbar := Rectangle {
+                property <bool> fold: root.window-width < 1300px;
                 height: 48px;
                 background: Theme.sidebar;
                 HorizontalLayout {
                     padding-left: 16px;
                     padding-right: 16px;
                     spacing: 8px;
+                    if root.narrow: CalButton { label: "New ▾"; primary: true; y: 10px; accessible-label: "New event"; active: CalStore.popup == "new"; clicked => { CalStore.popup = CalStore.popup == "new" ? "" : "new"; } }
                     Pill { label: "Today"; y: 11px; clicked => { CalStore.command("today", ""); } }
                     IconButton { icon: @image-url("icons/chevron-left.svg"); y: 8px; tooltip: "Previous"; clicked => { CalStore.command("prev", ""); } }
                     IconButton { icon: @image-url("icons/chevron-right.svg"); y: 8px; tooltip: "Next"; clicked => { CalStore.command("next", ""); } }
                     Rectangle {
                         horizontal-stretch: 1;
-                        min-width: 80px;
+                        min-width: min(title-text.preferred-width + 20px, 160px);
                         accessible-role: button;
                         accessible-label: "Pick dates";
                         accessible-description: CalStore.title;
@@ -618,20 +644,30 @@ export component CalendarView inherits Rectangle {
                         HorizontalLayout {
                             spacing: 6px;
                             alignment: start;
-                            Text { text: CalStore.title + (CalStore.week-label != "" ? "  ·  " + CalStore.week-label : ""); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; vertical-alignment: center; overflow: elide; horizontal-stretch: 0; }
+                            title-text := Text { text: CalStore.title + (CalStore.week-label != "" ? "  ·  " + CalStore.week-label : ""); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 700; vertical-alignment: center; overflow: elide; horizontal-stretch: 0; }
                             Text { text: "▾"; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                         }
                         TouchArea { mouse-cursor: pointer; clicked => { CalStore.range-start = ""; CalStore.popup = CalStore.popup == "range" ? "" : "range"; } }
                     }
                     if CalStore.status != "": Text { text: CalStore.status; color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
                     CalButton { label: CalStore.filtered ? "Filter ●" : "Filter"; y: 10px; active: CalStore.popup == "filters" || CalStore.filtered; clicked => { CalStore.popup = CalStore.popup == "filters" ? "" : "filters"; } }
-                    for v in [{key: "day", label: "Day"}, {key: "workweek", label: "Work week"}, {key: "week", label: "Week"}, {key: "month", label: "Month"}, {key: "split", label: "Split view"}]: Pill {
-                        y: 11px;
-                        label: v.label;
-                        active: CalStore.view-kind == v.key;
-                        clicked => { CalStore.command("view", v.key); }
+                    if !toolbar.fold: HorizontalLayout {
+                        spacing: 8px;
+                        for v in root.views: Pill {
+                            y: 11px;
+                            label: v.label;
+                            active: CalStore.view-kind == v.key;
+                            clicked => { CalStore.command("view", v.key); }
+                        }
                     }
-                    CalButton { label: "Views ▾"; y: 10px; active: CalStore.popup == "views"; clicked => { CalStore.popup = CalStore.popup == "views" ? "" : "views"; } }
+                    if !toolbar.fold: CalButton { label: "Views ▾"; y: 10px; active: CalStore.popup == "views"; clicked => { CalStore.popup = CalStore.popup == "views" ? "" : "views"; } }
+                    if toolbar.fold: CalButton {
+                        label: root.view-label + " ▾";
+                        accessible-label: "View: " + root.view-label;
+                        y: 10px;
+                        active: CalStore.popup == "view-pick";
+                        clicked => { CalStore.popup = CalStore.popup == "view-pick" ? "" : "view-pick"; }
+                    }
                     CalButton { label: "⋯"; y: 10px; preferred-width: 36px; min-width: 36px; active: CalStore.popup == "more"; clicked => { CalStore.popup = CalStore.popup == "more" ? "" : "more"; } }
                 }
                 Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
@@ -669,6 +705,22 @@ export component CalendarView inherits Rectangle {
     if CalStore.popup == "filters": FiltersPanel { z: 41; x: root.width - self.width - 16px; y: 52px; }
     if CalStore.popup == "views": ViewsPanel { z: 41; x: root.width - self.width - 16px; y: 52px; }
     if CalStore.popup == "more": MoreMenu { z: 41; x: root.width - self.width - 16px; y: 52px; }
+    if CalStore.popup == "view-pick": CalCard {
+        z: 41;
+        x: root.width - self.width - 16px;
+        y: 52px;
+        width: 200px;
+        height: (root.views.length + 1) * 30px + 8px;
+        VerticalLayout {
+            padding: 4px;
+            for v in root.views: CalMenuItem {
+                label: v.label;
+                checked: CalStore.view-kind == v.key;
+                clicked => { CalStore.popup = ""; CalStore.command("view", v.key); }
+            }
+            CalMenuItem { label: "Saved views…"; clicked => { CalStore.popup = "views"; } }
+        }
+    }
     if CalStore.popup == "work-location": WorkLocationMenu { z: 41; x: 340px; y: 56px; }
 
     // Dialogs

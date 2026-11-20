@@ -5,7 +5,7 @@
 use super::{UiHandle, model, msg};
 use crate::data::MsgData;
 use crate::{AppWindow, ChatWindow, MediaStore, Theme};
-use slint::{CloseRequestResponse, ComponentHandle};
+use slint::{CloseRequestResponse, ComponentHandle, Model};
 use std::cell::RefCell;
 
 thread_local! {
@@ -94,10 +94,13 @@ impl UiHandle {
                 copy_theme(&app.global::<Theme>(), &cw.global::<Theme>());
                 if cw.get_conv_id().as_str() != conv {
                     cw.set_draft("".into());
+                    // The next messages are a new chat's: they start at the newest one.
+                    cw.set_messages(model(Vec::new()));
                 }
                 cw.set_conv_id(conv.into());
                 cw.set_chat_title(title.into());
                 let _ = cw.show();
+                cw.set_scroll_tick(cw.get_scroll_tick() + 1);
             });
         });
     }
@@ -107,7 +110,12 @@ impl UiHandle {
         self.run(move |_| {
             POPOUT.with(|p| {
                 if let Some(cw) = p.borrow().as_ref() {
+                    let first = cw.get_messages().row_count() == 0;
                     cw.set_messages(model(msgs.into_iter().map(msg).collect()));
+                    if first {
+                        // A chat just opened: at its newest message, like the main view.
+                        cw.set_scroll_tick(cw.get_scroll_tick() + 1);
+                    }
                 }
             });
         });

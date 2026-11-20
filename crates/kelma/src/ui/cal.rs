@@ -2326,6 +2326,49 @@ mod tests {
     }
 
     #[test]
+    fn a_narrow_window_fits_the_work_week_around_today_and_folds_the_view_pills() {
+        use crate::ui_tests::responsive::{WIDTHS, assert_fits, assert_shown, on_screen, resize};
+        for width in WIDTHS {
+            let app = app(View::WorkWeek, &[ev("Standup", 0, 9.0, 9.5, json!({}))]);
+            resize(&app, width);
+            testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+            assert_fits(&app, width, "calendar work week");
+            // Today (Wednesday) is on screen; a day that does not fit is left out, not cut.
+            let head = |iso: &str| {
+                ElementHandle::find_by_accessible_label(&app, &format!("Work location for {iso}"))
+                    .next()
+                    .unwrap_or_else(|| panic!("a header for {iso}"))
+            };
+            assert!(on_screen(&head("2026-11-18"), width), "today at {width}px");
+            for d in 16..=20 {
+                let h = head(&format!("2026-11-{d}"));
+                assert!(
+                    on_screen(&h, width) || h.size().width == 0.,
+                    "{width}px: the 2026-11-{d} column is cut at {:?} {:?}",
+                    h.absolute_position(),
+                    h.size()
+                );
+            }
+            assert_shown(&app, "Standup", None, width, "the event of today");
+            // The month label keeps its room.
+            let title = app.global::<CalStore>().get_title().to_string();
+            let t = ElementHandle::find_by_element_type_name(&app, "Text")
+                .find(|t| t.accessible_label().is_some_and(|l| l.starts_with(&title)))
+                .expect("the toolbar title");
+            assert!(
+                t.size().width >= 120.,
+                "{width}px: the title is {}px",
+                t.size().width
+            );
+            // The view pills fold into one View menu.
+            let log = commands(&app);
+            click(&button(&app, "View: Work week"));
+            click(&button(&app, "Day"));
+            assert_eq!(*log.borrow(), [("view".to_string(), "day".to_string())]);
+        }
+    }
+
+    #[test]
     fn long_event_titles_stay_inside_their_blocks_and_the_toolbar_inside_the_page() {
         use crate::ui_tests::overflow::{
             LONG, LONG_AR, LONG_WORD, assert_texts_inside, assert_texts_inside_where,

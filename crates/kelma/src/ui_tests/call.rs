@@ -1359,3 +1359,50 @@ fn a_long_meeting_title_stays_inside_the_stage_while_waiting_in_the_lobby() {
         .expect("the stage");
     assert_texts_inside(&stage, "lobby stage");
 }
+#[test]
+fn a_narrow_window_keeps_the_call_toolbar_inside_and_folds_the_rest_into_more() {
+    use super::responsive::{WIDTHS, assert_fits, assert_shown, resize};
+    for width in WIDTHS {
+        let c = CallHarness::new();
+        resize(&c.h.app, width);
+        c.connected();
+        assert_fits(&c.h.app, width, "call toolbar");
+        for label in ["Leave", "Mute", "Camera", "More", "Share"] {
+            assert_shown(
+                &c.h.app,
+                label,
+                Some(AccessibleRole::Button),
+                width,
+                "call toolbar",
+            );
+        }
+        // What the toolbar has no room for is in the More panel.
+        click(&c.button("More"));
+        assert_eq!(cs(&c.h.app).get_panel(), "more");
+        assert_fits(&c.h.app, width, "the meeting More panel");
+        for label in ["People", "Raise", "View"] {
+            assert_shown(
+                &c.h.app,
+                label,
+                Some(AccessibleRole::Button),
+                width,
+                "call More",
+            );
+        }
+        click(&c.button("Raise"));
+        assert!(c.sent().iter().any(|s| s == "hand"), "{:?}", c.sent());
+    }
+}
+
+#[test]
+fn the_survey_fits_a_narrow_window() {
+    use super::responsive::{WIDTHS, assert_fits, assert_shown, resize};
+    for width in WIDTHS {
+        let c = CallHarness::new();
+        resize(&c.h.app, width);
+        c.long_call_ended();
+        assert!(c.shows(SURVEY));
+        assert_fits(&c.h.app, width, "the call survey");
+        assert_shown(&c.h.app, "Send feedback", None, width, "the call survey");
+    }
+}

@@ -239,12 +239,14 @@ impl Speller {
             .collect()
     }
 
-    /// Corrections for a misspelled word, best first.
+    /// Corrections for a misspelled word, best first (see [`rank`]).
     pub fn suggest(&self, word: &str) -> Vec<String> {
+        let word = word.replace('\u{2019}', "'");
         let mut out = Vec::new();
-        if let Some(d) = self.dictionary_for(word) {
-            d.suggest(&word.replace('\u{2019}', "'"), &mut out);
+        if let Some(d) = self.dictionary_for(&word) {
+            d.suggest(&word, &mut out);
         }
+        let mut out = rank(&word, out);
         out.truncate(MAX_SUGGESTIONS);
         out
     }
@@ -336,6 +338,83 @@ fn read_dictionary(aff: &Path, dic: &Path) -> Option<Dictionary> {
     }
     let dic_text = decode(std::fs::read(dic).ok()?, latin1)?;
     Dictionary::new(&aff_text, &dic_text).ok()
+}
+
+/// The QWERTY rows, for "the finger slipped to the next key".
+const QWERTY: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+
+/// Whether `a` and `b` are next to each other on a QWERTY keyboard (same row or the row
+/// above/below, at most one column apart).
+fn neighbor_keys(a: char, b: char) -> bool {
+    let at = |c: char| {
+        QWERTY
+            .iter()
+            .enumerate()
+            .find_map(|(r, row)| row.find(c).map(|col| (r as i32, col as i32)))
+    };
+    match (at(a), at(b)) {
+        (Some((ra, ca)), Some((rb, cb))) => a != b && (ra - rb).abs() <= 1 && (ca - cb).abs() <= 1,
+        _ => false,
+    }
+}
+
+/// How `word` becomes `fix`: the edit distance (Levenshtein with adjacent transpositions, by
+/// character) and, for one edit, which kind it is: 0 two neighbours swapped, 1 a letter replaced
+/// by a neighbouring key, 2 another letter replaced, 3 a letter added or dropped.
+fn edit(word: &[char], fix: &[char]) -> (usize, u8) {
+    let (n, m) = (word.len(), fix.len());
+    let mut d = vec![vec![0usize; m + 1]; n + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=n {
+        for j in 1..=m {
+            let cost = usize::from(word[i - 1] != fix[j - 1]);
+            let mut best = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && word[i - 1] == fix[j - 2] && word[i - 2] == fix[j - 1] {
+                best = best.min(d[i - 2][j - 2] + 1);
+            }
+            d[i][j] = best;
+        }
+    }
+    let kind = if n != m {
+        3
+    } else {
+        let diff: Vec<usize> = (0..n).filter(|&i| word[i] != fix[i]).collect();
+        match diff[..] {
+            [a, b] if b == a + 1 && word[a] == fix[b] && word[b] == fix[a] => 0,
+            [a] if neighbor_keys(word[a], fix[a]) => 1,
+            _ => 2,
+        }
+    };
+    (d[n][m], kind)
+}
+
+/// The dictionary's suggestions in the order a typo most likely meant them: fewest edits first;
+/// for one edit, two swapped neighbours, then a slip to the next key, then another letter of the
+/// same length, then a letter added or dropped; a suggestion that keeps the first letter (it is
+/// rarely the mistyped one) before one that changes it; splitting into two words last. Ties keep
+/// the dictionary's order. So "tset" gives "test" before "stet".
+fn rank(word: &str, suggestions: Vec<String>) -> Vec<String> {
+    let lower = |w: &str| w.to_lowercase().chars().collect::<Vec<char>>();
+    let typed = lower(word);
+    let mut keyed: Vec<_> = suggestions
+        .into_iter()
+        .map(|fix| {
+            let f = lower(&fix);
+            let (distance, kind) = edit(&typed, &f);
+            let split = fix.contains(' ') || fix.contains('-');
+            let first_changed = typed.first() != f.first();
+            ((split, distance, kind, first_changed), fix)
+        })
+        .collect();
+    keyed.sort_by_key(|(k, _)| *k);
+    keyed.into_iter().map(|(_, fix)| fix).collect()
 }
 
 /// Bytes at the start that `a` and `b` share, at a character boundary. Underlines of words in
@@ -578,6 +657,33 @@ pub(crate) mod tests {
     fn latin1_dictionaries_are_decoded() {
         assert_eq!(decode(vec![b'c', 0xE9], true).as_deref(), Some("cé"));
         assert_eq!(decode(vec![0xE9], false), None);
+    }
+
+    #[test]
+    fn suggestions_put_the_likely_typo_first() {
+        // What the menu listed for "tset" in the live run.
+        let live = ["stet", "test", "set", "sett", "t set"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(rank("tset", live), ["test", "stet", "set", "sett", "t set"]);
+        // A slip to the next key beats another letter; same length beats a dropped letter.
+        let got = rank("tewt", ["tent", "tet", "test"].map(String::from).to_vec());
+        assert_eq!(got, ["test", "tent", "tet"]);
+        // Case does not change the order and ties keep the dictionary's order.
+        let got = rank("Tset", ["Stet", "Test"].map(String::from).to_vec());
+        assert_eq!(got, ["Test", "Stet"]);
+        let got = rank("abc", ["abq", "abp"].map(String::from).to_vec());
+        assert_eq!(got, ["abq", "abp"]);
+        let got = rank("abc", ["abp", "abq"].map(String::from).to_vec());
+        assert_eq!(got, ["abp", "abq"]);
+    }
+
+    #[test]
+    fn the_speller_ranks_the_dictionarys_suggestions() {
+        let dic = "5\nstet\ntest\nset\nsett\nt\n";
+        let d = Dictionary::new("SET UTF-8\nTRY esianrtolcdugmphbyfvkwz'\n", dic).unwrap();
+        let s = Speller::new(Some(d), None);
+        assert_eq!(s.suggest("tset").first().map(String::as_str), Some("test"));
     }
 
     #[test]

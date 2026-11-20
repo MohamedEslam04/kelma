@@ -4,7 +4,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { CallStore, CallPerson, CallFound } from "call_store.slint";
-import { CallAction, DeviceSettings } from "call_widgets.slint";
+import { CallAction, CallButton, DeviceSettings } from "call_widgets.slint";
 
 // A small text button of a People row (Admit, Admit all).
 component RowButton inherits Rectangle {
@@ -284,12 +284,64 @@ component SwitchRow inherits Rectangle {
 // More, as Teams' "..." menu: Record and transcribe, Language and speech, and the devices. The
 // service decides who may record; a refusal shows as the call's error banner.
 export component MorePanel inherits Rectangle {
+    // The top bar had no room for these (a narrow window): they are here instead.
+    in property <bool> fold: false;
     background: Theme.sidebar;
     VerticalLayout {
         padding: 12px;
         spacing: 12px;
         alignment: start;
         PanelHeader { title: "More"; }
+        if root.fold: HorizontalLayout {
+            alignment: start;
+            spacing: 4px;
+            CallButton {
+                icon: @image-url("icons/people.svg");
+                label: "People";
+                checkable: true;
+                clicked => { CallStore.panel = "people"; }
+            }
+            CallButton {
+                icon: @image-url("icons/hand.svg");
+                label: CallStore.hand ? "Lower" : "Raise";
+                checkable: true;
+                active: CallStore.hand;
+                clicked => { CallStore.command("hand", ""); }
+            }
+            CallButton {
+                icon: @image-url("icons/grid.svg");
+                label: "View";
+                tip: "Gallery, speaker or focus on content";
+                active: CallStore.menu == "view";
+                clicked => { CallStore.menu = CallStore.menu == "view" ? "" : "view"; }
+            }
+        }
+        if root.fold && CallStore.kind == "direct": HorizontalLayout {
+            alignment: start;
+            spacing: 4px;
+            CallButton {
+                icon: @image-url("icons/pause.svg");
+                label: CallStore.held ? "Resume" : "Hold";
+                checkable: true;
+                active: CallStore.held;
+                tip: CallStore.held ? "Take the call off hold" : "Put the call on hold";
+                clicked => { CallStore.command("hold", ""); }
+            }
+            CallButton {
+                icon: @image-url("icons/forward.svg");
+                label: "Transfer";
+                active: CallStore.menu == "transfer";
+                tip: "Transfer the call to someone else";
+                clicked => {
+                    if CallStore.menu == "transfer" {
+                        CallStore.menu = "";
+                    } else {
+                        CallStore.menu = "transfer";
+                        CallStore.command("transfer-open", "");
+                    }
+                }
+            }
+        }
         SectionTitle { text: "Record and transcribe"; }
         HorizontalLayout {
             alignment: start;

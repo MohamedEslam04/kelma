@@ -222,12 +222,15 @@ export component Composer inherits Rectangle {
         // A chosen send time: the text is scheduled instead of sent (attachments stay here).
         if SendStore.schedule-at != "" && root.can-schedule {
             if composer-input.text != "" {
-                SendStore.command("schedule", SendStore.schedule-at + "\u{9}" + composer-input.text);
+                // Cleared first: a refused schedule puts the text (and the time) back.
+                let text = composer-input.text;
+                let at = SendStore.schedule-at;
                 composer-input.text = "";
                 SendStore.schedule-at = "";
                 SendStore.schedule-label = "";
                 root.important = false;
                 root.urgent = false;
+                SendStore.command("schedule", at + "\u{9}" + text);
             }
             return;
         }
