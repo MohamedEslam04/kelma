@@ -35,6 +35,7 @@ pub(crate) mod drive;
 pub(crate) mod engage;
 mod find;
 mod gifs;
+mod in_order;
 mod lists;
 mod live;
 mod manage;
@@ -288,6 +289,8 @@ pub struct Engine {
     retry_pending: AtomicBool,
     /// Last client message id handed out.
     last_cmid: AtomicI64,
+    /// The call commands' lane: they run one at a time, in the order they were sent (`in_order`).
+    calls_lane: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<Cmd>>,
 }
 
 const PAGE: usize = 60;
@@ -348,6 +351,7 @@ impl Engine {
             flush_lock: tokio::sync::Mutex::new(()),
             retry_pending: AtomicBool::new(false),
             last_cmid: AtomicI64::new(0),
+            calls_lane: std::sync::OnceLock::new(),
         });
         // The call window's photos come from the chat avatar cache. A miss downloads in the
         // background, which needs the runtime; without one only the cache is read.
@@ -428,6 +432,7 @@ impl Engine {
 
     /// Runs a command in the background. Quick local ones run inline, so they stay ordered with the
     /// command that follows them (a draft edit must land before the chat switch that flushes it).
+    /// The call commands take their own lane, in order (`in_order`).
     pub fn dispatch(self: &Arc<Self>, cmd: Cmd) {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
@@ -440,6 +445,10 @@ impl Engine {
             Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
             // Selection and view changes run in order with the command that follows them.
             Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
+            // The call window, the 1:1 ringing flows and the Calls page share the call state.
+            cmd @ Cmd::Call(_) => self.in_order(cmd),
+            #[cfg(feature = "calls")]
+            cmd @ (Cmd::DirectCall(_) | Cmd::CallsPage(_)) => self.in_order(cmd),
             cmd => {
                 tokio::spawn(self.clone().handle(cmd));
             }
@@ -448,10 +457,14 @@ impl Engine {
 
     pub async fn handle(self: Arc<Self>, cmd: Cmd) {
         if let Err(err) = self.clone().handle_inner(cmd).await {
-            tracing::warn!(%err, "command failed");
-            if !self.offline.load(Ordering::Relaxed) {
-                self.ui.banner(format!("{err}"));
-            }
+            self.command_failed(err);
+        }
+    }
+
+    fn command_failed(&self, err: anyhow::Error) {
+        tracing::warn!(%err, "command failed");
+        if !self.offline.load(Ordering::Relaxed) {
+            self.ui.banner(format!("{err}"));
         }
     }
 
@@ -650,11 +663,11 @@ impl Engine {
             Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::Media(c) => self.media_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
-            Cmd::Call(c) => self.call_cmd(c).await?,
+            Cmd::Call(c) => in_order::finish(self.call_cmd(c)?).await?,
             #[cfg(feature = "calls")]
-            Cmd::DirectCall(c) => self.direct_call_cmd(c).await?,
+            Cmd::DirectCall(c) => self.direct_call_cmd(c)?,
             #[cfg(feature = "calls")]
-            Cmd::CallsPage(c) => self.calls_page_cmd(c).await?,
+            Cmd::CallsPage(c) => in_order::finish(self.calls_page_cmd(c)?).await?,
             Cmd::ComposerApps(c) => self.composer_apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,

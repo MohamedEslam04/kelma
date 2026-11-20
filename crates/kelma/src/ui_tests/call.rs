@@ -56,9 +56,10 @@ impl CallHarness {
         }
     }
 
-    /// A click as the live app runs it: `Engine::dispatch` spawns every command as its own task on
-    /// a multi-thread runtime, so the commands one click sends have no order between them. The
-    /// worst case runs them last to first.
+    /// A click whose commands run out of order, last to first: what the live app did before the
+    /// call commands had their ordered lane (`backend/in_order.rs`, where the real dispatch path is
+    /// tested), and what every other store's commands still risk. The window must not depend on
+    /// the order of the commands one click sends.
     fn click_racing(&self, el: &ElementHandle) {
         self.racing.set(true);
         click(el);
