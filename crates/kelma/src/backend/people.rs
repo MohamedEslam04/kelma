@@ -112,6 +112,9 @@ pub(super) struct State {
     /// The same for @mention queries, so typing a mention and a New chat search do not drop each
     /// other's answers.
     mention_seq: u64,
+    /// The same for the New chat search. Opening, closing and adding a person bump it too, so a
+    /// search still on its way does not fill the list again after them.
+    new_chat_seq: u64,
     new_chat: NewChat,
     add_history: bool,
     add_results: Vec<Person>,
@@ -259,12 +262,18 @@ impl Engine {
                 Ok(())
             }
             PeopleCmd::NewChatOpen => {
-                self.people.lock().unwrap().new_chat = NewChat::default();
+                let mut p = self.people.lock().unwrap();
+                p.new_chat = NewChat::default();
+                p.new_chat_seq += 1;
+                drop(p);
                 self.push_new_chat(true);
                 Ok(())
             }
             PeopleCmd::NewChatClose => {
-                self.people.lock().unwrap().new_chat = NewChat::default();
+                let mut p = self.people.lock().unwrap();
+                p.new_chat = NewChat::default();
+                p.new_chat_seq += 1;
+                drop(p);
                 self.push_new_chat(false);
                 Ok(())
             }
@@ -695,8 +704,8 @@ impl Engine {
     async fn new_chat_query(self: &Arc<Self>, q: String) -> anyhow::Result<()> {
         let seq = {
             let mut p = self.people.lock().unwrap();
-            p.seq += 1;
-            p.seq
+            p.new_chat_seq += 1;
+            p.new_chat_seq
         };
         if q.trim().is_empty() {
             self.people.lock().unwrap().new_chat.results.clear();
@@ -706,7 +715,7 @@ impl Engine {
         let found = self.client.search_people(&self.me, q.trim()).await?;
         {
             let mut p = self.people.lock().unwrap();
-            if p.seq != seq {
+            if p.new_chat_seq != seq {
                 return Ok(());
             }
             let picked: Vec<String> = p.new_chat.to.iter().map(|x| x.mri.clone()).collect();
@@ -728,8 +737,15 @@ impl Engine {
                 p.new_chat.to.push(f);
             }
             p.new_chat.results.clear();
+            p.new_chat_seq += 1;
         }
         self.push_new_chat(true);
+    }
+
+    /// The New chat search's sequence number (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn new_chat_seq_for_test(&self) -> u64 {
+        self.people.lock().unwrap().new_chat_seq
     }
 
     /// Opens (creating it when needed) the chat with `others` and returns its id. A new group is

@@ -151,7 +151,7 @@ mod tests {
     use super::super::{Cmd, Engine};
     use crate::backend::call::{CallCmd, FakeDriver};
     use crate::backend::calls_page::CallsCmd;
-    use crate::backend::{CalCmd, DriveCmd, ListsCmd};
+    use crate::backend::{CalCmd, DriveCmd, ListsCmd, PeopleCmd};
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -323,6 +323,89 @@ mod tests {
         assert_eq!(got.categories, ["Red"]);
         e.cal_change_cached("gone", |ev| ev.categories.clear());
         assert!(e.calendar_event_for_test("gone").is_none());
+    }
+
+    fn event(id: &str) -> ::calendar::Event {
+        ::calendar::parse_events(&serde_json::json!({"value": [{
+            "id": id,
+            "subject": format!("Subject {id}"),
+            "start": {"dateTime": "2026-11-20T10:00:00", "timeZone": "UTC"},
+            "end": {"dateTime": "2026-11-20T11:00:00", "timeZone": "UTC"}
+        }]}))
+        .remove(0)
+    }
+
+    #[test]
+    fn a_dismiss_right_after_a_snooze_wins() {
+        let rt = runtime();
+        let (e, _window) = engine();
+        let start = 1_795_000_000_000;
+        let mut cmds = Vec::new();
+        for _ in 0..10 {
+            cmds.push(Cmd::Calendar(CalCmd::Snooze("ev1".into(), start)));
+            cmds.push(Cmd::Calendar(CalCmd::Dismiss("ev1".into(), start)));
+        }
+        send(&rt, &e, cmds);
+        settle(|| e.calendar_reminder_for_test("ev1", start) == (None, true));
+        assert_eq!(e.calendar_reminder_for_test("ev1", start), (None, true));
+    }
+
+    #[test]
+    fn a_form_opened_later_wins_over_one_still_loading() {
+        let rt = runtime();
+        let (e, _window) = engine();
+        // An Edit took its turn and waits for the event's details...
+        let edit = e.cal_form_ticket();
+        assert!(e.cal_form_current(edit));
+        // ...then New opens its form at once: the Edit must not replace it when it answers.
+        rt.block_on(e.clone().handle(Cmd::Calendar(CalCmd::New(String::new()))));
+        assert!(!e.cal_form_current(edit));
+    }
+
+    #[test]
+    fn details_of_an_event_no_longer_open_are_dropped() {
+        let rt = runtime();
+        let (e, _window) = engine();
+        e.calendar_put_for_test(event("a"));
+        e.calendar_put_for_test(event("b"));
+        rt.block_on(e.clone().handle(Cmd::Calendar(CalCmd::Peek("a".into()))));
+        assert!(e.cal_still_open("a"));
+        // Open full on `a` waits for Graph while the user peeks at `b`.
+        rt.block_on(e.clone().handle(Cmd::Calendar(CalCmd::Peek("b".into()))));
+        assert!(
+            !e.cal_still_open("a"),
+            "a's late details must not fill b's view"
+        );
+    }
+
+    #[test]
+    fn meet_now_forgets_the_last_meetings_link_at_once() {
+        let rt = runtime();
+        let (e, _window) = engine();
+        e.calendar_set_meet_link_for_test("https://teams.example/old");
+        rt.block_on(
+            e.clone()
+                .handle(Cmd::Calendar(CalCmd::MeetNow(String::new()))),
+        );
+        assert_eq!(e.calendar_meet_link_for_test(), None);
+    }
+
+    #[test]
+    fn new_chat_open_close_and_add_drop_a_search_on_its_way() {
+        let rt = runtime();
+        let (e, _window) = engine();
+        for cmd in [
+            PeopleCmd::NewChatOpen,
+            PeopleCmd::NewChatAdd("8:orgid:x".into()),
+            PeopleCmd::NewChatClose,
+        ] {
+            let before = e.new_chat_seq_for_test();
+            rt.block_on(e.clone().handle(Cmd::People(cmd.clone())));
+            assert!(
+                e.new_chat_seq_for_test() > before,
+                "{cmd:?} must outdate a search still on its way"
+            );
+        }
     }
 
     #[test]
