@@ -118,6 +118,8 @@ export global CallStore {
     in-out property <string> mini-layout: "speaker";
     in property <int> in-call;
     in property <int> in-lobby;
+    // We may let people in from the lobby (Admit, Admit all).
+    in property <bool> can-admit;
     in property <[string]> mics;
     in property <int> mic;
     in property <[string]> speakers;
@@ -147,7 +149,7 @@ export global CallStore {
     // prejoin-camera, leave, close, rejoin, dismiss-error, captions (on|off), recording
     // (start|stop), transcription (start|stop), dismiss-notice, resume, end-held,
     // control-request, control-release, control-give (MRI), control-allow, control-deny,
-    // control-take-back, control-key (key text), control-input (move x y | down b | up b |
+    // admit (MRI), admit-all, control-take-back, control-key (key text), control-input (move x y | down b | up b |
     // scroll dx dy | key-down text | key-up text). See
     // `backend/call.rs` `CallCmd::parse`.
     callback command(string, string);

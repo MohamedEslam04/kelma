@@ -981,6 +981,17 @@ impl Call {
                     sink.send(Event::Error(format!("Couldn't add {name} to the call.")));
                 }
             }
+            Control::Admit { mri, name } => self.admit(&[(mri, name)], sink).await,
+            Control::AdmitAll => {
+                let waiting: Vec<(String, String)> = self
+                    .roster
+                    .participants()
+                    .iter()
+                    .filter(|p| p.presence == Presence::Lobby)
+                    .map(|p| (p.mri.clone(), p.display_name.clone()))
+                    .collect();
+                self.admit(&waiting, sink).await;
+            }
             Control::Transfer { mri, name } => match self.ngc.transfer(s, links, &mri).await {
                 Ok(()) => self.transferring = Some(name),
                 Err(e) => {
@@ -990,6 +1001,23 @@ impl Call {
                     )));
                 }
             },
+        }
+    }
+
+    /// Lets these people in from the lobby, one `admit` each (the service's `admitAll` leaves
+    /// anonymous guests waiting). The first refusal stops and shows as the call's error.
+    async fn admit(&self, people: &[(String, String)], sink: &EventSink) {
+        let (s, links, controller) = (&self.s, &self.links, self.controller.as_str());
+        for (mri, name) in people {
+            if let Err(e) = self.ngc.admit(s, links, controller, mri, name).await {
+                tracing::warn!(%e, "admit failed");
+                sink.send(Event::Error(if people.len() > 1 {
+                    "Couldn't admit everyone from the lobby.".into()
+                } else {
+                    format!("Couldn't admit {name}.")
+                }));
+                return;
+            }
         }
     }
 

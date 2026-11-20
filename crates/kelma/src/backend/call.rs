@@ -168,6 +168,17 @@ pub struct Person {
     pub video_slot: Option<usize>,
 }
 
+/// A bot's MRI prefix: the recorder and caption bots are `28:` participants.
+const BOT_PREFIX: &str = "28:";
+
+impl Person {
+    /// A bot (the Teams recorder or caption bot). Teams hides them, and so do the tiles, the
+    /// floating call, the speaker order and the counts.
+    pub fn is_bot(&self) -> bool {
+        self.mri.starts_with(BOT_PREFIX)
+    }
+}
+
 /// The profile photos `lookup` knows for these people, by MRI. A lookup may start a download, so
 /// each MRI is asked once.
 fn photos(people: &[Person], lookup: impl Fn(&str) -> Option<Pixels>) -> HashMap<String, Pixels> {
@@ -285,6 +296,13 @@ pub enum Control {
         mri: String,
         name: String,
     },
+    /// Let a person in from the lobby (an MRI and their name).
+    Admit {
+        mri: String,
+        name: String,
+    },
+    /// Let everyone in the lobby in.
+    AdmitAll,
     /// Turn the camera on (the Camera portal may ask) or off.
     Camera(bool),
     /// Remote control of a shared screen (`KELMA_REMOTE_CONTROL=1`).
@@ -519,6 +537,8 @@ pub struct CallData {
     pub people: Vec<Person>,
     pub in_call: usize,
     pub in_lobby: usize,
+    /// We may let people in from the lobby (we are not a plain attendee).
+    pub can_admit: bool,
     pub mics: Vec<String>,
     pub mic: usize,
     pub speakers: Vec<String>,
@@ -946,6 +966,24 @@ impl CallModel {
         Some(c)
     }
 
+    /// The People panel's Admit: let one person in from the lobby. `None` unless a call runs and
+    /// the roster has them waiting.
+    pub fn admit(&mut self, mri: &str) -> Option<Control> {
+        if !self.phase.active() {
+            return None;
+        }
+        let p = self.roster.iter().find(|p| p.lobby && p.mri == mri)?;
+        Some(Control::Admit {
+            mri: p.mri.clone(),
+            name: p.name.clone(),
+        })
+    }
+
+    /// "Admit all": `None` unless a call runs and somebody waits in the lobby.
+    pub fn admit_all(&mut self) -> Option<Control> {
+        (self.phase.active() && self.roster.iter().any(|p| p.lobby)).then_some(Control::AdmitAll)
+    }
+
     /// The transfer dialog's "Transfer now".
     pub fn transfer(&mut self, mri: &str) -> Option<Control> {
         self.pick(mri, |mri, name| Control::Transfer { mri, name })
@@ -975,7 +1013,12 @@ impl CallModel {
             (p, Some(t), _) if p.active() => now.saturating_duration_since(t),
             _ => Duration::ZERO,
         };
-        let mut people = self.roster.clone();
+        let mut people: Vec<Person> = self
+            .roster
+            .iter()
+            .filter(|p| !p.is_bot())
+            .cloned()
+            .collect();
         for p in people.iter_mut().filter(|p| p.me) {
             p.muted = self.muted;
             p.hand = self.hand;
@@ -983,6 +1026,7 @@ impl CallModel {
         // In the call first, the lobby after; each in roster order.
         people.sort_by_key(|p| p.lobby);
         let in_lobby = people.iter().filter(|p| p.lobby).count();
+        let can_admit = self.phase.active() && people.iter().any(|p| p.me && p.role != "attendee");
         CallData {
             phase: self.phase.name(),
             kind: self.kind.name(),
@@ -1026,6 +1070,7 @@ impl CallModel {
             },
             in_call: people.len() - in_lobby,
             in_lobby,
+            can_admit,
             people,
             mics: self.devices.mics.iter().map(|d| d.name.clone()).collect(),
             mic: self.devices.mic,
@@ -1145,6 +1190,10 @@ pub enum CallCmd {
     EndHeld,
     /// Remote control of a shared screen.
     Control(ControlAction),
+    /// The People panel's Admit on a lobby row (an MRI).
+    Admit(String),
+    /// The People panel's "Admit all".
+    AdmitAll,
 }
 
 impl CallCmd {
@@ -1177,6 +1226,8 @@ impl CallCmd {
             "dismiss-notice" => CallCmd::DismissNotice,
             "resume" => CallCmd::Resume,
             "end-held" => CallCmd::EndHeld,
+            "admit" if !arg.is_empty() => CallCmd::Admit(arg.into()),
+            "admit-all" => CallCmd::AdmitAll,
             "control-request" => CallCmd::Control(ControlAction::Request),
             "control-release" => CallCmd::Control(ControlAction::Release),
             "control-give" if !arg.is_empty() => CallCmd::Control(ControlAction::Give {
@@ -1742,6 +1793,8 @@ impl CallManager {
                     return;
                 }
                 CallCmd::Control(a) => m.remote_control(a),
+                CallCmd::Admit(mri) => m.admit(&mri),
+                CallCmd::AdmitAll => m.admit_all(),
                 CallCmd::EndHeld => {
                     let shown_on_hold = m.held;
                     drop(m);
@@ -2154,6 +2207,8 @@ impl CallHandle for FakeHandle {
             Control::Hold(h) => format!("hold {}", if *h { "on" } else { "off" }),
             Control::AddPerson { mri, .. } => format!("add {mri}"),
             Control::Transfer { mri, .. } => format!("transfer {mri}"),
+            Control::Admit { mri, .. } => format!("admit {mri}"),
+            Control::AdmitAll => "admit all".into(),
             Control::Remote(a) => format!("control {a:?}"),
             Control::Leave => "leave".into(),
         };
@@ -2626,6 +2681,119 @@ mod tests {
         assert!(!m.apply(Event::Recording(false), t0));
         assert!(m.apply(Event::Recording(true), t0));
         assert!(m.data(t0).recording);
+    }
+
+    /// A connected meeting with a roster of us (`role`), a guest in the lobby, Ada, and the
+    /// recorder bot.
+    fn lobby_meeting(role: &str, t0: Instant) -> CallModel {
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Connected, t0);
+        let p = |mri: &str, name: &str, lobby, me, role: &str| Person {
+            mri: mri.into(),
+            name: name.into(),
+            lobby,
+            me,
+            role: role.into(),
+            ..Default::default()
+        };
+        m.apply(
+            Event::Roster(vec![
+                p("8:orgid:me", "Me", false, true, role),
+                p("8:orgid:guest", "Guest", true, false, ""),
+                p("28:bot-1", "Unknown", false, false, ""),
+                p("8:orgid:ada", "Ada", false, false, "attendee"),
+            ]),
+            t0,
+        );
+        m
+    }
+
+    #[test]
+    fn admitting_names_a_person_waiting_in_the_lobby() {
+        let t0 = Instant::now();
+        let mut m = lobby_meeting("organizer", t0);
+        assert_eq!(
+            m.admit("8:orgid:guest"),
+            Some(Control::Admit {
+                mri: "8:orgid:guest".into(),
+                name: "Guest".into()
+            })
+        );
+        assert_eq!(m.admit("8:orgid:ada"), None, "Ada is already in the call");
+        assert_eq!(m.admit("8:orgid:nobody"), None);
+        assert_eq!(m.admit_all(), Some(Control::AdmitAll));
+        assert_eq!(
+            CallCmd::parse("admit", "8:orgid:guest"),
+            Some(CallCmd::Admit("8:orgid:guest".into()))
+        );
+        assert_eq!(CallCmd::parse("admit", ""), None);
+        assert_eq!(CallCmd::parse("admit-all", ""), Some(CallCmd::AdmitAll));
+        // Nobody waits any more, and a call that ended admits nobody.
+        m.apply(
+            Event::Roster(vec![Person {
+                me: true,
+                ..Default::default()
+            }]),
+            t0,
+        );
+        assert_eq!(m.admit_all(), None);
+        let mut m = lobby_meeting("organizer", t0);
+        m.leave(t0);
+        assert_eq!(m.admit("8:orgid:guest"), None);
+        assert_eq!(m.admit_all(), None);
+    }
+
+    #[test]
+    fn only_those_who_are_not_plain_attendees_may_admit() {
+        let t0 = Instant::now();
+        for (role, can) in [
+            ("organizer", true),
+            ("presenter", true),
+            ("", true),
+            ("attendee", false),
+        ] {
+            assert_eq!(lobby_meeting(role, t0).data(t0).can_admit, can, "{role:?}");
+        }
+    }
+
+    #[test]
+    fn bots_are_left_out_of_the_people_and_the_counts() {
+        let t0 = Instant::now();
+        let d = lobby_meeting("organizer", t0).data(t0);
+        let names: Vec<&str> = d.people.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Me", "Ada", "Guest"], "no recorder bot");
+        assert_eq!((d.in_call, d.in_lobby), (2, 1));
+        let bot = |mri: &str| Person {
+            mri: mri.into(),
+            ..Default::default()
+        };
+        assert!(bot("28:00000000-0000-0000-0000-0000000000d1").is_bot());
+        assert!(!bot("8:orgid:00000000-0000-0000-0000-0000000000d1").is_bot());
+        assert!(!bot("").is_bot(), "an unknown MRI is a person");
+    }
+
+    #[test]
+    fn a_new_prejoin_replaces_a_call_that_only_ended() {
+        let t0 = Instant::now();
+        let mut m = lobby_meeting("organizer", t0);
+        assert!(m.leave(t0));
+        assert_eq!(m.phase, Phase::Ended);
+        assert!(!m.ended.is_empty());
+        assert!(
+            m.prejoin(
+                meeting(),
+                JoinTarget::Link("next".into()),
+                "19:next".into(),
+                devices()
+            )
+            .is_ok(),
+            "an ended call does not block the next one"
+        );
+        assert_eq!(m.phase, Phase::PreJoin);
+        assert_eq!(m.target, Some(JoinTarget::Link("next".into())));
+        assert!(m.ended.is_empty() && m.error.is_empty() && m.roster.is_empty());
+        assert_eq!(m.my_name, "Me", "our name carries over");
     }
 
     #[test]

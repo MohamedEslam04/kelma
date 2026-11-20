@@ -143,6 +143,7 @@ pub async fn pick_with_control(
     kind: ShareKind,
     settings: CaptureSettings,
 ) -> Result<Option<(ScreenCapture, InputInjector)>> {
+    super::portal::ensure_registered().await;
     let remote = RemoteDesktop::new().await.map_err(portal_err)?;
     let cast = Screencast::new().await.map_err(portal_err)?;
     let session = remote

@@ -11,6 +11,7 @@ pub mod callbacks;
 pub mod content_sharing;
 pub mod controls;
 pub mod endpoints;
+pub mod lobby;
 pub mod meeting;
 pub mod recorder;
 pub mod roster;
@@ -696,6 +697,20 @@ impl NgcClient {
         let (url, body) =
             call_ops::add_participant_request(s, links, controller, mri, display_name);
         self.post("add_participant", s, &url, &body).await.map(drop)
+    }
+
+    /// Lets `mri` in from the lobby (`admit`; see [`lobby`]). The outcome comes on the
+    /// `conversation/admitParticipantSuccess` or `admitParticipantFailure` callback.
+    pub async fn admit(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        mri: &str,
+        display_name: &str,
+    ) -> Result<()> {
+        let (url, body) = lobby::admit_request(s, links, controller, mri, display_name);
+        self.post("admit", s, &url, &body).await.map(drop)
     }
 
     /// Re-offers our media on the same peer connection (hold and resume; see [`call_ops`]) on

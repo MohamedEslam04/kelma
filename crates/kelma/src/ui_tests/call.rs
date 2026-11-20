@@ -1067,3 +1067,135 @@ fn never_in_settings_hides_the_survey() {
         "the ended screen as before"
     );
 }
+
+const ORGANIZER: &str = "8:orgid:00000000-0000-0000-0000-0000000000a1";
+const GUEST: &str = "8:orgid:00000000-0000-0000-0000-0000000000a2";
+const BOT: &str = "28:00000000-0000-0000-0000-0000000000a3";
+
+/// A meeting roster of us (`role`), a guest waiting in the lobby, Ada, and the recorder bot.
+fn lobby_roster(c: &CallHarness, role: &str) {
+    let p = |mri: &str, name: &str, lobby, me, role: &str| Person {
+        mri: mri.into(),
+        name: name.into(),
+        lobby,
+        me,
+        role: role.into(),
+        ..Default::default()
+    };
+    c.fake.emit(Event::Roster(vec![
+        p(ORGANIZER, "Me", false, true, role),
+        p(GUEST, "Guest", true, false, ""),
+        p(BOT, "Unknown", false, false, ""),
+        p("8:orgid:ada", "Ada", false, false, "attendee"),
+    ]));
+}
+
+#[test]
+fn the_organizer_admits_one_or_all_from_the_lobby() {
+    let c = CallHarness::new();
+    c.connected();
+    lobby_roster(&c, "organizer");
+    click(&c.button("People"));
+    assert!(c.shows("Waiting in lobby (1)"));
+    click(&c.button("Admit Guest"));
+    click(&c.button("Admit all"));
+    assert_eq!(
+        c.sent()[c.sent().len() - 2..],
+        [format!("admit {GUEST}"), "admit-all".to_owned()]
+    );
+    assert_eq!(
+        c.fake.calls()[1..],
+        [format!("admit {GUEST}"), "admit all".to_owned()]
+    );
+    assert!(
+        c.all("Admit Ada").is_empty(),
+        "only the lobby has an Admit button"
+    );
+}
+
+#[test]
+fn an_attendee_sees_no_admit_buttons() {
+    let c = CallHarness::new();
+    c.connected();
+    lobby_roster(&c, "attendee");
+    click(&c.button("People"));
+    assert!(c.shows("Waiting in lobby (1)"));
+    assert!(c.all("Admit Guest").is_empty() && c.all("Admit all").is_empty());
+}
+
+#[test]
+fn recorder_bots_have_no_tile_no_row_and_no_count() {
+    use slint::Model;
+    let c = CallHarness::new();
+    c.connected();
+    lobby_roster(&c, "organizer");
+    let names = |m: slint::ModelRc<crate::CallPerson>| -> Vec<String> {
+        m.iter().map(|p| p.name.to_string()).collect()
+    };
+    assert_eq!(names(cs(&c.h.app).get_people()), ["Me", "Ada", "Guest"]);
+    assert_eq!(names(cs(&c.h.app).get_speaker_people()), ["Ada", "Me"]);
+    assert_eq!(names(cs(&c.h.app).get_mini_people()), ["Ada"]);
+    assert_eq!(cs(&c.h.app).get_in_call(), 2);
+    click(&c.button("People"));
+    assert!(c.shows("In this meeting (2)"));
+    assert!(!c.shows("Unknown"), "no row, no tile named Unknown");
+}
+
+#[test]
+fn a_call_that_ends_while_minimized_comes_back_to_its_ended_screen() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("Chat"));
+    assert!(cs(&c.h.app).get_minimized());
+    click(&c.button("Leave"));
+    assert_eq!(c.phase(), "ended");
+    assert!(
+        !cs(&c.h.app).get_minimized(),
+        "the floating card does not stay behind"
+    );
+    assert!(c.shows("You left the meeting."));
+    click(&c.button("Close"));
+    assert_eq!(c.phase(), "");
+
+    // Ended by the meeting, not by us.
+    c.connected();
+    cs(&c.h.app).set_minimized(true);
+    c.fake.emit(Event::Ended("The meeting ended.".into()));
+    assert!(!cs(&c.h.app).get_minimized());
+    assert!(c.shows("The meeting ended."));
+}
+
+#[test]
+fn the_ended_screen_can_be_shrunk_and_its_floating_card_closes() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("Leave"));
+    // Shrinking it again (a rail click) is kept: only the end itself expands the call.
+    cs(&c.h.app).set_minimized(true);
+    c.fake.emit(Event::Ended("The meeting ended.".into()));
+    assert!(cs(&c.h.app).get_minimized(), "still the same ended call");
+    assert!(c.all("Leave").is_empty(), "nothing left to leave");
+    click(&c.button("Close call"));
+    assert_eq!(c.phase(), "");
+}
+
+#[test]
+fn joining_a_new_meeting_replaces_a_floating_ended_call() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("Leave"));
+    cs(&c.h.app).set_minimized(true);
+    assert_eq!(c.phase(), "ended");
+    c.open_prejoin();
+    assert!(
+        !cs(&c.h.app).get_minimized(),
+        "the pre-join screen is shown"
+    );
+    assert_eq!(
+        cs(&c.h.app).get_ended(),
+        "",
+        "nothing of the old call stays"
+    );
+    click(&c.button("Join now"));
+    assert_eq!(c.phase(), "connecting");
+}

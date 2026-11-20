@@ -1,7 +1,7 @@
 //! Answering a ring with or without the caller's offer (offline, synthetic fixtures with the
 //! shape of the live 2026-11-19 capture and fake values).
 
-use calling::incoming::{Answering, NoOffer, OfferVia, Step};
+use calling::incoming::{Answering, NoOffer, OfferVia, Step, answer_error_text};
 use calling::invitation::{CallEvent, EndReason, NgcPush, classify, parse_call_event};
 use calling::signaling::bodies::{
     Attached, attach_body, attach_offer_body, mediafree_acceptance_body, negotiation_body,
@@ -444,4 +444,29 @@ fn no_answer_an_end_or_no_acceptance_link_fails() {
         Answering::new(&with_offer(no_offer_invitation(), true), NoOffer::default());
     answering.on_timeout();
     assert!(matches!(answering.step(), Step::AnswerOffer(_)));
+}
+
+fn status(op: &'static str, status: u16, body: &str) -> calling::Error {
+    calling::Error::Status {
+        op,
+        status,
+        body: body.into(),
+    }
+}
+
+#[test]
+fn an_answer_too_late_says_the_call_ended_not_the_raw_answer() {
+    let late = r#"{"operationFailure":{"reason":"clientError","code":487,"subCode":10021,"phrase":"Call was canceled"}}"#;
+    for (code, body) in [(412, late), (487, ""), (400, late)] {
+        let text = answer_error_text(&status("attach", code, body));
+        assert_eq!(text, "The call ended before you answered.", "HTTP {code}");
+    }
+}
+
+#[test]
+fn another_answer_failure_keeps_the_status_but_not_the_body() {
+    let text = answer_error_text(&status("attach", 500, r#"{"secret":"detail"}"#));
+    assert_eq!(text, "attach: HTTP 500");
+    let other = calling::Error::Media("no relay".into());
+    assert_eq!(answer_error_text(&other), "media: no relay");
 }

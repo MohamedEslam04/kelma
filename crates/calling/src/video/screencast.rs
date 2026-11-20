@@ -114,6 +114,7 @@ pub(crate) fn portal_err(e: ashpd::Error) -> Error {
 /// Shows the desktop's picker and starts capturing what the user chose. `Ok(None)` when the user
 /// cancelled the dialog.
 pub async fn pick(kind: ShareKind, settings: CaptureSettings) -> Result<Option<ScreenCapture>> {
+    super::portal::ensure_registered().await;
     let proxy = Screencast::new().await.map_err(portal_err)?;
     let session = proxy
         .create_session(Default::default())

@@ -1044,11 +1044,17 @@ export component CallMini inherits Rectangle {
                 enabled: CallStore.can-share || CallStore.sharing;
                 clicked => { CallStore.command("share", ""); }
             }
-            MiniButton {
+            if CallStore.phase != "ended": MiniButton {
                 icon: @image-url("icons/call-end.svg");
                 label: "Leave";
                 danger: true;
                 clicked => { CallStore.command("leave", ""); }
+            }
+            // The ended card closes like the full call-ended screen's Close.
+            if CallStore.phase == "ended": MiniButton {
+                icon: @image-url("icons/close.svg");
+                label: "Close call";
+                clicked => { CallStore.command("close", ""); }
             }
         }
         if CallStore.held-name != "": HeldBar { compact: true; }
