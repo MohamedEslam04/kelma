@@ -1259,3 +1259,51 @@ msgstr "وضع علامة كمقروء"
 
 msgid "Play"
 msgstr "تشغيل"
+
+msgid "Go to Activity"
+msgstr "الانتقال إلى النشاط"
+
+msgid "Go to Chat"
+msgstr "الانتقال إلى الدردشة"
+
+msgid "Go to Teams"
+msgstr "الانتقال إلى الفرق"
+
+msgid "Go to Calendar"
+msgstr "الانتقال إلى التقويم"
+
+msgid "Go to Calls"
+msgstr "الانتقال إلى المكالمات"
+
+msgid "Go to OneDrive"
+msgstr "الانتقال إلى OneDrive"
+
+msgid "Search"
+msgstr "بحث"
+
+msgid "Go to a chat or channel"
+msgstr "الانتقال إلى دردشة أو قناة"
+
+msgid "Open Settings"
+msgstr "فتح الإعدادات"
+
+msgid "Toggle dark/light theme"
+msgstr "تبديل السمة الداكنة/الفاتحة"
+
+msgid "Keyboard shortcuts"
+msgstr "اختصارات لوحة المفاتيح"
+
+msgid "Actions"
+msgstr "الإجراءات"
+
+msgid "Chats and channels"
+msgstr "الدردشات والقنوات"
+
+msgid "Type a command or search chats"
+msgstr "اكتب أمراً أو ابحث في الدردشات"
+
+msgid "No matching commands or chats"
+msgstr "لا توجد أوامر أو دردشات مطابقة"
+
+msgid "Command palette"
+msgstr "لوحة الأوامر"
