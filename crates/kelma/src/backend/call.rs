@@ -287,7 +287,7 @@ pub enum Control {
     /// Turn the camera on (the Camera portal may ask) or off.
     Camera(bool),
     /// Remote control of a shared screen (`KELMA_REMOTE_CONTROL=1`).
-    RemoteControl(ControlAction),
+    Remote(ControlAction),
     Leave,
 }
 
@@ -879,7 +879,7 @@ impl CallModel {
             }
             a => a,
         };
-        Some(Control::RemoteControl(a))
+        Some(Control::Remote(a))
     }
 
     /// The hand toggle. Returns the new state while a call runs.
@@ -2090,7 +2090,7 @@ impl CallHandle for FakeHandle {
             Control::Hold(h) => format!("hold {}", if *h { "on" } else { "off" }),
             Control::AddPerson { mri, .. } => format!("add {mri}"),
             Control::Transfer { mri, .. } => format!("transfer {mri}"),
-            Control::RemoteControl(a) => format!("control {a:?}"),
+            Control::Remote(a) => format!("control {a:?}"),
             Control::Leave => "leave".into(),
         };
         self.log.lock().unwrap().push(line);
@@ -2431,7 +2431,7 @@ mod tests {
         };
         assert_eq!(
             m.remote_control(give("8:a")),
-            Some(Control::RemoteControl(ControlAction::Give {
+            Some(Control::Remote(ControlAction::Give {
                 mri: "8:a".into(),
                 name: "Ada".into()
             }))
