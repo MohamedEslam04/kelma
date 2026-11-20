@@ -42,6 +42,7 @@ mod people;
 mod saved;
 mod settings;
 mod shortcuts;
+mod snippets;
 mod teams;
 mod window_state;
 
