@@ -571,4 +571,21 @@ browser, every other action is drawn disabled. The raw attachments are stored wi
 `c` of the stored extras), so cards are drawn from the structure and the flattened text stays the
 preview.
 
+### Files tab actions, channel tabs, meeting pages and call settings (gaps)
+Built from the calls and endpoints above. **UNVERIFIED** means no request was sent to a tenant.
+| Feature | Call | Status |
+|---|---|---|
+| Files tab: Download, Rename, Delete, New folder, New document, Share, Copy link | the OneDrive crate's `ops::download`, `rename` (PATCH), `delete`, `create_folder`, `create_office_doc` and `share::create_link` (organization view link) on the drive items of the channel's `filesFolder`. Only rows listed from that folder have a drive item; a file that came from a message offers Open and Copy link only | calls verified in the OneDrive module; **not exercised** from the Files tab |
+| Rename a tab | `PATCH graph/v1.0/teams/<g>/channels/<c>/tabs/<tab>` `{"displayName"}` (Graph "Update tab") | **UNVERIFIED** |
+| Remove a tab | `DELETE graph/v1.0/teams/<g>/channels/<c>/tabs/<tab>` | **UNVERIFIED** |
+| Add an app's tab | `POST …/tabs` `{"displayName", "teamsApp@odata.bind": ".../appCatalogs/teamsApps/<appId>"}` with no `configuration`. Apps come from the user's installed apps (`aggregatedEntitlements`) that work in a team and have tabs. Graph may refuse apps whose tab needs setup | **UNVERIFIED** |
+| Meeting options | no call: the organizer's page `https://teams.microsoft.com/meetingOptions/?organizerId=<Oid>&tenantId=<Tid>&threadId=<thread>&messageId=0&language=en-US`, built from the join URL's thread and `context` (`Tid`, `Oid`), opened in the browser (shape from `docs/research/calendar-meetings.md`) | **UNVERIFIED** (page not opened) |
+| Meeting notes and Recap | no call: links found in the event body or preview. Notes are a Loop address or a `.loop` file on SharePoint; the recap is a Teams address that names a recap. Where Teams puts them in an event is not documented, so an event without such a link shows no entry | **UNVERIFIED** |
+| Attendance report | not built: Graph `OnlineMeetings` is refused for this client and no web address is documented | skipped |
+| Delete a voicemail | `DELETE graph/v1.0/me/messages/<id>` (the voicemail is a mail item); Mark as unread is the existing `PATCH {"isRead": false}` | **UNVERIFIED** (delete); read PATCH verified |
+| Call back a voicemail | the caller's mail address is looked up in the directory (`search_people`) and dialled as a 1:1 call | **UNVERIFIED** live |
+| Call forwarding, unanswered redirect, ring time, voicemail greeting | the endpoint is not documented in `docs/research/`, `plans/` or the reference clones (the fields would mirror `Get-CsUserCallingSettings`). Settings › Calls shows the controls disabled and says so | not built |
+| Dial a phone number | the calling crate cannot place PSTN calls. The Calls search box shows a disabled "Call <number>" row with the reason | not built |
+| Ringtone, hide a call, speed dial | local only: `calls.json` (`ringtone`) and `config.json` (`hidden_calls`) | n/a |
+
 Docs synced to commit 09fe5c2 ("feat(kelma): chat list sections and menus, channel post cards, cloud attach and adaptive cards (chat 8.1 to 8.8)", 2026-11-19)

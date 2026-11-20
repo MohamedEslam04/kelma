@@ -206,7 +206,7 @@ component TimeGrid inherits Rectangle {
             VerticalLayout {
                 alignment: center;
                 spacing: 2px;
-                Text { text: d.pin == "" ? d.label : d.label + (d.pin == "office" ? " · Office" : " · Remote"); color: d.today ? Theme.accent : Theme.fg-muted; font-size: 11px * Theme.font-scale; horizontal-alignment: center; }
+                Text { text: d.pin == "" ? d.label : d.label + (d.pin == "office" ? " · Office" : " · Remote"); color: d.today ? Theme.accent : Theme.fg-muted; font-size: 11px * Theme.font-scale; horizontal-alignment: center; overflow: elide; }
                 Rectangle {
                     height: 24px;
                     today-marker := Rectangle {
@@ -625,7 +625,7 @@ export component CalendarView inherits Rectangle {
                     }
                     if CalStore.status != "": Text { text: CalStore.status; color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
                     CalButton { label: CalStore.filtered ? "Filter ●" : "Filter"; y: 10px; active: CalStore.popup == "filters" || CalStore.filtered; clicked => { CalStore.popup = CalStore.popup == "filters" ? "" : "filters"; } }
-                    for v in [{key: "day", label: "Day"}, {key: "workweek", label: "Work week"}, {key: "week", label: "Week"}, {key: "month", label: "Month"}]: Pill {
+                    for v in [{key: "day", label: "Day"}, {key: "workweek", label: "Work week"}, {key: "week", label: "Week"}, {key: "month", label: "Month"}, {key: "split", label: "Split view"}]: Pill {
                         y: 11px;
                         label: v.label;
                         active: CalStore.view-kind == v.key;

@@ -42,6 +42,14 @@ pub enum CallsCmd {
     SpeedMove(String, i32),
     VoicemailPlay(String),
     VoicemailRead(String),
+    VoicemailUnread(String),
+    VoicemailDelete(String),
+    /// Call the person who left this voicemail.
+    VoicemailCallBack(String),
+    /// Take a call off the history on this computer (call id).
+    Hide(String),
+    /// Copy a name or number to the clipboard.
+    CopyText(String),
 }
 
 impl CallsCmd {
@@ -59,6 +67,11 @@ impl CallsCmd {
             "speed-down" => CallsCmd::SpeedMove(need(arg)?, 1),
             "voicemail-play" => CallsCmd::VoicemailPlay(need(arg)?),
             "voicemail-read" => CallsCmd::VoicemailRead(need(arg)?),
+            "voicemail-unread" => CallsCmd::VoicemailUnread(need(arg)?),
+            "voicemail-delete" => CallsCmd::VoicemailDelete(need(arg)?),
+            "voicemail-call" => CallsCmd::VoicemailCallBack(need(arg)?),
+            "hide" => CallsCmd::Hide(need(arg)?),
+            "copy" => CallsCmd::CopyText(need(arg)?),
             _ => return None,
         })
     }
@@ -87,6 +100,8 @@ pub struct HistoryRow {
     pub group: bool,
     /// The other party is on the speed dial.
     pub speed: bool,
+    /// The other party's phone number (a PSTN call), empty for a person.
+    pub number: String,
 }
 
 /// A person in the search results or on the speed dial.
@@ -122,6 +137,8 @@ pub struct CallsData {
     pub voicemails: Vec<VoicemailRow>,
     pub results: Vec<PersonRow>,
     pub speed: Vec<PersonRow>,
+    /// The search box holds a phone number: this is it, tidied. Calling it is not supported.
+    pub dial: String,
     pub loading: bool,
     /// Why the history could not be read (empty when it was).
     pub error: String,
@@ -135,6 +152,8 @@ pub struct State {
     voicemails: Vec<Voicemail>,
     filter: String,
     results: Vec<teams_proto::people::Person>,
+    /// The phone number the search box holds, if it holds one.
+    dial: String,
     /// Bumped per search, so a slow answer to an older query is dropped.
     seq: u64,
     loading: bool,
@@ -211,11 +230,82 @@ pub fn rows(
                 duration: duration_text(r.duration_secs),
                 group: r.is_group,
                 speed: !mri.is_empty() && speed(&mri),
+                number: phone_of_mri(&mri),
                 name: shown,
                 mri,
             }
         })
         .collect()
+}
+
+/// The phone number behind a PSTN MRI (`4:+15551230000`), empty for anyone else.
+pub fn phone_of_mri(mri: &str) -> String {
+    mri.strip_prefix("4:")
+        .filter(|n| phone_number(n).is_some())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The search text as a phone number when it is one: digits with an optional leading `+`, and
+/// spaces, dots, dashes or brackets between them, 3 to 15 digits. Returns it without the
+/// punctuation (`+1 (555) 010-0000` gives `+15550100000`).
+pub fn phone_number(query: &str) -> Option<String> {
+    let q = query.trim();
+    let mut out = String::new();
+    for (i, c) in q.chars().enumerate() {
+        match c {
+            '+' if i == 0 => out.push(c),
+            '0'..='9' => out.push(c),
+            ' ' | '.' | '-' | '(' | ')' => {}
+            _ => return None,
+        }
+    }
+    let digits = out.chars().filter(char::is_ascii_digit).count();
+    (3..=15).contains(&digits).then_some(out)
+}
+
+/// The key a hidden call is kept under: the account and the call.
+fn hidden_key(owner: &str, id: &str) -> String {
+    format!("{owner}\u{1f}{id}")
+}
+
+/// Takes call `id` off the history for `owner` (once).
+pub fn hide_call(list: &mut Vec<String>, owner: &str, id: &str) {
+    let key = hidden_key(owner, id);
+    if !list.contains(&key) {
+        list.push(key);
+    }
+}
+
+/// The records `owner` has not hidden.
+pub fn unhidden(records: &[CallRecord], list: &[String], owner: &str) -> Vec<CallRecord> {
+    records
+        .iter()
+        .filter(|r| !list.contains(&hidden_key(owner, &r.id)))
+        .cloned()
+        .collect()
+}
+
+/// Who to call back for a voicemail from this caller address: a phone number, a person by
+/// mail address, or nobody known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallBack {
+    Number(String),
+    Person(String),
+    Unknown,
+}
+
+/// A caller address is an email address, or `+number@…` for a call from a phone.
+pub fn call_back_target(address: &str) -> CallBack {
+    let a = address.trim();
+    let local = a.split('@').next().unwrap_or("");
+    if let Some(n) = phone_number(local).filter(|_| local.starts_with('+')) {
+        CallBack::Number(n)
+    } else if a.contains('@') {
+        CallBack::Person(a.to_owned())
+    } else {
+        CallBack::Unknown
+    }
 }
 
 /// The speed dial with `mri` added at the end, or taken off when already on it.
@@ -336,6 +426,7 @@ impl Engine {
     pub(super) fn push_calls_page(self: &Arc<Self>) {
         let speed = self.speed_dial();
         let on_speed = |mri: &str| speed.iter().any(|s| s.mri == mri);
+        let hidden = self.cfg.lock().unwrap().hidden_calls.clone();
         let data = {
             let s = self.calls_state();
             let filter = if s.filter.is_empty() {
@@ -343,8 +434,9 @@ impl Engine {
             } else {
                 s.filter.clone()
             };
+            let shown = unhidden(&s.records, &hidden, &self.me);
             let mut history = rows(
-                &s.records,
+                &shown,
                 &filter,
                 |m| self.known_name(m),
                 super::util::chat_time,
@@ -371,6 +463,7 @@ impl Engine {
                     })
                     .collect(),
                 speed: Vec::new(),
+                dial: s.dial.clone(),
                 loading: s.loading,
                 error: s.error.clone(),
                 voicemail_error: s.voicemail_error.clone(),
@@ -435,17 +528,27 @@ impl Engine {
                 self.push_calls_page();
             }
             CallsCmd::VoicemailPlay(id) => self.voicemail_play(&id).await?,
-            CallsCmd::VoicemailRead(id) => {
-                calling::voicemail::mark_read(&self.client, &id, true).await?;
-                if let Some(v) = self
-                    .calls_state()
-                    .voicemails
-                    .iter_mut()
-                    .find(|v| v.id == id)
-                {
-                    v.read = true;
-                }
+            CallsCmd::VoicemailRead(id) => self.voicemail_set_read(&id, true).await?,
+            CallsCmd::VoicemailUnread(id) => self.voicemail_set_read(&id, false).await?,
+            CallsCmd::VoicemailDelete(id) => {
+                calling::voicemail::delete(&self.client, &id).await?;
+                self.calls_state().voicemails.retain(|v| v.id != id);
                 self.push_calls_page();
+                self.ui.banner("Voicemail deleted".into());
+            }
+            CallsCmd::VoicemailCallBack(id) => self.voicemail_call_back(&id).await?,
+            CallsCmd::Hide(id) => {
+                hide_call(&mut self.cfg.lock().unwrap().hidden_calls, &self.me, &id);
+                self.save_cfg();
+                self.push_calls_page();
+                self.ui
+                    .banner("Removed from this list. The call stays in Teams.".into());
+            }
+            CallsCmd::CopyText(text) => {
+                match arboard::Clipboard::new().and_then(|mut c| c.set_text(text)) {
+                    Ok(()) => self.ui.banner("Copied".into()),
+                    Err(err) => self.ui.banner(format!("Couldn't copy: {err}")),
+                }
             }
         }
         Ok(())
@@ -496,16 +599,70 @@ impl Engine {
         });
     }
 
+    async fn voicemail_set_read(self: &Arc<Self>, id: &str, read: bool) -> anyhow::Result<()> {
+        calling::voicemail::mark_read(&self.client, id, read).await?;
+        if let Some(v) = self
+            .calls_state()
+            .voicemails
+            .iter_mut()
+            .find(|v| v.id == id)
+        {
+            v.read = read;
+        }
+        self.push_calls_page();
+        Ok(())
+    }
+
+    /// Call back: a voicemail names its caller by mail address, so the directory finds the person
+    /// and the 1:1 call path dials them. A call from a phone cannot be called back from kelma.
+    async fn voicemail_call_back(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let address = self
+            .calls_state()
+            .voicemails
+            .iter()
+            .find(|v| v.id == id)
+            .map(|v| v.caller_address.clone())
+            .unwrap_or_default();
+        match call_back_target(&address) {
+            CallBack::Number(_) => self.ui.banner(
+                "This voicemail came from a phone. kelma can't call phone numbers yet.".into(),
+            ),
+            CallBack::Unknown => self
+                .ui
+                .banner("This voicemail doesn't say who called.".into()),
+            CallBack::Person(email) => {
+                let found = self.client.search_people(&self.me, &email).await?;
+                let person = found.into_iter().find(|p| {
+                    p.email
+                        .as_deref()
+                        .is_some_and(|e| e.eq_ignore_ascii_case(&email))
+                });
+                match person {
+                    Some(p) => {
+                        self.direct_call_cmd(DirectCallCmd::DialPerson(p.mri))
+                            .await?
+                    }
+                    None => self
+                        .ui
+                        .banner("Couldn't find the person who left this voicemail.".into()),
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn calls_page_search(self: &Arc<Self>, q: String) -> anyhow::Result<()> {
+        let dial = phone_number(&q);
         let seq = {
             let mut s = self.calls_state();
             s.seq += 1;
-            if q.trim().is_empty() {
+            s.dial = dial.clone().unwrap_or_default();
+            if q.trim().is_empty() || dial.is_some() {
                 s.results.clear();
             }
             s.seq
         };
-        if q.trim().is_empty() {
+        if q.trim().is_empty() || dial.is_some() {
             self.push_calls_page();
             return Ok(());
         }
@@ -688,6 +845,96 @@ mod tests {
             Some(CallsCmd::SpeedMove("8:x".into(), 1))
         );
         assert_eq!(CallsCmd::parse("dial", "8:x"), None);
+    }
+
+    #[test]
+    fn a_phone_number_is_told_from_a_name() {
+        assert_eq!(
+            phone_number("+1 (555) 010-0000"),
+            Some("+15550100000".into())
+        );
+        assert_eq!(phone_number(" 0100 123 4567 "), Some("01001234567".into()));
+        assert_eq!(phone_number("555.0100"), Some("5550100".into()));
+        assert_eq!(phone_number("12"), None, "too short for a number");
+        assert_eq!(
+            phone_number("1234567890123456"),
+            None,
+            "too long for a number"
+        );
+        assert_eq!(phone_number("sam 555"), None);
+        assert_eq!(phone_number("555+0100"), None, "a plus only leads");
+        assert_eq!(phone_number("sam@example.com"), None);
+        assert_eq!(phone_number(""), None);
+    }
+
+    #[test]
+    fn a_pstn_mri_carries_its_number_and_a_person_does_not() {
+        assert_eq!(phone_of_mri("4:+15550100000"), "+15550100000");
+        assert_eq!(phone_of_mri("8:orgid:abc"), "");
+        assert_eq!(phone_of_mri(""), "");
+        let mut r = rec("p", CallDirection::Outgoing, CallOutcome::Accepted);
+        r.other_mri = Some("4:+15550100000".into());
+        let rows = rows(&[r], "all", |m| m.to_owned(), |_| String::new(), |_| false);
+        assert_eq!(rows[0].number, "+15550100000");
+    }
+
+    #[test]
+    fn a_hidden_call_stays_off_the_history_for_that_account_only() {
+        let mut list = Vec::new();
+        hide_call(&mut list, "me", "b");
+        hide_call(&mut list, "me", "b");
+        assert_eq!(list.len(), 1, "hiding twice keeps one entry");
+        hide_call(&mut list, "other", "a");
+        let kept: Vec<_> = unhidden(&sample(), &list, "me")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(kept, ["a", "c", "d", "g"]);
+        let kept: Vec<_> = unhidden(&sample(), &list, "other")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(kept, ["b", "c", "d", "g"]);
+    }
+
+    #[test]
+    fn a_voicemail_is_called_back_by_mail_address_unless_it_came_from_a_phone() {
+        assert_eq!(
+            call_back_target("pat@example.com"),
+            CallBack::Person("pat@example.com".into())
+        );
+        assert_eq!(
+            call_back_target("+1 555 010 0000@example.com"),
+            CallBack::Number("+15550100000".into())
+        );
+        assert_eq!(call_back_target(""), CallBack::Unknown);
+        assert_eq!(call_back_target("not an address"), CallBack::Unknown);
+    }
+
+    #[test]
+    fn the_new_commands_parse_and_need_their_argument() {
+        assert_eq!(
+            CallsCmd::parse("hide", "c1"),
+            Some(CallsCmd::Hide("c1".into()))
+        );
+        assert_eq!(CallsCmd::parse("hide", ""), None);
+        assert_eq!(
+            CallsCmd::parse("copy", "Sam"),
+            Some(CallsCmd::CopyText("Sam".into()))
+        );
+        assert_eq!(
+            CallsCmd::parse("voicemail-unread", "m"),
+            Some(CallsCmd::VoicemailUnread("m".into()))
+        );
+        assert_eq!(
+            CallsCmd::parse("voicemail-delete", "m"),
+            Some(CallsCmd::VoicemailDelete("m".into()))
+        );
+        assert_eq!(
+            CallsCmd::parse("voicemail-call", "m"),
+            Some(CallsCmd::VoicemailCallBack("m".into()))
+        );
+        assert_eq!(CallsCmd::parse("voicemail-delete", ""), None);
     }
 
     #[test]

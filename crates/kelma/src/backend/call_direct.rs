@@ -27,6 +27,7 @@
 
 use super::Engine;
 use super::call::{self, CallKind, CallManager, CurrentCall};
+use super::ringtone::RingtoneChoice;
 use crate::data::{Pixels, color_for, initials};
 use anyhow::Context;
 use calling::incoming::NoOffer;
@@ -553,7 +554,7 @@ impl Engine {
         c.ringtone = if waiting {
             Ringtone::waiting()
         } else {
-            Ringtone::start()
+            Ringtone::start(super::settings::calls_prefs().ringtone)
         };
         drop(c);
         let mut view = self.call_view(&mri, &name);
@@ -1192,14 +1193,69 @@ pub fn waiting_sample(n: u64) -> i16 {
     (0.12 * 32767.0 * fade * x.sin()) as i16
 }
 
+impl RingtoneChoice {
+    fn sample(self) -> fn(u64) -> i16 {
+        match self {
+            RingtoneChoice::Chime => ring_sample,
+            RingtoneChoice::Soft => soft_sample,
+            RingtoneChoice::Pulse => pulse_sample,
+        }
+    }
+}
+
+/// The "Soft" ringtone: one 800 ms note of 660 Hz with slow fades, every 3 s.
+const SOFT_NOTE: u64 = RING_RATE * 4 / 5;
+
+/// Sample `n` (48 kHz mono) of the soft ringtone.
+pub fn soft_sample(n: u64) -> i16 {
+    let t = n % RING_CYCLE;
+    if t >= SOFT_NOTE {
+        return 0;
+    }
+    let i = t as f64;
+    let fade = (i / 4800.0).min((SOFT_NOTE as f64 - i) / 4800.0).min(1.0);
+    let x = 2.0 * std::f64::consts::PI * 660.0 * n as f64 / RING_RATE as f64;
+    (0.18 * 32767.0 * fade * x.sin()) as i16
+}
+
+/// The "Pulse" ringtone: three 120 ms beeps of 880 Hz, 250 ms apart, every 3 s.
+const PULSE_BEEP: u64 = RING_RATE * 3 / 25;
+const PULSE_GAP: u64 = RING_RATE / 4;
+
+/// Sample `n` (48 kHz mono) of the pulse ringtone.
+pub fn pulse_sample(n: u64) -> i16 {
+    let t = n % RING_CYCLE;
+    let beep = t / PULSE_GAP;
+    let i = t % PULSE_GAP;
+    if beep > 2 || i >= PULSE_BEEP {
+        return 0;
+    }
+    let i = i as f64;
+    let fade = (i / 240.0).min((PULSE_BEEP as f64 - i) / 240.0).min(1.0);
+    let x = 2.0 * std::f64::consts::PI * 880.0 * n as f64 / RING_RATE as f64;
+    (0.18 * 32767.0 * fade * x.sin()) as i16
+}
+
+/// Plays a ringtone for three seconds, for the Settings preview. Silent in tests and demo mode.
+pub(crate) fn preview_ringtone(choice: RingtoneChoice) {
+    if let Some(tone) = Ringtone::start(choice) {
+        let _ = std::thread::Builder::new()
+            .name("kelma-ringtone-preview".into())
+            .spawn(move || {
+                std::thread::sleep(Duration::from_secs(3));
+                drop(tone);
+            });
+    }
+}
+
 /// Plays while it lives. Never plays in tests or demo mode.
 pub(crate) struct Ringtone {
     stop: Arc<AtomicBool>,
 }
 
 impl Ringtone {
-    fn start() -> Option<Ringtone> {
-        Self::play(ring_sample)
+    fn start(choice: RingtoneChoice) -> Option<Ringtone> {
+        Self::play(choice.sample())
     }
 
     /// The call-waiting beep instead of the ringtone.
@@ -1489,8 +1545,35 @@ mod tests {
     }
 
     #[test]
+    fn every_ringtone_choice_sounds_repeats_and_stays_quiet() {
+        for choice in RingtoneChoice::ALL {
+            let f = choice.sample();
+            let peak = (0..RING_CYCLE).map(|n| f(n).unsigned_abs()).max().unwrap();
+            assert!(peak > 1000, "{choice:?} is audible: {peak}");
+            assert!(peak < 8000, "{choice:?} is quiet enough: {peak}");
+            assert_eq!(f(0), 0, "{choice:?} starts from silence");
+            assert_eq!(
+                f(RING_RATE / 10),
+                f(RING_CYCLE + RING_RATE / 10),
+                "{choice:?} repeats"
+            );
+            assert_eq!(f(RING_RATE * 2), 0, "{choice:?} rests");
+            assert_eq!(RingtoneChoice::from_slug(choice.slug()), Some(choice));
+        }
+        // The pulse beeps three times, not four.
+        assert_ne!(
+            pulse_sample(PULSE_GAP * 2 + PULSE_BEEP / 2),
+            0,
+            "third beep"
+        );
+        assert_eq!(pulse_sample(PULSE_GAP * 3 + PULSE_BEEP / 2), 0, "no fourth");
+        assert_eq!(RingtoneChoice::from_slug("siren"), None);
+        assert_eq!(RingtoneChoice::default(), RingtoneChoice::Chime);
+    }
+
+    #[test]
     fn tests_never_ring() {
-        assert!(Ringtone::start().is_none());
+        assert!(Ringtone::start(RingtoneChoice::default()).is_none());
         assert!(Ringtone::waiting().is_none());
     }
 

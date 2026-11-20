@@ -522,3 +522,200 @@ fn the_details_pane_toggles_lists_recent_items_and_see_all_opens_shared() {
     assert!(!fs(&h.app).get_details_open());
     assert!(find_label(&h.app, "In this chat").is_empty());
 }
+// ---- The Files tab: row menu and toolbar ------------------------------------------------
+
+fn shared_row(name: &str, url: &str, editable: bool, sharepoint: bool) -> crate::SharedRow {
+    crate::SharedRow {
+        kind: "file".into(),
+        name: name.into(),
+        ext: "DOCX".into(),
+        shared_by: "Sam".into(),
+        date: "Nov 18, 2026".into(),
+        url: url.into(),
+        editable,
+        sharepoint,
+    }
+}
+
+/// A window on the Files tab with these rows and every FindStore command recorded.
+fn files_tab(rows: Vec<crate::SharedRow>, can_create: bool) -> (AppWindow, Log) {
+    let app = app_with_messages(vec![]);
+    let log = Log::default();
+    let l = log.clone();
+    fs(&app).on_command(move |name, arg| l.borrow_mut().push(format!("{name} {arg}")));
+    fs(&app).set_chat_tab("shared".into());
+    fs(&app).set_shared(ModelRc::new(VecModel::from(rows)));
+    fs(&app).set_shared_can_create(can_create);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    (app, log)
+}
+
+/// The name field of the Files tab's dialogs (the list header has a "Name" caption too).
+fn name_field(app: &AppWindow) -> ElementHandle {
+    find_label(app, "Name")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::TextInput))
+        .expect("the name field")
+}
+
+fn settle() {
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+}
+
+#[test]
+fn a_files_row_menu_offers_what_the_row_allows() {
+    let (app, log) = files_tab(
+        vec![
+            shared_row(
+                "Plan.docx",
+                "https://x.sharepoint.com/Plan.docx",
+                true,
+                true,
+            ),
+            shared_row(
+                "Shared in chat.pdf",
+                "https://example.com/c.pdf",
+                false,
+                false,
+            ),
+        ],
+        false,
+    );
+    // A SharePoint drive item: everything.
+    click(&labelled(&app, "More actions for Plan.docx"));
+    settle();
+    for item in [
+        "Open",
+        "Download",
+        "Copy link",
+        "Share",
+        "Rename",
+        "Delete",
+        "Open in SharePoint",
+    ] {
+        assert!(!find_label(&app, item).is_empty(), "{item}");
+    }
+    click(&labelled(&app, "Copy link"));
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "shared-copy-link https://x.sharepoint.com/Plan.docx"
+    );
+    settle();
+    assert!(
+        find_label(&app, "File actions").is_empty(),
+        "the menu closed"
+    );
+
+    click(&labelled(&app, "More actions for Plan.docx"));
+    settle();
+    click(&labelled(&app, "Download"));
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "shared-download https://x.sharepoint.com/Plan.docx"
+    );
+    click(&labelled(&app, "More actions for Plan.docx"));
+    settle();
+    click(&labelled(&app, "Share"));
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "shared-share https://x.sharepoint.com/Plan.docx"
+    );
+
+    // A file shared in a message has no drive item: open, copy the link, nothing else.
+    click(&labelled(&app, "More actions for Shared in chat.pdf"));
+    settle();
+    assert!(!find_label(&app, "Copy link").is_empty());
+    for item in [
+        "Download",
+        "Share",
+        "Rename",
+        "Delete",
+        "Open in SharePoint",
+    ] {
+        assert!(find_label(&app, item).is_empty(), "{item} is not offered");
+    }
+}
+
+#[test]
+fn renaming_and_deleting_a_file_ask_first() {
+    let (app, log) = files_tab(
+        vec![shared_row(
+            "Plan.docx",
+            "https://x.sharepoint.com/Plan.docx",
+            true,
+            true,
+        )],
+        false,
+    );
+    click(&labelled(&app, "More actions for Plan.docx"));
+    settle();
+    click(&labelled(&app, "Rename"));
+    settle();
+    let name = name_field(&app);
+    assert_eq!(
+        name.accessible_value().unwrap_or_default().as_str(),
+        "Plan.docx",
+        "the dialog starts with the current name"
+    );
+    name.set_accessible_value("Plan v2.docx");
+    settle();
+    click(&labelled(&app, "Save"));
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "shared-rename https://x.sharepoint.com/Plan.docx\u{1f}Plan v2.docx"
+    );
+
+    log.borrow_mut().clear();
+    click(&labelled(&app, "More actions for Plan.docx"));
+    settle();
+    click(&labelled(&app, "Delete"));
+    settle();
+    assert!(
+        log.borrow().is_empty(),
+        "nothing is deleted before the confirmation"
+    );
+    click(&labelled(&app, "Cancel"));
+    assert!(log.borrow().is_empty());
+    settle();
+    click(&labelled(&app, "More actions for Plan.docx"));
+    settle();
+    click(&labelled(&app, "Delete"));
+    settle();
+    let confirm = find_label(&app, "Delete")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+        .expect("the confirm button");
+    click(&confirm);
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "shared-delete https://x.sharepoint.com/Plan.docx"
+    );
+}
+
+#[test]
+fn a_channel_files_tab_can_create_a_folder_and_a_document() {
+    // No toolbar buttons for a chat.
+    let (chat, _) = files_tab(vec![], false);
+    assert!(find_label(&chat, "New folder").is_empty());
+    assert!(find_label(&chat, "New document").is_empty());
+
+    let (app, log) = files_tab(vec![], true);
+    click(&labelled(&app, "New folder"));
+    settle();
+    name_field(&app).set_accessible_value("Plans");
+    settle();
+    click(&labelled(&app, "Create"));
+    assert_eq!(log.borrow().last().unwrap(), "shared-new-folder Plans");
+
+    settle();
+    click(&labelled(&app, "New document"));
+    settle();
+    for item in ["Word document", "Excel workbook", "PowerPoint presentation"] {
+        assert!(!find_label(&app, item).is_empty(), "{item}");
+    }
+    click(&labelled(&app, "Excel workbook"));
+    assert_eq!(log.borrow().last().unwrap(), "shared-new-doc excel");
+    // Upload and From OneDrive stay.
+    assert!(!find_label(&app, "Upload").is_empty());
+    assert!(!find_label(&app, "Upload from OneDrive").is_empty());
+}

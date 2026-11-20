@@ -57,10 +57,27 @@ pub enum FindCmd {
     ChannelTabOpen(String),
     /// "Add a tab": a website, as `name` U+001F `url`.
     ChannelTabAdd(String),
+    /// "Add a tab" with an installed app, as `app id` U+001F `name`.
+    ChannelTabAddApp(String),
+    /// Rename a tab, as `tab id` U+001F `name`.
+    ChannelTabRename(String),
+    ChannelTabRemove(String),
+    /// The "Add a tab" dialog opened: list the installed apps that have a tab.
+    ChannelTabApps,
     SharedFilter(String),
     SharedKeyword(String),
     SharedOpen(String),
     SharedUpload,
+    /// The row menu, each with the row's address (Rename adds `name` after U+001F).
+    SharedDownload(String),
+    SharedCopyLink(String),
+    SharedShare(String),
+    SharedRename(String),
+    SharedDelete(String),
+    /// New folder, with its name.
+    SharedNewFolder(String),
+    /// New document: `word`, `excel` or `powerpoint`.
+    SharedNewDoc(String),
     /// Upload from OneDrive: the cloud-file picker, answered like Attach cloud files.
     SharedOneDrive,
     Details(bool),
@@ -94,10 +111,21 @@ impl FindCmd {
             "tab" => FindCmd::Tab(a),
             "channel-tab-open" => FindCmd::ChannelTabOpen(a),
             "channel-tab-add" => FindCmd::ChannelTabAdd(a),
+            "channel-tab-add-app" => FindCmd::ChannelTabAddApp(a),
+            "channel-tab-rename" => FindCmd::ChannelTabRename(a),
+            "channel-tab-remove" => FindCmd::ChannelTabRemove(a),
+            "channel-tab-apps" => FindCmd::ChannelTabApps,
             "shared-filter" => FindCmd::SharedFilter(a),
             "shared-keyword" => FindCmd::SharedKeyword(a),
             "shared-open" => FindCmd::SharedOpen(a),
             "shared-upload" => FindCmd::SharedUpload,
+            "shared-download" => FindCmd::SharedDownload(a),
+            "shared-copy-link" => FindCmd::SharedCopyLink(a),
+            "shared-share" => FindCmd::SharedShare(a),
+            "shared-rename" => FindCmd::SharedRename(a),
+            "shared-delete" => FindCmd::SharedDelete(a),
+            "shared-new-folder" => FindCmd::SharedNewFolder(a),
+            "shared-new-doc" => FindCmd::SharedNewDoc(a),
             "shared-onedrive" => FindCmd::SharedOneDrive,
             "details" => FindCmd::Details(arg == "open"),
             "follow" => FindCmd::Follow(a),
@@ -381,12 +409,23 @@ impl Engine {
                 }
             }
             FindCmd::ChannelTabAdd(arg) => self.add_channel_tab(&arg).await?,
+            FindCmd::ChannelTabAddApp(arg) => self.add_channel_app_tab(&arg).await?,
+            FindCmd::ChannelTabRename(arg) => self.rename_channel_tab(&arg).await?,
+            FindCmd::ChannelTabRemove(id) => self.remove_channel_tab(&id).await?,
+            FindCmd::ChannelTabApps => self.load_tab_apps().await,
             FindCmd::SharedFilter(f) => self.shared_filter(&f),
             FindCmd::SharedKeyword(k) => self.shared_keyword(k),
             FindCmd::SharedOpen(url) => {
                 self.clone().handle(super::Cmd::OpenUrl(url)).await;
             }
             FindCmd::SharedUpload => self.shared_upload().await,
+            FindCmd::SharedDownload(url) => self.shared_download(&url).await,
+            FindCmd::SharedCopyLink(url) => self.shared_copy_link(&url),
+            FindCmd::SharedShare(url) => self.shared_share(&url).await,
+            FindCmd::SharedRename(arg) => self.shared_rename(&arg).await,
+            FindCmd::SharedDelete(url) => self.shared_delete(&url).await,
+            FindCmd::SharedNewFolder(name) => self.shared_new_folder(&name).await,
+            FindCmd::SharedNewDoc(kind) => self.shared_new_doc(&kind).await,
             FindCmd::SharedOneDrive => self.shared_onedrive().await,
             FindCmd::Details(open) => self.details(open).await,
             FindCmd::Follow(id) => self.set_follow(&id, true).await?,

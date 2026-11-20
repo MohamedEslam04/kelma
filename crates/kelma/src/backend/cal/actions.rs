@@ -246,17 +246,40 @@ impl Engine {
         self.push_calendar();
     }
 
+    /// The peek of the open event, with the links its body (once the full view loaded it) adds.
+    fn cal_open_peek(&self) -> Option<PeekData> {
+        let s = self.cal.lock();
+        let e = s.open.as_deref().and_then(|id| s.find(id))?;
+        let mut p = model::peek_data(e, &local_offset);
+        if let Some(d) = s.detail.as_ref().filter(|d| d.event.id == e.id) {
+            p.add_links_from(&d.body);
+        }
+        Some(if s.is_extra(&e.id) { read_only(p) } else { p })
+    }
+
     /// Re-sends the peek for the open event after it changed.
     fn cal_refresh_peek(&self) {
-        let p = {
-            let s = self.cal.lock();
-            let Some(e) = s.open.as_deref().and_then(|id| s.find(id)) else {
-                return;
-            };
-            let p = model::peek_data(e, &local_offset);
-            if s.is_extra(&e.id) { read_only(p) } else { p }
+        if let Some(p) = self.cal_open_peek() {
+            self.ui.cal_peek(p);
+        }
+    }
+
+    /// Notes, Recap and Meeting options: Teams has no native view of them here, so they open in
+    /// the browser. The address comes from the open event, never from the UI.
+    fn cal_meeting_link(&self, kind: &str) {
+        let Some(p) = self.cal_open_peek() else {
+            return;
         };
-        self.ui.cal_peek(p);
+        let url = match kind {
+            "notes" => p.notes_url,
+            "recap" => p.recap_url,
+            _ => p.options_url,
+        };
+        if url.starts_with("https://") {
+            let _ = crate::external::open(&url);
+        } else {
+            self.cal_note("This event has no such page");
+        }
     }
 
     /// Loads the calendars, categories and mailbox work hours once the app is online.
@@ -322,6 +345,7 @@ impl Engine {
                 }
             }
             CalCmd::Chat => self.cal_open_chat().await,
+            CalCmd::MeetingLink(kind) => self.cal_meeting_link(&kind),
             CalCmd::Rsvp {
                 rsvp,
                 send,
@@ -522,6 +546,8 @@ impl Engine {
                 }
                 self.cal.lock().detail = Some(d);
                 self.ui.cal_detail(data);
+                // The body may carry the meeting's notes and recap links.
+                self.cal_refresh_peek();
             }
             Err(err) => {
                 tracing::warn!(%err, "event detail failed");

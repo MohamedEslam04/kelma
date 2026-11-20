@@ -11,7 +11,7 @@
 //! language, date-format, time-format, time-zone, startup, high-contrast, reduced-motion,
 //! larger-text, a11y, notify, pause, test-notification, privacy, unblock, priority-remove,
 //! speaker, mic, camera, noise-suppression, echo-cancellation, all-devices, test-sound, mic-test,
-//! call-feedback, open-files, perm, switch-account, switch-org, add-account, remove-account,
+//! call-feedback, ringtone, ringtone-preview, open-files, perm, switch-account, switch-org, add-account, remove-account,
 //! refresh-license, restart, sign-out, view-account, report-problem, check-updates, check-now,
 //! release-notes, status, work-location, status-note, banner-photo, banner-actions, notify-sound,
 //! meeting-chat.
@@ -19,6 +19,7 @@
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
 use crate::backend::call_feedback::Ask;
+use crate::backend::ringtone::RingtoneChoice;
 use crate::backend::settings::{
     self as st, DeviceLists, Local, Look, OpenFilesIn, ServerData, SettingsCmd,
 };
@@ -466,6 +467,7 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_echo_cancellation(l.devices.echo_cancellation);
     g.set_open_files(s(l.files.open_office_in.slug()));
     g.set_call_feedback(s(l.calls.ask_feedback.slug()));
+    g.set_ringtone(s(l.calls.ringtone.slug()));
     push_devices(w, c);
     push_perms(w, c);
 }
@@ -1150,6 +1152,18 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             let r = c.local.save_calls();
             push_local(w, &c);
             saved(w, r);
+        }
+        "ringtone" => {
+            let mut c = shared.borrow_mut();
+            c.local.calls.ringtone = RingtoneChoice::from_slug(arg).unwrap_or_default();
+            let r = c.local.save_calls();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "ringtone-preview" => {
+            let _choice = RingtoneChoice::from_slug(arg).unwrap_or_default();
+            #[cfg(feature = "calls")]
+            crate::backend::call_direct::preview_ringtone(_choice);
         }
         // --- Files and app permissions (local) ---
         "open-files" => {

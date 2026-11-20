@@ -47,6 +47,7 @@ mod people;
 mod people_live;
 mod people_presence;
 mod render;
+pub(crate) mod ringtone;
 mod send;
 pub(crate) mod settings;
 mod shared;
@@ -60,8 +61,8 @@ pub(crate) use activity::{State as ActivityState, row_data as activity_row_data}
 pub use appstore::AppsCmd;
 #[cfg(test)]
 pub use cal::{
-    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, ProposalRow, SuggestRow, build, filter_opts,
-    parse_view, peek_data, room_rows, sched_rows,
+    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, ProposalRow, SuggestRow, build, build_split,
+    filter_opts, parse_view, peek_data, room_rows, sched_rows,
 };
 pub use cal::{
     CalCmd, CalData, DetailData, FormFields, FormOpen, Panels, PeekData, PermRow, RoomsPush,

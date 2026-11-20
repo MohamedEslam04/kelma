@@ -233,6 +233,10 @@ pub struct Config {
     /// The Calls page's speed dial, in the order shown, for every account.
     #[serde(default)]
     pub speed_dial: Vec<SpeedDial>,
+    /// Calls the user removed from the Calls page's history on this computer (Teams has no
+    /// delete), as `owner` U+001F `call id`. The call stays in Teams.
+    #[serde(default)]
+    pub hidden_calls: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -257,6 +261,7 @@ impl Default for Config {
             recent_emoji: Vec::new(),
             accounts: Vec::new(),
             speed_dial: Vec::new(),
+            hidden_calls: Vec::new(),
         }
     }
 }

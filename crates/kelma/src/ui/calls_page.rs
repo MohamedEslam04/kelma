@@ -35,6 +35,7 @@ fn history_item(r: HistoryRow) -> CallHistoryItem {
         duration: r.duration.into(),
         group: r.group,
         speed: r.speed,
+        number: r.number.into(),
     }
 }
 
@@ -74,6 +75,7 @@ fn set(w: &AppWindow, d: CallsData) {
     ));
     s.set_results(model(d.results.into_iter().map(person_item).collect()));
     s.set_speed(model(d.speed.into_iter().map(person_item).collect()));
+    s.set_dial(d.dial.into());
     s.set_loading(d.loading);
     s.set_error(d.error.into());
     s.set_voicemail_error(d.voicemail_error.into());
@@ -126,6 +128,7 @@ mod tests {
             duration: if missed { "" } else { "1m 5s" }.into(),
             group: mri.is_empty(),
             speed: false,
+            number: String::new(),
         }
     }
 
@@ -264,5 +267,156 @@ mod tests {
             *log.borrow(),
             [("call".to_string(), "8:orgid:s".to_string())]
         );
+    }
+
+    fn labelled(app: &AppWindow, label: &str) -> Vec<ElementHandle> {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        // Buttons only: a menu item's text carries the same label as the item.
+        ElementHandle::find_by_accessible_label(app, label)
+            .filter(|e| {
+                e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button)
+            })
+            .collect()
+    }
+
+    fn press(app: &AppWindow, label: &str) {
+        labelled(app, label)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("no element labelled {label:?}"))
+            .mock_single_click(PointerEventButton::Left);
+    }
+
+    #[test]
+    fn a_history_row_menu_calls_chats_copies_and_removes_from_view() {
+        let app = app();
+        app.set_view("calls".into());
+        let log = commands(&app);
+        let mut pstn = row("p", "4:+15550100000", false);
+        pstn.name = "+1 555 010 0000".into();
+        pstn.number = "+15550100000".into();
+        set(
+            &app,
+            CallsData {
+                filter: "all".into(),
+                history: vec![row("a", "8:orgid:a", false), pstn, row("g", "", false)],
+                ..Default::default()
+            },
+        );
+        // A person: call back, chat, speed dial, copy the name, remove. No number to copy.
+        press(&app, "More actions for Person a");
+        // (Call back and Chat are also buttons of the rows: two rows with a person, plus the menu.)
+        assert_eq!(labelled(&app, "Call back").len(), 3);
+        assert_eq!(labelled(&app, "Chat").len(), 3);
+        for item in ["Copy name", "Remove from view"] {
+            assert_eq!(labelled(&app, item).len(), 1, "{item}");
+        }
+        assert_eq!(labelled(&app, "Add to speed dial").len(), 3);
+        assert!(labelled(&app, "Copy number").is_empty());
+        press(&app, "Copy name");
+        assert_eq!(
+            log.borrow().last().unwrap(),
+            &("copy".to_string(), "Person a".to_string())
+        );
+        // The menu closed; a phone number can be copied too.
+        press(&app, "More actions for +1 555 010 0000");
+        press(&app, "Copy number");
+        assert_eq!(
+            log.borrow().last().unwrap(),
+            &("copy".to_string(), "+15550100000".to_string())
+        );
+        press(&app, "More actions for +1 555 010 0000");
+        press(&app, "Remove from view");
+        assert_eq!(
+            log.borrow().last().unwrap(),
+            &("hide".to_string(), "p".to_string())
+        );
+        // A group call has no one to call or chat with, only the copy and the removal.
+        press(&app, "More actions for Person g");
+        // (The two rows with a person already have a Call back and a Chat button of their own.)
+        assert_eq!(labelled(&app, "Call back").len(), 2);
+        assert_eq!(labelled(&app, "Chat").len(), 2);
+        assert!(!labelled(&app, "Remove from view").is_empty());
+    }
+
+    #[test]
+    fn a_voicemail_can_be_called_back_marked_either_way_and_deleted() {
+        let app = app();
+        app.set_view("calls".into());
+        let log = commands(&app);
+        let vm = |id: &str, unread: bool| VoicemailRow {
+            id: id.into(),
+            mri: String::new(),
+            name: format!("Caller {id}"),
+            initials: "C".into(),
+            color: 0x123456,
+            when: "Yesterday".into(),
+            duration: "12s".into(),
+            transcript: "Call me".into(),
+            unread,
+        };
+        set(
+            &app,
+            CallsData {
+                filter: "voicemail".into(),
+                voicemails: vec![vm("u", true), vm("r", false)],
+                ..Default::default()
+            },
+        );
+        press(&app, "Mark as read");
+        assert_eq!(
+            log.borrow().last().unwrap(),
+            &("voicemail-read".to_string(), "u".to_string())
+        );
+        press(&app, "Mark as unread");
+        assert_eq!(
+            log.borrow().last().unwrap(),
+            &("voicemail-unread".to_string(), "r".to_string())
+        );
+        press(&app, "Delete voicemail from Caller r");
+        assert_eq!(
+            log.borrow().last().unwrap(),
+            &("voicemail-delete".to_string(), "r".to_string())
+        );
+        click(&app, "VoicemailLine::play-button", 0);
+        assert_eq!(
+            log.borrow().last().unwrap(),
+            &("voicemail-play".to_string(), "u".to_string())
+        );
+        // Call back is on every row (the first Call back button is the first row's).
+        labelled(&app, "Call back")[0].mock_single_click(PointerEventButton::Left);
+        assert_eq!(
+            log.borrow().last().unwrap(),
+            &("voicemail-call".to_string(), "u".to_string())
+        );
+    }
+
+    #[test]
+    fn a_phone_number_in_the_search_box_shows_a_disabled_call_row() {
+        let app = app();
+        app.set_view("calls".into());
+        let log = commands(&app);
+        assert!(labelled(&app, "Call +15550100000").is_empty());
+        set(
+            &app,
+            CallsData {
+                filter: "all".into(),
+                dial: "+15550100000".into(),
+                ..Default::default()
+            },
+        );
+        let row = labelled(&app, "Call +15550100000");
+        assert_eq!(row.len(), 1, "a Call <number> row appears");
+        assert_eq!(
+            row[0].accessible_enabled(),
+            Some(false),
+            "kelma cannot dial phone numbers yet"
+        );
+        assert_eq!(
+            row[0].accessible_description().unwrap_or_default().as_str(),
+            "kelma can't call phone numbers yet."
+        );
+        row[0].invoke_accessible_default_action();
+        assert!(log.borrow().is_empty(), "no call is placed");
     }
 }

@@ -325,6 +325,49 @@ fn the_page_list_and_find_in_settings_switch_pages() {
 }
 
 #[test]
+fn the_calls_page_picks_a_ringtone_and_is_honest_about_forwarding() {
+    use crate::backend::ringtone::RingtoneChoice;
+    let home = Home::new("ringtone");
+    let dir = home.paths().config_dir;
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "general");
+    press(app, "Calls");
+    assert_eq!(value_of(app, "Settings page"), "Calls");
+    assert!(checked(app, "Ringtone: Chime"), "the chime is the default");
+
+    press(app, "Ringtone: Soft");
+    assert_eq!(store(app).get_ringtone(), "soft");
+    assert!(checked(app, "Ringtone: Soft"));
+    assert_eq!(Local::load(&dir).calls.ringtone, RingtoneChoice::Soft);
+    // Play makes no sound in tests, and changes nothing.
+    press(app, "Play ringtone");
+    assert_eq!(Local::load(&dir).calls.ringtone, RingtoneChoice::Soft);
+
+    // Forwarding and the voicemail greeting live in Teams: shown, not pretending to work.
+    for label in [
+        "Forward my calls: Don't forward",
+        "If unanswered: Voicemail",
+        "Ring for: 20 seconds",
+    ] {
+        let option = ElementHandle::find_by_accessible_label(app, label)
+            .next()
+            .unwrap_or_else(|| panic!("no {label}"));
+        assert_eq!(option.accessible_enabled(), Some(false), "{label}");
+        assert_eq!(option.accessible_checked(), Some(false), "{label}");
+    }
+    assert_eq!(
+        control(app, "Record a greeting").accessible_enabled(),
+        Some(false)
+    );
+
+    // Find in Settings leads to the page.
+    control(app, "Find in Settings").set_accessible_value("ringtone");
+    press(app, "Result: Ringtone in Calls");
+    assert_eq!(value_of(app, "Settings page"), "Calls");
+}
+
+#[test]
 fn a_find_result_scrolls_its_setting_into_view() {
     // "Ask about call quality after calls" sits at the bottom of Devices: opening the page alone
     // left it below the window.

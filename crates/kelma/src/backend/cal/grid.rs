@@ -581,6 +581,59 @@ pub fn build(events: &[&Event], c: &Ctx) -> CalData {
     out
 }
 
+/// The Split view: the day of `c.date` once per calendar, side by side. Each column is headed by
+/// its calendar's name (in `DayHead::label`) over the day number; `columns` are `(name, events)`.
+pub fn build_split(columns: &[(String, Vec<&Event>)], c: &Ctx) -> CalData {
+    let day = Ctx {
+        date: c.date,
+        view: View::Day(1),
+        scale: c.scale,
+        now_ms: c.now_ms,
+        first_day: c.first_day,
+        mini_anchor: c.mini_anchor,
+        off: c.off,
+        prefs: c.prefs,
+    };
+    let everything: Vec<&Event> = columns
+        .iter()
+        .flat_map(|(_, e)| e.iter().copied())
+        .collect();
+    let mut out = build(&everything, &day);
+    out.view_key = "split".into();
+    out.view_kind = "split".into();
+    out.day_count = 1;
+    let head = out.days.first().cloned().unwrap_or(DayHead {
+        iso: c.date.to_string(),
+        label: String::new(),
+        number: c.date.day,
+        today: false,
+        weekend: false,
+        pin: String::new(),
+    });
+    out.days = columns
+        .iter()
+        .map(|(name, _)| DayHead {
+            label: name.clone(),
+            pin: String::new(),
+            ..head.clone()
+        })
+        .collect();
+    out.blocks.clear();
+    out.all_day.clear();
+    out.all_day_rows = 0;
+    for (col, (_, events)) in columns.iter().enumerate() {
+        let mut part = CalData::default();
+        time_grid(events, &[c.date], &day, &mut part);
+        out.blocks
+            .extend(part.blocks.into_iter().map(|b| Block { col, ..b }));
+        out.all_day
+            .extend(part.all_day.into_iter().map(|a| AllDay { col, ..a }));
+        out.all_day_rows = out.all_day_rows.max(part.all_day_rows);
+    }
+    // The line of "now" stays in the first column.
+    out
+}
+
 /// The ISO week number of a row of days: the week of the row's Thursday (or its middle day
 /// when the row has none, as in a week without weekends starting elsewhere).
 fn row_week(row: &[Date]) -> u32 {
@@ -766,6 +819,38 @@ mod tests {
             off,
             prefs: &DEFAULT_PREFS,
         }
+    }
+
+    #[test]
+    fn split_view_puts_each_calendar_in_its_own_column() {
+        let a = ev("a", 0, 9.0, 10.0, 0, json!({}));
+        let b = ev("b", 0, 9.5, 11.0, 0, json!({}));
+        let all_day = ev("d", 0, 0.0, 24.0, 0, json!({"isAllDay": true}));
+        let mine = vec![&a];
+        let other = vec![&b, &all_day];
+        let cols = vec![
+            ("Mine".to_string(), mine),
+            ("Sam Example".to_string(), other),
+        ];
+        let d = build_split(&cols, &ctx(View::Day(1), &utc));
+        assert_eq!(d.view_kind, "split");
+        assert_eq!(d.view_key, "split");
+        assert_eq!(
+            d.days.iter().map(|h| h.label.as_str()).collect::<Vec<_>>(),
+            ["Mine", "Sam Example"],
+            "a column per calendar, headed by its name"
+        );
+        assert!(d.days.iter().all(|h| h.number == 18 && h.pin.is_empty()));
+        let block = |id: &str| d.blocks.iter().find(|b| b.id == id).unwrap();
+        assert_eq!(block("a").col, 0);
+        assert_eq!(block("b").col, 1);
+        assert_eq!(
+            (block("a").lane, block("a").lanes),
+            (0, 1),
+            "events of different calendars do not share a column"
+        );
+        assert_eq!(d.all_day.len(), 1);
+        assert_eq!(d.all_day[0].col, 1);
     }
 
     #[test]

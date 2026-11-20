@@ -90,6 +90,16 @@ pub fn files_prefs() -> FilesPrefs {
 pub struct CallsPrefs {
     /// "Ask about call quality after calls".
     pub ask_feedback: call_feedback::Ask,
+    /// The sound of an incoming call.
+    pub ringtone: super::ringtone::RingtoneChoice,
+}
+
+/// The saved calls preferences, read from `calls.json` (the ringing path reads it each time, so
+/// a change in Settings applies to the next call).
+pub fn calls_prefs() -> CallsPrefs {
+    session::Paths::new()
+        .map(|p| read_json(&p.config_dir.join(CALLS_FILE)))
+        .unwrap_or_default()
 }
 
 fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
@@ -838,7 +848,7 @@ pub fn dry_run_remove(middle_tier: &str, list: ContactList, mri: &str) -> Planne
 // ---------------------------------------------------------------------------------------------
 // Find in Settings.
 
-pub const PAGES: [(&str, &str); 10] = [
+pub const PAGES: [(&str, &str); 11] = [
     ("general", "General"),
     ("accounts", "Accounts and orgs"),
     ("privacy", "Privacy"),
@@ -846,6 +856,7 @@ pub const PAGES: [(&str, &str); 10] = [
     ("appearance", "Appearance"),
     ("accessibility", "Accessibility"),
     ("devices", "Devices"),
+    ("calls", "Calls"),
     ("files", "Files and links"),
     ("permissions", "App permissions"),
     ("about", "About"),
@@ -933,6 +944,13 @@ const INDEX: &[(&str, &str, &str)] = &[
         "Ask about call quality after calls",
         "calls survey feedback rating",
     ),
+    ("calls", "Ringtone", "incoming call sound ring"),
+    (
+        "calls",
+        "Call forwarding",
+        "forward calls unanswered redirect voicemail ring time",
+    ),
+    ("calls", "Voicemail greeting", "voicemail record greeting"),
     (
         "files",
         "Open Word, Excel and PowerPoint files in",
@@ -1954,6 +1972,21 @@ mod tests {
         assert_eq!(p.ask_feedback, call_feedback::Ask::Sometimes);
         let p: CallsPrefs = serde_json::from_str(r#"{"ask_feedback":"always"}"#).unwrap();
         assert_eq!(p.ask_feedback, call_feedback::Ask::Always);
+    }
+
+    #[test]
+    fn the_ringtone_defaults_to_the_chime_and_survives_a_save() {
+        use super::super::ringtone::RingtoneChoice;
+        assert_eq!(CallsPrefs::default().ringtone, RingtoneChoice::Chime);
+        let p: CallsPrefs = serde_json::from_str(r#"{"ask_feedback":"never"}"#).unwrap();
+        assert_eq!(p.ringtone, RingtoneChoice::Chime, "an old file has none");
+        let p = CallsPrefs {
+            ringtone: RingtoneChoice::Pulse,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"pulse\""), "{json}");
+        assert_eq!(serde_json::from_str::<CallsPrefs>(&json).unwrap(), p);
     }
 
     // ---- files and app grants (X1.6, X1.7) ----

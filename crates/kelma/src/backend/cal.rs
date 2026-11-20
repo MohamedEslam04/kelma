@@ -20,7 +20,7 @@ use chrono::{Local, TimeZone};
 use grid::DAY_MS;
 pub use grid::{CalData, Ctx};
 #[cfg(test)]
-pub use grid::{DEFAULT_PREFS, Prefs, build, parse_view};
+pub use grid::{DEFAULT_PREFS, Prefs, build, build_split, parse_view};
 pub use model::{
     DetailData, FormOpen, Panels, PeekData, PermRow, RoomsPush, SchedPush, SettingsData,
     share_roles,
@@ -116,6 +116,8 @@ pub enum CalCmd {
     JoinEvent,
     CopyLink,
     Chat,
+    /// Opens a page of the open meeting in the browser: `notes`, `recap` or `options`.
+    MeetingLink(String),
     Rsvp {
         rsvp: Rsvp,
         send: bool,
@@ -248,6 +250,9 @@ impl CalCmd {
             "join-event" => CalCmd::JoinEvent,
             "copy-link" => CalCmd::CopyLink,
             "chat" => CalCmd::Chat,
+            "meeting-link" if matches!(arg, "notes" | "recap" | "options") => {
+                CalCmd::MeetingLink(arg.into())
+            }
             "rsvp" => {
                 let p = parts(arg, 3);
                 CalCmd::Rsvp {
@@ -378,6 +383,8 @@ struct Inner {
     cache: EventCache,
     date: Date,
     view: View,
+    /// The Split view: one day, a column per calendar. `view` stays `Day(1)` meanwhile.
+    split: bool,
     scale: u32,
     mini: Date,
     /// The delta window `[start, end)`, once the first delta finished.
@@ -422,6 +429,9 @@ struct Inner {
     last_panels: Option<Panels>,
 }
 
+/// The saved view key of the Split view (the grid's own keys only know single views).
+const SPLIT: &str = "split";
+
 /// Calendar state shared by the engine.
 pub struct CalState(Mutex<Inner>);
 
@@ -443,10 +453,14 @@ impl CalState {
         CalState(Mutex::new(Inner {
             cache: EventCache::default(),
             date: today,
-            view: cfg
-                .calendar_view
-                .as_deref()
-                .map_or(View::WorkWeek, grid::parse_view),
+            view: cfg.calendar_view.as_deref().map_or(View::WorkWeek, |k| {
+                if k == SPLIT {
+                    View::Day(1)
+                } else {
+                    grid::parse_view(k)
+                }
+            }),
+            split: cfg.calendar_view.as_deref() == Some(SPLIT),
             scale: cfg
                 .calendar_scale
                 .filter(|s| SCALES.contains(s))
@@ -545,11 +559,11 @@ impl Inner {
                 self.mini = self.date;
             }
             CalCmd::SetView(k) => {
-                self.view = grid::parse_view(k);
+                self.set_view_key(k);
                 return true;
             }
             CalCmd::Days(d) => {
-                if let View::Day(n) = self.view {
+                if let (View::Day(n), false) = (self.view, self.split) {
                     let n = (n as i32 + d).clamp(1, grid::MAX_DAYS as i32);
                     self.view = View::Day(n as u32);
                     return true;
@@ -572,6 +586,7 @@ impl Inner {
             CalCmd::Range(a, b) => {
                 let (from, to) = if a <= b { (*a, *b) } else { (*b, *a) };
                 let days = ((to.midnight_ms() - from.midnight_ms()) / DAY_MS + 1) as u32;
+                self.split = false;
                 self.view = View::Day(days.clamp(1, grid::MAX_DAYS));
                 self.date = from;
                 self.mini = from;
@@ -579,7 +594,7 @@ impl Inner {
             }
             CalCmd::SavedApply(name) => {
                 if let Some(v) = self.saved_views.iter().find(|v| v.name == *name).cloned() {
-                    self.view = grid::parse_view(&v.view);
+                    self.set_view_key(&v.view);
                     if SCALES.contains(&v.scale) {
                         self.scale = v.scale;
                     }
@@ -591,7 +606,7 @@ impl Inner {
                 if !name.is_empty() {
                     let v = session::SavedView {
                         name: name.into(),
-                        view: grid::view_key(self.view),
+                        view: self.view_key(),
                         scale: self.scale,
                     };
                     match self.saved_views.iter_mut().find(|x| x.name == v.name) {
@@ -680,23 +695,73 @@ impl Inner {
         v
     }
 
+    /// The Split view's columns: my calendar, then each ticked one in the list's order, each with
+    /// its events of the range, narrowed by the filters.
+    fn split_columns(&self, s: i64, e: i64) -> Vec<(String, Vec<&Event>)> {
+        let name = self
+            .calendars
+            .iter()
+            .find(|c| c.is_default)
+            .map_or_else(|| "My calendar".to_owned(), |c| c.name.clone());
+        let mut mine = self.cache.in_range(s, e);
+        mine.retain(|x| self.filter.matches(x));
+        let mut cols = vec![(name, mine)];
+        for c in self
+            .calendars
+            .iter()
+            .filter(|c| !c.is_default && self.visible.contains(&c.id))
+        {
+            let events: Vec<&Event> = self
+                .extras
+                .get(&c.id)
+                .map(|(evs, _)| {
+                    evs.iter()
+                        .filter(|x| overlaps(x, s, e) && self.filter.matches(x))
+                        .collect()
+                })
+                .unwrap_or_default();
+            cols.push((c.name.clone(), events));
+        }
+        cols
+    }
+
+    /// The view as the config file and saved views name it.
+    fn view_key(&self) -> String {
+        if self.split {
+            SPLIT.into()
+        } else {
+            grid::view_key(self.view)
+        }
+    }
+
+    /// Switches to the view a key names (`split` or one of the grid's).
+    fn set_view_key(&mut self, key: &str) {
+        self.split = key == SPLIT;
+        self.view = if self.split {
+            View::Day(1)
+        } else {
+            grid::parse_view(key)
+        };
+    }
+
     fn data(&self, now: i64) -> CalData {
         let (s, e) = self.range();
-        let events = self.visible_events(s, e);
         let prefs = self.prefs(now);
-        let mut data = grid::build(
-            &events,
-            &Ctx {
-                date: self.date,
-                view: self.view,
-                scale: self.scale,
-                now_ms: now,
-                first_day: self.first_day(),
-                mini_anchor: self.mini,
-                off: &local_offset,
-                prefs: &prefs,
-            },
-        );
+        let ctx = Ctx {
+            date: self.date,
+            view: self.view,
+            scale: self.scale,
+            now_ms: now,
+            first_day: self.first_day(),
+            mini_anchor: self.mini,
+            off: &local_offset,
+            prefs: &prefs,
+        };
+        let mut data = if self.split {
+            grid::build_split(&self.split_columns(s, e), &ctx)
+        } else {
+            grid::build(&self.visible_events(s, e), &ctx)
+        };
         for b in &mut data.blocks {
             if let Some(c) = self.tones.get(&b.id) {
                 b.look.color = *c;
@@ -1028,7 +1093,7 @@ impl Engine {
         let (view, scale, settings, saved) = {
             let s = self.cal.lock();
             (
-                grid::view_key(s.view),
+                s.view_key(),
                 s.scale,
                 s.settings.clone(),
                 s.saved_views.clone(),
@@ -1185,6 +1250,49 @@ mod tests {
 
     fn state(cfg: session::Config) -> CalState {
         CalState::new(&cfg)
+    }
+
+    #[test]
+    fn split_view_is_one_day_with_a_column_per_ticked_calendar_and_is_saved() {
+        let cal = |id: &str, name: &str, default: bool| CalendarInfo {
+            id: id.into(),
+            name: name.into(),
+            color: "auto".into(),
+            hex_color: None,
+            is_default: default,
+            can_edit: false,
+            can_share: false,
+            owner_name: String::new(),
+            owner_email: String::new(),
+        };
+        let s = state(session::Config::default());
+        let mut s = s.lock();
+        s.calendars = vec![
+            cal("c0", "Mine", true),
+            cal("c1", "Team", false),
+            cal("c2", "Hidden", false),
+        ];
+        s.visible.insert("c1".into());
+        assert!(s.apply(&CalCmd::SetView("split".into()), NOV_18));
+        assert_eq!((s.view, s.split), (View::Day(1), true));
+        assert_eq!(s.view_key(), "split", "the config and saved views keep it");
+        assert!(
+            !s.apply(&CalCmd::Days(2), NOV_18),
+            "a split view is always one day"
+        );
+        let names: Vec<_> = s.split_columns(0, 1).into_iter().map(|c| c.0).collect();
+        assert_eq!(names, ["Mine", "Team"], "unticked calendars have no column");
+        assert_eq!(s.data(0).view_kind, "split");
+        // Another view leaves it, and a restored config brings it back.
+        s.apply(&CalCmd::SetView("week".into()), NOV_18);
+        assert_eq!((s.view, s.split), (View::Week, false));
+        drop(s);
+        let g = state(session::Config {
+            calendar_view: Some("split".into()),
+            ..Default::default()
+        });
+        let g = g.lock();
+        assert_eq!((g.view, g.split), (View::Day(1), true));
     }
 
     const NOV_18: Date = Date {

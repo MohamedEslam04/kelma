@@ -1033,6 +1033,7 @@ fn a_channel_shows_its_other_tabs_and_add_a_tab_sends_a_name_and_address() {
     let tabs = vec![ChannelTabItem {
         name: "Board".into(),
         url: "https://tasks.office.com/board".into(),
+        id: "t1".into(),
     }];
     app.global::<FindStore>()
         .set_channel_tabs(ModelRc::new(VecModel::from(tabs)));
@@ -1065,6 +1066,118 @@ fn a_channel_shows_its_other_tabs_and_add_a_tab_sends_a_name_and_address() {
     assert_eq!(
         log.borrow().last().unwrap(),
         "channel-tab-add Docs\u{1f}example.com/docs"
+    );
+    assert!(!app.global::<FindStore>().get_tab_add_open());
+}
+
+#[test]
+fn a_channel_tab_can_be_renamed_or_removed_from_its_menu() {
+    use crate::{ChannelTabItem, FindStore};
+    let app = app_with_messages(vec![]);
+    app.set_current_id("19:tests@thread.tacv2".into());
+    app.set_current_is_channel(true);
+    app.global::<FindStore>()
+        .set_channel_tabs(ModelRc::new(VecModel::from(vec![ChannelTabItem {
+            name: "Board".into(),
+            url: "https://tasks.office.com/board".into(),
+            id: "t1".into(),
+        }])));
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let l = log.clone();
+        app.global::<FindStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    click(&find_label(&app, "Tab options for Board")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert_eq!(app.global::<FindStore>().get_tab_menu_id(), "t1");
+    assert!(!find_label(&app, "Remove tab").is_empty());
+
+    // Rename sends the tab's id and the new name.
+    click(&find_label(&app, "Rename tab")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let name = find_label(&app, "Tab name")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::TextInput))
+        .expect("the name field");
+    assert_eq!(
+        name.accessible_value().unwrap_or_default().as_str(),
+        "Board"
+    );
+    name.set_accessible_value("Plan");
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    click(&find_label(&app, "Save")[0]);
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "channel-tab-rename t1\u{1f}Plan"
+    );
+    assert_eq!(
+        app.global::<FindStore>().get_tab_menu_id(),
+        "",
+        "all closed"
+    );
+
+    // Remove asks first, then sends the id.
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    click(&find_label(&app, "Tab options for Board")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    click(&find_label(&app, "Remove tab")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert_ne!(log.borrow().last().unwrap(), "channel-tab-remove t1");
+    let confirm = find_label(&app, "Remove")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+        .expect("the confirm button");
+    click(&confirm);
+    assert_eq!(log.borrow().last().unwrap(), "channel-tab-remove t1");
+}
+
+#[test]
+fn add_a_tab_can_add_an_installed_apps_tab() {
+    use crate::{ChannelTabApp, FindStore};
+    let app = app_with_messages(vec![]);
+    app.set_current_id("19:tests@thread.tacv2".into());
+    app.set_current_is_channel(true);
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let l = log.clone();
+        app.global::<FindStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    find_label(&app, "Add a tab")[0].invoke_accessible_default_action();
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    // The App choice asks for the installed apps, and offers them by name.
+    click(&find_label(&app, "App")[0]);
+    assert_eq!(log.borrow().last().unwrap(), "channel-tab-apps ");
+    app.global::<FindStore>()
+        .set_tab_apps(ModelRc::new(VecModel::from(vec![
+            ChannelTabApp {
+                id: "app-1".into(),
+                name: "Planner".into(),
+            },
+            ChannelTabApp {
+                id: "app-2".into(),
+                name: "Wiki".into(),
+            },
+        ])));
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let add = || {
+        find_label(&app, "Add")
+            .into_iter()
+            .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+            .expect("the Add button")
+    };
+    assert_eq!(add().accessible_enabled(), Some(false), "no app picked yet");
+    click(&find_label(&app, "Planner")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert_eq!(add().accessible_enabled(), Some(true));
+    click(&add());
+    // The name starts as the app's name.
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "channel-tab-add-app app-1\u{1f}Planner"
     );
     assert!(!app.global::<FindStore>().get_tab_add_open());
 }

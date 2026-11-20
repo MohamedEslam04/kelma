@@ -88,6 +88,22 @@ pub fn website_tab_body(name: &str, url: &str) -> Value {
     })
 }
 
+/// The body that renames a tab (`PATCH …/tabs/{id}`).
+pub fn rename_tab_body(name: &str) -> Value {
+    json!({ "displayName": name })
+}
+
+/// The body that adds a tab of an installed app, without a configuration. UNVERIFIED: Graph
+/// documents that apps whose tab needs setup are added unconfigured and set up in Teams, but
+/// kelma has not sent this to a tenant.
+pub fn app_tab_body(name: &str, app_id: &str) -> Value {
+    json!({
+        "displayName": name,
+        "teamsApp@odata.bind":
+            format!("https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/{app_id}"),
+    })
+}
+
 impl Client {
     /// The channel's tabs (without Files).
     pub async fn channel_tabs(&self, group_id: &str, channel_id: &str) -> Result<Vec<ChannelTab>> {
@@ -110,6 +126,54 @@ impl Client {
         let u = graph_url(&["teams", group_id, "channels", channel_id, "tabs"], "");
         let body = website_tab_body(name, url);
         self.json("add tab", Method::POST, &u, Some(&body)).await?;
+        Ok(())
+    }
+
+    /// Adds a tab of an installed app (UNVERIFIED, see [`app_tab_body`]).
+    pub async fn add_app_tab(
+        &self,
+        group_id: &str,
+        channel_id: &str,
+        name: &str,
+        app_id: &str,
+    ) -> Result<()> {
+        let u = graph_url(&["teams", group_id, "channels", channel_id, "tabs"], "");
+        let body = app_tab_body(name, app_id);
+        self.json("add app tab", Method::POST, &u, Some(&body))
+            .await?;
+        Ok(())
+    }
+
+    /// Renames a tab (Graph "Update tab").
+    pub async fn rename_channel_tab(
+        &self,
+        group_id: &str,
+        channel_id: &str,
+        tab_id: &str,
+        name: &str,
+    ) -> Result<()> {
+        let u = graph_url(
+            &["teams", group_id, "channels", channel_id, "tabs", tab_id],
+            "",
+        );
+        let body = rename_tab_body(name);
+        self.json("rename tab", Method::PATCH, &u, Some(&body))
+            .await?;
+        Ok(())
+    }
+
+    /// Removes a tab from the channel (Graph "Delete tab").
+    pub async fn remove_channel_tab(
+        &self,
+        group_id: &str,
+        channel_id: &str,
+        tab_id: &str,
+    ) -> Result<()> {
+        let u = graph_url(
+            &["teams", group_id, "channels", channel_id, "tabs", tab_id],
+            "",
+        );
+        self.json("remove tab", Method::DELETE, &u, None).await?;
         Ok(())
     }
 }
@@ -147,6 +211,18 @@ mod tests {
              "teamsApp": {"id": "2a527703-1f6f-4559-a332-d8a7d288cd88", "displayName": "Files"}}
         ]});
         assert!(parse_tabs(&v).is_empty());
+    }
+
+    #[test]
+    fn a_rename_sends_only_the_name_and_an_app_tab_binds_its_app() {
+        assert_eq!(rename_tab_body("Plan"), json!({"displayName": "Plan"}));
+        let b = app_tab_body("Board", "abc-123");
+        assert_eq!(b["displayName"], "Board");
+        assert_eq!(
+            b["teamsApp@odata.bind"],
+            "https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/abc-123"
+        );
+        assert!(b.get("configuration").is_none());
     }
 
     #[test]
