@@ -227,6 +227,17 @@ impl Engine {
         s.open.as_deref().and_then(|id| s.find(id)).cloned()
     }
 
+    /// Changes the cached event `id` as it is now, not as it was when a request for it started,
+    /// so two quick changes to one event (Show as, then a category) both stay. Nothing happens
+    /// when the event left the cache meanwhile.
+    pub(in crate::backend) fn cal_change_cached(&self, id: &str, f: impl FnOnce(&mut Event)) {
+        let Some(mut e) = self.cal.lock().find(id).cloned() else {
+            return;
+        };
+        f(&mut e);
+        self.cal_upsert(e);
+    }
+
     /// Puts an event in the cache and refreshes the screens that show it.
     fn cal_upsert(&self, e: Event) {
         self.cal.lock().cache.apply(vec![EventChange::Upsert(e)]);
@@ -556,7 +567,7 @@ impl Engine {
         comment: &str,
         proposed: Option<(i64, i64)>,
     ) {
-        let Some(mut e) = self.cal_open_event() else {
+        let Some(e) = self.cal_open_event() else {
             return;
         };
         if !self.is_offline()
@@ -568,13 +579,13 @@ impl Engine {
             self.cal_note("Couldn't send your answer");
             return;
         }
-        e.response = match rsvp {
+        let response = match rsvp {
             Rsvp::Accept => ::calendar::Response::Accepted,
             Rsvp::Tentative => ::calendar::Response::Tentative,
             Rsvp::Decline => ::calendar::Response::Declined,
         };
         self.ui.cal_modal_if("prompt", "");
-        self.cal_upsert(e);
+        self.cal_change_cached(&e.id, |e| e.response = response);
         self.sync_soon();
     }
 
@@ -602,7 +613,7 @@ impl Engine {
 
     /// `PATCH` a few fields of the open event; `local` applies the same change to the cache.
     async fn cal_patch(self: &Arc<Self>, body: Value, local: impl FnOnce(&mut Event)) {
-        let Some(mut e) = self.cal_open_event() else {
+        let Some(e) = self.cal_open_event() else {
             return;
         };
         if !self.is_offline() {
@@ -632,8 +643,7 @@ impl Engine {
                 }
             }
         }
-        local(&mut e);
-        self.cal_upsert(e);
+        self.cal_change_cached(&e.id, local);
     }
 
     // ---- edit, duplicate, forward, cancel, delete, export ----

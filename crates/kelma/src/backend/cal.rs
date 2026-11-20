@@ -794,6 +794,17 @@ impl Engine {
         self.cal.lock().date
     }
 
+    /// Puts an event in the cache and reads one back (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn calendar_put_for_test(&self, e: Event) {
+        self.cal.lock().cache.apply(vec![::calendar::EventChange::Upsert(e)]);
+    }
+
+    #[cfg(test)]
+    pub(super) fn calendar_event_for_test(&self, id: &str) -> Option<Event> {
+        self.cal.lock().find(id).cloned()
+    }
+
     pub(super) fn start_calendar(self: &Arc<Self>) {
         let e = self.clone();
         tokio::spawn(async move {

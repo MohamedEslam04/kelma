@@ -304,6 +304,28 @@ mod tests {
     }
 
     #[test]
+    fn two_quick_changes_to_one_event_both_stay() {
+        let (e, _window) = engine();
+        let ev = ::calendar::parse_events(&serde_json::json!({"value": [{
+            "id": "ev1",
+            "subject": "Sync",
+            "start": {"dateTime": "2026-11-20T10:00:00", "timeZone": "UTC"},
+            "end": {"dateTime": "2026-11-20T11:00:00", "timeZone": "UTC"}
+        }]}))
+        .remove(0);
+        e.calendar_put_for_test(ev);
+        // Each request copies nothing: its change lands on the event as the cache has it when
+        // the answer comes, so the second answer keeps the first one's change.
+        e.cal_change_cached("ev1", |ev| ev.show_as = ::calendar::ShowAs::Free);
+        e.cal_change_cached("ev1", |ev| ev.categories = vec!["Red".into()]);
+        let got = e.calendar_event_for_test("ev1").unwrap();
+        assert_eq!(got.show_as, ::calendar::ShowAs::Free);
+        assert_eq!(got.categories, ["Red"]);
+        e.cal_change_cached("gone", |ev| ev.categories.clear());
+        assert!(e.calendar_event_for_test("gone").is_none());
+    }
+
+    #[test]
     fn store_commands_take_their_stores_lane_and_chat_commands_do_not() {
         assert_eq!(
             super::store_lane(&Cmd::Calendar(CalCmd::Today)),
