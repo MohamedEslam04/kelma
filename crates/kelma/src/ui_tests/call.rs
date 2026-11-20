@@ -389,8 +389,10 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
     c.connected();
     for (label, why) in [
         ("React", "Reactions aren't available yet"),
-        ("Camera", "Video isn't available in this call"),
-        ("Share", "Screen sharing isn't available in this call"),
+        // A meeting can't switch its video lines yet (live 2026-11-20: the update was refused
+        // and the meeting ended), so it says so rather than "in this call".
+        ("Camera", "Video isn't available in meetings yet"),
+        ("Share", "Sharing isn't available in meetings yet"),
     ] {
         let b = c.button(label);
         assert_eq!(b.accessible_enabled(), Some(false), "{label}");
@@ -853,6 +855,22 @@ fn chat_in_a_direct_call_opens_the_one_on_one_chat_and_shrinks_the_call() {
     assert!(cs(&c.h.app).get_minimized());
     assert_eq!(*opened.borrow(), [DM.to_owned()]);
     assert_eq!(c.h.app.get_view(), "chat");
+}
+
+/// A 1:1 call shares through its re-offer, not a meeting's line switch: its disabled controls
+/// keep saying "in this call".
+#[test]
+fn a_direct_calls_unavailable_video_says_in_this_call() {
+    let c = CallHarness::new();
+    c.direct();
+    for (label, why) in [
+        ("Camera", "Video isn't available in this call"),
+        ("Share", "Screen sharing isn't available in this call"),
+    ] {
+        let b = c.button(label);
+        assert_eq!(b.accessible_enabled(), Some(false), "{label}");
+        assert_eq!(b.accessible_description().unwrap(), why);
+    }
 }
 
 #[test]

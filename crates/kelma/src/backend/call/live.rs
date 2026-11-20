@@ -35,6 +35,7 @@ use calling::ngc_trouter::{CallPush, NgcEvent, NgcTrouter};
 use calling::remote_control::{
     CONTROL_DATA_ID, ControlMessage, NgcControlChannel, decode, parse_session_message,
 };
+use calling::signaling::bodies::declared_video_mids;
 use calling::signaling::call_ops::{
     TransferOutcome, hold_offer, keep_media_running, parse_transfer_completion,
 };
@@ -444,17 +445,15 @@ async fn join_meeting(
     };
     let (media, events) = MediaSession::with_options(ice.clone(), options).await?;
     let offer = media.create_offer().await?;
+    let modalities = remote_video::join_modalities();
+    let declared = declared_video_mids(&offer, modalities);
+    tracing::info!(?declared, "meeting join declares its video lines");
     let me = hub.client.self_mri().await?;
     let s = CallSession::new(&surl, &me, &opts.name);
     // Callbacks can arrive before the join answers.
     let pushes = hub.add_session(s.callbacks.session_id());
     let conv = match ngc
-        .join(
-            &s,
-            &target,
-            &SdpBlob::ngc(offer),
-            remote_video::join_modalities(),
-        )
+        .join(&s, &target, &SdpBlob::ngc(offer), modalities)
         .await
     {
         Ok(c) => c,
@@ -496,6 +495,7 @@ async fn join_meeting(
         roster,
         controls: Controls::default(),
         meeting: true,
+        declared,
         keep_alive: None,
         pending_offer: None,
         reoffer: None,
@@ -551,6 +551,7 @@ pub fn adopt(
             roster: Roster::default(),
             controls: Controls::default(),
             meeting: false,
+            declared: Vec::new(),
             keep_alive: None,
             pending_offer: None,
             reoffer: None,
@@ -888,6 +889,9 @@ struct Call {
     roster: Roster,
     controls: Controls,
     meeting: bool,
+    /// The video mids a meeting's join declared (`mediaDescriptions`): the only lines it may
+    /// switch with `UpdateMediaDescriptions`. None by default, and none in a 1:1 call.
+    declared: Vec<String>,
     keep_alive: Option<JoinHandle<()>>,
     link: Link,
     share: Share,
@@ -1368,7 +1372,7 @@ impl Call {
                 }
             }
             let can_share = self.link == Link::Connected
-                && share::available(&self.media, &self.links, self.meeting).await;
+                && share::available(&self.media, &self.links, self.declared_lines()).await;
             if let Some((available, sharing)) = self.share.changed(can_share) {
                 sink.send(Event::Share { available, sharing });
             }
@@ -1383,7 +1387,7 @@ impl Call {
                 self.control_changed(&sink);
             }
             let can_camera = self.link == Link::Connected
-                && camera::available(&self.media, &self.links, self.meeting).await;
+                && camera::available(&self.media, &self.links, self.declared_lines()).await;
             if can_camera && std::mem::take(&mut camera_wanted) {
                 self.camera.open(&camera_tx);
             }
@@ -1441,8 +1445,13 @@ impl Call {
         sink: &EventSink,
     ) {
         if on {
-            if self.meeting && self.media.live_video_mid(share::ROLE).await.is_none() {
-                sink.send(Event::Error(share::unavailable_text(share::ROLE).into()));
+            if self.meeting
+                && share::meeting_mid(&self.media, &self.declared, share::ROLE)
+                    .await
+                    .is_none()
+            {
+                let text = share::unavailable_text(share::ROLE, &self.declared);
+                sink.send(Event::Error(text.into()));
                 return;
             }
             self.share.pick(tx);
@@ -1684,6 +1693,35 @@ impl Call {
         }
     }
 
+    /// In a meeting, the video lines its join declared (what [`share::available`] needs); `None`
+    /// in a 1:1 call.
+    fn declared_lines(&self) -> Option<&[String]> {
+        self.meeting.then_some(self.declared.as_slice())
+    }
+
+    /// A meeting's `UpdateMediaDescriptions` for a change of `role`'s line (now `sending`, the
+    /// others as `lines` say). Nothing is posted for a line the join did not declare
+    /// ([`share::meeting_update`]): the service ends the call after refusing such an update.
+    async fn tell_meeting(
+        &mut self,
+        role: calling::video::VideoRole,
+        lines: Sending,
+        sending: bool,
+    ) -> anyhow::Result<()> {
+        let update = share::meeting_update(&self.media, &self.declared, role, lines).await?;
+        let request_id = self.share.next_request_id();
+        share::tell_meeting(
+            &self.ngc,
+            &self.s,
+            &self.links,
+            &update,
+            role,
+            sending,
+            request_id,
+        )
+        .await
+    }
+
     /// Tells the service our sharing line sends (or stopped): `UpdateMediaDescriptions` in a
     /// meeting, a re-offer in a 1:1 call.
     async fn tell_share(&mut self, sending: bool, sink: &EventSink) {
@@ -1692,17 +1730,7 @@ impl Call {
                 camera: self.camera.on(),
                 share: sending,
             };
-            let request_id = self.share.next_request_id();
-            share::tell_meeting(
-                &self.ngc,
-                &self.s,
-                &self.links,
-                &self.media,
-                share::ROLE,
-                lines,
-                request_id,
-            )
-            .await
+            self.tell_meeting(share::ROLE, lines, sending).await
         } else {
             // The answer comes inline or on `call/mediaAnswer/`, which `apply_answer` takes.
             self.answered = false;
@@ -1758,8 +1786,13 @@ impl Call {
         sink: &EventSink,
     ) {
         if on {
-            if self.meeting && self.media.live_video_mid(camera::ROLE).await.is_none() {
-                sink.send(Event::Error(share::unavailable_text(camera::ROLE).into()));
+            if self.meeting
+                && share::meeting_mid(&self.media, &self.declared, camera::ROLE)
+                    .await
+                    .is_none()
+            {
+                let text = share::unavailable_text(camera::ROLE, &self.declared);
+                sink.send(Event::Error(text.into()));
                 return;
             }
             self.camera.open(tx);
@@ -1806,17 +1839,7 @@ impl Call {
                 camera: on,
                 share: self.share.sharing(),
             };
-            let request_id = self.share.next_request_id();
-            share::tell_meeting(
-                &self.ngc,
-                &self.s,
-                &self.links,
-                &self.media,
-                camera::ROLE,
-                lines,
-                request_id,
-            )
-            .await
+            self.tell_meeting(camera::ROLE, lines, on).await
         } else {
             // The answer comes inline or on `call/mediaAnswer/`, which `apply_answer` takes.
             self.answered = false;

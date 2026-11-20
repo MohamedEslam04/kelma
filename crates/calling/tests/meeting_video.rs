@@ -9,7 +9,7 @@
 
 use calling::media::sdp::video_mids;
 use calling::media::{MediaOptions, MediaSession, VideoLayout};
-use calling::signaling::bodies::join_meeting_body;
+use calling::signaling::bodies::{declared_video_mids, join_meeting_body};
 use calling::signaling::video::JOIN_REQUEST_ID;
 use calling::signaling::{CallSession, CallbackLinks, LocalEndpoint, MeetingInfo};
 use calling::video::VideoRole;
@@ -229,6 +229,33 @@ async fn a_join_asked_to_declares_only_its_send_capable_video_lines() {
         media["applyChannelParameters"]["multiChannelParameter"]["mids"],
         json!(["*"])
     );
+    session.close().await.unwrap();
+}
+
+/// What a join declared is what a meeting may later switch with `UpdateMediaDescriptions`: the
+/// mids of its `mediaDescriptions`, none by default. Live 2026-11-20: after a default join (no
+/// descriptions), an update naming the video lines was refused (400, 1047 "Invalid
+/// MediaDescriptions") and the call ended (410, 301999 "InvalidUpdatedMediaDescriptions").
+#[tokio::test]
+async fn the_declared_mids_are_the_join_bodys_descriptions() {
+    let (session, _events) =
+        MediaSession::with_options(vec![], join_options(VideoLayout::WebClient))
+            .await
+            .unwrap();
+    let offer = session.create_offer().await.unwrap();
+    assert!(declared_video_mids(&offer, &[Modality::Audio]).is_empty());
+    let asked = [Modality::Audio, Modality::ScreenViewer];
+    let declared = declared_video_mids(&offer, &asked);
+    assert_eq!(declared, ["1", "11"]);
+    let b = join_meeting_body(&session_ids(), &meeting(), &SdpBlob::ngc(offer), &asked);
+    let named: Vec<_> = b["callInvitation"]["mediaContent"]["mediaDescriptions"]["descriptions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["mid"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(named, declared);
+    assert!(declared_video_mids(MEETING_ANSWER, &asked).is_empty());
     session.close().await.unwrap();
 }
 

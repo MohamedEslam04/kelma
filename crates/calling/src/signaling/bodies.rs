@@ -130,7 +130,7 @@ fn meeting_invitation(s: &CallSession, offer: &SdpBlob, modalities: &[Modality])
     let mut inv = call_invitation(s, offer, modalities, false);
     let media = &mut inv["mediaContent"];
     media["mediaDescriptions"] = json!({
-        "descriptions": crate::media::sdp::send_capable_video_mids(&sdp)
+        "descriptions": declared_video_mids(&sdp, modalities)
             .into_iter()
             .map(|mid| MediaDescription::receive_only(mid).wire())
             .collect::<Vec<_>>(),
@@ -141,6 +141,19 @@ fn meeting_invitation(s: &CallSession, offer: &SdpBlob, modalities: &[Modality])
         "mediaParameter": format!(r#"{{"sendSideBWSeed":{{"seedValueBitsPerSec":{SEND_BANDWIDTH_SEED}}}}}"#),
     }});
     inv
+}
+
+/// The video mids a meeting join with `offer_sdp` and `modalities` declares in its
+/// `mediaDescriptions` (see [`meeting_invitation`]): the send-capable video lines when
+/// `modalities` name `ScreenViewer`, else none. Only these lines may later be switched with
+/// `UpdateMediaDescriptions`: after a join that declared none, an update naming the live video
+/// lines was refused (400, 1047 "Invalid MediaDescriptions") and the call ended (410, 301999
+/// "InvalidUpdatedMediaDescriptions", live 2026-11-20).
+pub fn declared_video_mids(offer_sdp: &str, modalities: &[Modality]) -> Vec<String> {
+    if !modalities.contains(&Modality::ScreenViewer) {
+        return Vec::new();
+    }
+    crate::media::sdp::send_capable_video_mids(offer_sdp)
 }
 
 fn roster_request(s: &CallSession) -> Value {

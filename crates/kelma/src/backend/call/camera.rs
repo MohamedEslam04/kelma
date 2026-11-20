@@ -203,8 +203,9 @@ impl Camera {
 }
 
 /// Whether `media` has a main-video line and the call has the link to switch it with (in a
-/// meeting, a line the media server did not refuse; see [`share::available`]).
-pub async fn available(media: &MediaSession, links: &Links, meeting: bool) -> bool {
+/// meeting, a line its join declared and the media server did not refuse; see
+/// [`share::available`]).
+pub async fn available(media: &MediaSession, links: &Links, meeting: Option<&[String]>) -> bool {
     share::line_available(media, links, meeting, ROLE).await
 }
 

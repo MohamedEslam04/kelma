@@ -580,12 +580,25 @@ What kelma does (`calling::signaling::{roster, video}`, `calling::media`,
   receive-only lines are what made them invalid. Not yet run live: the new offer (layout,
   `x-signaling-fb`, `1-1` ranges, all from the same commit) joined without descriptions; the last
   good join had kelma's earlier offer.
-- Every later `UpdateMediaDescriptions` lists all our live video lines with a call-wide
-  `requestId` (UNVERIFIED: the web client's updates name only its send-capable mids 1-6 and 11,
-  so naming a live receive-only gallery line may be refused as the join was), and a
-  line the media server answered with port 0 is never named: Share and Camera stay disabled
-  ("Sharing/Video isn't available in this meeting"), since an update naming a refused line was
-  400 (1047) and then ended the call (410).
+- A meeting may switch only the lines its join declared (`calling::signaling::bodies::
+  declared_video_mids`, kept on the call): after the default join (no `mediaDescriptions`)
+  Share and Camera stay disabled ("Sharing/Video isn't available in meetings yet") and no
+  `UpdateMediaDescriptions` is ever posted, whatever ports the answer gave the lines. With
+  `KELMA_MEETING_VIDEO_DESCRIBE=1` the update names only the declared lines (camera mid 1,
+  sharing mid 11) that are also live, as the web client's updates name only its send-capable
+  mids, with a call-wide `requestId` (UNVERIFIED live). A declared line the media server answered
+  with port 0 is never named either ("Sharing/Video isn't available in this meeting").
+- **Live 2026-11-20 (binary `89dbf86`, `KELMA_CAMERA=1 KELMA_SCREEN_SHARE=1`), why.** The
+  default join (`callModalities: ["Audio"]`, no `mediaDescriptions`) had its video lines answered
+  live (`remote video lines slots=9 share=true`), so the old gate (port liveness) enabled Share.
+  Sharing posted `UpdateMediaDescriptions` naming mids 1-10 `recvonly` and 11 `sendonly`
+  (`applicationsharing-video`, tag `;ss_1`, `requestId` 2): 400, subCode 10146, media
+  controller `operationFailure` 1047 "Invalid MediaDescriptions". About 0.2 s later, before kelma
+  sent anything else, `call/end` came: 410, subCode 301999, "InvalidUpdatedMediaDescriptions"
+  (`clientError`, `MidCallFailure`). kelma's `contentSharingLeave` went out after that (0.5 s)
+  and was 404 ("could not be resolved"): the 400 itself ends the call, not a follow-up of ours.
+  So a refused update is unrecoverable; the only safe path is never to send one the join did not
+  set up. (A failed update still stops the share locally with the error banner.)
 - On every roster change (and a new answer) the gallery is re-planned: the others whose camera
   sends, latest speakers first; a slot keeps its person while they still send. Changed slots are
   subscribed in order through one queue (`sequenceNumber` rising per call), on the

@@ -138,7 +138,7 @@ component TopBar inherits Rectangle {
             active: CallStore.camera;
             enabled: CallStore.can-camera || CallStore.camera;
             tip: CallStore.can-camera || CallStore.camera ? (CallStore.camera ? "Turn camera off" : "Turn camera on")
-                : "Video isn't available in this call";
+                : CallStore.kind == "meeting" ? "Video isn't available in meetings yet" : "Video isn't available in this call";
             clicked => { CallStore.command("camera", ""); }
         }
         HorizontalLayout {
@@ -166,7 +166,8 @@ component TopBar inherits Rectangle {
                 checkable: true;
                 active: CallStore.sharing;
                 enabled: CallStore.can-share || CallStore.sharing;
-                tip: CallStore.can-share || CallStore.sharing ? "" : "Screen sharing isn't available in this call";
+                tip: CallStore.can-share || CallStore.sharing ? ""
+                    : CallStore.kind == "meeting" ? "Sharing isn't available in meetings yet" : "Screen sharing isn't available in this call";
                 clicked => { CallStore.command("share", ""); }
             }
             // Give control (remote control of our share).

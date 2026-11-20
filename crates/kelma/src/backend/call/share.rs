@@ -3,7 +3,8 @@
 //!
 //! The sharing line is negotiated only when `KELMA_SCREEN_SHARE=1` (until a live run confirms the
 //! media servers accept it, the verified audio-only offer stays the default). Then:
-//! - a meeting flips the line with `UpdateMediaDescriptions` (no renegotiation);
+//! - a meeting flips the line with `UpdateMediaDescriptions` (no renegotiation), only when its
+//!   join declared the line (`KELMA_MEETING_VIDEO_DESCRIBE=1`; never after the default join);
 //! - a 1:1 call sends a re-offer with `ScreenSharer` on the other side's `mediaRenegotiation`.
 //!
 //! The camera will reuse this path with `VideoRole::MainVideo` and a camera frame source.
@@ -13,7 +14,8 @@ use calling::signaling::content_sharing::{
     ADD_MODALITY_FAILURE, ADD_MODALITY_SUCCESS, SESSION_END, SESSION_UPDATE, SharingSession, new_id,
 };
 use calling::signaling::video::{
-    JOIN_REQUEST_ID, meeting_descriptions, negotiation_tag, parse_sender_controls, video_modalities,
+    JOIN_REQUEST_ID, MediaDescription, meeting_descriptions, negotiation_tag,
+    parse_sender_controls, video_modalities,
 };
 use calling::signaling::{CallSession, NgcClient};
 use calling::video::control_overlay::ShareArea;
@@ -241,9 +243,10 @@ impl Share {
     }
 }
 
-/// Whether `media` has a sharing line and the call has the link to switch it with. In a meeting
-/// the line must also be live: the media servers answer a line they will not carry with port 0.
-pub async fn available(media: &MediaSession, links: &Links, meeting: bool) -> bool {
+/// Whether `media` has a sharing line and the call has the link to switch it with. `meeting` is
+/// `None` in a 1:1 call, and in a meeting the mids its join declared
+/// (`calling::signaling::bodies::declared_video_mids`): see [`meeting_mid`].
+pub async fn available(media: &MediaSession, links: &Links, meeting: Option<&[String]>) -> bool {
     line_available(media, links, meeting, ROLE).await
 }
 
@@ -251,24 +254,45 @@ pub async fn available(media: &MediaSession, links: &Links, meeting: bool) -> bo
 pub(super) async fn line_available(
     media: &MediaSession,
     links: &Links,
-    meeting: bool,
+    meeting: Option<&[String]>,
     role: VideoRole,
 ) -> bool {
     if media.video_sender(role).is_none() {
         return false;
     }
-    if meeting {
-        update_link(links).is_some() && media.live_video_mid(role).await.is_some()
-    } else {
-        links.get("mediaRenegotiation").is_some()
+    match meeting {
+        Some(declared) => {
+            update_link(links).is_some() && meeting_mid(media, declared, role).await.is_some()
+        }
+        None => links.get("mediaRenegotiation").is_some(),
     }
 }
 
-/// What the call says when a meeting's media server refused `role`'s line.
-pub fn unavailable_text(role: VideoRole) -> &'static str {
-    match role {
-        VideoRole::MainVideo => "Video isn't available in this meeting.",
-        VideoRole::ApplicationSharing => "Sharing isn't available in this meeting.",
+/// The mid of `role`'s line when a meeting may switch it: the join declared it (`declared`, the
+/// mids of its `mediaDescriptions`) and the media server answered it live (not port 0). Live
+/// 2026-11-20: after the default join, which declares none, the lines were answered live and an
+/// update naming them was refused (400, 1047 "Invalid MediaDescriptions"); the service then
+/// ended the call (410, 301999 "InvalidUpdatedMediaDescriptions"). An update naming a line
+/// answered with port 0 was refused the same way.
+pub(super) async fn meeting_mid(
+    media: &MediaSession,
+    declared: &[String],
+    role: VideoRole,
+) -> Option<String> {
+    media
+        .live_video_mid(role)
+        .await
+        .filter(|mid| declared.contains(mid))
+}
+
+/// What the call says when a meeting can't switch `role`'s line: the join declared no lines
+/// (`declared` empty, the default), or the media server refused the line.
+pub fn unavailable_text(role: VideoRole, declared: &[String]) -> &'static str {
+    match (role, declared.is_empty()) {
+        (VideoRole::MainVideo, true) => "Video isn't available in meetings yet.",
+        (VideoRole::ApplicationSharing, true) => "Sharing isn't available in meetings yet.",
+        (VideoRole::MainVideo, false) => "Video isn't available in this meeting.",
+        (VideoRole::ApplicationSharing, false) => "Sharing isn't available in this meeting.",
     }
 }
 
@@ -354,37 +378,52 @@ pub async fn leave_session(ngc: &NgcClient, s: &CallSession, share: &mut Share) 
     }
 }
 
-/// Tells a meeting's media server, for a change of `role`'s line, what every live video line of
-/// ours does now: the whole list, receive-only but for those `sending`, as the web client and
-/// mautrix-teams (`SetVideo`) post it. Posts nothing when `role`'s line is not live: the server
-/// refuses an update naming a line it answered with port 0 (400, 1047 "Invalid
-/// MediaDescriptions", live 2026-11-20) and then ends the call (410).
-pub async fn tell_meeting(
-    ngc: &NgcClient,
-    s: &CallSession,
-    links: &Links,
+/// The lines of a meeting's `UpdateMediaDescriptions` for a change of `role`'s line: every line
+/// the join declared (`declared`) that is live, receive-only but for those `sending`, as the web
+/// client's updates name only its send-capable (declared) mids. An error, and so nothing to post,
+/// when `role`'s line is not one the meeting may switch ([`meeting_mid`]): the server refuses
+/// such an update (400, 1047) and then ends the call (410, live 2026-11-20).
+pub async fn meeting_update(
     media: &MediaSession,
+    declared: &[String],
     role: VideoRole,
     sending: Sending,
-    request_id: u64,
-) -> anyhow::Result<()> {
-    if media.live_video_mid(role).await.is_none() {
-        anyhow::bail!("{}", unavailable_text(role));
+) -> anyhow::Result<Vec<MediaDescription>> {
+    if meeting_mid(media, declared, role).await.is_none() {
+        anyhow::bail!("{}", unavailable_text(role, declared));
     }
-    let url = update_link(links).ok_or_else(|| anyhow::anyhow!("no updateMediaDescriptions"))?;
-    let mut with = links.clone();
-    with.0.insert("updateMediaDescriptions".into(), url);
     let mut sends = Vec::new();
     for r in [VideoRole::MainVideo, VideoRole::ApplicationSharing] {
         if sending.of(r)
-            && let Some(mid) = media.live_video_mid(r).await
+            && let Some(mid) = meeting_mid(media, declared, r).await
         {
             sends.push((mid, r));
         }
     }
-    let lines = meeting_descriptions(&media.live_video_mids(), &sends);
-    let tag = negotiation_tag(s, role, sending.of(role));
-    ngc.update_media_descriptions(s, &with, &lines, &tag, request_id)
+    let live: Vec<String> = media
+        .live_video_mids()
+        .into_iter()
+        .filter(|mid| declared.contains(mid))
+        .collect();
+    Ok(meeting_descriptions(&live, &sends))
+}
+
+/// Posts a meeting's `UpdateMediaDescriptions` (`lines` from [`meeting_update`]) for a change of
+/// `role`'s line, now `sending` or not.
+pub async fn tell_meeting(
+    ngc: &NgcClient,
+    s: &CallSession,
+    links: &Links,
+    lines: &[MediaDescription],
+    role: VideoRole,
+    sending: bool,
+    request_id: u64,
+) -> anyhow::Result<()> {
+    let url = update_link(links).ok_or_else(|| anyhow::anyhow!("no updateMediaDescriptions"))?;
+    let mut with = links.clone();
+    with.0.insert("updateMediaDescriptions".into(), url);
+    let tag = negotiation_tag(s, role, sending);
+    ngc.update_media_descriptions(s, &with, lines, &tag, request_id)
         .await?;
     Ok(())
 }
@@ -581,6 +620,126 @@ mod tests {
             directions(&direct_offer(offer, false, None)),
             ["a=sendonly", "a=inactive"]
         );
+    }
+
+    const FULL_REOFFER: &str =
+        include_str!("../../../../calling/tests/fixtures/media/teams_meeting_full_reoffer.sdp");
+
+    /// A meeting's media whose camera (mid 2) and sharing (mid 3) lines the media server
+    /// answered live, as the live default join's were (`slots=9 share=true`, 2026-11-20).
+    async fn live_meeting_media() -> (MediaSession, calling::media::MediaEvents) {
+        let options = MediaOptions {
+            udp_addrs: vec!["127.0.0.1:0".into()],
+            video: vec![VideoRole::MainVideo, ROLE],
+            ..MediaOptions::default()
+        };
+        let (media, events) = MediaSession::with_options(vec![], options).await.unwrap();
+        media.accept_offer(FULL_REOFFER).await.unwrap();
+        (media, events)
+    }
+
+    fn call_links() -> Links {
+        let mut links = Links::default();
+        for (name, url) in [
+            ("updateMediaDescriptions", "https://cc.example.invalid/u"),
+            ("mediaRenegotiation", "https://cc.example.invalid/r"),
+        ] {
+            links.0.insert(name.into(), url.into());
+        }
+        links
+    }
+
+    fn wire(lines: &[MediaDescription]) -> Vec<serde_json::Value> {
+        lines.iter().map(MediaDescription::wire).collect()
+    }
+
+    /// Live 2026-11-20: a default meeting join (no `mediaDescriptions`) had its video lines
+    /// answered live, Share was enabled, and the update naming them was refused (400, 1047) and
+    /// the call ended (410). Without declared lines, neither Share nor Camera is offered and no
+    /// update can be built, whatever the ports say.
+    #[tokio::test]
+    async fn a_default_meeting_join_offers_no_share_or_camera_and_builds_no_update() {
+        let (media, _events) = live_meeting_media().await;
+        let links = call_links();
+        assert!(
+            media.live_video_mid(ROLE).await.is_some(),
+            "the line is live"
+        );
+        let declared: &[String] = &[];
+        assert!(!available(&media, &links, Some(declared)).await);
+        assert!(!super::super::camera::available(&media, &links, Some(declared)).await);
+        let both = Sending {
+            camera: true,
+            share: true,
+        };
+        for role in [ROLE, VideoRole::MainVideo] {
+            let e = meeting_update(&media, declared, role, both)
+                .await
+                .unwrap_err();
+            assert_eq!(e.to_string(), unavailable_text(role, declared));
+        }
+        assert_eq!(
+            unavailable_text(ROLE, declared),
+            "Sharing isn't available in meetings yet."
+        );
+        assert_eq!(
+            unavailable_text(VideoRole::MainVideo, declared),
+            "Video isn't available in meetings yet."
+        );
+        media.close().await.unwrap();
+    }
+
+    /// A join that declared its send-capable lines (`KELMA_MEETING_VIDEO_DESCRIBE=1`) may switch
+    /// them, and its update names only the lines it declared (as the web client's names only its
+    /// send-capable mids), never another live line.
+    #[tokio::test]
+    async fn a_described_join_updates_only_the_lines_it_declared() {
+        let (media, _events) = live_meeting_media().await;
+        let links = call_links();
+        let share_only = ["3".to_owned()];
+        assert!(available(&media, &links, Some(&share_only)).await);
+        assert!(!super::super::camera::available(&media, &links, Some(&share_only)).await);
+        let sharing = Sending {
+            camera: false,
+            share: true,
+        };
+        let lines = meeting_update(&media, &share_only, ROLE, sharing)
+            .await
+            .unwrap();
+        let sends = serde_json::json!({"mid": "3", "direction": "sendonly", "label": "applicationsharing-video"});
+        assert_eq!(wire(&lines), std::slice::from_ref(&sends));
+        assert!(
+            meeting_update(&media, &share_only, VideoRole::MainVideo, sharing)
+                .await
+                .is_err()
+        );
+        let both = ["2".to_owned(), "3".to_owned()];
+        let lines = meeting_update(&media, &both, ROLE, sharing).await.unwrap();
+        assert_eq!(
+            wire(&lines),
+            [
+                serde_json::json!({"mid": "2", "direction": "recvonly"}),
+                sends
+            ]
+        );
+        // A declared line the media server refused is still not offered, and says so.
+        assert_eq!(
+            unavailable_text(ROLE, &both),
+            "Sharing isn't available in this meeting."
+        );
+        media.close().await.unwrap();
+    }
+
+    /// A 1:1 call shares through its re-offer link: nothing a meeting join declares applies.
+    #[tokio::test]
+    async fn a_direct_call_shares_through_its_re_offer_link() {
+        let (media, _events) = live_meeting_media().await;
+        let mut links = call_links();
+        assert!(available(&media, &links, None).await);
+        assert!(super::super::camera::available(&media, &links, None).await);
+        links.0.remove("mediaRenegotiation");
+        assert!(!available(&media, &links, None).await);
+        media.close().await.unwrap();
     }
 
     #[test]
