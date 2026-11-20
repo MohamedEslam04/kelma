@@ -38,6 +38,8 @@ import { CallWindow, CallMini, CallStore } from "call_window.slint";
 import { DirectCallStore, CallIncoming } from "call_incoming.slint";
 import { CallOutgoing, CallHeaderButtons } from "call_outgoing.slint";
 import { ComposerAppsOverlay } from "composer_apps.slint";
+import { SendStore, ScheduledList } from "composer_send.slint";
+import { ChatHeaderStore, HeaderMoreButton, RemoveHistoryConfirm } from "chat_header.slint";
 
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, Msg, ChannelRow, TeamRow } from "types.slint";
@@ -59,6 +61,8 @@ export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TD
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
 export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
 export { ComposerApps, CaCommand, CaResult, CaCard } from "composer_apps.slint";
+export { SendStore, ScheduledItem } from "composer_send.slint";
+export { ChatHeaderStore } from "chat_header.slint";
 export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
 export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
 
@@ -107,6 +111,8 @@ export component AppWindow inherits Window {
     in property <image> current-avatar;
     in property <bool> current-has-avatar;
     in property <bool> current-is-channel;
+    // The open chat is muted ("More chat options" offers Unmute).
+    in property <bool> current-muted;
     in property <string> thread-root;     // non-empty: viewing a channel thread
     in property <[Msg]> messages;
     in property <string> typing;
@@ -166,6 +172,8 @@ export component AppWindow inherits Window {
     in-out property <int> msg-focus-tick: 0;
     // The composer's "Mark as important"; main.rs reads it when the message is sent.
     in-out property <bool> important: false;
+    // "Set delivery options" › Urgent (the send button's menu); read the same way.
+    in-out property <bool> urgent: false;
     in-out property <bool> composer-focused;
     in-out property <int> skin-tone: 0;
     in property <[ComposerEmoji]> recent-emoji;
@@ -329,6 +337,9 @@ export component AppWindow inherits Window {
             if a == "focus-messages" { root.msg-focus-tick += 1; }
             if a == "expand-composer" { root.composer-expanded = !root.composer-expanded; root.focus-tick += 1; }
             if a == "attach-file" { root.attach-file(); }
+            if a == "share-screen" && root.view == "chat" && DirectCallStore.available && DirectCallStore.is-direct(root.current-id) {
+                DirectCallStore.command("share-screen", root.current-id);
+            }
         }
         VerticalLayout {
         // Top bar with search
@@ -715,6 +726,31 @@ export component AppWindow inherits Window {
                             if root.thread-root == "" && CallStore.is-meeting-chat(root.current-id): IconButton { icon: @image-url("icons/video.svg"); y: 14px; tooltip: "Join meeting"; clicked => { CallStore.command("join-chat", root.current-id); } }
                             Rectangle { horizontal-stretch: 1; }
                             if root.thread-root == "" && !root.current-is-channel: CallHeaderButtons { chat-id: root.current-id; y: 14px; height: 32px; }
+                            // "View and add participants": group and 1:1 chats (a 1:1 starts a group).
+                            if (PeopleStore.header-group || PeopleStore.member-count > 0) && !root.current-is-channel && root.thread-root == "": people-btn := Rectangle {
+                                width: people-count.preferred-width + 40px;
+                                height: 32px;
+                                y: 14px;
+                                horizontal-stretch: 0;
+                                border-radius: 4px;
+                                background: people-touch.has-hover || PeopleStore.participants-open ? Theme.surface-hover : transparent;
+                                accessible-role: button;
+                                accessible-label: @tr("View and add participants");
+                                accessible-value: PeopleStore.member-count;
+                                accessible-action-default => {
+                                    PeopleStore.participants-open = true;
+                                    PeopleStore.command("participants-open", "");
+                                }
+                                Icon { source: @image-url("icons/people.svg"); x: 8px; y: 8px; width: 16px; height: 16px; tint: Theme.fg-muted; }
+                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                                people-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        PeopleStore.participants-open = true;
+                                        PeopleStore.command("participants-open", "");
+                                    }
+                                }
+                            }
                             if root.thread-root == "": IconButton {
                                 icon: @image-url("icons/search.svg");
                                 y: 14px;
@@ -736,24 +772,11 @@ export component AppWindow inherits Window {
                                     FindStore.command("details", FindStore.details-open ? "open" : "close");
                                 }
                             }
-                            if PeopleStore.header-group && root.thread-root == "": people-btn := Rectangle {
-                                width: people-count.preferred-width + 40px;
-                                height: 32px;
+                            if root.thread-root == "" && !root.current-is-channel: HeaderMoreButton {
                                 y: 14px;
-                                horizontal-stretch: 0;
-                                border-radius: 4px;
-                                background: people-touch.has-hover || PeopleStore.participants-open ? Theme.surface-hover : transparent;
-                                accessible-role: button;
-                                accessible-label: @tr("Participants");
-                                Icon { source: @image-url("icons/people.svg"); x: 8px; y: 8px; width: 16px; height: 16px; tint: Theme.fg-muted; }
-                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
-                                people-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => {
-                                        PeopleStore.participants-open = true;
-                                        PeopleStore.command("participants-open", "");
-                                    }
-                                }
+                                chat-id: root.current-id;
+                                muted: root.current-muted;
+                                mark-unread => { root.mark-chat-unread(root.current-id); }
                             }
                         }
                         Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
@@ -957,6 +980,11 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    // The chat's scheduled messages ("Sending on …"), below the newest message.
+                    if SendStore.scheduled.length > 0 && root.thread-root == "" && !root.posts-mode: ScheduledList {
+                        max-bubble: min(720px, parent.width * 0.75);
+                    }
+
                     if root.typing != "": HorizontalLayout {
                         padding-left: 24px;
                         Text { text: root.typing; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
@@ -993,6 +1021,7 @@ export component AppWindow inherits Window {
                         enter-sends <=> root.enter-sends;
                         expanded <=> root.composer-expanded;
                         important <=> root.important;
+                        urgent <=> root.urgent;
                         input-focus(f) => { root.composer-focused = f; }
                         edit-last => {
                             if ShortcutApi.last-own(root.messages) != "" { root.edit(ShortcutApi.last-own(root.messages)); }
@@ -1160,6 +1189,8 @@ export component AppWindow inherits Window {
         ParticipantsPanel {
             x: root.width - self.width - 16px;
             y: 108px;
+            // A 1:1 chat can't be left; its "Add people" starts a group chat.
+            can-leave: PeopleStore.header-group;
             members: PeopleStore.members;
             add-results: PeopleStore.add-results;
             open-profile(id) => {
@@ -1190,6 +1221,22 @@ export component AppWindow inherits Window {
                 PeopleStore.leave-confirm = "";
             }
             cancel => { PeopleStore.leave-confirm = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && ChatHeaderStore.remove-history != "": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        RemoveHistoryConfirm {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            confirm => {
+                ListStore.command("remove-history", ChatHeaderStore.remove-history);
+                ChatHeaderStore.remove-history = "";
+            }
+            cancel => { ChatHeaderStore.remove-history = ""; }
         }
     }
 

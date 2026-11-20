@@ -1,0 +1,317 @@
+// The send button's options, as in Teams: right-click Send (or its chevron) for "Schedule message"
+// and "Set delivery options" (Standard, Important, Urgent). A chosen send time shows as a banner
+// above the box; the open chat's scheduled messages show as "Sending on …" bubbles at the bottom
+// of the conversation with Edit and Delete. Rust (src/send_options.rs, backend/scheduled.rs)
+// gives the day and time words and keeps the scheduled messages.
+import { Theme } from "theme.slint";
+import { Icon, IconButton } from "widgets.slint";
+
+export struct ScheduledItem {
+    id: string,     // client message id
+    label: string,  // "Sending on Fri, Nov 21 at 8:00 AM"
+    text: string,
+}
+
+export global SendStore {
+    // The send time chosen for the next message (ms since 1970 as text); "" sends now.
+    in-out property <string> schedule-at;
+    in-out property <string> schedule-label;
+    // The picker: days from today and minutes after midnight (Teams' default: tomorrow 8:00 AM).
+    in-out property <int> pick-day: 1;
+    in-out property <int> pick-minutes: 480;
+    // The open chat's scheduled messages.
+    in property <[ScheduledItem]> scheduled;
+    pure callback day-label(int) -> string;
+    pure callback time-label(int) -> string;
+    // The picked day and time as ms (text), "" when it is not in the future.
+    pure callback resolve(int, int) -> string;
+    pure callback when-label(string) -> string;
+    // schedule <ms>\t<text> | edit <id> | delete <id>
+    callback command(string, string);
+}
+
+component OptionRow inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+    in property <bool> checked: false;
+    in property <bool> chevron: false;
+    in property <bool> checkable: false;
+    callback clicked();
+    height: root.detail != "" ? 48px : 32px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-description: root.detail;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.clicked(); }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        if root.checkable: Text { width: 14px; text: root.checked ? "✓" : ""; color: Theme.accent; font-size: 13px * Theme.font-scale; vertical-alignment: center; accessible-role: none; }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text { text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; accessible-role: none; }
+            if root.detail != "": Text { text: root.detail; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; wrap: word-wrap; accessible-role: none; }
+        }
+        if root.chevron: Icon { source: @image-url("icons/chevron-right.svg"); width: 14px; height: 14px; y: (parent.height - 14px) / 2; }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// Send, with the chevron that opens its options. A right-click on Send opens them too.
+export component SendButton inherits HorizontalLayout {
+    in property <bool> ready;
+    callback send();
+    callback options();
+    spacing: 0px;
+    send-btn := Rectangle {
+        width: 32px;
+        height: 32px;
+        border-radius: 4px;
+        background: touch.has-hover ? Theme.surface-hover : transparent;
+        accessible-role: button;
+        accessible-label: @tr("Send");
+        accessible-action-default => { root.send(); }
+        Icon { source: @image-url("icons/send.svg"); width: 19px; height: 19px; tint: root.ready ? Theme.accent : Theme.fg-subtle; }
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.send(); }
+            pointer-event(e) => {
+                if e.button == PointerEventButton.right && e.kind == PointerEventKind.up { root.options(); }
+            }
+        }
+    }
+    options-btn := Rectangle {
+        width: 18px;
+        height: 32px;
+        border-radius: 4px;
+        background: options-touch.has-hover ? Theme.surface-hover : transparent;
+        accessible-role: button;
+        accessible-label: @tr("Send options");
+        accessible-action-default => { root.options(); }
+        Icon { source: @image-url("icons/chevron-down.svg"); width: 12px; height: 12px; }
+        options-touch := TouchArea { mouse-cursor: pointer; clicked => { root.options(); } }
+    }
+}
+
+// The contents of the send options menu: the two entries, then the delivery choices. The popup
+// above Send keeps the height of the taller view, and the menu sits at its bottom, next to Send.
+export component SendMenu inherits Rectangle {
+    // "Schedule message" is offered (a chat, not a channel post or a reply).
+    in property <bool> can-schedule: true;
+    in-out property <bool> important;
+    in-out property <bool> urgent;
+    callback schedule();
+    callback done();
+    property <string> view: "main";
+    out property <length> menu-height: 32px + 3 * 48px + 8px;
+    accessible-role: groupbox;
+    accessible-label: @tr("Send options");
+    panel := Rectangle {
+        y: parent.height - self.height;
+        height: (root.view == "main" ? (root.can-schedule ? 2 : 1) * 32px : 32px + 3 * 48px) + 8px;
+        background: Theme.surface;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
+    VerticalLayout {
+        y: panel.y;
+        height: panel.height;
+        padding: 4px;
+        if root.view == "main": VerticalLayout {
+            if root.can-schedule: OptionRow { label: @tr("Schedule message"); clicked => { root.schedule(); } }
+            OptionRow { label: @tr("Set delivery options"); chevron: true; clicked => { root.view = "delivery"; } }
+        }
+        if root.view == "delivery": VerticalLayout {
+            OptionRow { label: @tr("‹ Set delivery options"); clicked => { root.view = "main"; } }
+            OptionRow {
+                label: @tr("Standard");
+                detail: @tr("Delivered as usual");
+                checkable: true;
+                checked: !root.important && !root.urgent;
+                clicked => { root.important = false; root.urgent = false; root.done(); }
+            }
+            OptionRow {
+                label: @tr("Important");
+                detail: @tr("Marked IMPORTANT! for the recipients");
+                checkable: true;
+                checked: root.important;
+                clicked => { root.important = true; root.urgent = false; root.done(); }
+            }
+            OptionRow {
+                label: @tr("Urgent");
+                detail: @tr("Recipients are notified every 2 minutes for 20 minutes");
+                checkable: true;
+                checked: root.urgent;
+                clicked => { root.urgent = true; root.important = false; root.done(); }
+            }
+        }
+    }
+}
+
+component StepRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> what;
+    callback back();
+    callback next();
+    height: 32px;
+    spacing: 6px;
+    IconButton { icon: @image-url("icons/chevron-left.svg"); size: 28px; y: 2px; tooltip: @tr("Earlier {}", root.what); clicked => { root.back(); } }
+    Rectangle {
+        horizontal-stretch: 1;
+        border-radius: 4px;
+        background: Theme.sidebar;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: text;
+        accessible-label: root.label;
+        Text { text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+    }
+    IconButton { icon: @image-url("icons/chevron-right.svg"); size: 28px; y: 2px; tooltip: @tr("Later {}", root.what); clicked => { root.next(); } }
+}
+
+// "Send this message on": a day and a time, then Continue.
+export component SchedulePicker inherits Rectangle {
+    callback done();
+    property <string> picked: SendStore.resolve(SendStore.pick-day, SendStore.pick-minutes);
+    width: 300px;
+    height: 196px;
+    background: Theme.surface;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border;
+    accessible-role: groupbox;
+    accessible-label: @tr("Send this message on");
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        Text { text: @tr("Send this message on"); color: Theme.fg; font-size: 15px * Theme.font-scale; font-weight: 700; }
+        StepRow {
+            label: SendStore.day-label(SendStore.pick-day);
+            what: @tr("day");
+            back => { SendStore.pick-day = max(0, SendStore.pick-day - 1); }
+            next => { SendStore.pick-day = min(60, SendStore.pick-day + 1); }
+        }
+        StepRow {
+            label: SendStore.time-label(SendStore.pick-minutes);
+            what: @tr("time");
+            back => { SendStore.pick-minutes = mod(SendStore.pick-minutes + 1440 - 30, 1440); }
+            next => { SendStore.pick-minutes = mod(SendStore.pick-minutes + 30, 1440); }
+        }
+        Text {
+            text: root.picked == "" ? @tr("Pick a time in the future") : "";
+            color: Theme.danger;
+            font-size: 11px * Theme.font-scale;
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            cancel-btn := Rectangle {
+                width: 80px;
+                height: 30px;
+                border-radius: 4px;
+                background: cancel-touch.has-hover ? Theme.surface-hover : transparent;
+                border-width: 1px;
+                border-color: Theme.border;
+                accessible-role: button;
+                accessible-label: @tr("Cancel");
+                accessible-action-default => { root.done(); }
+                Text { text: @tr("Cancel"); color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                cancel-touch := TouchArea { mouse-cursor: pointer; clicked => { root.done(); } }
+            }
+            continue-btn := Rectangle {
+                width: 90px;
+                height: 30px;
+                border-radius: 4px;
+                background: root.picked == "" ? Theme.surface-hover : (continue-touch.has-hover ? Theme.accent.brighter(0.1) : Theme.accent-strong);
+                accessible-role: button;
+                accessible-label: @tr("Continue");
+                accessible-enabled: root.picked != "";
+                accessible-action-default => { root.confirm(); }
+                Text { text: @tr("Continue"); color: root.picked == "" ? Theme.fg-subtle : #ffffff; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                continue-touch := TouchArea { mouse-cursor: root.picked == "" ? MouseCursor.default : MouseCursor.pointer; clicked => { root.confirm(); } }
+            }
+        }
+    }
+    function confirm() {
+        if root.picked != "" {
+            SendStore.schedule-at = root.picked;
+            SendStore.schedule-label = SendStore.when-label(root.picked);
+            root.done();
+        }
+    }
+}
+
+// Above the box while a send time is chosen: "Select Send to deliver on … at …" with a clear.
+export component ScheduleBanner inherits Rectangle {
+    height: 30px;
+    accessible-role: groupbox;
+    accessible-label: @tr("Select Send to deliver on {}", SendStore.schedule-label);
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 6px;
+        spacing: 6px;
+        Icon { source: @image-url("icons/history.svg"); width: 14px; height: 14px; y: 5px; tint: Theme.accent; }
+        Text {
+            text: @tr("Select Send to deliver on {}", SendStore.schedule-label);
+            color: Theme.fg-muted;
+            font-size: 12px * Theme.font-scale;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            accessible-role: none;
+        }
+        IconButton {
+            icon: @image-url("icons/close.svg");
+            size: 24px;
+            tooltip: @tr("Don't schedule");
+            clicked => {
+                SendStore.schedule-at = "";
+                SendStore.schedule-label = "";
+            }
+        }
+    }
+}
+
+// The open chat's scheduled messages, at the bottom of the conversation (right-aligned like my
+// own messages), each with Edit and Delete.
+export component ScheduledList inherits VerticalLayout {
+    in property <length> max-bubble: 520px;
+    padding-left: 20px;
+    padding-right: 20px;
+    padding-top: 4px;
+    spacing: 6px;
+    for s in SendStore.scheduled: HorizontalLayout {
+        alignment: end;
+        bubble := Rectangle {
+            width: min(root.max-bubble, max(280px, bubble-text.preferred-width + 24px));
+            height: bubble-col.preferred-height;
+            border-radius: 6px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            accessible-role: groupbox;
+            accessible-label: s.label;
+            accessible-description: s.text;
+            bubble-col := VerticalLayout {
+                padding: 8px;
+                padding-left: 12px;
+                spacing: 2px;
+                HorizontalLayout {
+                    spacing: 6px;
+                    Icon { source: @image-url("icons/history.svg"); width: 14px; height: 14px; y: 6px; tint: Theme.fg-subtle; }
+                    Text { text: s.label; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; accessible-role: none; }
+                    IconButton { icon: @image-url("icons/edit.svg"); size: 26px; tooltip: @tr("Edit"); clicked => { SendStore.command("edit", s.id); } }
+                    IconButton { icon: @image-url("icons/trash.svg"); size: 26px; tooltip: @tr("Delete"); clicked => { SendStore.command("delete", s.id); } }
+                }
+                bubble-text := Text { text: s.text; color: Theme.fg; font-size: 14px * Theme.font-scale; wrap: word-wrap; accessible-role: none; }
+            }
+        }
+    }
+}

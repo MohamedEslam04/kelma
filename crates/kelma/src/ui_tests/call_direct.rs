@@ -131,9 +131,15 @@ fn a_second_invitation_does_not_replace_a_ringing_one() {
 }
 
 #[test]
-fn a_one_on_one_chat_header_has_call_and_a_disabled_video_button() {
+fn a_one_on_one_chat_header_has_call_with_a_dropdown_of_video_and_audio() {
     let h = harness();
     h.select(DIRECT);
+    button(&h.app, "Audio call");
+    assert!(
+        buttons(&h.app, "Video call").is_empty(),
+        "inside the dropdown"
+    );
+    click(&button(&h.app, "Call options"));
     let video = button(&h.app, "Video call");
     assert_eq!(video.accessible_enabled(), Some(false));
     assert_eq!(
@@ -142,7 +148,50 @@ fn a_one_on_one_chat_header_has_call_and_a_disabled_video_button() {
     );
     click(&video);
     assert!(h.engine.call_log().is_empty(), "video does nothing");
-    button(&h.app, "Audio call");
+    // The dropdown's own Audio call places the call.
+    assert_eq!(buttons(&h.app, "Audio call").len(), 2);
+    let audio = ElementHandle::find_by_element_type_name(&h.app, "CallChoice")
+        .find(|e| label(e) == "Audio call")
+        .expect("Audio call in the dropdown");
+    click(&audio);
+    assert_eq!(h.engine.call_log(), [format!("dial {PEER}")]);
+    assert!(cs(&h.app).get_outgoing_open());
+}
+
+#[test]
+fn share_screen_from_the_chat_menu_calls_and_shares_once_connected() {
+    let h = harness();
+    h.select(DIRECT);
+    click(&button(&h.app, "More chat options"));
+    let share = ElementHandle::find_by_accessible_label(&h.app, "Share screen")
+        .next()
+        .expect("Share screen in a 1:1 chat's menu");
+    assert_eq!(share.accessible_description().unwrap(), "Ctrl+Shift+E");
+    click(&share);
+    assert_eq!(
+        h.engine.call_log(),
+        [format!("dial {PEER}"), "share when connected".into()]
+    );
+    assert!(cs(&h.app).get_outgoing_open());
+}
+
+#[test]
+fn ctrl_shift_e_shares_the_screen_of_a_one_on_one_chat() {
+    let h = harness();
+    h.select(DIRECT);
+    composer(&h.app).mock_single_click(PointerEventButton::Left);
+    for k in [Key::Control, Key::Shift] {
+        key(&h.app, k, true);
+    }
+    key(&h.app, "E", true);
+    key(&h.app, "E", false);
+    for k in [Key::Shift, Key::Control] {
+        key(&h.app, k, false);
+    }
+    assert_eq!(
+        h.engine.call_log(),
+        [format!("dial {PEER}"), "share when connected".into()]
+    );
 }
 
 #[test]

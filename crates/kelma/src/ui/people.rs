@@ -49,15 +49,20 @@ impl UiHandle {
         });
     }
 
-    /// Group chat header state: whether the pencil and participants button show, and the count.
+    /// Chat header state: whether the pencil shows (group chats), and the count of the
+    /// participants button (group and 1:1 chats; 0 hides it).
     pub fn group_header(&self, group: bool, count: usize) {
         self.store(move |s| {
             s.set_header_group(group);
             s.set_member_count(count as i32);
-            if !group {
+            if count == 0 {
                 s.set_participants_open(false);
             }
         });
+    }
+
+    pub fn close_participants(&self) {
+        self.store(|s| s.set_participants_open(false));
     }
 
     /// The participants popover: members, and the suggestions of "Add people".

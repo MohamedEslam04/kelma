@@ -329,6 +329,7 @@ impl Engine {
             p.add_results.clear();
         }
         self.ui.card(false, CardData::default());
+        self.ui.close_participants();
         self.ui.members(vec![], vec![]);
         self.ui.pinned(
             self.people
@@ -971,6 +972,9 @@ impl Engine {
                 p.add_history,
             )
         };
+        if self.conv_kind(&conv) == Some(ConvKind::OneOnOne) {
+            return self.group_from_direct(&conv, person);
+        }
         // Whole history: 0. No history: from now on.
         let from = if history { 0 } else { now_ms() };
         self.client.add_member(&conv, &mri, from).await?;
@@ -1000,6 +1004,39 @@ impl Engine {
             "Added {}",
             person.map_or_else(|| "a person".into(), |p| p.display_name)
         ));
+        Ok(())
+    }
+
+    /// "Add people" in a 1:1 chat: a 1:1 chat takes no members, so, as in Teams, a group chat
+    /// with the other person and the one picked is started instead. The New chat pane opens
+    /// with both in To:; its first message creates the group (or opens one that exists).
+    fn group_from_direct(
+        self: &Arc<Self>,
+        conv: &str,
+        picked: Option<Person>,
+    ) -> anyhow::Result<()> {
+        let mut to: Vec<Person> = one_on_one_members(conv)
+            .into_iter()
+            .filter(|m| *m != self.me)
+            .map(|m| Person {
+                display_name: self.name_of(&m),
+                mri: m,
+                email: None,
+                job_title: None,
+                department: None,
+            })
+            .collect();
+        to.extend(picked);
+        {
+            let mut p = self.people.lock().unwrap();
+            p.new_chat = NewChat {
+                to,
+                ..NewChat::default()
+            };
+            p.add_results.clear();
+        }
+        self.ui.close_participants();
+        self.push_new_chat(true);
         Ok(())
     }
 

@@ -15,7 +15,7 @@ impl Engine {
     ) -> anyhow::Result<()> {
         let text = text.trim().to_string();
         // The importance applies to this one message (and never to an edit or a chip).
-        let important = std::mem::take(&mut self.view.lock().unwrap().important);
+        let importance = std::mem::take(&mut self.view.lock().unwrap().importance);
         let editing_now = self.view.lock().unwrap().editing.is_some();
         // Chips go first, each as its own outbox item (an image or a file card), then the text.
         if !editing_now && let Err(err) = self.queue_attachments() {
@@ -137,9 +137,8 @@ impl Engine {
             None,
         );
         item.mentions = mentions::property(&prepared);
-        if important {
-            item.importance = teams_proto::delivery::Importance::Important.wire().into();
-        }
+        // "high" or "urgent"; Standard leaves it empty.
+        item.importance = importance.wire().into();
         if !cards.is_empty() {
             // One message holds the typed text and every card, as in Teams, where the card
             // chosen from an extension is attached to the message being written.

@@ -231,6 +231,9 @@ pub enum CallCmd {
     Decline,
     /// Call the other person of this 1:1 chat.
     DialChat(String),
+    /// The chat header's "Share screen": call the other person of this 1:1 chat and share once
+    /// connected (the screen and window picker opens).
+    ShareScreen(String),
     /// Call this MRI (profile card).
     DialPerson(String),
     /// Cancel the outgoing call while it rings.
@@ -248,6 +251,7 @@ impl CallCmd {
             "end-accept" => CallCmd::AcceptWaiting(CurrentCall::End),
             "decline" => CallCmd::Decline,
             "dial" if !arg.is_empty() => CallCmd::DialChat(arg.to_owned()),
+            "share-screen" if !arg.is_empty() => CallCmd::ShareScreen(arg.to_owned()),
             "dial-person" if !arg.is_empty() => CallCmd::DialPerson(arg.to_owned()),
             "cancel" => CallCmd::Cancel,
             "close" => CallCmd::Close,
@@ -459,29 +463,14 @@ impl Engine {
             CallCmd::Accept { video } => self.accept_incoming(video, None),
             CallCmd::AcceptWaiting(current) => self.accept_incoming(false, Some(current)),
             CallCmd::Decline => self.decline_incoming(),
-            CallCmd::DialChat(chat) => {
-                let peer = super::util::one_on_one_members(&chat)
-                    .into_iter()
-                    .find(|m| *m != self.me)
-                    .context("not a 1:1 chat")?;
-                let title = self
-                    .store
-                    .lock()
-                    .unwrap()
-                    .conversation(&chat)
-                    .ok()
-                    .flatten()
-                    .map(|c| c.title)
-                    .filter(|t| !t.is_empty());
-                let name = title.unwrap_or_else(|| self.person_name(&peer));
-                self.dial(peer, name)
-            }
+            CallCmd::DialChat(chat) => self.dial_chat(&chat, false),
+            CallCmd::ShareScreen(chat) => self.dial_chat(&chat, true),
             CallCmd::DialPerson(mri) => {
                 if mri == self.me {
                     anyhow::bail!("You can't call yourself");
                 }
                 let name = self.person_name(&mri);
-                self.dial(mri, name)
+                self.dial(mri, name, false)
             }
             CallCmd::Cancel => {
                 self.cancel_outgoing();
@@ -874,7 +863,26 @@ impl Engine {
 
     // --- outgoing ------------------------------------------------------------------------------
 
-    fn dial(self: &Arc<Self>, mri: String, name: String) -> anyhow::Result<()> {
+    /// Calls the other person of the 1:1 chat `chat`; `share`: share the screen once connected.
+    fn dial_chat(self: &Arc<Self>, chat: &str, share: bool) -> anyhow::Result<()> {
+        let peer = super::util::one_on_one_members(chat)
+            .into_iter()
+            .find(|m| *m != self.me)
+            .context("not a 1:1 chat")?;
+        let title = self
+            .store
+            .lock()
+            .unwrap()
+            .conversation(chat)
+            .ok()
+            .flatten()
+            .map(|c| c.title)
+            .filter(|t| !t.is_empty());
+        let name = title.unwrap_or_else(|| self.person_name(&peer));
+        self.dial(peer, name, share)
+    }
+
+    fn dial(self: &Arc<Self>, mri: String, name: String, share: bool) -> anyhow::Result<()> {
         let mut c = self.direct();
         let busy = c.incoming.as_ref().is_some_and(|i| !i.state.is_over())
             || c.outgoing.as_ref().is_some_and(|o| o.state.is_live());
@@ -898,6 +906,9 @@ impl Engine {
         self.push_outgoing(id);
         if self.offline.load(Ordering::Relaxed) {
             self.direct().log.push(format!("dial {mri}"));
+            if share {
+                self.direct().log.push("share when connected".into());
+            }
             let e = self.clone();
             // Demo: rings, then connects (there is no in-call window without an account).
             later(async move {
@@ -914,7 +925,7 @@ impl Engine {
         }
         let e = self.clone();
         later(async move {
-            if let Err(err) = e.dial_live(id, mri, name, cancel_rx, ev_rx).await {
+            if let Err(err) = e.dial_live(id, mri, name, share, cancel_rx, ev_rx).await {
                 tracing::warn!(%err, "placing a call failed");
                 e.outgoing_event(id, OutgoingEvent::Failed(err.to_string()));
             }
@@ -929,6 +940,7 @@ impl Engine {
         id: u64,
         mri: String,
         name: String,
+        share: bool,
         mut cancel: oneshot::Receiver<()>,
         mut events: mpsc::UnboundedReceiver<CallEvent>,
     ) -> anyhow::Result<()> {
@@ -1018,7 +1030,11 @@ impl Engine {
                     let Some(oe) = outgoing_event(&ev) else { continue };
                     match self.outgoing_event(id, oe) {
                         Some(OutgoingState::Connected) => {
-                            return m.adopt(s, links, media, media_events, CallKind::Direct { peer_name: name, chat_id }, None);
+                            m.adopt(s, links, media, media_events, CallKind::Direct { peer_name: name, chat_id }, None)?;
+                            if share {
+                                m.share_when_ready();
+                            }
+                            return Ok(());
                         }
                         Some(st) if !st.is_live() => {
                             let _ = media.close().await;
@@ -1446,6 +1462,11 @@ mod tests {
             Some(CallCmd::DialChat("19:a_b@unq.gbl.spaces".into()))
         );
         assert_eq!(CallCmd::parse("dial", ""), None);
+        assert_eq!(
+            CallCmd::parse("share-screen", "19:a_b@unq.gbl.spaces"),
+            Some(CallCmd::ShareScreen("19:a_b@unq.gbl.spaces".into()))
+        );
+        assert_eq!(CallCmd::parse("share-screen", ""), None);
         assert_eq!(
             CallCmd::parse("dial-person", "8:orgid:x"),
             Some(CallCmd::DialPerson("8:orgid:x".into()))

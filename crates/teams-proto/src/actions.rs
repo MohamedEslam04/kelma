@@ -185,6 +185,16 @@ pub fn cleared_bookmark(now: i64) -> String {
     format!("0;{now};0")
 }
 
+/// Name of the conversation property behind Teams' "Remove chat history".
+pub const CLEAR_HISTORY_PROPERTY: &str = "clearHistoryTime";
+
+/// Body of "Remove chat history": everything up to `until_ms` disappears for the current user
+/// only. The time is a number, not a string. Shape from rusty-teams (`chatsvc/conversations.rs`);
+/// UNVERIFIED live.
+pub fn clear_history_body(until_ms: i64) -> Value {
+    json!({ CLEAR_HISTORY_PROPERTY: until_ms })
+}
+
 impl Client {
     async fn conv_props_url(&self, conversation_id: &str, name: &str) -> String {
         format!(
@@ -327,6 +337,17 @@ impl Client {
         .await
     }
 
+    /// Teams' "Remove chat history": the messages up to `until_ms` are gone for this user (the
+    /// other people keep them). UNVERIFIED live, see [`clear_history_body`].
+    pub async fn clear_history(&self, conversation_id: &str, until_ms: i64) -> Result<()> {
+        self.put_conv_prop(
+            conversation_id,
+            CLEAR_HISTORY_PROPERTY,
+            clear_history_body(until_ms),
+        )
+        .await
+    }
+
     /// Hides a chat until its next message, or shows it again.
     pub async fn set_hidden(&self, conversation_id: &str, hidden: bool) -> Result<()> {
         if hidden {
@@ -410,6 +431,13 @@ mod tests {
         assert_eq!(p[1].folder_id, "F");
         let b = pinbar_body("19:a", "1", "", false);
         assert_eq!(b["pinbarOperation"], "remove");
+    }
+
+    #[test]
+    fn clear_history_puts_the_time_as_a_number() {
+        let b = clear_history_body(1_792_200_000_001);
+        assert_eq!(b, json!({"clearHistoryTime": 1_792_200_000_001_i64}));
+        assert!(b["clearHistoryTime"].is_i64());
     }
 
     #[test]

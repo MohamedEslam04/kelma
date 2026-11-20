@@ -48,6 +48,8 @@ pub enum ListsCmd {
     Unmute(String),
     CopyLink(String),
     Hide(String),
+    /// The chat header's "Remove chat history": the messages so far are gone for this user.
+    RemoveHistory(String),
     /// `previews`, `times` or `combined`, on or off.
     Option(String, bool),
     ChannelMenu(String),
@@ -78,6 +80,7 @@ impl ListsCmd {
             "unmute" => ListsCmd::Unmute(a),
             "copy-link" => ListsCmd::CopyLink(a),
             "hide" => ListsCmd::Hide(a),
+            "remove-history" => ListsCmd::RemoveHistory(a),
             "option" => ListsCmd::Option(a, b == "on"),
             "channel-menu" => ListsCmd::ChannelMenu(a),
             "channel-show" => ListsCmd::ChannelShow(a),
@@ -557,6 +560,7 @@ impl Engine {
             ListsCmd::Unmute(conv) => self.set_mute(&conv, false).await,
             ListsCmd::CopyLink(conv) => self.copy_text(&chat_link(&conv), "Chat link copied"),
             ListsCmd::Hide(conv) => self.hide_chat(&conv).await,
+            ListsCmd::RemoveHistory(conv) => self.remove_history(&conv).await,
             ListsCmd::Option(name, on) => self.set_option(&name, on),
             ListsCmd::ChannelMenu(id) => self.channel_menu(&id).await,
             ListsCmd::ChannelShow(id) => self.set_channel_shown(&id, true).await,
@@ -752,7 +756,11 @@ impl Engine {
             }
             was
         };
-        self.mark(|d| d.chats = true);
+        // The chat header's "More chat options" shows Mute or Unmute too.
+        self.mark(|d| {
+            d.chats = true;
+            d.header = true;
+        });
         if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
@@ -765,7 +773,10 @@ impl Engine {
                 st.muted.remove(conv);
             }
             drop(st);
-            self.mark(|d| d.chats = true);
+            self.mark(|d| {
+                d.chats = true;
+                d.header = true;
+            });
             return Err(err.into());
         }
         Ok(())
@@ -791,6 +802,43 @@ impl Engine {
         // Best effort: Teams hides the chat for this account too.
         if let Err(err) = self.client.set_hidden(conv, true).await {
             tracing::warn!(%err, "hiding the chat in Teams failed");
+        }
+        Ok(())
+    }
+
+    /// "Remove chat history" (chat header, "More chat options"): Teams clears the history up to
+    /// now for this user only. Here the cached messages and draft go, and the chat leaves the
+    /// list until a newer message arrives. The account is written first; when it refuses,
+    /// nothing changes here.
+    async fn remove_history(self: &Arc<Self>, conv: &str) -> anyhow::Result<()> {
+        let at = now_ms();
+        if !self.offline.load(std::sync::atomic::Ordering::Relaxed) {
+            self.client.clear_history(conv, at).await?;
+        }
+        self.store.lock().unwrap().delete_conversation(conv)?;
+        self.lists
+            .lock()
+            .unwrap()
+            .local
+            .hidden
+            .insert(conv.to_string(), at);
+        self.lists_save();
+        let was_open = {
+            let mut v = self.view.lock().unwrap();
+            let open = v.current.as_deref() == Some(conv);
+            if open {
+                v.current = None;
+                v.thread_root = None;
+            }
+            open
+        };
+        self.mark(|d| {
+            d.chats = true;
+            d.header = true;
+            d.messages = true;
+        });
+        if was_open {
+            self.banner("Chat history removed");
         }
         Ok(())
     }
@@ -996,9 +1044,19 @@ impl Engine {
         self.lists_silenced(id)
     }
 
+    /// The chat is muted (the header's menu offers Unmute).
+    pub(super) fn is_muted(&self, id: &str) -> bool {
+        self.lists.lock().unwrap().muted.contains(id)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_is_muted(&self, id: &str) -> bool {
-        self.lists.lock().unwrap().muted.contains(id)
+        self.is_muted(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_is_hidden(&self, id: &str) -> bool {
+        self.lists.lock().unwrap().local.hidden.contains_key(id)
     }
 
     #[cfg(test)]
@@ -1025,6 +1083,14 @@ mod tests {
             hidden_channels: ["chan-hidden".to_string()].into(),
             unknown_sections: HashSet::new(),
         }
+    }
+
+    #[test]
+    fn parses_remove_history() {
+        assert_eq!(
+            ListsCmd::parse("remove-history", "19:x"),
+            Some(ListsCmd::RemoveHistory("19:x".into()))
+        );
     }
 
     #[test]

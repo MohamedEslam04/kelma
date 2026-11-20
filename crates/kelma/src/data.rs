@@ -220,6 +220,8 @@ pub struct HeaderData {
     pub avatar: Option<Pixels>,
     pub is_channel: bool,
     pub thread_root: String,
+    /// Notifications are off for this chat ("More chat options" offers Unmute).
+    pub muted: bool,
 }
 
 /// One row of the Activity list.

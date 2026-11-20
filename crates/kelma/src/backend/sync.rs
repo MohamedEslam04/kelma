@@ -255,6 +255,7 @@ impl Engine {
         self.push_attachments();
         self.on_chat_opened(&id);
         self.find_chat_opened(&id);
+        self.scheduled_chat_opened();
         self.mark(|d| {
             d.header = true;
             d.messages = true;

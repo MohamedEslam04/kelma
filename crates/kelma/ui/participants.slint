@@ -8,6 +8,8 @@ import { PeopleStore } from "people.slint";
 export component ParticipantsPanel inherits Rectangle {
     in property <[PersonItem]> members;
     in property <[PersonItem]> add-results;
+    // Leave is offered (group chats; a 1:1 chat can't be left).
+    in property <bool> can-leave: true;
     callback open-profile(string);
     callback add-query(string);
     callback add-pick(string);
@@ -170,7 +172,7 @@ export component ParticipantsPanel inherits Rectangle {
                     }
                 }
             }
-            leave-btn := Rectangle {
+            if root.can-leave: leave-btn := Rectangle {
                 height: 32px;
                 border-radius: 4px;
                 background: leave-touch.has-hover ? #3b1f22 : transparent;

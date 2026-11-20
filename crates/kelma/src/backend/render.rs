@@ -382,6 +382,7 @@ impl Engine {
             avatar: avatar_mri.and_then(|m| self.avatar(&m)),
             is_channel: kind == ConvKind::Channel,
             thread_root: thread.unwrap_or_default(),
+            muted: self.is_muted(&id),
             id,
             title,
         });

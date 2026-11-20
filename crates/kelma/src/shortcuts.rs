@@ -21,6 +21,8 @@ pub fn action(key: &str, ctrl: bool, alt: bool, shift: bool) -> &'static str {
         (false, true, true, "m") => "focus-messages",
         (true, false, true, "x") => "expand-composer",
         (false, true, true, "o") => "attach-file",
+        // The chat header's "More chat options" › Share screen (1:1 chats).
+        (true, false, true, "e") => "share-screen",
         _ => "",
     }
 }
@@ -58,6 +60,7 @@ mod tests {
         assert_eq!(action("R", false, true, true), "focus-composer");
         assert_eq!(action("M", false, true, true), "focus-messages");
         assert_eq!(action("X", true, false, true), "expand-composer");
+        assert_eq!(action("E", true, false, true), "share-screen");
         assert_eq!(action("O", false, true, true), "attach-file");
     }
 
