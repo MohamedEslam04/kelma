@@ -17,6 +17,7 @@ optdepends=(
   'xdg-desktop-portal: file chooser and open-link portals'
   'gst-plugin-pipewire: screen sharing in calls (with gstreamer and gst-plugins-base)'
   'gst-plugins-good: camera video in calls (V4L2 and MJPEG cameras)'
+  'ffmpeg: recording voice messages (encodes them to AAC)'
 )
 # !lto: makepkg's default -flto turns aws-lc's C objects into bitcode that the Rust linker cannot
 # read. !debug: the release profile is stripped, so the -debug package would be empty.

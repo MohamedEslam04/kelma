@@ -27,6 +27,7 @@ pkgbase = kelma-git
 	optdepends = noto-fonts-emoji: emoji rendering
 	optdepends = gnome-keyring: Secret Service for the stored sign-in (or kwallet)
 	optdepends = xdg-desktop-portal: file chooser and open-link portals
+	optdepends = ffmpeg: recording voice messages (encodes them to AAC)
 	provides = kelma
 	conflicts = kelma
 	options = !lto
