@@ -41,6 +41,33 @@ pub(super) fn app_view(def: &AppDefinition) -> &'static str {
     }
 }
 
+/// The "…" flyout, as Teams lists it: every installed app that is not on the bar, by name, and
+/// with a query the same list filtered by name. Unlike `InstalledApps::more_apps` it keeps
+/// Teams' own apps (`isCoreApp`) and the apps kelma has a screen for even without a personal tab;
+/// only the screens the rail always shows (Activity, Chat, Teams, Calendar, OneDrive) stay out.
+/// An app with a pinned entitlement is on the bar even when another of its entitlements is not.
+pub(super) fn flyout_apps<'a>(i: &'a InstalledApps, query: &str) -> Vec<&'a AppDefinition> {
+    let q = query.trim().to_lowercase();
+    let pinned: Vec<&str> = i
+        .entitlements
+        .iter()
+        .filter(|e| e.pinned)
+        .map(|e| e.id.as_str())
+        .collect();
+    let mut apps: Vec<&AppDefinition> = i
+        .entitlements
+        .iter()
+        .filter(|e| e.state.is_installed() && !pinned.contains(&e.id.as_str()))
+        .filter_map(|e| i.definition(&e.id))
+        .filter(|d| native_key(d).is_none())
+        .filter(|d| d.has_personal_app || app_view(d) != "app")
+        .filter(|d| d.name.to_lowercase().contains(&q))
+        .collect();
+    apps.sort_by_key(|d| d.name.to_lowercase());
+    apps.dedup_by(|a, b| a.id == b.id);
+    apps
+}
+
 /// What the rail and the flyout need from an app definition.
 struct Listed {
     id: String,
@@ -92,19 +119,36 @@ impl Apps {
         self.extras().into_iter().map(|e| e.id).collect()
     }
 
+    fn rail_item(&mut self, e: Listed) -> RailItem {
+        RailItem {
+            letter: letter(&e.name),
+            color: tile_color(&e.accent, &e.name),
+            icon: self.image(&e.icon),
+            id: e.id,
+            name: e.name,
+            view: e.view.to_owned(),
+            locked: e.locked,
+        }
+    }
+
     pub(super) fn rail_items(&mut self) -> Vec<RailItem> {
         self.extras()
             .into_iter()
-            .map(|e| RailItem {
-                letter: letter(&e.name),
-                color: tile_color(&e.accent, &e.name),
-                icon: self.image(&e.icon),
-                id: e.id,
-                name: e.name,
-                view: e.view.to_owned(),
-                locked: e.locked,
-            })
+            .map(|e| self.rail_item(e))
             .collect()
+    }
+
+    /// The open app when it is not on the bar (it was opened from the flyout).
+    fn temp_item(&mut self) -> Option<RailItem> {
+        if self.active.is_empty() || self.extras().iter().any(|e| e.id == self.active) {
+            return None;
+        }
+        let def = self.def(&self.active)?;
+        if native_key(def).is_some() {
+            return None;
+        }
+        let e = Listed::of(def, false);
+        Some(self.rail_item(e))
     }
 
     pub(super) fn is_pinned(&self, id: &str) -> bool {
@@ -126,8 +170,7 @@ impl Apps {
         let Some(i) = &self.installed else {
             return Vec::new();
         };
-        let found: Vec<Listed> = i
-            .more_apps(&self.flyout_query)
+        let found: Vec<Listed> = flyout_apps(i, &self.flyout_query)
             .into_iter()
             .map(|d| Listed::of(d, false))
             .collect();
@@ -149,6 +192,7 @@ impl Apps {
 
     pub(super) fn rail_data(&mut self) -> RailData {
         let items = self.rail_items();
+        let temp = self.temp_item();
         let flyout = if self.flyout {
             self.flyout_cards()
         } else {
@@ -156,6 +200,7 @@ impl Apps {
         };
         RailData {
             items,
+            temp,
             collapsed: self.collapsed,
             active: self.active.clone(),
             flyout_open: self.flyout,
@@ -353,6 +398,7 @@ impl Engine {
         open: bool,
         query: Option<String>,
     ) -> anyhow::Result<()> {
+        let opening = open && query.is_none();
         // The flyout's state changes first, so a Close sent while the apps load stays closed.
         {
             let mut a = self.apps.lock().unwrap();
@@ -367,6 +413,15 @@ impl Engine {
         if open && self.apps.lock().unwrap().installed.is_none() {
             self.apps_ensure_installed().await;
             self.apps_push_rail();
+        }
+        // What the flyout had to list from, for a live run that shows an unexpected list.
+        if opening && let Some(i) = &self.apps.lock().unwrap().installed {
+            tracing::info!(
+                entitled = i.entitlements.len(),
+                pinned = i.entitlements.iter().filter(|e| e.pinned).count(),
+                listed = flyout_apps(i, "").len(),
+                "apps flyout opened"
+            );
         }
         Ok(())
     }
@@ -459,5 +514,61 @@ mod tests {
         assert!(names.contains(&"Calling".to_owned()));
         let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
         assert!(pos("Workflows") < pos("Planner"));
+    }
+
+    /// Microsoft's own apps as the service can send them: Planner marked core, OneNote with a
+    /// team tab only, an app pinned through one entitlement and not through another.
+    fn tenant_apps() -> InstalledApps {
+        let personal = json!({"staticTabs": {"scopes": ["personal"]}});
+        parse_installed(&json!({"value": {"userEntitlements": {"u": [
+            {"id": "act", "state": "InstalledAndPermanent", "isAppBarPinned": true, "appBarOrder": 1},
+            {"id": "planner", "state": "InstalledAndPermanent"},
+            {"id": "onenote", "state": "Installed"},
+            {"id": "lists", "state": "Installed"},
+            {"id": "flows", "state": "Installed"},
+            {"id": "shifts", "state": "Installed", "isAppBarPinned": true, "appBarOrder": 2},
+            {"id": "shifts", "state": "Installed"},
+            {"id": "polls", "state": "Featured"}
+        ]}, "definitions": {
+            "act": {"id": "act", "name": "Activity", "isCoreApp": true, "metaCapabilities": personal},
+            "planner": {"id": "planner", "name": "Planner", "isCoreApp": true, "metaCapabilities": personal},
+            "onenote": {"id": "onenote", "name": "OneNote", "metaCapabilities": {"galleryTabs": {"scopes": ["team"]}}},
+            "lists": {"id": "lists", "name": "Lists", "metaCapabilities": personal},
+            "flows": {"id": "flows", "name": "Workflows", "metaCapabilities": personal},
+            "shifts": {"id": "shifts", "name": "Shifts", "metaCapabilities": personal},
+            "polls": {"id": "polls", "name": "Polls", "metaCapabilities": personal}
+        }}}))
+    }
+
+    #[test]
+    fn the_flyout_lists_every_installed_app_not_on_the_bar_and_a_query_filters_that_list() {
+        let mut a = Apps {
+            installed: Some(tenant_apps()),
+            flyout: true,
+            ..Default::default()
+        };
+        let names = |a: &mut Apps| -> Vec<String> {
+            a.rail_data().flyout.into_iter().map(|c| c.name).collect()
+        };
+        // Planner (core) and OneNote (no personal tab) are there; Activity is one of kelma's own
+        // screens, Shifts is on the bar, Polls is only suggested.
+        assert_eq!(names(&mut a), ["Lists", "OneNote", "Planner", "Workflows"]);
+        a.flyout_query = "PLAN".into();
+        assert_eq!(names(&mut a), ["Planner"]);
+    }
+
+    #[test]
+    fn an_app_opened_from_the_flyout_shows_on_the_rail_while_it_is_the_open_one() {
+        let mut a = Apps {
+            installed: Some(tenant_apps()),
+            ..Default::default()
+        };
+        assert!(a.rail_data().temp.is_none());
+        a.active = "lists".into();
+        let temp = a.rail_data().temp.expect("the open app on the rail");
+        assert_eq!((temp.name.as_str(), temp.view.as_str()), ("Lists", "lists"));
+        // A pinned app is on the rail already.
+        a.active = "shifts".into();
+        assert!(a.rail_data().temp.is_none());
     }
 }

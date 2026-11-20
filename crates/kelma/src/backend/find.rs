@@ -1027,7 +1027,15 @@ impl Engine {
             .conv_row(conv)
             .filter(|c| c.kind == ConvKind::Channel)
             .map(|_| self.location_of(conv, "", ""));
+        // `open` does nothing for the chat already open, which would leave a quick view (Saved,
+        // Mentions, Followed threads) covering the message it lands on: it closes here.
+        self.close_quick();
         self.open(conv.to_string(), title).await
+    }
+
+    fn close_quick(&self) {
+        self.find.lock().unwrap().quick = None;
+        self.ui.quick_open(false);
     }
 
     /// Opens the chat of a message and lands on it. `root` is the thread root of a channel reply.

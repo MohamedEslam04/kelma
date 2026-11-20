@@ -169,17 +169,33 @@ impl Engine {
             return Ok(teams_proto::planner::parse_plans(&fx::planner_plans()));
         }
         // Plans the user is on, plus those of the teams joined (a plan lives in its team's group).
+        // The teams are read side by side: one after another, a slow Graph made the screen wait
+        // for every team in turn. A team whose plans cannot be read is left out.
         let mut plans = self.client.my_planner_plans().await?;
-        for g in self.client.joined_group_ids().await.unwrap_or_default() {
-            for p in self
-                .client
-                .group_planner_plans(&g)
-                .await
-                .unwrap_or_default()
-            {
-                if !plans.iter().any(|o| o.id == p.id) {
-                    plans.push(p);
+        let groups = self.client.joined_group_ids().await.unwrap_or_else(|e| {
+            tracing::warn!(err = %e, "joined teams could not be read for their plans");
+            Vec::new()
+        });
+        let mut per_team = Vec::new();
+        // Six at a time. The futures are collected before the wait, so no iterator (and its
+        // closure) is held across it: that kept the command's future from being `Send`.
+        for chunk in groups.chunks(6) {
+            let reads: Vec<_> = chunk
+                .iter()
+                .map(|g| self.client.group_planner_plans(g))
+                .collect();
+            per_team.extend(futures_util::future::join_all(reads).await);
+        }
+        for r in per_team {
+            match r {
+                Ok(found) => {
+                    for p in found {
+                        if !plans.iter().any(|o| o.id == p.id) {
+                            plans.push(p);
+                        }
+                    }
                 }
+                Err(e) => tracing::debug!(err = %e, "a team's plans could not be read"),
             }
         }
         Ok(plans)

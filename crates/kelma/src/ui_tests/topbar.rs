@@ -115,12 +115,16 @@ fn a_slash_opens_the_command_list_and_typing_narrows_it() {
     assert!(row_titles(&app).contains(&"/goto <team or channel>".to_string()));
     type_text(&app, "b");
     assert_eq!(row_titles(&app), ["/busy", "/brb"]);
-    // The chat list is not filtered by a command.
+    // The chat list is not filtered by a command (nor by anything typed).
     let filtered = Log::default();
     let f = filtered.clone();
     app.on_search(move |q| f.borrow_mut().push(q.to_string()));
     type_text(&app, "u");
-    assert_eq!(*filtered.borrow(), [""]);
+    assert!(
+        filtered.borrow().iter().all(|q| q.is_empty()),
+        "{:?}",
+        filtered.borrow()
+    );
 }
 
 #[test]
@@ -568,6 +572,39 @@ fn engine_window() -> (Harness, Log) {
         move |id, title| run(Cmd::SelectChannel(id.into(), title.into()))
     });
     (h, log)
+}
+
+fn chat_list(app: &AppWindow) -> Vec<String> {
+    [
+        app.get_chats_favorites(),
+        app.get_chats_main(),
+        app.get_chats_channels(),
+    ]
+    .iter()
+    .flat_map(|m| m.iter().map(|c| c.title.to_string()).collect::<Vec<_>>())
+    .collect()
+}
+
+/// The live case: "tech" left in the search box hid every chat that did not match, and the
+/// user's own sections showed open and empty. As in Teams, the box no longer filters the list.
+#[test]
+fn text_in_the_search_box_leaves_the_chat_list_whole() {
+    let (h, _log) = engine_window();
+    h.app.on_search({
+        let run = h.runner();
+        move |q| run(Cmd::Search(q.into()))
+    });
+    h.runner()(Cmd::SetFilter("all".into()));
+    let all = chat_list(&h.app);
+    assert!(all.len() > 2, "{all:?}");
+
+    focus_box(&h.app);
+    type_text(&h.app, "backend");
+    assert_eq!(chat_list(&h.app), all, "typing does not filter the chats");
+    // Gone from the box (Esc), the list is still whole.
+    key(&h.app, Key::Escape, true);
+    key(&h.app, Key::Escape, false);
+    assert_eq!(chat_list(&h.app), all);
 }
 
 #[test]

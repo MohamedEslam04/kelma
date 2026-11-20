@@ -205,6 +205,87 @@ export component SettingsPage inherits Rectangle {
     init => { keys.focus(); }
 }
 
+// A Teams availability's icon: green (Available), red (Busy), red with a bar (Do not disturb),
+// yellow with a clock (Be right back), yellow (Away), a grey ring (Offline).
+component PresenceIcon inherits Rectangle {
+    in property <string> status;
+    property <color> tone: (status == "Available" || status == "AvailableIdle") ? #6bb700
+        : (status == "Busy" || status == "BusyIdle" || status == "DoNotDisturb") ? #c4314b
+        : (status == "BeRightBack" || status == "Away") ? #ffaa44
+        : #8a8886;
+    property <bool> ring: status == "Offline" || status == "";
+    in property <length> size: 14px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+    background: root.ring ? transparent : root.tone;
+    border-width: root.ring ? max(1.5px, root.size / 7) : 0px;
+    border-color: root.tone;
+    // Do not disturb: a white bar across.
+    if root.status == "DoNotDisturb": Rectangle {
+        x: root.size * 0.22;
+        y: root.size * 0.43;
+        width: root.size * 0.56;
+        height: root.size * 0.14;
+        background: #ffffff;
+    }
+    // Be right back: the hands of a clock.
+    if root.status == "BeRightBack": Rectangle {
+        x: root.size * 0.43;
+        y: root.size * 0.22;
+        width: root.size * 0.14;
+        height: root.size * 0.35;
+        background: #ffffff;
+    }
+    if root.status == "BeRightBack": Rectangle {
+        x: root.size * 0.43;
+        y: root.size * 0.43;
+        width: root.size * 0.33;
+        height: root.size * 0.14;
+        background: #ffffff;
+    }
+}
+
+// The words for a Teams availability, as the profile menu shows them.
+global PresenceWords {
+    pure public function label(p: string) -> string {
+        if p == "Available" || p == "AvailableIdle" { return @tr("Available"); }
+        if p == "Busy" || p == "BusyIdle" { return @tr("Busy"); }
+        if p == "DoNotDisturb" { return @tr("Do not disturb"); }
+        if p == "BeRightBack" { return @tr("Be right back"); }
+        if p == "Away" { return @tr("Away"); }
+        if p == "Offline" { return @tr("Offline"); }
+        if p == "PresenceUnknown" { return @tr("Status unknown"); }
+        return p;
+    }
+}
+
+// One status of "Set status": its icon, its name and a check on the current one.
+component StatusRow inherits Rectangle {
+    in property <string> label;
+    in property <string> status;
+    in property <bool> current;
+    callback clicked();
+    height: 32px;
+    border-radius: 4px;
+    background: t.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-description: root.current ? @tr("Current status") : "";
+    accessible-action-default => { root.clicked(); }
+    t := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 10px;
+        alignment: stretch;
+        if root.status != "": PresenceIcon { status: root.status; y: (parent.height - self.height) / 2; }
+        if root.status == "": Icon { source: @image-url("icons/restore.svg"); width: 14px; height: 14px; y: (parent.height - self.height) / 2; }
+        Text { text: root.label; color: Theme.fg; font-size: SFont.body; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; accessible-role: none; }
+        if root.current: Icon { source: @image-url("icons/check.svg"); tint: Theme.accent; width: 16px; height: 16px; y: (parent.height - self.height) / 2; }
+    }
+}
+
 // The profile menu under the avatar: who is signed in (with the photo), Set status (when it ends,
 // the status message and when that clears), Change profile photo, Saved, Zoom, Keyboard shortcuts,
 // Settings, View account and Sign out.
@@ -224,7 +305,8 @@ export component ProfileMenu inherits Rectangle {
         x: root.width - self.width - 8px;
         y: 46px;
         width: 300px;
-        height: min(col.preferred-height, root.height - 56px);
+        // Never taller than the window: the rest scrolls (the status options are long).
+        height: max(0px, min(col.preferred-height, root.height - 56px));
         border-radius: 8px;
         background: Theme.surface;
         border-width: 1px;
@@ -233,8 +315,13 @@ export component ProfileMenu inherits Rectangle {
         drop-shadow-color: #00000080;
         accessible-role: groupbox;
         accessible-label: @tr("Your profile");
+        clip: true;
         TouchArea { }
         ScrollView {
+            width: parent.width;
+            height: parent.height;
+            // The whole menu can be scrolled to, whatever the layout's minimum height says.
+            content-height: max(self.visible-height, col.preferred-height);
             col := VerticalLayout {
                 padding: 14px;
                 padding-right: 18px;
@@ -252,7 +339,13 @@ export component ProfileMenu inherits Rectangle {
                         alignment: center;
                         Text { text: SettingsStore.me-name; color: Theme.fg; font-size: SFont.heading; font-weight: 600; overflow: elide; accessible-role: text; accessible-label: @tr("Name"); accessible-value: self.text; }
                         Text { text: SettingsStore.me-email; color: Theme.fg-muted; font-size: SFont.small; overflow: elide; accessible-role: text; accessible-label: @tr("Email"); accessible-value: self.text; }
-                        if SettingsStore.me-presence != "": Text { text: SettingsStore.me-presence; color: Theme.fg-muted; font-size: SFont.small; accessible-role: text; accessible-label: @tr("Status"); accessible-value: self.text; }
+                        if SettingsStore.me-presence != "": HorizontalLayout {
+                            spacing: 6px;
+                            PresenceIcon { status: SettingsStore.me-presence; size: 10px; y: (parent.height - self.height) / 2; }
+                            Text { text: PresenceWords.label(SettingsStore.me-presence); color: Theme.fg-muted; font-size: SFont.small; overflow: elide; horizontal-stretch: 1; accessible-role: text; accessible-label: @tr("Status"); accessible-value: self.text; }
+                        }
+                        // When a status picked with "Reset status after" ends.
+                        if SettingsStore.me-presence-until != "": Text { text: SettingsStore.me-presence-until; color: Theme.fg-subtle; font-size: SFont.small; overflow: elide; accessible-role: text; accessible-label: @tr("Status ends"); accessible-value: self.text; }
                         if SettingsStore.me-work-location != "": Text {
                             text: SettingsStore.me-work-location == "office" ? @tr("In the office today") : @tr("Working remotely today");
                             color: Theme.fg-muted;
@@ -300,13 +393,13 @@ export component ProfileMenu inherits Rectangle {
                         initial: SettingsStore.status-custom;
                         edited(t) => { SettingsStore.status-custom = t; }
                     }
-                    SButton { label: @tr("Available"); clicked => { SettingsStore.command("status", "Available"); } }
-                    SButton { label: @tr("Busy"); clicked => { SettingsStore.command("status", "Busy"); } }
-                    SButton { label: @tr("Do not disturb"); clicked => { SettingsStore.command("status", "DoNotDisturb"); } }
-                    SButton { label: @tr("Be right back"); clicked => { SettingsStore.command("status", "BeRightBack"); } }
-                    SButton { label: @tr("Appear away"); clicked => { SettingsStore.command("status", "Away"); } }
-                    SButton { label: @tr("Appear offline"); clicked => { SettingsStore.command("status", "Offline"); } }
-                    SButton { label: @tr("Reset status"); clicked => { SettingsStore.command("status", ""); } }
+                    for st in [{v: "Available", l: @tr("Available")}, {v: "Busy", l: @tr("Busy")}, {v: "DoNotDisturb", l: @tr("Do not disturb")}, {v: "BeRightBack", l: @tr("Be right back")}, {v: "Away", l: @tr("Appear away")}, {v: "Offline", l: @tr("Appear offline")}]: StatusRow {
+                        label: st.l;
+                        status: st.v;
+                        current: SettingsStore.me-presence == st.v || SettingsStore.me-presence == st.v + "Idle";
+                        clicked => { SettingsStore.command("status", st.v); }
+                    }
+                    StatusRow { label: @tr("Reset status"); status: ""; clicked => { SettingsStore.command("status", ""); } }
                     note := SField { label: @tr("New status message"); initial: SettingsStore.me-status; }
                     Text { text: @tr("Clear message after"); color: Theme.fg-muted; font-size: SFont.small; }
                     for d in [{v: "never", l: @tr("Never")}, {v: "today", l: @tr("Today")}, {v: "1h", l: @tr("1 hour")}, {v: "4h", l: @tr("4 hours")}, {v: "week", l: @tr("This week")}]: SRadio {

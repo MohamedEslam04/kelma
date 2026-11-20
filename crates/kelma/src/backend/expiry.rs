@@ -96,9 +96,55 @@ pub fn expiry_iso(choice: &str, custom: &str) -> Result<Option<String>, String> 
     expiry(appearance::formats::time_zone(), choice, custom, Utc::now()).map(|t| t.map(iso))
 }
 
+/// "Until 3:45 PM" under the status in the profile menu: the clock time when the status ends
+/// today, else the day as well (`Until 11/21 3:45 PM`). `time_pat` and `date_pat` are the
+/// `strftime` patterns of the user's formats.
+pub fn until_text(
+    until: NaiveDateTime,
+    now: NaiveDateTime,
+    time_pat: &str,
+    date_pat: &str,
+) -> String {
+    if until.date() == now.date() {
+        format!("Until {}", until.format(time_pat))
+    } else {
+        format!(
+            "Until {} {}",
+            until.format(date_pat),
+            until.format(time_pat)
+        )
+    }
+}
+
+/// [`until_text`] for an instant (ms), in the zone and the formats chosen in Settings.
+pub fn until_label(until_ms: i64) -> String {
+    use appearance::formats as f;
+    match (f::local(until_ms), f::local_now()) {
+        (Some(u), Some(n)) => until_text(u, n, f::time_pattern(), f::date_pattern(false)),
+        _ => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wall(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap()
+    }
+
+    #[test]
+    fn until_shows_the_clock_time_today_and_the_day_after_that() {
+        let now = wall("2026-11-20 14:00");
+        assert_eq!(
+            until_text(wall("2026-11-20 15:45"), now, "%-I:%M %p", "%-m/%-d"),
+            "Until 3:45 PM"
+        );
+        assert_eq!(
+            until_text(wall("2026-11-21 00:00"), now, "%H:%M", "%-m/%-d"),
+            "Until 11/21 00:00"
+        );
+    }
 
     fn utc(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)

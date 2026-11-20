@@ -40,6 +40,8 @@ export global SettingsStore {
     in-out property <string> me-initials;
     in-out property <string> me-status;
     in-out property <string> me-presence;
+    // "Until 3:45 PM" when the status picked here ends at a set time, else "".
+    in-out property <string> me-presence-until;
     in-out property <string> me-work-location; // office | remote | ""
     in-out property <bool> status-open: false;
     in-out property <bool> confirm-sign-out: false;

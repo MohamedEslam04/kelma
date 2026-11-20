@@ -349,6 +349,26 @@ fn opening_an_app_from_the_flyout_shows_it_in_the_main_area() {
 }
 
 #[test]
+fn an_app_opened_from_the_flyout_shows_on_the_rail_while_it_is_open() {
+    let a = AppsHarness::open();
+    a.click("More apps");
+    a.click("Shifts");
+    assert_eq!(a.view(), "app");
+    assert!(a.store().get_has_temp_app());
+    assert_eq!(a.store().get_temp_app().name, "Shifts");
+    let on_rail = |a: &AppsHarness| {
+        a.find("Shifts")
+            .iter()
+            .any(|e| e.accessible_description().is_some_and(|d| d == "Current"))
+    };
+    assert!(on_rail(&a), "the rail shows the open app");
+    // Another page: it leaves the rail.
+    a.h.app.set_view("chat".into());
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(!on_rail(&a));
+}
+
+#[test]
 fn pin_from_the_flyout_adds_the_app_to_the_rail() {
     let a = AppsHarness::open();
     a.click("More apps");

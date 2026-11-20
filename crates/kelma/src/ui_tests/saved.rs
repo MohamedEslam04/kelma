@@ -113,6 +113,35 @@ fn a_click_on_a_saved_message_opens_its_chat_and_lands_on_it() {
     assert!(flashed[0].contains("deployed to staging"), "{flashed:?}");
 }
 
+/// The live case: the message was saved from the chat that is still open. Opening that chat
+/// again changed nothing, so the Saved view stayed over it and the click seemed to do nothing.
+#[test]
+fn a_click_on_a_saved_message_of_the_open_chat_closes_the_view_and_lands_on_it() {
+    let h = Harness::new();
+    wire(&h);
+    let m = message_with(&h, "it was deployed to");
+    save(&h, &m, 1_000);
+    h.select(BACKEND);
+    h.runner()(Cmd::Find(FindCmd::Quick("saved".into())));
+    assert!(fs(&h.app).get_quick_open());
+
+    click(&hit_items(&h.app)[0]);
+    assert_eq!(h.app.get_current_id(), BACKEND);
+    assert!(
+        !fs(&h.app).get_quick_open(),
+        "the Saved view gives way to the chat"
+    );
+    let flashed: Vec<_> = h
+        .app
+        .get_messages()
+        .iter()
+        .filter(|x| x.flash)
+        .map(|x| x.plain.to_string())
+        .collect();
+    assert_eq!(flashed.len(), 1, "the saved message is highlighted");
+    assert!(flashed[0].contains("deployed to staging"), "{flashed:?}");
+}
+
 #[test]
 fn unsave_removes_a_row_from_the_list_and_the_store() {
     let h = Harness::new();

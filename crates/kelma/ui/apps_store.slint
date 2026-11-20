@@ -98,6 +98,9 @@ export global AppsStore {
     in property <length> rail-width: root.rail-collapsed ? 52px : 68px;
     // The pinned app that is open (the rail highlights it).
     in property <string> active-app;
+    // The app opened from the flyout that is not pinned: the rail shows it while it is open.
+    in property <RailApp> temp-app;
+    in property <bool> has-temp-app;
     // Right click menu of a rail app: its id and where it opened (absolute y).
     in-out property <string> menu-app;
     in-out property <length> menu-y;

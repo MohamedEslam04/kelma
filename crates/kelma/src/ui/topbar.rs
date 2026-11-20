@@ -334,8 +334,9 @@ fn command(c: &mut Ctl, w: &AppWindow, name: &str, arg: &str) {
     match name {
         "input" => {
             let q = arg.trim();
-            // The chat list is filtered by what is typed, except for a command.
-            w.invoke_search(s(if q.starts_with('/') { "" } else { arg }));
+            // As in Teams, the box searches (its dropdown, then the Search page) and never
+            // filters the chat list: a word left in the box once hid most chats and left the
+            // user's sections empty with nothing saying why.
             c.suggestions.clear();
             if q.is_empty() || q.starts_with('/') {
                 drop_messages(c);

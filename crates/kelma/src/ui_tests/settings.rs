@@ -345,6 +345,126 @@ fn a_status_ends_after_the_chosen_duration_and_a_bad_custom_time_is_refused() {
     ));
 }
 
+fn settle_tree() {
+    for _ in 0..3 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
+#[test]
+fn status_rows_have_presence_icons_and_check_the_current_status() {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("status-rows").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    app.window().set_size(LogicalSize::new(1200., 2600.));
+    UiHandle::new(app.as_weak()).settings_server(ServerData {
+        me_presence: Some("DoNotDisturb".into()),
+        ..Default::default()
+    });
+    press(app, "Profile menu");
+    // The header says it in words.
+    assert_eq!(value_of(app, "Status"), "Do not disturb");
+    press(app, "Set status");
+    let description = |label: &str| {
+        control(app, label)
+            .accessible_description()
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert_eq!(description("Do not disturb"), "Current status");
+    assert_eq!(description("Available"), "");
+    assert_eq!(description("Appear offline"), "");
+    // Six statuses and Reset, each a row with its icon, not a plain button.
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(app, "StatusRow").count(),
+        7
+    );
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(app, "PresenceIcon").count(),
+        // The six rows and the header's.
+        7
+    );
+}
+
+#[test]
+fn a_picked_status_shows_at_once_with_its_end_and_goes_back_when_teams_refuses() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("status-now").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    app.window().set_size(LogicalSize::new(1200., 2600.));
+    let handle = UiHandle::new(app.as_weak());
+    handle.settings_server(ServerData {
+        me_presence: Some("Available".into()),
+        ..Default::default()
+    });
+    press(app, "Profile menu");
+    press(app, "Set status");
+    press(app, "Reset status after: 1 hour");
+    while rx.try_recv().is_ok() {}
+    press(app, "Busy");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s, Some(_)))) if s == "Busy"
+    ));
+    // Before Teams answers: the menu already shows it, and when it ends.
+    settle_tree();
+    assert_eq!(value_of(app, "Status"), "Busy");
+    let ends = value_of(app, "Status ends");
+    assert!(ends.starts_with("Until "), "{ends}");
+
+    // Teams refuses: the old status comes back and a red banner says why.
+    handle.settings_status_failed("Could not change your status: refused".into());
+    settle_tree();
+    assert_eq!(value_of(app, "Status"), "Available");
+    assert!(
+        ElementHandle::find_by_accessible_label(app, "Status ends")
+            .next()
+            .is_none()
+    );
+    assert!(
+        app.get_banner().contains("Could not change your status"),
+        "{}",
+        app.get_banner()
+    );
+    assert!(!app.get_banner_info(), "an error banner");
+}
+
+#[test]
+fn the_status_options_fit_a_short_window_and_scroll_to_the_end() {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("status-short").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    app.window().set_size(LogicalSize::new(1000., 700.));
+    press(app, "Profile menu");
+    press(app, "Set status");
+    settle_tree();
+    let panel = ElementHandle::find_by_accessible_label(app, "Your profile")
+        .next()
+        .expect("the profile menu");
+    let (p, size) = (panel.absolute_position(), panel.size());
+    let bottom = p.y + size.height;
+    assert!(
+        bottom <= 700.,
+        "the menu ends at {bottom}, below the window"
+    );
+    // Scrolled to its end, the menu's last item is inside it, not cut off.
+    for _ in 0..80 {
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: LogicalPosition::new(p.x + size.width / 2., p.y + size.height / 2.),
+            delta_x: 0.,
+            delta_y: -120.,
+        });
+    }
+    settle_tree();
+    let last = control(app, "Sign out");
+    let end = last.absolute_position().y + last.size().height;
+    assert!(
+        end <= bottom + 0.5,
+        "Sign out ends at {end}, the menu at {bottom}"
+    );
+}
+
 #[test]
 fn a_status_message_clears_after_the_chosen_time_and_can_show_when_people_message_me() {
     use crate::backend::settings::SettingsCmd;

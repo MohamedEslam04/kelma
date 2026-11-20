@@ -55,6 +55,9 @@ pub struct RailItem {
 #[derive(Clone, Default)]
 pub struct RailData {
     pub items: Vec<RailItem>,
+    /// The app opened from the flyout that is not on the bar: the rail shows it while it is
+    /// open, as Teams does.
+    pub temp: Option<RailItem>,
     pub collapsed: bool,
     pub active: String,
     pub flyout_open: bool,
