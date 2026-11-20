@@ -419,12 +419,18 @@ impl Engine {
         );
         let e = self.clone();
         let conv = conv.to_string();
+        // Members, tabs and pins do not depend on each other: read together, not one after the
+        // other (a channel's tabs waited for its members before).
         tokio::spawn(async move {
-            let _ = e.ensure_members(&conv).await;
-            e.push_group_header(&conv);
-            e.load_channel_tabs(&conv).await;
-            e.refresh_pins(&conv).await;
-            e.refresh_horizons(&conv).await;
+            tokio::join!(
+                async {
+                    let _ = e.ensure_members(&conv).await;
+                    e.push_group_header(&conv);
+                    e.refresh_horizons(&conv).await;
+                },
+                e.load_channel_tabs(&conv),
+                e.refresh_pins(&conv),
+            );
         });
     }
 

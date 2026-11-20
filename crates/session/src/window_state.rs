@@ -46,6 +46,8 @@ pub struct WindowState {
     pub maximized: bool,
     /// Id of the conversation that was open.
     pub last_chat: Option<String>,
+    /// Id of the last channel that was open: the Teams page opens it again.
+    pub last_channel: Option<String>,
     /// Ids of the collapsed sidebar sections.
     pub collapsed_sections: BTreeSet<String>,
     /// Width of the chat and teams list the user dragged it to; `None` keeps the default.
@@ -61,6 +63,7 @@ impl Default for WindowState {
             y: None,
             maximized: false,
             last_chat: None,
+            last_channel: None,
             collapsed_sections: BTreeSet::new(),
             sidebar_width: None,
         }
@@ -76,6 +79,7 @@ impl std::fmt::Debug for WindowState {
             .field("y", &self.y)
             .field("maximized", &self.maximized)
             .field("last_chat", &self.last_chat.as_ref().map(|_| "<set>"))
+            .field("last_channel", &self.last_channel.as_ref().map(|_| "<set>"))
             .field("collapsed_sections", &self.collapsed_sections.len())
             .finish()
     }
@@ -104,12 +108,13 @@ impl WindowState {
             self.x = None;
             self.y = None;
         }
-        if self
-            .last_chat
-            .as_deref()
-            .is_some_and(|c| c.trim().is_empty() || c.len() > MAX_ID_LEN)
-        {
-            self.last_chat = None;
+        for id in [&mut self.last_chat, &mut self.last_channel] {
+            if id
+                .as_deref()
+                .is_some_and(|c| c.trim().is_empty() || c.len() > MAX_ID_LEN)
+            {
+                *id = None;
+            }
         }
         self.collapsed_sections
             .retain(|s| !s.is_empty() && s.len() <= MAX_SECTION_LEN);
@@ -184,6 +189,11 @@ impl WindowState {
     /// Remembers the open conversation, or forgets it with `None`.
     pub fn set_last_chat(&mut self, id: Option<&str>) {
         self.last_chat = id.map(str::to_owned);
+        self.clamp();
+    }
+
+    pub fn set_last_channel(&mut self, id: Option<&str>) {
+        self.last_channel = id.map(str::to_owned);
         self.clamp();
     }
 
@@ -342,6 +352,11 @@ mod tests {
         assert_eq!(s.last_chat.as_deref(), Some("19:x@thread.v2"));
         s.set_last_chat(None);
         assert_eq!(s.last_chat, None);
+
+        s.set_last_channel(Some("19:c@thread.tacv2"));
+        assert_eq!(s.last_channel.as_deref(), Some("19:c@thread.tacv2"));
+        s.set_last_channel(Some("  "));
+        assert_eq!(s.last_channel, None, "a blank id is not kept");
     }
 
     #[test]

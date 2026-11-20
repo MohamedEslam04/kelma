@@ -228,14 +228,19 @@ impl Engine {
         id: String,
         title: Option<String>,
     ) -> anyhow::Result<()> {
+        let started = std::time::Instant::now();
+        let (row, cached) = {
+            let st = self.store.lock().unwrap();
+            let row = st.conversation(&id)?;
+            let cached = !st.messages_before(&id, None, 1)?.is_empty();
+            (row, cached)
+        };
+        let what = match row.as_ref().map(|c| c.kind) {
+            Some(ConvKind::Channel) => "channel",
+            _ => "chat",
+        };
         // The read horizon before this open moves it: the "New messages" divider goes there.
-        let marker = self
-            .store
-            .lock()
-            .unwrap()
-            .conversation(&id)?
-            .filter(|c| c.unread)
-            .map(|c| c.read_horizon_ms);
+        let marker = row.filter(|c| c.unread).map(|c| c.read_horizon_ms);
         let open_at = self.cfg.lock().unwrap().open_chat_at;
         self.flush_draft();
         {
@@ -267,13 +272,21 @@ impl Engine {
         self.on_chat_opened(&id);
         self.find_chat_opened(&id);
         self.scheduled_chat_opened();
+        // The header and the posts the store has show at once (the next render tick); the
+        // newest page is read behind a loading line.
         self.mark(|d| {
             d.header = true;
             d.messages = true;
             d.scroll = true;
             d.chats = true;
         });
-        let page = match self.client.messages(&id, None, PAGE as u32).await {
+        let offline = self.offline.load(std::sync::atomic::Ordering::Relaxed);
+        self.ui.loading_latest(!offline);
+        let fetched = self.client.messages(&id, None, PAGE as u32).await;
+        if self.view.lock().unwrap().current.as_deref() == Some(id.as_str()) {
+            self.ui.loading_latest(false);
+        }
+        let page = match fetched {
             Ok(p) => p,
             Err(e) if is_soft_deleted(&e.to_string()) => {
                 self.store.lock().unwrap().delete_conversation(&id)?;
@@ -296,16 +309,28 @@ impl Engine {
             Err(e) => return Err(e.into()),
         };
         self.store_messages(&page.messages, None);
-        if let Some(last) = page.messages.iter().rev().find(|m| m.is_chat_content()) {
-            self.store.lock().unwrap().mark_read(&id, last.compose_ms)?;
-            let _ = self.client.mark_read(&id, last).await;
-        }
         self.view.lock().unwrap().loaded = true;
         self.mark(|d| {
             d.messages = true;
             d.scroll = true;
             d.chats = true;
         });
+        tracing::info!(
+            cached,
+            fetched = page.messages.len(),
+            "{what} opened in {} ms",
+            started.elapsed().as_millis()
+        );
+        // The read position goes to the server in the background: the posts never wait for it.
+        if let Some(last) = page.messages.iter().rev().find(|m| m.is_chat_content()) {
+            self.store.lock().unwrap().mark_read(&id, last.compose_ms)?;
+            let (e, id, last) = (self.clone(), id.clone(), last.clone());
+            tokio::spawn(async move {
+                if let Err(err) = e.client.mark_read(&id, &last).await {
+                    tracing::debug!(%err, "mark read failed");
+                }
+            });
+        }
         self.prefetch_threads(&id);
         Ok(())
     }
