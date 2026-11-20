@@ -1,6 +1,7 @@
 //! kelma: a lightweight native Microsoft Teams chat client (unofficial).
 
 mod backend;
+mod catch_up;
 mod composer;
 mod composer_format;
 mod data;

@@ -450,9 +450,12 @@ impl Engine {
         tokio::spawn(async move {
             // Messages left in the outbox by the last run go out first.
             e.flush_outbox(true).await;
-            if let Err(err) = e.sync().await {
-                tracing::error!(%err, "initial sync failed");
-                e.ui.banner(format!("Sync failed: {err}"));
+            match e.sync().await {
+                Ok(()) => e.ui.synced(),
+                Err(err) => {
+                    tracing::error!(%err, "initial sync failed");
+                    e.ui.banner(format!("Sync failed: {err}"));
+                }
             }
         });
     }

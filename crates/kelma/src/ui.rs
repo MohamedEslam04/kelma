@@ -299,6 +299,11 @@ impl UiHandle {
         self.run(move |w| w.set_connected(ok));
     }
 
+    /// The first sync after start-up has finished ("While you were away" can show).
+    pub fn synced(&self) {
+        self.run(|w| w.set_synced(true));
+    }
+
     pub fn typing(&self, text: String) {
         self.run(move |w| w.set_typing(text.into()));
     }
