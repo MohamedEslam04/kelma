@@ -8,6 +8,7 @@
 pub mod bodies;
 pub mod call_ops;
 pub mod callbacks;
+pub mod content_sharing;
 pub mod controls;
 pub mod endpoints;
 pub mod meeting;
@@ -216,12 +217,28 @@ impl NgcClient {
         url: &str,
         body: Option<&Value>,
     ) -> Result<NgcResponse> {
+        self.send_with(op, s, method, url, body, &[]).await
+    }
+
+    /// [`Self::send`] with `extra` headers (a content-sharing session's correlation id).
+    pub async fn send_with(
+        &self,
+        op: &'static str,
+        s: &CallSession,
+        method: Method,
+        url: &str,
+        body: Option<&Value>,
+        extra: &[(&'static str, &str)],
+    ) -> Result<NgcResponse> {
         let target = endpoints::routed_url(url)?;
         let ic3 = self.client.token_for(&Audience::Ic3).await?;
         let message_id = new_id();
         let mut req = self.client.http().request(method.clone(), &target);
         for (k, v) in endpoints::call_headers(&self.endpoints, &s.chain_id, &message_id, &ic3) {
             req = req.header(k, v);
+        }
+        for (k, v) in extra {
+            req = req.header(*k, *v);
         }
         req = match body {
             Some(b) => req.body(serde_json::to_vec(b)?),
@@ -714,6 +731,63 @@ impl NgcClient {
     }
 
     /// One keep-alive (see [`bodies::keep_alive_request`]).
+    /// Asks the meeting to make us the presenter of its content-sharing session (`POST
+    /// <addModality>`, UNVERIFIED). The grant may be in the answer or come on a callback
+    /// ([`content_sharing::SharingSession::read`] reads either).
+    pub async fn start_content_sharing(
+        &self,
+        s: &CallSession,
+        add_modality: &str,
+        correlation_id: &str,
+        identifier: &str,
+    ) -> Result<NgcResponse> {
+        let body = content_sharing::start_body(s, identifier);
+        self.send_with(
+            "contentSharingStart",
+            s,
+            Method::POST,
+            add_modality,
+            Some(&body),
+            &[(content_sharing::CORRELATION_HEADER, correlation_id)],
+        )
+        .await
+    }
+
+    /// Gives the content-sharing session back on ITS `leave` link (never the call's).
+    pub async fn leave_content_sharing(
+        &self,
+        s: &CallSession,
+        session: &content_sharing::SharingSession,
+    ) -> Result<()> {
+        let url = session
+            .leave()
+            .ok_or_else(|| Error::Protocol("the sharing session has no 'leave' link".into()))?;
+        let body = content_sharing::leave_body(s);
+        self.post_content_sharing("contentSharingLeave", s, url, session, &body)
+            .await?;
+        Ok(())
+    }
+
+    /// One POST of a content-sharing session, with its correlation header.
+    pub async fn post_content_sharing(
+        &self,
+        op: &'static str,
+        s: &CallSession,
+        url: &str,
+        session: &content_sharing::SharingSession,
+        body: &Value,
+    ) -> Result<NgcResponse> {
+        self.send_with(
+            op,
+            s,
+            Method::POST,
+            url,
+            Some(body),
+            &[(content_sharing::CORRELATION_HEADER, &session.correlation_id)],
+        )
+        .await
+    }
+
     pub async fn keep_alive(&self, s: &CallSession, links: &Links) -> Result<()> {
         let (url, body) = bodies::keep_alive_request(links)
             .ok_or_else(|| Error::Protocol("no keep-alive link".into()))?;

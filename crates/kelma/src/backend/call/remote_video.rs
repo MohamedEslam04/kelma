@@ -293,11 +293,11 @@ impl RemoteVideo {
     }
 
     /// The presenter's name when it changed since last told: someone else in the roster shares
-    /// a screen (empty: nobody).
+    /// a screen, or the roster names them the content-sharing session's presenter
+    /// (`contentSharing`, UNVERIFIED) before their stream sends (empty: nobody).
     pub fn presenter_changed(&mut self, roster: &Roster, me: &str) -> Option<String> {
-        let name = roster
-            .screen_sharer(me)
-            .and_then(|(mri, _)| roster.get(&mri).map(|p| p.display_name.clone()))
+        let name = presenter_mri(roster, me)
+            .and_then(|mri| roster.get(&mri).map(|p| p.display_name.clone()))
             .map(|n| {
                 if n.is_empty() {
                     "Someone".to_owned()
@@ -311,6 +311,14 @@ impl RemoteVideo {
             name
         })
     }
+}
+
+/// Who else presents: the one whose share sends, else the content-sharing presenter.
+pub fn presenter_mri(roster: &Roster, me: &str) -> Option<String> {
+    roster
+        .screen_sharer(me)
+        .map(|(mri, _)| mri)
+        .or_else(|| roster.content_presenter(me))
 }
 
 fn lock(routes: &Mutex<Routes>) -> std::sync::MutexGuard<'_, Routes> {
@@ -451,6 +459,18 @@ mod tests {
         assert_eq!(v.presenter_changed(&r, "8:me"), None);
         let nobody = roster(json!({"8:me": person("Me", None, None)}));
         assert_eq!(v.presenter_changed(&nobody, "8:me").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn the_content_sharing_presenter_is_named_before_their_stream_sends() {
+        let mut v = with_lines(0, true);
+        let r = roster(json!({
+            "8:me": person("Me", None, None),
+            "8:a": {"version": 1, "state": "active", "details": {"displayName": "Ada"},
+                    "contentSharing": {}, "endpoints": {"ep": {"call": {}}}},
+        }));
+        assert_eq!(presenter_mri(&r, "8:me").as_deref(), Some("8:a"));
+        assert_eq!(v.presenter_changed(&r, "8:me").as_deref(), Some("Ada"));
     }
 
     #[test]
