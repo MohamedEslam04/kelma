@@ -8,6 +8,16 @@ use store::{ConvFilter, ConvKind, ConversationRow, TeamRow, UserRow};
 use teams_proto::model::Message;
 use teams_proto::time::now_ms;
 
+/// Shown when a chat opens from the cache because Teams did not answer.
+const OPEN_OFFLINE: &str = "Couldn't refresh this chat. Showing saved messages; kelma will try again.";
+
+/// Waits between the retries of [`Engine::retry_history`].
+const HISTORY_RETRY: [std::time::Duration; 3] = [
+    std::time::Duration::from_secs(5),
+    std::time::Duration::from_secs(20),
+    std::time::Duration::from_secs(60),
+];
+
 impl Engine {
     /// Fetches conversations, teams and names; writes them to the store.
     pub async fn sync(self: &Arc<Self>) -> anyhow::Result<()> {
@@ -272,6 +282,16 @@ impl Engine {
                 });
                 anyhow::bail!("This conversation was deleted.");
             }
+            // No answer (a dropped connection, a suspend, no network): the saved messages are
+            // already on screen, so say so quietly and try again instead of a red error.
+            Err(e) if e.is_transient() => {
+                tracing::warn!(err = %e, "chat history fetch failed, showing the cache");
+                self.view.lock().unwrap().loaded = true;
+                self.mark(|d| d.messages = true);
+                self.ui.info(OPEN_OFFLINE.into());
+                self.retry_history(id);
+                return Ok(());
+            }
             Err(e) => return Err(e.into()),
         };
         self.store_messages(&page.messages, None);
@@ -287,6 +307,31 @@ impl Engine {
         });
         self.prefetch_threads(&id);
         Ok(())
+    }
+
+    /// Fetches the open chat's newest page again after a fetch got no answer: a few times, further
+    /// apart each time, and only while the chat is still open.
+    fn retry_history(self: &Arc<Self>, id: String) {
+        let e = self.clone();
+        tokio::spawn(async move {
+            for wait in HISTORY_RETRY {
+                tokio::time::sleep(wait).await;
+                if e.view.lock().unwrap().current.as_deref() != Some(id.as_str()) {
+                    return;
+                }
+                match e.client.messages(&id, None, PAGE as u32).await {
+                    Ok(page) => {
+                        e.store_messages(&page.messages, None);
+                        e.mark(|d| {
+                            d.messages = true;
+                            d.scroll = true;
+                        });
+                        return;
+                    }
+                    Err(err) => tracing::warn!(%err, "chat history retry failed"),
+                }
+            }
+        });
     }
 
     pub(super) async fn load_older(self: &Arc<Self>) -> anyhow::Result<()> {
