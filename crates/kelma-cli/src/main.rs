@@ -394,6 +394,18 @@ async fn calendar_check(client: &Client, args: &[String]) -> Result<()> {
             );
         }
         Some("worklocation") => {
+            // `worklocation [office|remote|clear]`: a pin set here lapses after one hour.
+            let pin = match args.get(1).map(String::as_str) {
+                None => None,
+                Some("office") => Some(cal::WorkLocation::Office),
+                Some("remote") => Some(cal::WorkLocation::Remote),
+                Some("clear") => Some(cal::WorkLocation::Unset),
+                Some(_) => bail!("usage: calendar worklocation [office|remote|clear]"),
+            };
+            if let Some(pin) = pin {
+                cal::set_work_location(client, pin, now + 3_600_000).await?;
+                println!("set work location: {pin:?}");
+            }
             let w = cal::work_location(client).await?;
             println!("work location: {w:?}");
         }
@@ -676,6 +688,63 @@ async fn main() -> Result<()> {
                 .await?;
             println!("sent (clientmessageid {cmid})");
         }
+        Some("gifs") => {
+            // `gifs [query]`: GIF search, read only (an empty query gives the trending ones).
+            let (client, _) = connect(&paths).await?;
+            let q = args[1..].join(" ");
+            let found = client.search_gifs(&q, "en-us").await?;
+            println!("{} GIF(s)", found.len());
+            for g in found.iter().take(5) {
+                println!("  {} {}x{}", g.title, g.width, g.height);
+            }
+        }
+        Some("schedule") => {
+            // `schedule <conversation id> <minutes> <text>`: a scheduled send (live checks use
+            // 48:notes). `schedule list` and `schedule cancel <id>`.
+            let (client, cfg) = connect(&paths).await?;
+            match args.get(1).map(String::as_str) {
+                Some("list") => {
+                    let list = client.scheduled_messages().await?;
+                    println!("{} scheduled message(s)", list.len());
+                    for m in &list {
+                        println!(
+                            "  {} in {} at {} ({} bytes)",
+                            m.id,
+                            if m.conversation_id == "48:notes" {
+                                "48:notes"
+                            } else {
+                                "a chat"
+                            },
+                            calendar::format_iso_ms(m.send_at_ms),
+                            m.html.len()
+                        );
+                    }
+                }
+                Some("cancel") => {
+                    let id = args.get(2).context("usage: schedule cancel <id>")?;
+                    client.cancel_scheduled(id).await?;
+                    println!("cancelled");
+                }
+                Some(conv) => {
+                    let (Some(mins), Some(text)) = (args.get(2), args.get(3)) else {
+                        bail!("usage: schedule <conversation id> <minutes> <text>")
+                    };
+                    let mins: i64 = mins.parse().context("minutes")?;
+                    let at = teams_proto::time::now_ms() + mins * 60_000;
+                    let name = cfg.display_name.clone().unwrap_or_default();
+                    let cmid = client
+                        .schedule_message(conv, &render::text_to_teams_html(text), &name, at)
+                        .await?;
+                    println!(
+                        "scheduled for {} (clientmessageid {cmid})",
+                        calendar::format_iso_ms(at)
+                    );
+                }
+                None => {
+                    bail!("usage: schedule <conversation id> <minutes> <text> | list | cancel <id>")
+                }
+            }
+        }
         Some("reply") => {
             let (Some(conv), Some(msg), Some(text)) = (args.get(1), args.get(2), args.get(3))
             else {
@@ -879,7 +948,59 @@ async fn main() -> Result<()> {
         }
         Some("presence") => {
             let (client, cfg) = connect(&paths).await?;
+            // `presence set <status>` forces my status for ten minutes; `presence reset` clears it.
             let mut mris: Vec<String> = args[1..].to_vec();
+            match mris.first().map(String::as_str) {
+                Some("set") => {
+                    let want = mris.get(1).map(String::as_str).unwrap_or_default();
+                    let a = teams_proto::presence::Availability::from_wire(want).context(
+                        "usage: presence set Available|Busy|DoNotDisturb|BeRightBack|Away|Offline",
+                    )?;
+                    let until = calendar::format_iso_ms(teams_proto::time::now_ms() + 600_000);
+                    client.set_presence(a, Some(&until)).await?;
+                    println!("set {} until {until}", a.as_str());
+                    mris.clear();
+                }
+                Some("reset") => {
+                    client.reset_presence().await?;
+                    println!("reset");
+                    mris.clear();
+                }
+                Some("note") => {
+                    // `presence note [text…]`: my status message for one hour; no text clears it.
+                    let text = mris[1..].join(" ");
+                    let until = calendar::format_iso_ms(teams_proto::time::now_ms() + 3_600_000);
+                    let expiry = (!text.is_empty()).then_some(until.as_str());
+                    client.set_status_note(&text, expiry, false).await?;
+                    println!(
+                        "status message {}",
+                        if text.is_empty() { "cleared" } else { "set" }
+                    );
+                    mris.clear();
+                }
+                Some("idle") => {
+                    client.report_activity(false).await?;
+                    println!("reported idle");
+                    mris.clear();
+                }
+                Some("remove-endpoint") => {
+                    client.remove_endpoint().await?;
+                    println!("removed this device's endpoint");
+                    mris.clear();
+                }
+                Some("endpoint") => {
+                    // `presence endpoint <availability> <activity>`: this device's own presence.
+                    let a = mris
+                        .get(1)
+                        .and_then(|w| teams_proto::presence::Availability::from_wire(w))
+                        .context("usage: presence endpoint <availability> <activity>")?;
+                    let activity = mris.get(2).map(String::as_str).unwrap_or(a.as_str());
+                    client.publish_endpoint(a, activity).await?;
+                    println!("endpoint {} / {activity}", a.as_str());
+                    mris.clear();
+                }
+                _ => {}
+            }
             if mris.is_empty() {
                 mris.push(self_mri(&client, &cfg).await?);
             }
@@ -887,7 +1008,7 @@ async fn main() -> Result<()> {
             println!("{} presence record(s)", found.len());
             for p in &found {
                 println!(
-                    "{} {} / {}{}{}",
+                    "{} {} / {}{}{}{}",
                     p.mri,
                     p.availability,
                     p.activity,
@@ -895,6 +1016,10 @@ async fn main() -> Result<()> {
                     p.note
                         .as_ref()
                         .map(|n| format!(" note={:?}", n.text))
+                        .unwrap_or_default(),
+                    p.work_location
+                        .as_ref()
+                        .map(|w| format!(" work location={w}"))
                         .unwrap_or_default()
                 );
             }

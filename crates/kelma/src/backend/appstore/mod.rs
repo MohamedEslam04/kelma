@@ -1,17 +1,21 @@
 //! Apps: the app bar on the rail, the "View more apps" flyout, the Store, and the built-in app
-//! screens (Planner and To Do, Workflows, OneNote, Lists).
+//! screens (Planner and To Do, Workflows, OneNote, Lists, Meeting Recaps).
 //!
 //! Reads go to the live services through `crates/apps` and `teams_proto`; in demo mode they come
-//! from `fixtures`. Nothing here writes to the server: pin changes are kept on this computer,
-//! and install, uninstall, update and pin requests are built and shown, never sent.
+//! from `fixtures`. Changes (add, remove or update an app, pin, tasks, flows, pages, list items)
+//! are sent only after the user confirms in the dialog of `form.rs`, and the message that follows
+//! is the service's answer. In demo mode and in the tests nothing is sent: `Apps::sent` logs the
+//! requests that would have been.
 
 mod bar;
 mod cmd;
 mod fixtures;
 mod flows;
+mod form;
 #[cfg(test)]
 mod live;
 mod notes;
+mod recaps;
 mod shop;
 mod source;
 mod tasks;
@@ -33,6 +37,9 @@ pub struct Apps {
     collapsed: bool,
     flyout: bool,
     flyout_query: String,
+    /// Bumped by every Open app, so one still waiting for the installed apps does not open
+    /// after a later one.
+    open_seq: u64,
     /// The pinned app that is open on the rail.
     active: String,
     /// Icons and screenshots by URL. `None` while loading, or when the download failed.
@@ -45,6 +52,10 @@ pub struct Apps {
     flows: flows::Flows,
     notes: notes::Notes,
     lists: notes::Lists,
+    recaps: recaps::Recaps,
+    form: form::Form,
+    /// The changes that were (offline: would have been) sent, as `METHOD url`.
+    sent: Vec<String>,
     grants: Grants,
     /// Links that were opened (the tests read these; nothing is opened offline).
     opened: Vec<String>,
@@ -128,17 +139,47 @@ impl Engine {
             TasksNav(key) => self.tasks_nav(&key).await,
             TasksMode(mode) => self.tasks_mode(&mode),
             TasksRefresh => self.tasks_refresh().await,
+            TaskNew => self.tasks_begin_new(),
+            TaskToggle(id) => self.tasks_toggle(&id).await,
+            TaskEdit(id) => self.tasks_begin_edit(&id),
+            TaskDelete(id) => self.tasks_begin_delete(&id),
             FlowsEnter => self.flows_enter().await,
             FlowsSelect(id) => self.flows_select(&id).await,
             FlowsRefresh => self.flows_refresh().await,
+            FlowRun(id) => self.flows_begin_run(&id),
+            FlowToggle(id) => self.flows_begin_toggle(&id),
             NotesEnter => self.notes_enter().await,
             NotesNotebook(id) => self.notes_notebook(&id).await,
             NotesSection(id) => self.notes_section(&id).await,
             NotesPage(id) => self.notes_page(&id).await,
             NotesOpenWeb => self.notes_open_web(),
+            PageNew => self.notes_begin_new_page(),
             ListsEnter => self.lists_enter().await,
             ListsSite(id) => self.lists_site(&id).await,
             ListsList(id) => self.lists_list(&id).await,
+            ItemNew => self.lists_begin_item(None),
+            ItemEdit(id) => self.lists_begin_item(Some(&id)),
+            FormSubmit(text) => self.form_submit(&text).await,
+            FormCancel => {
+                self.form_cancel();
+                Ok(())
+            }
+            FormChoice(id) => {
+                self.form_choice(&id);
+                Ok(())
+            }
+            FormLink => {
+                self.form_link();
+                Ok(())
+            }
+            RecapsEnter => self.recaps_enter().await,
+            RecapsRefresh => self.recaps_refresh().await,
+            RecapsQuery(q) => self.recaps_query(&q),
+            RecapsOpen(key) => self.recaps_open(&key).await,
+            RecapsPlay => self.recaps_play(),
+            RecapsNotes => self.recaps_notes(),
+            RecapsShare => self.recaps_share().await,
+            RecapsAi => self.recaps_ai(),
         }
     }
 
@@ -191,5 +232,10 @@ impl Engine {
     /// Links the app screens opened, oldest first.
     pub(crate) fn apps_opened(&self) -> Vec<String> {
         self.apps.lock().unwrap().opened.clone()
+    }
+
+    /// The changes the app screens sent (offline: would have sent), oldest first.
+    pub(crate) fn apps_sent(&self) -> Vec<String> {
+        self.apps.lock().unwrap().sent.clone()
     }
 }

@@ -18,13 +18,7 @@ struct DriveHarness {
 
 impl DriveHarness {
     fn run(engine: &Arc<Engine>, rt: &tokio::runtime::Runtime, cmd: DriveCmd) {
-        rt.block_on(async {
-            if cmd.is_instant() {
-                engine.dispatch(Cmd::Drive(cmd));
-            } else {
-                engine.clone().handle(Cmd::Drive(cmd)).await;
-            }
-        });
+        rt.block_on(engine.clone().handle(Cmd::Drive(cmd)));
     }
 }
 

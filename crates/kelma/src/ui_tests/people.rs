@@ -209,6 +209,67 @@ fn a_picked_mention_goes_through_the_outbox_with_its_span_and_property() {
     assert_eq!(ms[0].item_id, 0);
 }
 
+/// In a channel the picker offers the team's tags too; a picked tag is sent like Teams sends it
+/// (`mri` `tag:<id>`, `mentionType` `tag`).
+#[test]
+fn a_channel_offers_the_team_tags_and_sends_a_tag_mention() {
+    const TECH: &str = "19:tech@thread.tacv2";
+    let h = Harness::new();
+    wire(&h);
+    let team = h.engine.test_store(|s| {
+        s.conversation(TECH)
+            .unwrap()
+            .and_then(|r| r.team_id)
+            .expect("the demo channel has a team")
+    });
+    let tag = |id: &str, name: &str, members: u32| teams_proto::tags::Tag {
+        id: id.into(),
+        name: name.into(),
+        description: String::new(),
+        member_count: members,
+        member_ids: vec![],
+        is_member: false,
+        version: 1,
+    };
+    h.engine.test_set_tags(
+        &team,
+        vec![tag("t1", "Designers", 3), tag("t2", "On call", 1)],
+    );
+    h.select(TECH);
+    // The channel's composer opens with "Post in channel".
+    if let Some(post) = find_label(&h.app, "Post in channel").into_iter().next() {
+        post.mock_single_click(PointerEventButton::Left);
+    }
+    h.type_in_composer("@des");
+    let items: Vec<(String, String)> = ps(&h.app)
+        .get_mention_items()
+        .iter()
+        .map(|p| (p.name.to_string(), p.subtitle.to_string()))
+        .collect();
+    assert_eq!(
+        items,
+        vec![("Designers".to_string(), "Tag · 3 people".to_string())]
+    );
+    enter(&h.app);
+    assert_eq!(h.app.get_draft(), "@Designers ");
+    type_text(&h.app, "please review");
+    enter(&h.app);
+
+    let queued = h.engine.test_store(|s| s.outbox_for(TECH).unwrap());
+    assert_eq!(queued.len(), 1);
+    assert!(
+        queued[0].html.contains(">Designers</span>"),
+        "{}",
+        queued[0].html
+    );
+    let ms = parse_mentions(Some(
+        &json!({"mentions": queued[0].mentions.clone().unwrap()}),
+    ));
+    assert_eq!(ms.len(), 1);
+    assert_eq!(ms[0].mri, "tag:t1");
+    assert_eq!(ms[0].kind, MentionKind::Tag);
+}
+
 #[test]
 fn text_without_a_picked_mention_carries_no_mentions_property() {
     let h = Harness::new();
@@ -730,6 +791,59 @@ fn clicking_the_avatar_also_opens_the_card_and_a_card_without_an_email_has_no_em
     assert!(ids(&h.app, "ProfileCard::mail-touch").is_empty());
 }
 
+#[test]
+fn resting_on_a_photo_opens_a_hover_card_whose_quick_message_goes_to_their_chat() {
+    let h = harness_with_sara_email();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    // The list lays out lazily: on the first frame rows only have an estimated height, and the
+    // measured heights (which depend on how the installed fonts wrap the messages) shift every
+    // row under a pointer that was already placed. Let it settle before looking for the photo.
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    // A photo that is on screen (rows above the view are laid out but clipped).
+    let height = h
+        .app
+        .window()
+        .size()
+        .to_logical(h.app.window().scale_factor())
+        .height;
+    let avatar = ids(&h.app, "MessageRow::avatar-touch")
+        .into_iter()
+        .rfind(|e| {
+            let y = e.absolute_position().y + e.size().height / 2.;
+            label(e) == "Open profile of Sara Hassan" && (120. ..height - 120.).contains(&y)
+        })
+        .expect("Sara's photo on screen");
+    let (p, s) = (avatar.absolute_position(), avatar.size());
+    // Resting means the photo does not move under the pointer.
+    testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    assert_eq!(avatar.absolute_position(), p, "the list has settled");
+    h.app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.),
+    });
+    for _ in 0..8 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        ps(&h.app).get_card_open(),
+        "resting on the photo opens the card"
+    );
+    assert!(ps(&h.app).get_card_by_hover());
+    assert_eq!(ps(&h.app).get_card().name, "Sara Hassan");
+
+    // A quick message goes to the 1:1 with her; the open chat stays.
+    let quick = touch(&h.app, "ProfileCard::quick");
+    quick.set_accessible_value("on my way");
+    click(&touch(&h.app, "ProfileCard::quick-send"));
+    assert!(!ps(&h.app).get_card_open(), "sending closes the card");
+    let direct = "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000003@unq.gbl.spaces";
+    let queued = h.engine.test_store(|s| s.outbox_for(direct).unwrap());
+    assert_eq!(queued.len(), 1, "one message queued for Sara");
+    assert_eq!(h.app.get_current_id(), BACKEND);
+}
+
 // ---- 6.6 pinned messages banner ----------------------------------------------
 
 fn pins() -> Vec<PinnedData> {
@@ -965,7 +1079,7 @@ fn the_read_receipts_setting_turns_the_marks_off_and_on() {
 fn the_composer_menu_has_the_read_receipts_switch() {
     let app = app_with_messages(vec![]);
     let log = record(&app);
-    click(&toolbar(&app)[3]); // the "…" button
+    click(&toolbar(&app)[2]); // the "…" button
     let on = find_label(&app, "Read receipts");
     assert!(!on.is_empty());
     click(&on[0]);

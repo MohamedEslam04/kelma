@@ -137,6 +137,15 @@ pub(super) fn one_on_one_members(id: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The 1:1 chat id of two people (`8:orgid:` MRIs): `19:<a>_<b>@unq.gbl.spaces`, the GUIDs in
+/// sorted order. `None` for anyone else (guests, bots).
+#[cfg(feature = "calls")]
+pub(super) fn one_on_one_chat_id(a: &str, b: &str) -> Option<String> {
+    let mut ids = [a.strip_prefix("8:orgid:")?, b.strip_prefix("8:orgid:")?];
+    ids.sort_unstable();
+    Some(format!("19:{}_{}@unq.gbl.spaces", ids[0], ids[1]))
+}
+
 pub(super) fn decode_image(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Pixels> {
     let img = image::load_from_memory(bytes).ok()?;
     let img = if img.width() > max_w || img.height() > max_h {
@@ -156,12 +165,20 @@ pub(super) fn system_text(m: &MessageRow) -> Option<String> {
     let t = m.message_type.as_str();
     if t.starts_with("ThreadActivity/") {
         let what = t.trim_start_matches("ThreadActivity/");
-        Some(match what {
-            "AddMember" | "MemberJoined" => "A member was added to the chat.".into(),
-            "DeleteMember" | "MemberLeft" => "A member left the chat.".into(),
-            "TopicUpdate" => "The chat name was changed.".into(),
-            _ => format!("{what}."),
-        })
+        Some(
+            match what {
+                "AddMember" | "MemberJoined" => "A member was added to the chat.",
+                "DeleteMember" | "MemberLeft" => "A member left the chat.",
+                "TopicUpdate" | "TopicTopicUpdated" => "The name was changed.",
+                "TopicDescriptionUpdated" => "The description was changed.",
+                "ThreadArchivalUpdate" => "The team was archived or restored.",
+                "PictureUpdate" => "The picture was changed.",
+                "RoleUpdate" => "A member's role was changed.",
+                // Settings changes ("UpdateFavDefault" and the like) read the same way.
+                _ => "The settings were changed.",
+            }
+            .into(),
+        )
     } else if t.starts_with("Event/Call") {
         Some("Call".into())
     } else if t.starts_with("RichText/Media_Call") {
@@ -181,6 +198,45 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 11, day, h, m, 0)
             .unwrap()
             .timestamp_millis()
+    }
+
+    #[cfg(feature = "calls")]
+    #[test]
+    fn a_one_on_one_chat_id_sorts_both_members() {
+        let id = one_on_one_chat_id("8:orgid:f74e", "8:orgid:a1b2");
+        assert_eq!(id.as_deref(), Some("19:a1b2_f74e@unq.gbl.spaces"));
+        assert_eq!(
+            one_on_one_members(id.as_deref().unwrap()),
+            ["8:orgid:a1b2", "8:orgid:f74e"]
+        );
+        assert_eq!(one_on_one_chat_id("8:orgid:a1b2", "28:bot"), None);
+    }
+
+    #[test]
+    fn thread_activity_reads_as_a_sentence() {
+        let row = |t: &str| MessageRow {
+            id: "m1".into(),
+            conversation_id: "19:c@thread.tacv2".into(),
+            parent_id: None,
+            sender_mri: String::new(),
+            sender_name: String::new(),
+            compose_ms: 0,
+            edited_ms: None,
+            deleted: false,
+            message_type: t.into(),
+            content_html: String::new(),
+            client_message_id: None,
+            reactions_json: String::new(),
+        };
+        assert_eq!(
+            system_text(&row("ThreadActivity/TopicTopicUpdated")).as_deref(),
+            Some("The name was changed.")
+        );
+        assert_eq!(
+            system_text(&row("ThreadActivity/UpdateFavDefault")).as_deref(),
+            Some("The settings were changed.")
+        );
+        assert_eq!(system_text(&row("RichText/Html")), None);
     }
 
     #[test]

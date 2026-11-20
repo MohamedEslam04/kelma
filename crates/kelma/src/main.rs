@@ -1,6 +1,7 @@
 //! kelma: a lightweight native Microsoft Teams chat client (unofficial).
 
 mod backend;
+mod catch_up;
 mod composer;
 mod composer_format;
 mod data;
@@ -13,7 +14,12 @@ mod markdown;
 mod media_data;
 mod mention;
 mod reactions;
+mod send_options;
 mod shortcuts;
+mod snippets;
+mod spell;
+mod suggest;
+mod topbar;
 mod tray_wiring;
 mod ui;
 #[cfg(test)]
@@ -160,9 +166,22 @@ async fn device_code(ui: &UiHandle, cfg: &session::Config) -> anyhow::Result<Cli
 
 /// Twemoji (COLRv0) — Slint's renderer draws COLRv0/CBDT color glyphs but not COLRv1, which is
 /// what most distributions ship as their emoji font. CC-BY 4.0, see ui/fonts/README.md.
+/// kelma's desktop-file id (the Flatpak's app id), which is also its Wayland app id and X11 window
+/// class, so the compositor and the task manager match the window to the installed desktop file.
+/// The desktop portal gets it too: the ScreenCast and RemoteDesktop dialogs then show kelma's
+/// name instead of the terminal's. The portal takes reverse-DNS ids only.
+const APP_ID: &str = tray::APP_ID;
+
 const EMOJI_FONT: &[u8] = include_bytes!("../ui/fonts/TwemojiMozilla.ttf");
 
 /// Finds a system font file for a fontconfig pattern.
+/// The window saw a right button go up: the message under the pointer opens its "…" menu
+/// (`MessagePointer` in `message_row.slint`; its text takes the press itself).
+fn right_click_released(w: &AppWindow) {
+    let p = w.global::<MessagePointer>();
+    p.set_right_clicks(p.get_right_clicks().wrapping_add(1));
+}
+
 fn fc_match(pattern: &str) -> Option<std::path::PathBuf> {
     let out = std::process::Command::new("fc-match")
         .args(["-f", "%{file}", pattern])
@@ -249,8 +268,11 @@ fn main() -> anyhow::Result<()> {
         .backend_name("winit".into())
         .renderer_name(renderer)
         .select()?;
-    // Inside Flatpak the desktop file is named after the app id, so the window must use it.
-    let _ = slint::set_xdg_app_id(std::env::var("FLATPAK_ID").unwrap_or_else(|_| "kelma".into()));
+    // The desktop file is named after the app id (inside Flatpak too), so the window uses it.
+    let _ = slint::set_xdg_app_id(std::env::var("FLATPAK_ID").unwrap_or_else(|_| APP_ID.into()));
+    // The ScreenCast, RemoteDesktop and Camera dialogs name kelma, not the terminal it ran from.
+    #[cfg(feature = "calls")]
+    calling::video::portal::set_host_app_id(APP_ID);
 
     let window = AppWindow::new()?;
     composer::wire(&window);
@@ -357,14 +379,29 @@ fn main() -> anyhow::Result<()> {
             if weak.upgrade().is_some_and(|w| w.get_important()) {
                 let _ = tx.send(Cmd::SetImportant(true));
             }
+            if weak.upgrade().is_some_and(|w| w.get_urgent()) {
+                let _ = tx.send(Cmd::SetUrgent(true));
+            }
             let _ = tx.send(Cmd::Send(text.into(), subject));
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<SendStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::ScheduledCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Scheduled(c));
+            }
         });
     }
     ui::install_calendar(&window, tx.clone());
     ui::install_apps(&window, tx.clone());
     ui::settings::install_system(&window, tx.clone());
+    snippets::install_system(&window);
+    ui::topbar::install(&window, session::Paths::new().ok().map(|p| p.config_dir));
     #[cfg(feature = "calls")]
     ui::call_direct::install(&window, tx.clone());
+    #[cfg(feature = "calls")]
+    ui::calls_page::install(&window, tx.clone());
     ui::install_composer_apps(&window, tx.clone());
     {
         let tx = tx.clone();
@@ -379,6 +416,14 @@ fn main() -> anyhow::Result<()> {
         window.global::<PeopleStore>().on_command(move |name, arg| {
             if let Some(c) = backend::PeopleCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::People(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<RemindStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::RemindCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Remind(c));
             }
         });
     }
@@ -413,6 +458,14 @@ fn main() -> anyhow::Result<()> {
         window.global::<MediaStore>().on_command(move |name, arg| {
             if let Some(c) = backend::MediaCmd::parse(&name, &arg) {
                 let _ = tx.send(Cmd::Media(c));
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<GifStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::GifCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Gif(c));
             }
         });
     }
@@ -463,12 +516,39 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Files dropped on the window become attachments. winit reports one event per file. Wayland has
-    // no drop events in winit 0.30, so this only fires on X11, Windows and macOS.
+    // no drop events in winit 0.30, so this only fires on X11, Windows and macOS. Right clicks are
+    // counted for the message under the pointer (`right_click_released`).
     {
-        use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
+        use slint::winit_030::winit::event::{ElementState, MouseButton, WindowEvent};
+        use slint::winit_030::{EventResult, WinitWindowAccessor};
         let tx = tx.clone();
         let weak = window.as_weak();
         window.window().on_winit_window_event(move |_, event| {
+            if let WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Right,
+                ..
+            } = event
+                && let Some(w) = weak.upgrade()
+            {
+                right_click_released(&w);
+            }
+            // The mouse's own Back and Forward buttons move through the history like the arrows.
+            if let WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: button @ (MouseButton::Back | MouseButton::Forward),
+                ..
+            } = event
+                && let Some(w) = weak.upgrade()
+            {
+                let name = if *button == MouseButton::Back {
+                    "back"
+                } else {
+                    "forward"
+                };
+                w.global::<TopBarStore>()
+                    .invoke_command(name.into(), "".into());
+            }
             if let WindowEvent::DroppedFile(path) = event {
                 // On the OneDrive view a drop uploads; elsewhere it attaches to the message.
                 let on_drive = weak.upgrade().is_some_and(|w| w.get_view() == "onedrive");
@@ -519,9 +599,35 @@ fn main() -> anyhow::Result<()> {
     // Tray, close-to-tray and the event loop (stays up with the window hidden).
     tray_wiring::run(&window, hidden)?;
     window_state::finish(&window);
-    // Give the engine a moment to write a draft typed just before closing.
+    // Give the engine a moment to write a draft typed just before closing and to take this
+    // device out of presence.
     let _ = tx.send(Cmd::Flush);
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(std::time::Duration::from_millis(300));
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
     Ok(())
+}
+
+#[cfg(test)]
+mod app_id_tests {
+    use super::APP_ID;
+
+    #[test]
+    fn the_app_id_names_the_flatpak_and_every_packaged_file() {
+        let manifest =
+            include_str!("../../../packaging/flatpak/io.github.mohamedeslam04.kelma.yml");
+        assert!(manifest.contains(&format!("app-id: {APP_ID}\n")));
+        assert!(APP_ID.split('.').count() >= 2, "the portal refuses `kelma`");
+        let desktop = include_str!("../../../packaging/io.github.mohamedeslam04.kelma.desktop");
+        assert!(desktop.contains(&format!("\nIcon={APP_ID}\n")));
+        assert!(
+            desktop.contains(&format!("\nStartupWMClass={APP_ID}\n")),
+            "the X11 window class is the app id"
+        );
+        let metainfo =
+            include_str!("../../../packaging/io.github.mohamedeslam04.kelma.metainfo.xml");
+        assert!(metainfo.contains(&format!("<id>{APP_ID}</id>")));
+        assert!(metainfo.contains(&format!(
+            "<launchable type=\"desktop-id\">{APP_ID}.desktop</launchable>"
+        )));
+    }
 }

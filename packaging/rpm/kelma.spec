@@ -27,6 +27,7 @@ BuildRequires:  pkgconfig(fontconfig)
 BuildRequires:  pkgconfig(xkbcommon)
 BuildRequires:  pkgconfig(dbus-1)
 BuildRequires:  desktop-file-utils
+BuildRequires:  libappstream-glib
 Requires:       hicolor-icon-theme
 # Loaded with dlopen (winit, glutin, xkbcommon-dl), so rpm does not detect them:
 Requires:       libxkbcommon
@@ -41,6 +42,13 @@ Requires:       libglvnd-egl
 Requires:       libglvnd-glx
 Recommends:     google-noto-emoji-fonts
 Recommends:     xdg-desktop-portal
+# Screen sharing in calls runs `gst-launch-1.0 pipewiresrc` on the ScreenCast portal's stream.
+Recommends:     gstreamer1
+Recommends:     gstreamer1-plugins-base
+Recommends:     pipewire-gstreamer
+# Camera video in calls: `pipewiresrc` (Camera portal) or `v4l2src`, and `jpegdec` for MJPEG
+# cameras, from plugins-good.
+Recommends:     gstreamer1-plugins-good
 
 %description
 kelma is a small, fast Linux client for Microsoft Teams chat, channels, activity, calendar and
@@ -69,20 +77,25 @@ cargo build --release --frozen -p kelma
 
 %check
 export CARGO_HOME=%{_builddir}/cargo-home
-desktop-file-validate packaging/kelma.desktop
+desktop-file-validate packaging/io.github.mohamedeslam04.kelma.desktop
+appstream-util validate-relax --nonet packaging/io.github.mohamedeslam04.kelma.metainfo.xml
 cargo test --frozen -p diag
 
 %install
 install -Dm755 target/release/kelma %{buildroot}%{_bindir}/kelma
-install -Dm644 packaging/kelma.desktop %{buildroot}%{_datadir}/applications/kelma.desktop
-install -Dm644 packaging/kelma.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/kelma.svg
+# The desktop file, icon and AppStream id are the reverse-DNS app id kelma registers with the
+# desktop portal and uses as its window class.
+install -Dm644 packaging/io.github.mohamedeslam04.kelma.desktop %{buildroot}%{_datadir}/applications/io.github.mohamedeslam04.kelma.desktop
+install -Dm644 packaging/io.github.mohamedeslam04.kelma.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mohamedeslam04.kelma.svg
+install -Dm644 packaging/io.github.mohamedeslam04.kelma.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mohamedeslam04.kelma.metainfo.xml
 
 %files
 %license LICENSE
 %doc README.md
 %{_bindir}/kelma
-%{_datadir}/applications/kelma.desktop
-%{_datadir}/icons/hicolor/scalable/apps/kelma.svg
+%{_datadir}/applications/io.github.mohamedeslam04.kelma.desktop
+%{_datadir}/icons/hicolor/scalable/apps/io.github.mohamedeslam04.kelma.svg
+%{_metainfodir}/io.github.mohamedeslam04.kelma.metainfo.xml
 
 %changelog
 * Thu Nov 19 2026 kelma contributors - 0.1.0-1

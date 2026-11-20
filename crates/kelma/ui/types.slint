@@ -17,6 +17,8 @@ export struct ChatRow {
     group: bool,   // a group chat (the item menu offers Leave)
     muted: bool,   // notifications are off (the item menu offers Unmute)
     channel: bool, // a channel (the item menu offers the channel items)
+    presence: string, // the other person's availability in a 1:1 chat ("" draws no dot)
+    person: string,   // the other person in a 1:1 chat ("" otherwise), for the hover card
 }
 
 // Adaptive Card rows (plan 8.8). `kind`: text | fact | columns | image | actions | banner.
@@ -52,7 +54,10 @@ export struct Edited { text: string, cursor: int }
 
 // An attachment waiting in the composer (pasted image, dropped or picked file).
 export struct PendingAttachment { name: string, detail: string, is-image: bool, preview: image, has-preview: bool }
-export struct FileItem { name: string, url: string, ext: string }
+// `place`: "OneDrive" | "SharePoint" | "" (elsewhere). `detail`: the card's second line.
+export struct FileItem { name: string, url: string, ext: string, place: string, detail: string }
+// A Loop component link drawn as a card.
+export struct LoopCard { url: string, title: string }
 // One cell of a message's image grid (x, y, w, h place it; `overflow` is the "+K more" of the last cell).
 export struct ImageItem { url: string, img: image, loaded: bool, x: length, y: length, w: length, h: length, overflow: int }
 // A link preview card under a message (plan chat 9.7).
@@ -100,6 +105,9 @@ export struct Msg {
     translate: string,     // "" | "can" (menu only) | "offer" (link too) | "busy" | "shown" | "failed"
     translate-from: string, // language name shown with "See original"
     links: [LinkCard],     // preview cards of the links in the message
+    pinned: bool,          // pinned for everyone: the menu offers Unpin
+    urls: [string],        // the links in the text (menu: Open link, Copy link)
+    loops: [LoopCard],     // Loop components, drawn as cards
 }
 
 // A person (or, for the @mention picker, a team, channel or "Everyone" entry) in a people list.
@@ -112,6 +120,7 @@ export struct PersonItem {
     avatar: image,
     has-avatar: bool,
     kind: string, // "person" | "team" | "channel" | "everyone"
+    presence: string, // a person's availability ("" draws no dot)
 }
 
 // One pinned message of the open chat, for the banner.

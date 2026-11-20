@@ -101,7 +101,7 @@ impl Engine {
                     });
                 }
             }
-            Event::Presence { .. } => {}
+            Event::Presence { mri, availability } => self.on_presence(&mri, &availability),
         }
     }
 
@@ -194,40 +194,75 @@ impl Engine {
         });
     }
 
-    fn notify(&self, st: &Store, m: &Message) {
-        // Muted chats and channels set to "Off" stay silent here, like in Teams, and so does
-        // everything while the tray's Mute is on.
-        if self.lists_silenced(&m.conversation_id) || crate::tray_wiring::notifications_muted() {
-            return;
-        }
-        // The notification settings from Teams: type switches, pause and previews.
-        let Some(preview) = super::settings::banner_for(m, &self.me) else {
-            return;
+    fn notify(self: &Arc<Self>, st: &Store, m: &Message) {
+        use super::quiet::{self, Decision, Incoming};
+        use teams_proto::user_settings::Kind;
+        // Muted chats and channels set to "Off" are not routed to a banner, like in Teams; the
+        // notification settings from Teams (type switches, previews) route the rest.
+        let routed = if self.lists_silenced(&m.conversation_id) {
+            None
+        } else {
+            super::settings::banner_for(m, &self.me)
         };
-        let title = st
+        let full = render::plain_text(&render::parse_teams_html(&m.content));
+        let prefs = quiet::load_prefs();
+        let keyword_text = format!("{} {full}", m.subject.as_deref().unwrap_or_default());
+        let kind = super::settings::incoming_kind(
+            &m.conversation_id,
+            m.parent_id.is_some(),
+            &m.mentions,
+            &self.me,
+        );
+        let now = chrono::Utc::now();
+        let inc = Incoming {
+            paused: super::settings::notifications_paused(now),
+            routed: routed.is_some(),
+            mentions_me: matches!(kind, Kind::ChatMention | Kind::PersonMention),
+            urgent: m.importance != teams_proto::delivery::Importance::Standard,
+            priority_sender: super::settings::is_priority_person(&m.sender_mri),
+            call: false,
+            keyword: quiet::keyword_hit(&keyword_text, &prefs.keyword_alerts),
+        };
+        let focus = quiet::focus_active(quiet::focus_until(&prefs), now.timestamp_millis());
+        let keyword =
+            match quiet::should_banner(&inc, chrono::Local::now().naive_local(), &prefs, focus) {
+                Decision::Show { keyword } => keyword,
+                Decision::Hidden(why) => {
+                    tracing::debug!(?why, conversation = %m.conversation_id, "banner held back");
+                    return;
+                }
+            };
+        let preview = routed.unwrap_or_else(super::settings::previews_enabled);
+        let chat = st
             .conversation(&m.conversation_id)
             .ok()
             .flatten()
             .map(|c| c.title)
             .unwrap_or_default();
-        let summary = if title.is_empty() || title == m.sender_name {
-            m.sender_name.clone()
-        } else {
-            format!("{} — {}", m.sender_name, title)
+        // A keyword alert is titled by the word and the chat; the sender and text follow.
+        let title = match keyword {
+            Some(k) => format!(
+                "\u{201c}{k}\u{201d} in {}",
+                if chat.is_empty() {
+                    &m.sender_name
+                } else {
+                    &chat
+                }
+            ),
+            None => chat,
         };
-        let body: String = render::plain_text(&render::parse_teams_html(&m.content))
-            .chars()
-            .take(200)
-            .collect();
-        let body = super::settings::banner_body(preview, body);
+        let text: String = full.chars().take(200).collect();
+        let line = super::settings::banner_body(preview, super::banner::friendly(&text));
+        let photo = st.user(&m.sender_mri).ok().flatten().and_then(|u| u.avatar);
         tracing::info!(conversation = %m.conversation_id, "desktop notification");
-        tokio::task::spawn_blocking(move || {
-            let _ = notify_rust::Notification::new()
-                .appname("kelma")
-                .summary(&summary)
-                .body(&body)
-                .icon("mail-message-new")
-                .show();
+        self.show_banner(super::banner::Pending {
+            conversation: m.conversation_id.clone(),
+            message: m.id.clone(),
+            sender: m.sender_name.clone(),
+            sender_mri: m.sender_mri.clone(),
+            title,
+            line,
+            photo,
         });
     }
 }

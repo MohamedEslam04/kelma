@@ -8,6 +8,7 @@ description = "OneDrive and SharePoint files for kelma: browse, act, share, recy
 publish = false
 
 [dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", features = ["json"] }
 serde_json = "1.0.154"
 teams-proto = { version = "0.0.0", path = "../teams-proto" }

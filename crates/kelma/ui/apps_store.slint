@@ -1,8 +1,9 @@
 // State shared between the Rust backend and the app screens: the app bar and flyout, the Store,
 // Planner and To Do, Workflows, OneNote and Lists. Everything a screen shows comes from one of the
 // globals below; every action goes out through the global's `command(name, argument)`. The command
-// names are listed in backend/appstore/cmd.rs. Nothing here writes to the work tenant: install,
-// uninstall and pin only show the request they would send.
+// names are listed in backend/appstore/cmd.rs. A change (add, remove, update, a task, a flow, a
+// page, a list item) first opens the dialog described by the `form-*` properties of AppsStore;
+// the engine sends the request when `form-submit` arrives.
 
 // One app in a card grid, the flyout or the Manage list.
 export struct AppCard {
@@ -76,7 +77,7 @@ export struct TableRow {
 export global AppsStore {
     // The views the app screens own (they cover the area right of the rail).
     pure public function owns(view: string) -> bool {
-        view == "store" || view == "planner" || view == "workflows" || view == "onenote" || view == "lists" || view == "app"
+        view == "store" || view == "planner" || view == "workflows" || view == "onenote" || view == "lists" || view == "recaps" || view == "app"
     }
     // Ctrl+Shift+N: N from the key's text (Shift turns a digit into its US symbol), else 0.
     pure public function shortcut-index(text: string) -> int {
@@ -148,10 +149,21 @@ export global AppsStore {
     in property <[image]> app-shots;
     in property <int> app-shot-count;
     in-out property <int> app-shot: 0;
-    // Add and Remove only show the request (never sent).
-    in-out property <string> install-title;
-    in-out property <string> install-request;
-    in-out property <string> install-link;
+    // The confirm and input dialog (closed while form-title is empty). The text fields are the
+    // window's to edit; `form-submit` sends them joined by newlines.
+    in property <string> form-title;
+    in property <string> form-body;
+    in property <string> form-confirm: "Confirm";
+    in property <bool> form-danger;
+    in property <string> form-link-label;
+    in property <string> form-error;
+    in property <[AppRow]> form-choices;
+    in property <string> form-label1;
+    in property <string> form-label2;
+    in property <string> form-label3;
+    in-out property <string> form-text1;
+    in-out property <string> form-text2;
+    in-out property <string> form-text3;
     // Manage your apps.
     in property <[AppCard]> manage;
     in property <string> manage-note;
@@ -177,6 +189,8 @@ export global TasksStore {
     in property <float> progress;
     in property <string> status;
     in property <bool> loading;
+    // New task works in a To Do list or a plan.
+    in property <bool> can-add;
     callback command(string, string);
 }
 
@@ -185,8 +199,12 @@ export global FlowsStore {
     in property <[AppRow]> runs;
     in property <string> environment;
     in property <string> selected-name;
+    in property <string> selected-id;
     in property <string> status;
     in property <bool> loading;
+    in property <bool> can-run;
+    in property <bool> can-toggle;
+    in property <bool> selected-on;
     callback command(string, string);
 }
 
@@ -197,6 +215,7 @@ export global NotesStore {
     in property <string> page-title;
     in property <string> page-text;
     in property <bool> can-open-web;
+    in property <bool> can-new-page;
     in property <string> status;
     in property <bool> loading;
     callback command(string, string);
@@ -210,5 +229,29 @@ export global ListsStore {
     in property <string> title;
     in property <string> status;
     in property <bool> loading;
+    // A list (not a library) is open: items can be added and edited.
+    in property <bool> can-edit;
+    callback command(string, string);
+}
+
+// Meeting Recaps: recent meetings with a recording or transcript, and the selected one.
+export global RecapsStore {
+    in property <[AppRow]> meetings;
+    in-out property <string> query;
+    in property <string> note;
+    in property <bool> loading;
+    in property <bool> detail-open;
+    in property <string> detail-title;
+    in property <string> detail-when;
+    in property <string> detail-organizer;
+    in property <bool> has-recording;
+    in property <bool> has-transcript;
+    in property <string> transcript;
+    in property <string> transcript-note;
+    in property <bool> has-notes;
+    in property <string> notes-note;
+    in property <string> ai;
+    in property <bool> has-ai-link;
+    in property <bool> can-share;
     callback command(string, string);
 }

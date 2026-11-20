@@ -3,7 +3,7 @@
 
 use super::{UiHandle, img, model, rgb, styled};
 use crate::find_data::{HitData, PickData, SharedData};
-use crate::{AppWindow, FindStore, HitRow, PickRow, SharedRow};
+use crate::{AppWindow, ChannelTabApp, ChannelTabItem, FindStore, HitRow, PickRow, SharedRow};
 use slint::{ComponentHandle, ModelRc};
 
 fn hit(d: HitData) -> HitRow {
@@ -39,6 +39,8 @@ fn shared_rows(v: Vec<SharedData>) -> ModelRc<SharedRow> {
                 shared_by: s.shared_by.into(),
                 date: s.date.into(),
                 url: s.url.into(),
+                editable: s.editable,
+                sharepoint: s.sharepoint,
             })
             .collect(),
     )
@@ -114,6 +116,44 @@ impl UiHandle {
             }
             s.set_chat_find_count(count as i32);
             s.set_chat_find_index(index as i32);
+        });
+    }
+
+    /// The open channel's tabs beyond Posts and Files: (name, address, tab id).
+    pub fn channel_tabs(&self, tabs: Vec<(String, String, String)>) {
+        self.find_store(move |s| {
+            s.set_channel_tabs(slint::ModelRc::new(slint::VecModel::from(
+                tabs.into_iter()
+                    .map(|(name, url, id)| ChannelTabItem {
+                        name: name.into(),
+                        url: url.into(),
+                        id: id.into(),
+                    })
+                    .collect::<Vec<_>>(),
+            )));
+        });
+    }
+
+    /// The installed apps the "Add a tab" dialog offers: (app id, name).
+    pub fn tab_apps(&self, apps: Vec<(String, String)>) {
+        self.find_store(move |s| {
+            s.set_tab_apps(slint::ModelRc::new(slint::VecModel::from(
+                apps.into_iter()
+                    .map(|(id, name)| ChannelTabApp {
+                        id: id.into(),
+                        name: name.into(),
+                    })
+                    .collect::<Vec<_>>(),
+            )));
+        });
+    }
+
+    /// Whether the Files tab shows New folder and New document (a channel with a files folder),
+    /// and a short message from the last file action ("" for none).
+    pub fn shared_tools(&self, can_create: bool, note: String) {
+        self.find_store(move |s| {
+            s.set_shared_can_create(can_create);
+            s.set_shared_note(note.into());
         });
     }
 

@@ -31,7 +31,7 @@ mod resample;
 mod source;
 
 #[cfg(feature = "aec")]
-pub use aec::{AudioProcessor, EchoCancelled, EchoReference, echo_cancelled};
+pub use aec::{AudioProcessor, EchoCancelled, EchoReference, ProcessingOptions, echo_cancelled};
 pub use codec::{OpusDecoder, OpusEncoder};
 #[cfg(feature = "devices")]
 pub use device::{Capture, DeviceInfo, Playback, list_input_devices, list_output_devices};

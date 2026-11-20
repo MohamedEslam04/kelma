@@ -359,6 +359,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ashpd"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72e703b2bc5ba8e903b7845ae92657c281391116ccb8eef89cf6a0ee68d96d76"
+dependencies = [
+ "bitflags 2.13.2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_repr",
+ "tokio",
+ "zbus 6.3.0",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -889,6 +904,8 @@ dependencies = [
 name = "calling"
 version = "0.0.0"
 dependencies = [
+ "ab_glyph",
+ "ashpd",
  "async-trait",
  "base64 0.23.1",
  "bytes",
@@ -896,6 +913,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "hound",
+ "openh264",
  "opus",
  "rand 0.10.4",
  "rcgen",
@@ -903,6 +921,7 @@ dependencies = [
  "rtc",
  "serde",
  "serde_json",
+ "smithay-client-toolkit 0.20.0",
  "sonora",
  "teams-proto",
  "thiserror 2.0.21",
@@ -3585,6 +3604,7 @@ dependencies = [
  "session",
  "slint",
  "slint-build",
+ "spellbook",
  "store",
  "teams-proto",
  "tokio",
@@ -4075,6 +4095,15 @@ dependencies = [
  "indexmap",
  "rustc-hash 1.1.0",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nasm-rs"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "706bf8a5e8c8ddb99128c3291d31bd21f4bcde17f0f4c20ec678d85c74faa149"
+dependencies = [
+ "log",
 ]
 
 [[package]]
@@ -4718,6 +4747,7 @@ dependencies = [
 name = "onedrive"
 version = "0.0.0"
 dependencies = [
+ "futures-util",
  "reqwest",
  "serde_json",
  "teams-proto",
@@ -4734,6 +4764,27 @@ checksum = "8d8c8b8e725ad26404d6896eb2f064294a0a7b4f1d9120210d85544684c4ca95"
 dependencies = [
  "is-wsl",
  "libc",
+]
+
+[[package]]
+name = "openh264"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a30840cd2b2cd6ae39af2544f66adf55357f68e0e4938a096fe0e9f8f412b59"
+dependencies = [
+ "openh264-sys2",
+ "wide",
+]
+
+[[package]]
+name = "openh264-sys2"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8de206369120cab1be98e587adad1389e2ec00b63c62cdb3c13238000c1290a"
+dependencies = [
+ "cc",
+ "nasm-rs",
+ "walkdir",
 ]
 
 [[package]]
@@ -6277,6 +6328,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "safe_arch"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42c6efa15875e6ecb39ca61fb0b0c1a40b84fac5a5ffe71eef7d1000c8eb3f5f"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6937,6 +6997,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f939d8e63a2a0baa7555294d7b09c5e3d382f28358755b920e13ad527658c8fa"
 dependencies = [
  "cpufeatures 0.3.1",
+]
+
+[[package]]
+name = "spellbook"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d204abcbdf8e88729306a8d0ca01a79d8a49969fe1f84696909d6dbc4321c1a"
+dependencies = [
+ "foldhash 0.2.0",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -8442,6 +8512,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wide"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d920ac99c3c8edce110cb8d07dbb324d6d026011dce85b1e9355b70f0adacc4f"
+dependencies = [
+ "bytemuck",
+ "safe_arch",
+]
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9132,6 +9212,7 @@ dependencies = [
  "serde",
  "serde_repr",
  "socket2",
+ "tokio",
  "uds_windows",
  "uuid",
  "windows-sys 0.61.2",

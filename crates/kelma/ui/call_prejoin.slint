@@ -86,7 +86,7 @@ export component PreJoin inherits Rectangle {
                             Avatar { initials: CallStore.my-initials; size: 72px; }
                         }
                         Text {
-                            text: "Your camera is off";
+                            text: CallStore.prejoin-camera ? "Your camera turns on when you join" : "Your camera is off";
                             color: Theme.fg-subtle;
                             font-size: 12px * Theme.font-scale;
                             horizontal-alignment: center;
@@ -97,15 +97,19 @@ export component PreJoin inherits Rectangle {
                     text: "Join as " + CallStore.my-name;
                     color: Theme.fg;
                     font-size: 13px * Theme.font-scale;
+                    overflow: elide;
                 }
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: start;
                     CallButton {
-                        icon: @image-url("icons/video-off.svg");
+                        icon: CallStore.prejoin-camera ? @image-url("icons/video.svg") : @image-url("icons/video-off.svg");
                         label: "Camera";
-                        enabled: false;
-                        tip: "Video isn't available yet";
+                        checkable: true;
+                        active: CallStore.prejoin-camera;
+                        enabled: CallStore.camera-available;
+                        tip: CallStore.camera-available ? "" : "Video isn't available yet";
+                        clicked => { CallStore.command("prejoin-camera", CallStore.prejoin-camera ? "off" : "on"); }
                     }
                     MicSwitch { }
                 }

@@ -8,9 +8,15 @@
 //! `docs/openapi/teams-webclient.yaml` `RosterUpdate` (AGPL, facts only), teams-lite
 //! `NATIVE-CALLING.md` (measured frame, facts only).
 
+use crate::types::Links;
 use serde_json::Value;
 
 const ACTIVE: &str = "active";
+/// A camera stream's `type` (its `label` is `main-video`).
+const VIDEO: &str = "video";
+/// A screen share's stream `type` and `label`.
+const SCREEN: &str = "applicationsharing-video";
+const SENDING: [&str; 2] = ["sendonly", "sendrecv"];
 const RAISE_HANDS: &str = "raiseHands";
 const ROLE_KEYS: [&str; 2] = ["meetingRole", "role"];
 
@@ -75,6 +81,10 @@ pub struct RosterEndpoint {
     pub server_muted: bool,
     /// `sourceId`s of its call's audio streams.
     pub audio_sources: Vec<u32>,
+    /// The `sourceId` (MSI) of its camera stream while that stream sends.
+    pub video_source: Option<u32>,
+    /// The `sourceId` of its screen share (`applicationsharing-video`) while that stream sends.
+    pub screen_source: Option<u32>,
 }
 
 /// One participant as the roster last reported them.
@@ -91,12 +101,33 @@ pub struct RosterParticipant {
     pub hand: Option<RaisedHand>,
     pub endpoints: Vec<RosterEndpoint>,
     pub version: u64,
+    /// The roster names them as the presenter of the meeting's content-sharing session: a
+    /// `contentSharing` object on the participant or one of its endpoints (the web client's
+    /// shape; UNVERIFIED, teams-lite's tenant never sent one).
+    pub content_sharing: bool,
+    /// The `links` of that `contentSharing` object, if it has any (a viewer's way to ask the
+    /// presenter for control, UNVERIFIED).
+    pub sharing_links: Links,
 }
 
 impl RosterParticipant {
     /// Not heard in the call, whoever muted them.
     pub fn muted(&self) -> bool {
         self.self_muted || self.server_muted
+    }
+
+    fn in_call(&self) -> impl Iterator<Item = &RosterEndpoint> {
+        self.endpoints.iter().filter(|e| e.in_call)
+    }
+
+    /// The MSI of the camera they send, from their first endpoint in the call that sends one.
+    pub fn video_source(&self) -> Option<u32> {
+        self.in_call().find_map(|e| e.video_source)
+    }
+
+    /// The MSI of the screen they share, if they share one.
+    pub fn screen_source(&self) -> Option<u32> {
+        self.in_call().find_map(|e| e.screen_source)
     }
 }
 
@@ -132,6 +163,35 @@ impl Roster {
 
     pub fn hand_of(&self, mri: &str) -> Option<&RaisedHand> {
         self.get(mri)?.hand.as_ref()
+    }
+
+    /// Everyone else in the call (not `own_mri`, not the lobby).
+    fn others<'a>(&'a self, own_mri: &'a str) -> impl Iterator<Item = &'a RosterParticipant> {
+        self.participants
+            .iter()
+            .filter(move |p| p.mri != own_mri && p.presence == Presence::Connected)
+    }
+
+    /// The others whose camera sends, with its MSI, in the roster's order: who a meeting's
+    /// gallery can subscribe to (rusty-teams `roster.rs` `video_candidates`).
+    pub fn video_candidates(&self, own_mri: &str) -> Vec<(String, u32)> {
+        self.others(own_mri)
+            .filter_map(|p| Some((p.mri.clone(), p.video_source()?)))
+            .collect()
+    }
+
+    /// Who else shares a screen now, with the share's MSI (the first one, if several do).
+    pub fn screen_sharer(&self, own_mri: &str) -> Option<(String, u32)> {
+        self.others(own_mri)
+            .find_map(|p| Some((p.mri.clone(), p.screen_source()?)))
+    }
+
+    /// Who else the roster names as the content-sharing presenter ([`RosterParticipant::
+    /// content_sharing`]), whether or not their stream says it sends yet.
+    pub fn content_presenter(&self, own_mri: &str) -> Option<String> {
+        self.others(own_mri)
+            .find(|p| p.content_sharing)
+            .map(|p| p.mri.clone())
     }
 
     /// Applies a delta. An older `version` than the one known is ignored; a participant whose
@@ -265,6 +325,7 @@ fn participant_from(
     } else {
         Presence::Connected
     };
+    let sharing = content_sharing_of(p, raw_endpoints.iter().map(|(_, e)| *e));
     let all = |f: fn(&RosterEndpoint) -> bool| !in_call.is_empty() && in_call.iter().all(|e| f(e));
     RosterParticipant {
         mri: mri.to_owned(),
@@ -277,13 +338,45 @@ fn participant_from(
         self_muted: all(|e| e.self_muted),
         server_muted: all(|e| e.server_muted),
         hand: raised_hand(p, raw_endpoints.iter().map(|(_, e)| *e)),
+        content_sharing: sharing.is_some(),
+        sharing_links: sharing
+            .map(|c| super::bodies::parse_links(&c["links"]))
+            .unwrap_or_default(),
         endpoints,
         version,
     }
 }
 
+/// The participant's `contentSharing` object: on the participant, on an endpoint, or on an
+/// endpoint's call.
+fn content_sharing_of<'a>(
+    p: &'a Value,
+    endpoints: impl Iterator<Item = &'a Value>,
+) -> Option<&'a Value> {
+    std::iter::once(p)
+        .chain(endpoints.flat_map(|e| [e, &e["call"]]))
+        .filter_map(|holder| holder.get("contentSharing"))
+        .find(|c| c.is_object())
+}
+
 fn present(v: &Value, key: &str) -> bool {
     v.get(key).is_some_and(|x| !x.is_null())
+}
+
+/// The `sourceId` of the first stream of `endpoint`'s call that is of `kind` (by `type` or
+/// `label`) and sends.
+fn sending_source(endpoint: &Value, kind: &[&str]) -> Option<u32> {
+    endpoint
+        .pointer("/call/mediaStreams")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|s| {
+            kind.contains(&s["type"].as_str().unwrap_or_default())
+                || kind.contains(&s["label"].as_str().unwrap_or_default())
+        })
+        .filter(|s| SENDING.contains(&s["direction"].as_str().unwrap_or_default()))
+        .find_map(|s| source_id(&s["sourceId"]))
 }
 
 fn endpoint_from(id: &str, e: &Value) -> RosterEndpoint {
@@ -310,6 +403,8 @@ fn endpoint_from(id: &str, e: &Value) -> RosterEndpoint {
             .iter()
             .filter_map(|s| source_id(&s["sourceId"]))
             .collect(),
+        video_source: sending_source(e, &[VIDEO, "main-video"]),
+        screen_source: sending_source(e, &[SCREEN]),
     }
 }
 
@@ -336,4 +431,39 @@ fn raised_hand<'a>(p: &'a Value, endpoints: impl Iterator<Item = &'a Value>) -> 
                 rank: s["typeRank"].as_u64(),
             })
         })
+}
+
+#[cfg(test)]
+mod content_sharing_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_contentsharing_object_names_the_presenter() {
+        let mut r = Roster::default();
+        r.apply(&json!({"participants": {
+            "8:orgid:me": {"state": "active", "version": 1, "details": {"displayName": "Me"},
+                "endpoints": {"e0": {"call": {}}}},
+            "8:orgid:ada": {"state": "active", "version": 1, "details": {"displayName": "Ada"},
+                "endpoints": {"e1": {"call": {"contentSharing": {
+                    "sessionInformation": {"contentSharingSessionId": "cs"},
+                    "links": {"takeControl": "https://x/tc"}
+                }}}}}
+        }}));
+        assert_eq!(
+            r.content_presenter("8:orgid:me").as_deref(),
+            Some("8:orgid:ada")
+        );
+        let ada = r.get("8:orgid:ada").unwrap();
+        assert!(ada.content_sharing);
+        assert_eq!(ada.sharing_links.get("takeControl"), Some("https://x/tc"));
+        // Our own session is not someone else's presentation.
+        assert_eq!(r.content_presenter("8:orgid:ada"), None);
+        // A null field is no presenter.
+        r.apply(&json!({"participants": {
+            "8:orgid:ada": {"state": "active", "version": 2, "contentSharing": null,
+                "endpoints": {"e1": {"call": {}}}}
+        }}));
+        assert_eq!(r.content_presenter("8:orgid:me"), None);
+    }
 }

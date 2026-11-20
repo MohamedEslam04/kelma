@@ -186,6 +186,17 @@ impl Page {
             .collect()
     }
 
+    /// Every team as [`Self::rows`] draws it, without the filter and the search.
+    pub fn all_rows(&self) -> Vec<TeamRowData> {
+        Page {
+            entries: self.entries.clone(),
+            pinned: self.pinned.clone(),
+            sort: self.sort.clone(),
+            ..Page::default()
+        }
+        .rows()
+    }
+
     /// The Analytics tab: totals computed from the list.
     pub fn stats(&self) -> Vec<(String, String)> {
         let teams: Vec<&TeamEntry> = self.entries.iter().filter(|t| !t.is_deleted).collect();
@@ -371,6 +382,16 @@ mod tests {
         assert_eq!(names(&p), ["Zebra"], "a team with a hidden channel counts");
         p.filter = "archived".into();
         assert_eq!(names(&p), ["Old project"]);
+    }
+
+    #[test]
+    fn all_rows_ignore_the_filter_and_the_search() {
+        let mut p = page();
+        p.filter = "owned".into();
+        p.query = "zeb".into();
+        let all: Vec<String> = p.all_rows().into_iter().map(|r| r.name).collect();
+        assert_eq!(all, ["alpha", "Old project", "Zebra"]);
+        assert_eq!(names(&p), ["Zebra"], "the page keeps its own view");
     }
 
     #[test]

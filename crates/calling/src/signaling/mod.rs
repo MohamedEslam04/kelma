@@ -6,13 +6,19 @@
 //! [`endpoints::routed_url`], which refuses hosts outside Microsoft's calling plane.
 
 pub mod bodies;
+pub mod call_ops;
 pub mod callbacks;
+pub mod content_sharing;
 pub mod controls;
 pub mod endpoints;
+pub mod lobby;
 pub mod meeting;
+pub mod recorder;
 pub mod roster;
+pub mod video;
 
-pub use bodies::{Conversation, MeetingInfo};
+pub use bodies::{Attached, Conversation, MeetingInfo};
+pub use call_ops::TransferOutcome;
 pub use callbacks::CallbackLinks;
 pub use controls::{Controls, HandReceipt};
 pub use endpoints::CallingEndpoints;
@@ -24,6 +30,7 @@ use crate::invitation;
 use crate::types::{CallInvitation, Links, Modality, Participant, SdpBlob};
 use reqwest::Method;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use teams_proto::Client;
 use teams_proto::broker::Audience;
 
@@ -113,16 +120,65 @@ pub struct NgcResponse {
     pub body: Value,
 }
 
+/// One request to the conversation service and what came back, for `--dump` /
+/// `KELMA_CALL_DUMP`. The bodies hold real ids and SDPs with addresses: keep them local.
+#[derive(Debug)]
+pub struct Exchange<'a> {
+    pub op: &'a str,
+    pub method: &'a str,
+    pub url: &'a str,
+    pub request: Option<&'a Value>,
+    /// The HTTP status; 0 when the request never got an answer.
+    pub status: u16,
+    /// The answer body, or the transport error.
+    pub response: &'a str,
+}
+
+/// Sees every [`Exchange`] of an [`NgcClient`].
+pub type ExchangeObserver = Arc<dyn Fn(&Exchange<'_>) + Send + Sync>;
+
 /// Client for the NGC conversation service, on top of a signed-in [`teams_proto::Client`].
 #[derive(Clone)]
 pub struct NgcClient {
     client: Client,
     endpoints: CallingEndpoints,
+    observer: Option<ExchangeObserver>,
 }
 
 impl NgcClient {
     pub fn new(client: Client, endpoints: CallingEndpoints) -> Self {
-        NgcClient { client, endpoints }
+        NgcClient {
+            client,
+            endpoints,
+            observer: None,
+        }
+    }
+
+    /// Reports every request and its answer to `observer` (protocol debugging).
+    pub fn with_observer(mut self, observer: ExchangeObserver) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    fn observe(
+        &self,
+        op: &str,
+        method: &Method,
+        url: &str,
+        request: Option<&Value>,
+        status: u16,
+        response: &str,
+    ) {
+        if let Some(o) = &self.observer {
+            o(&Exchange {
+                op,
+                method: method.as_str(),
+                url,
+                request,
+                status,
+                response,
+            });
+        }
     }
 
     /// Reads the calling endpoints from authz (teams-proto keeps only the chat ones), then builds
@@ -162,6 +218,19 @@ impl NgcClient {
         url: &str,
         body: Option<&Value>,
     ) -> Result<NgcResponse> {
+        self.send_with(op, s, method, url, body, &[]).await
+    }
+
+    /// [`Self::send`] with `extra` headers (a content-sharing session's correlation id).
+    pub async fn send_with(
+        &self,
+        op: &'static str,
+        s: &CallSession,
+        method: Method,
+        url: &str,
+        body: Option<&Value>,
+        extra: &[(&'static str, &str)],
+    ) -> Result<NgcResponse> {
         let target = endpoints::routed_url(url)?;
         let ic3 = self.client.token_for(&Audience::Ic3).await?;
         let message_id = new_id();
@@ -169,11 +238,20 @@ impl NgcClient {
         for (k, v) in endpoints::call_headers(&self.endpoints, &s.chain_id, &message_id, &ic3) {
             req = req.header(k, v);
         }
+        for (k, v) in extra {
+            req = req.header(*k, *v);
+        }
         req = match body {
             Some(b) => req.body(serde_json::to_vec(b)?),
             None => req.header("Content-Length", "0"),
         };
-        let resp = req.send().await.map_err(teams_proto::Error::from)?;
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                self.observe(op, &method, &target, body, 0, &e.to_string());
+                return Err(teams_proto::Error::from(e).into());
+            }
+        };
         let status = resp.status().as_u16();
         let location = resp
             .headers()
@@ -181,6 +259,7 @@ impl NgcClient {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         let text = resp.text().await.map_err(teams_proto::Error::from)?;
+        self.observe(op, &method, &target, body, status, &text);
         tracing::debug!(op, %method, status, "ngc request");
         if !(200..300).contains(&status) {
             return Err(status_error(op, status, &text));
@@ -342,10 +421,34 @@ impl NgcClient {
     /// Claims a forked incoming call (`attach`) and joins its conversation. Returns the leg's links
     /// (`acceptance`, `callLeg`, `mediaAnswer`, `progress`, ...).
     pub async fn attach(&self, s: &CallSession, inv: &CallInvitation) -> Result<Links> {
+        self.attach_with(s, inv, false).await.map(|a| a.links)
+    }
+
+    /// [`Self::attach`], asking for the caller's offer when `require_media` (a ring that came
+    /// without `mediaContent`). The offer, if the service sends it, is in [`Attached::offer`].
+    pub async fn attach_with(
+        &self,
+        s: &CallSession,
+        inv: &CallInvitation,
+        require_media: bool,
+    ) -> Result<Attached> {
         let url = Self::link(&inv.links, "attach")?;
-        let body = bodies::attach_body(s, invitation::conversation_controller(inv));
+        let body = bodies::attach_body(s, invitation::conversation_controller(inv), require_media);
         let r = self.post("attach", s, url, &body).await?;
-        bodies::parse_attach_links(&r.body)
+        bodies::parse_attach(&r.body)
+    }
+
+    /// [`Self::attach`] with OUR offer in it (see [`bodies::attach_offer_body`]; UNVERIFIED).
+    pub async fn attach_with_offer(
+        &self,
+        s: &CallSession,
+        inv: &CallInvitation,
+        offer: &SdpBlob,
+    ) -> Result<Attached> {
+        let url = Self::link(&inv.links, "attach")?;
+        let body = bodies::attach_offer_body(s, invitation::conversation_controller(inv), offer);
+        let r = self.post("attach", s, url, &body).await?;
+        bodies::parse_attach(&r.body)
     }
 
     /// Tells the caller we ring (`progress`).
@@ -375,6 +478,70 @@ impl NgcClient {
             )
             .await?;
         Ok(bodies::parse_acceptance_links(&r.body))
+    }
+
+    /// Accepts a call that came without an offer, with OUR offer (the offerer path, UNVERIFIED
+    /// live; see [`bodies::offer_acceptance_body`]). Returns the leg's links and the caller's
+    /// answer when the acknowledgement carries it inline; otherwise it arrives on our
+    /// `call/mediaAnswer/` callback.
+    pub async fn accept_with_offer(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        modalities: &[Modality],
+        offer: &SdpBlob,
+    ) -> Result<(Links, Option<SdpBlob>)> {
+        let url = Self::link(links, "acceptance")?;
+        let r = self
+            .post(
+                "accept_with_offer",
+                s,
+                url,
+                &bodies::offer_acceptance_body(s, modalities, offer),
+            )
+            .await?;
+        Ok((
+            bodies::parse_acceptance_links(&r.body),
+            bodies::parse_inline_answer(&r.body),
+        ))
+    }
+
+    /// Accepts after our offer went out on its own (`mediaContent: null`; UNVERIFIED). Returns
+    /// the leg's links and any answer the acknowledgement carries inline.
+    pub async fn accept_without_media(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        modalities: &[Modality],
+    ) -> Result<(Links, Option<SdpBlob>)> {
+        let url = Self::link(links, "acceptance")?;
+        let r = self
+            .post(
+                "accept_without_media",
+                s,
+                url,
+                &bodies::mediafree_acceptance_body(s, modalities),
+            )
+            .await?;
+        Ok((
+            bodies::parse_acceptance_links(&r.body),
+            bodies::parse_inline_answer(&r.body),
+        ))
+    }
+
+    /// Posts OUR offer as a `mediaNegotiation` to `url` (the attach answer's `newOffer`; see
+    /// [`bodies::negotiation_body`]). Returns the answer when it comes inline; otherwise it
+    /// arrives on our `call/mediaAnswer/` callback.
+    pub async fn send_offer(
+        &self,
+        s: &CallSession,
+        url: &str,
+        modalities: &[Modality],
+        offer: &SdpBlob,
+    ) -> Result<Option<SdpBlob>> {
+        let body = bodies::negotiation_body(s, modalities, offer);
+        let r = self.post("new_offer", s, url, &body).await?;
+        Ok(bodies::parse_inline_answer(&r.body))
     }
 
     /// The whole incoming path: attach when the invitation has no `acceptance` of its own (a
@@ -517,7 +684,125 @@ impl NgcClient {
             .map(|_| true)
     }
 
+    /// Rings `mri` into the call (`addParticipant`; see [`call_ops`]). The outcome comes on the
+    /// `conversation/addParticipantSuccess` or `addParticipantFailure` callback.
+    pub async fn add_participant(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        mri: &str,
+        display_name: &str,
+    ) -> Result<()> {
+        let (url, body) =
+            call_ops::add_participant_request(s, links, controller, mri, display_name);
+        self.post("add_participant", s, &url, &body).await.map(drop)
+    }
+
+    /// Lets `mri` in from the lobby (`admit`; see [`lobby`]). The outcome comes on the
+    /// `conversation/admitParticipantSuccess` or `admitParticipantFailure` callback.
+    pub async fn admit(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        mri: &str,
+        display_name: &str,
+    ) -> Result<()> {
+        let (url, body) = lobby::admit_request(s, links, controller, mri, display_name);
+        self.post("admit", s, &url, &body).await.map(drop)
+    }
+
+    /// Re-offers our media on the same peer connection (hold and resume; see [`call_ops`]) on
+    /// the leg's `mediaRenegotiation` link. Returns the answer when it comes inline; otherwise
+    /// it arrives on our `call/mediaAnswer/` callback.
+    pub async fn renegotiate(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        modalities: &[Modality],
+        offer: &SdpBlob,
+    ) -> Result<Option<SdpBlob>> {
+        let url = Self::link(links, "mediaRenegotiation")?;
+        let body = bodies::renegotiation_body(s, modalities, offer, false);
+        let r = self.post("media_renegotiation", s, url, &body).await?;
+        Ok(bodies::parse_inline_answer(&r.body))
+    }
+
+    /// Acknowledges a media answer we applied (an empty POST on its `mediaAcknowledgement` link,
+    /// as rusty-teams does).
+    pub async fn acknowledge_media(&self, s: &CallSession, url: &str) -> Result<()> {
+        self.send("media_acknowledgement", s, Method::POST, url, None)
+            .await
+            .map(drop)
+    }
+
+    /// Transfers the call to `target` (an MRI; blind, "Transfer now"). The outcome comes on
+    /// `call/transferCompletion` ([`call_ops::parse_transfer_completion`]).
+    pub async fn transfer(&self, s: &CallSession, links: &Links, target: &str) -> Result<()> {
+        let (url, body) = call_ops::transfer_request(s, links, target)
+            .ok_or_else(|| Error::Protocol("this call has no 'transfer' link".into()))?;
+        self.post("transfer", s, &url, &body).await.map(drop)
+    }
+
     /// One keep-alive (see [`bodies::keep_alive_request`]).
+    /// Asks the meeting to make us the presenter of its content-sharing session (`POST
+    /// <addModality>`, UNVERIFIED). The grant may be in the answer or come on a callback
+    /// ([`content_sharing::SharingSession::read`] reads either).
+    pub async fn start_content_sharing(
+        &self,
+        s: &CallSession,
+        add_modality: &str,
+        correlation_id: &str,
+        identifier: &str,
+    ) -> Result<NgcResponse> {
+        let body = content_sharing::start_body(s, identifier);
+        self.send_with(
+            "contentSharingStart",
+            s,
+            Method::POST,
+            add_modality,
+            Some(&body),
+            &[(content_sharing::CORRELATION_HEADER, correlation_id)],
+        )
+        .await
+    }
+
+    /// Gives the content-sharing session back on ITS `leave` link (never the call's).
+    pub async fn leave_content_sharing(
+        &self,
+        s: &CallSession,
+        session: &content_sharing::SharingSession,
+    ) -> Result<()> {
+        let url = session
+            .leave()
+            .ok_or_else(|| Error::Protocol("the sharing session has no 'leave' link".into()))?;
+        let body = content_sharing::leave_body(s);
+        self.post_content_sharing("contentSharingLeave", s, url, session, &body)
+            .await?;
+        Ok(())
+    }
+
+    /// One POST of a content-sharing session, with its correlation header.
+    pub async fn post_content_sharing(
+        &self,
+        op: &'static str,
+        s: &CallSession,
+        url: &str,
+        session: &content_sharing::SharingSession,
+        body: &Value,
+    ) -> Result<NgcResponse> {
+        self.send_with(
+            op,
+            s,
+            Method::POST,
+            url,
+            Some(body),
+            &[(content_sharing::CORRELATION_HEADER, &session.correlation_id)],
+        )
+        .await
+    }
+
     pub async fn keep_alive(&self, s: &CallSession, links: &Links) -> Result<()> {
         let (url, body) = bodies::keep_alive_request(links)
             .ok_or_else(|| Error::Protocol("no keep-alive link".into()))?;

@@ -13,34 +13,52 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
 use teams_proto::Client;
+use teams_proto::delivery::Importance;
 
 mod actions;
 mod activity;
 pub(crate) mod appstore;
 mod attach;
+mod banner;
 mod cal;
 pub(crate) mod call;
 #[cfg(feature = "calls")]
 pub(crate) mod call_direct;
+pub(crate) mod call_feedback;
+pub(crate) mod call_presence;
+#[cfg(feature = "calls")]
+pub(crate) mod calls_page;
+mod channel_tabs;
 mod channels;
 pub(crate) mod composer_apps;
 mod drafts;
 pub(crate) mod drive;
 pub(crate) mod engage;
+pub(crate) mod expiry;
 mod find;
+mod gifs;
+mod in_order;
 mod lists;
 mod live;
 mod manage;
 mod media;
 mod mentions;
+mod my_presence;
 mod outbox;
 mod people;
 #[cfg(test)]
 mod people_live;
+mod people_presence;
+mod photo;
+pub(crate) mod quiet;
+mod remind;
 mod render;
+pub(crate) mod ringtone;
+mod scheduled;
 mod send;
 pub(crate) mod settings;
 mod shared;
+mod stickers;
 mod sync;
 mod unread;
 mod util;
@@ -51,8 +69,8 @@ pub(crate) use activity::{State as ActivityState, row_data as activity_row_data}
 pub use appstore::AppsCmd;
 #[cfg(test)]
 pub use cal::{
-    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, ProposalRow, SuggestRow, build, filter_opts,
-    parse_view, peek_data, room_rows, sched_rows,
+    AttendeeRow, Ctx, DEFAULT_PREFS, Prefs, ProposalRow, SuggestRow, build, build_split,
+    filter_opts, parse_view, peek_data, room_rows, sched_rows,
 };
 pub use cal::{
     CalCmd, CalData, DetailData, FormFields, FormOpen, Panels, PeekData, PermRow, RoomsPush,
@@ -61,11 +79,14 @@ pub use cal::{
 };
 #[cfg(feature = "calls")]
 pub use call_direct::CallCmd as DirectCallCmd;
+#[cfg(feature = "calls")]
+pub use calls_page::{CallsCmd, CallsData};
 pub use channels::ChannelCmd;
 pub use composer_apps::ComposerAppsCmd;
 pub use drive::DriveCmd;
 pub use engage::EngageCmd;
 pub use find::FindCmd;
+pub use gifs::{GifCmd, GifRow};
 pub use lists::ListsCmd;
 pub use manage::{
     CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
@@ -75,6 +96,8 @@ pub use media::MediaCmd;
 #[cfg(test)]
 pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
+pub use remind::{RemindCmd, ReminderData, SnoozedData};
+pub use scheduled::{ScheduledCmd, ScheduledData};
 
 /// Commands sent by the UI.
 #[derive(Debug, Clone)]
@@ -103,6 +126,10 @@ pub enum Cmd {
     ToggleSave(String),
     /// The composer's "Mark as important" state, sent right before the message it applies to.
     SetImportant(bool),
+    /// "Set delivery options" › Urgent, sent right before the message it applies to.
+    SetUrgent(bool),
+    /// The send button's "Schedule message" and the scheduled messages of the open chat.
+    Scheduled(ScheduledCmd),
     Pin(String),
     /// Message menu "Mark as unread": the chat turns unread from this message on.
     MarkUnread(String),
@@ -133,6 +160,7 @@ pub enum Cmd {
     Drive(DriveCmd),
     /// Viva Engage: a community's read-only feed (plan S3.2).
     Engage(EngageCmd),
+    Gif(GifCmd),
     /// The chat list: sections, item menu, options, channel menu (plan 8.1 to 8.3, 8.5).
     Lists(ListsCmd),
     /// The channel Posts tab (plan 8.4).
@@ -140,6 +168,8 @@ pub enum Cmd {
     /// The image viewer, Translate and link previews (plan 9.5 to 9.7).
     Media(MediaCmd),
     Apps(AppsCmd),
+    /// Reminders on messages and snoozed chats (local to this device).
+    Remind(RemindCmd),
     /// The call window (pre-join, meeting controls, call ended).
     Call(call::CallCmd),
     /// The composer's "+" apps picker (plan S3.6).
@@ -160,6 +190,9 @@ pub enum Cmd {
     /// 1:1 calls: the incoming toast and the outgoing ringing screen.
     #[cfg(feature = "calls")]
     DirectCall(DirectCallCmd),
+    /// The Calls page: history, speed dial, voicemail (plans/calls.md K1.1 to K1.3).
+    #[cfg(feature = "calls")]
+    CallsPage(CallsCmd),
 }
 
 #[derive(Default)]
@@ -195,10 +228,17 @@ struct View {
     loaded: bool,
     /// The list is at (or about to follow) the newest message.
     at_bottom: bool,
+    /// The first message shown before an older page was added, for the list to keep in place.
+    older_anchor: Option<String>,
     /// New messages that arrived while scrolled up; shown on the jump button.
     new_count: usize,
-    /// "Mark as important" is on for the next message (set by the composer just before a send).
-    important: bool,
+    /// The delivery option of the next message: "Mark as important" or "Set delivery options"
+    /// (set by the composer just before a send).
+    importance: teams_proto::delivery::Importance,
+    /// The scheduled messages of the account, as last read (or made here).
+    scheduled: Vec<teams_proto::scheduled::ScheduledMessage>,
+    /// `scheduled` was read from the account once.
+    scheduled_loaded: bool,
     /// Latest composer text of the current chat as the engine knows it.
     draft_text: String,
     /// `draft_text` (or the reply target) changed since it was last written to the store.
@@ -243,6 +283,7 @@ pub struct Engine {
     drive: Mutex<drive::Drive>,
     engage: Mutex<engage::State>,
     lists: Mutex<lists::State>,
+    remind: Mutex<remind::State>,
     channels: Mutex<channels::State>,
     media: Mutex<media::State>,
     apps: Mutex<appstore::Apps>,
@@ -251,6 +292,9 @@ pub struct Engine {
     /// 1:1 calls: the incoming toast and the outgoing ringing screen.
     #[cfg(feature = "calls")]
     direct_calls: call_direct::Calls,
+    /// The Calls page's history, search and voicemail.
+    #[cfg(feature = "calls")]
+    calls_page: Mutex<calls_page::State>,
     composer_apps: Mutex<composer_apps::State>,
     avatars: Mutex<HashMap<String, Option<Pixels>>>,
     images: Mutex<HashMap<String, Option<Pixels>>>,
@@ -267,6 +311,15 @@ pub struct Engine {
     retry_pending: AtomicBool,
     /// Last client message id handed out.
     last_cmid: AtomicI64,
+    /// The call commands' lane: they run one at a time, in the order they were sent (`in_order`).
+    calls_lane: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<Cmd>>,
+    /// One lane per store (Find, People, Calendar, ...): each command's ordered part runs in the
+    /// order the store's commands were sent (`in_order::store_lane`).
+    store_lanes: Mutex<HashMap<&'static str, tokio::sync::mpsc::UnboundedSender<Cmd>>>,
+    /// Teams settings writes, one at a time in the order they were made (tokio's mutex is
+    /// first come, first served), and the number of the latest settings read.
+    settings_writes: tokio::sync::Mutex<()>,
+    settings_reads: std::sync::atomic::AtomicU64,
 }
 
 const PAGE: usize = 60;
@@ -282,7 +335,7 @@ impl Engine {
         me: String,
         my_name: String,
     ) -> Arc<Engine> {
-        Arc::new(Engine {
+        let engine = Arc::new(Engine {
             calls: call::CallManager::new(ui.clone(), client.clone(), my_name.clone()),
             client,
             store: Mutex::new(store),
@@ -310,11 +363,14 @@ impl Engine {
             drive: Mutex::new(drive::Drive::default()),
             engage: Mutex::new(engage::State::default()),
             lists: Mutex::new(lists::State::default()),
+            remind: Mutex::new(remind::State::default()),
             channels: Mutex::new(channels::State::default()),
             media: Mutex::new(media::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
             #[cfg(feature = "calls")]
             direct_calls: call_direct::Calls::default(),
+            #[cfg(feature = "calls")]
+            calls_page: Mutex::default(),
             composer_apps: Mutex::new(composer_apps::State::default()),
             avatars: Mutex::new(HashMap::new()),
             images: Mutex::new(HashMap::new()),
@@ -325,11 +381,32 @@ impl Engine {
             flush_lock: tokio::sync::Mutex::new(()),
             retry_pending: AtomicBool::new(false),
             last_cmid: AtomicI64::new(0),
-        })
+            calls_lane: std::sync::OnceLock::new(),
+            store_lanes: Mutex::default(),
+            settings_writes: tokio::sync::Mutex::new(()),
+            settings_reads: std::sync::atomic::AtomicU64::new(0),
+        });
+        // The call window's photos come from the chat avatar cache. A miss downloads in the
+        // background, which needs the runtime; without one only the cache is read.
+        let weak = Arc::downgrade(&engine);
+        engine.calls.set_photos(move |mri| {
+            let e = weak.upgrade()?;
+            if tokio::runtime::Handle::try_current().is_ok() {
+                e.avatar(mri)
+            } else {
+                e.avatars.lock().unwrap().get(mri).cloned().flatten()
+            }
+        });
+        engine
     }
 
     fn mark(&self, f: impl FnOnce(&mut Dirty)) {
         f(&mut self.dirty.lock().unwrap());
+    }
+
+    /// The delivery option for the next message: `level` when `on`, else Standard.
+    fn set_importance(&self, on: bool, level: Importance) {
+        self.view.lock().unwrap().importance = if on { level } else { Importance::Standard };
     }
 
     /// Starts only the render loop (demo mode: no network).
@@ -355,6 +432,10 @@ impl Engine {
         #[cfg(feature = "calls")]
         self.start_calls();
         self.start_notify_prefs();
+        self.start_my_photo();
+        self.start_my_presence();
+        self.start_people_presence();
+        self.start_reminders();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -382,35 +463,59 @@ impl Engine {
         tokio::spawn(async move {
             // Messages left in the outbox by the last run go out first.
             e.flush_outbox(true).await;
-            if let Err(err) = e.sync().await {
-                tracing::error!(%err, "initial sync failed");
-                e.ui.banner(format!("Sync failed: {err}"));
+            match e.sync().await {
+                Ok(()) => e.ui.synced(),
+                Err(err) => {
+                    tracing::error!(%err, "initial sync failed");
+                    e.ui.banner(format!("Sync failed: {err}"));
+                }
             }
         });
     }
 
     /// Runs a command in the background. Quick local ones run inline, so they stay ordered with the
     /// command that follows them (a draft edit must land before the chat switch that flushes it).
+    /// The call commands take their own lane, in order, and each store's commands take the
+    /// store's lane (`in_order`).
     pub fn dispatch(self: &Arc<Self>, cmd: Cmd) {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
-            Cmd::Flush => self.flush_draft(),
-            // In order with the Send that follows it.
-            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
-            // Selection and view changes run in order with the command that follows them.
-            Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
-            cmd => {
-                tokio::spawn(self.clone().handle(cmd));
+            Cmd::Flush => {
+                self.flush_draft();
+                // kelma is closing: this device stops counting for presence.
+                self.stop_my_presence();
             }
+            // In order with the Send that follows it.
+            Cmd::SetImportant(on) => self.set_importance(on, Importance::Important),
+            Cmd::SetUrgent(on) => self.set_importance(on, Importance::Urgent),
+            // The call window, the 1:1 ringing flows and the Calls page share the call state.
+            // A chat switch changes the view before it waits: every command after it sees the
+            // new chat (`in_order::start_now`).
+            cmd @ (Cmd::SelectChat(_) | Cmd::SelectChannel(..)) => {
+                in_order::start_now(Box::pin(self.clone().handle(cmd)));
+            }
+            cmd @ Cmd::Call(_) => self.in_order(cmd),
+            #[cfg(feature = "calls")]
+            cmd @ (Cmd::DirectCall(_) | Cmd::CallsPage(_)) => self.in_order(cmd),
+            cmd => match in_order::store_lane(&cmd) {
+                Some(lane) => self.in_store_lane(lane, cmd),
+                None => {
+                    tokio::spawn(self.clone().handle(cmd));
+                }
+            },
         }
     }
 
     pub async fn handle(self: Arc<Self>, cmd: Cmd) {
         if let Err(err) = self.clone().handle_inner(cmd).await {
-            tracing::warn!(%err, "command failed");
-            if !self.offline.load(Ordering::Relaxed) {
-                self.ui.banner(format!("{err}"));
-            }
+            self.command_failed(err);
+        }
+    }
+
+    fn command_failed(&self, err: anyhow::Error) {
+        tracing::warn!(%err, "command failed");
+        if !self.offline.load(Ordering::Relaxed) {
+            self.ui.banner(format!("{err}"));
         }
     }
 
@@ -571,7 +676,9 @@ impl Engine {
             Cmd::AttachFile => self.attach_file().await?,
             Cmd::CopyLink(id) => self.copy_link(&id)?,
             Cmd::ToggleSave(id) => self.toggle_save(&id).await?,
-            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
+            Cmd::SetImportant(on) => self.set_importance(on, Importance::Important),
+            Cmd::SetUrgent(on) => self.set_importance(on, Importance::Urgent),
+            Cmd::Scheduled(c) => self.scheduled_cmd(c).await?,
             Cmd::Pin(id) => self.pin(&id).await?,
             Cmd::MarkUnread(id) => self.mark_unread_from(&id).await?,
             Cmd::ForwardBegin(id) => self.forward_begin(id)?,
@@ -601,16 +708,23 @@ impl Engine {
             Cmd::Find(c) => Box::pin(self.find_cmd(c)).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
+            // Selection and view changes: no network, so they finish within the lane's first step.
+            Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::Settings(c) => self.settings_cmd(c).await?,
             Cmd::Engage(c) => self.engage_cmd(c).await?,
+            Cmd::Gif(c) => self.gif_cmd(c).await?,
             Cmd::Lists(c) => self.lists_cmd(c).await?,
             Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::Media(c) => self.media_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
-            Cmd::Call(c) => self.call_cmd(c).await?,
+            // Boxed: the notification's "Open" opens a chat through `handle` again.
+            Cmd::Remind(c) => Box::pin(self.remind_cmd(c)).await?,
+            Cmd::Call(c) => in_order::finish(self.call_cmd(c)?).await?,
             #[cfg(feature = "calls")]
-            Cmd::DirectCall(c) => self.direct_call_cmd(c).await?,
+            Cmd::DirectCall(c) => self.direct_call_cmd(c)?,
+            #[cfg(feature = "calls")]
+            Cmd::CallsPage(c) => in_order::finish(self.calls_page_cmd(c)?).await?,
             Cmd::ComposerApps(c) => self.composer_apps_cmd(c).await?,
             Cmd::PasteImage => self.paste_image().await?,
             Cmd::AddFile(path) => self.add_file(path).await?,

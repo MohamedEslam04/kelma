@@ -177,6 +177,15 @@ impl Account {
     }
 }
 
+/// A person on the Calls page's speed dial. The list is kept per account: `owner` is the MRI of
+/// the account that added them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SpeedDial {
+    pub owner: String,
+    pub mri: String,
+    pub name: String,
+}
+
 /// Non-secret settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
@@ -221,6 +230,13 @@ pub struct Config {
     /// then adds the one the legacy fields describe.
     #[serde(default)]
     pub accounts: Vec<Account>,
+    /// The Calls page's speed dial, in the order shown, for every account.
+    #[serde(default)]
+    pub speed_dial: Vec<SpeedDial>,
+    /// Calls the user removed from the Calls page's history on this computer (Teams has no
+    /// delete), as `owner` U+001F `call id`. The call stays in Teams.
+    #[serde(default)]
+    pub hidden_calls: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -244,6 +260,8 @@ impl Default for Config {
             skin_tone: 0,
             recent_emoji: Vec::new(),
             accounts: Vec::new(),
+            speed_dial: Vec::new(),
+            hidden_calls: Vec::new(),
         }
     }
 }

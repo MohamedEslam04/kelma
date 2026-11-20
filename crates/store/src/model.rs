@@ -192,3 +192,29 @@ pub struct OutboxItem {
     pub state: OutboxState,
     pub last_error: Option<String>,
 }
+
+/// Narrows [`crate::Store::search_messages_local`]; the default searches everything.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocalFilters<'a> {
+    /// Only messages of this conversation.
+    pub conversation: Option<&'a str>,
+    /// Only messages sent by this MRI.
+    pub sender: Option<&'a str>,
+    /// Only messages composed at or after this time.
+    pub since_ms: Option<i64>,
+}
+
+/// A cached message that matches an offline search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHit {
+    pub message_id: String,
+    pub conversation_id: String,
+    /// Channel thread root id; `None` for top-level messages and chats.
+    pub parent_id: Option<String>,
+    pub sender_mri: String,
+    pub sender_name: String,
+    pub compose_ms: i64,
+    /// A piece of the message's plain text around the matches, each match between
+    /// [`crate::MARK_START`] and [`crate::MARK_END`], with `…` where the text was cut.
+    pub snippet: String,
+}

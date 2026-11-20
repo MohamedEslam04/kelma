@@ -23,6 +23,10 @@ export global SettingsStore {
     // | permissions | about
     in-out property <string> page: "general";
     in-out property <string> query;
+    // The setting a Find result opened (its label), and where its row is once the page is up
+    // (window y); the page list scrolls it into view (settings.slint).
+    in-out property <string> target;
+    in-out property <length> target-y: -1px;
     in-out property <[SFind]> found;
     // A short message at the bottom of the page (saved, dry run, errors).
     in-out property <string> notice;
@@ -36,7 +40,19 @@ export global SettingsStore {
     in-out property <string> me-initials;
     in-out property <string> me-status;
     in-out property <string> me-presence;
+    in-out property <string> me-work-location; // office | remote | ""
+    in-out property <bool> status-open: false;
     in-out property <bool> confirm-sign-out: false;
+    // My photo (top bar and profile menu); `me-has-photo` is false until one was read.
+    in-out property <image> me-photo;
+    in-out property <bool> me-has-photo: false;
+    // "Reset status after" (never | 30m | 1h | 2h | today | week | custom) and the custom time.
+    in-out property <string> status-duration: "never";
+    in-out property <string> status-custom;
+    // The status message's "Clear after" (never | today | 1h | 4h | week) and "Show when people
+    // message me".
+    in-out property <string> note-clear-after: "never";
+    in-out property <bool> note-show-when-messaged: false;
 
     // --- Appearance (9.3) ---
     in-out property <string> theme: "system"; // light | dark | system
@@ -57,6 +73,11 @@ export global SettingsStore {
     in-out property <string> system-time-zone;
     in-out property <[SToggle]> startup;
 
+    // --- Chats ---
+    // When a chat opens: last-read (at the first unread message) | newest.
+    in-out property <string> open-chat-at: "last-read";
+    in-out property <bool> link-previews: true;
+
     // --- Accessibility (X1.3) ---
     in-out property <string> high-contrast: "auto"; // auto | on | off
     in-out property <string> reduced-motion: "auto";
@@ -67,6 +88,9 @@ export global SettingsStore {
     // --- Notifications and activity (9.1) ---
     in-out property <[SNotify]> notify;
     in-out property <bool> paused: false;
+    // "Paused until 14:30" while paused; the custom pause time box.
+    in-out property <string> pause-until;
+    in-out property <bool> pause-custom-open: false;
     in-out property <string> notify-status;
 
     // --- Privacy (X1.5) ---
@@ -83,9 +107,15 @@ export global SettingsStore {
     in-out property <string> speaker: "";
     in-out property <string> camera: "";
     in-out property <bool> all-devices: false;
+    in-out property <bool> noise-suppression: true;
+    in-out property <bool> echo-cancellation: true;
     in-out property <float> mic-level;
     in-out property <bool> mic-testing: false;
     in-out property <string> devices-status;
+
+    // --- Calls ---
+    in-out property <string> call-feedback: "sometimes"; // always | sometimes | never
+    in-out property <string> ringtone: "chime"; // chime | soft | pulse
 
     // --- Files and links (X1.6) ---
     in-out property <string> open-files: "browser"; // kelma | browser | desktop
@@ -107,9 +137,35 @@ export global SettingsStore {
     in-out property <string> version;
     // Opt-in update check (X3.5). `update-status` is the line under the switch.
     in-out property <bool> check-updates: false;
+    in-out property <bool> banner-photo: true;
+    // Red underlines under misspelled words in the message box (General > Writing).
+    in-out property <bool> check-spelling: true;
+    // Teams' sound and preview switches, and which meeting chats notify (all | participated | none).
+    in-out property <[SToggle]> notify-sounds;
+    in-out property <string> meeting-chat;
+    in-out property <bool> banner-actions: true;
+    // Quiet hours, Focus mode and keyword alerts (all local to this device).
+    in-out property <bool> quiet-on: false;
+    in-out property <[bool]> quiet-days: [true, true, true, true, true, true, true]; // Monday first
+    in-out property <string> quiet-start: "22:00";
+    in-out property <string> quiet-end: "07:00";
+    in-out property <bool> focus-on: false;
+    // "" | forever | today | later, with the end time as HH:MM for today and later.
+    in-out property <string> focus-end-kind: "";
+    in-out property <string> focus-end-time: "";
+    in-out property <string> focus-duration: "1h"; // 1h | 2h | tomorrow | manual
+    in-out property <[string]> keywords;
     in-out property <bool> update-checking: false;
     in-out property <bool> update-available: false;
     in-out property <string> update-status;
+
+    // The line under the Focus switch and in the indicator's description; "" when Focus is off.
+    pure public function focus-label() -> string {
+        return root.focus-end-kind == "forever" ? @tr("Until you turn it off")
+            : root.focus-end-kind == "today" ? @tr("Until {}", root.focus-end-time)
+            : root.focus-end-kind == "later" ? @tr("Until tomorrow {}", root.focus-end-time)
+            : "";
+    }
 
     // (name, argument). See `ui/settings.rs` for the list.
     callback command(string, string);

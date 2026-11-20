@@ -74,6 +74,17 @@ pub(super) fn next_client_message_id(last: &AtomicI64, now: i64) -> String {
     }
 }
 
+/// The delivery option of a queued item from its stored `properties.importance` value: "high"
+/// is Important, "urgent" is Urgent, anything else Standard.
+pub(super) fn delivery_of(importance: &str) -> teams_proto::delivery::Delivery {
+    use teams_proto::delivery::{Delivery, Importance};
+    match Importance::from_wire(Some(&Value::String(importance.into()))) {
+        Importance::Important => Delivery::Important,
+        Importance::Urgent => Delivery::Urgent,
+        Importance::Standard => Delivery::Standard,
+    }
+}
+
 /// `"<chat>;messageid=<root>"` into the chat and the thread root.
 fn split_target(target: &str) -> (&str, Option<&str>) {
     match target.split_once(";messageid=") {
@@ -280,8 +291,9 @@ impl Engine {
         let (chat, _) = split_target(target);
         let subject = item.subject.as_deref();
         match item.kind {
-            // "Mark as important": sent with the delivery property, the same client message id
-            // on every retry; mentions and a quote reply travel along.
+            // "Mark as important" or "Set delivery options" (Important, Urgent): sent with the
+            // delivery property, the same client message id on every retry; mentions and a
+            // quote reply travel along.
             OutboxKind::Text if !item.importance.is_empty() => {
                 let mentions =
                     super::mentions::from_property(item.mentions.as_deref().unwrap_or(""));
@@ -293,7 +305,7 @@ impl Engine {
                         subject,
                         &mentions,
                         item.reply_to.as_deref(),
-                        &teams_proto::delivery::Delivery::Important,
+                        &delivery_of(&item.importance),
                         cmid,
                     )
                     .await
@@ -342,11 +354,7 @@ impl Engine {
                 }
                 let mentions =
                     super::mentions::from_property(item.mentions.as_deref().unwrap_or(""));
-                let delivery = if item.importance.is_empty() {
-                    teams_proto::delivery::Delivery::Standard
-                } else {
-                    teams_proto::delivery::Delivery::Important
-                };
+                let delivery = delivery_of(&item.importance);
                 self.client
                     .send_card_message_as(
                         target,
@@ -491,6 +499,24 @@ fn read_payload(item: &OutboxItem) -> teams_proto::Result<(String, Vec<u8>)> {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn a_queued_importance_is_sent_as_its_delivery_option() {
+        use teams_proto::delivery::{Delivery, outgoing_delivery_body};
+        assert_eq!(delivery_of(""), Delivery::Standard);
+        assert_eq!(delivery_of("high"), Delivery::Important);
+        assert_eq!(delivery_of("urgent"), Delivery::Urgent);
+        let body = |d: &Delivery| outgoing_delivery_body("<p>x</p>", "Me", "1", None, &[], None, d);
+        assert_eq!(
+            body(&delivery_of("urgent"))["properties"]["importance"],
+            "urgent"
+        );
+        assert_eq!(
+            body(&delivery_of("high"))["properties"]["importance"],
+            "high"
+        );
+        assert!(body(&delivery_of(""))["properties"]["importance"].is_null());
+    }
 
     fn item(id: &str, kind: OutboxKind) -> OutboxItem {
         OutboxItem {

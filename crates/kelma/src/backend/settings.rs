@@ -11,6 +11,7 @@
 //!   run (`dry_run_*` below); nothing here sends one.
 
 use super::Engine;
+use super::call_feedback;
 use app_store::{DevicePermission, Grants};
 use appearance::{
     AccessibilityPrefs, AppearancePrefs, AutoSwitch, DateFormat, GeneralPrefs, PortalSettings,
@@ -24,12 +25,13 @@ use std::sync::atomic::Ordering;
 use teams_proto::mentions::{Mention, MentionKind};
 use teams_proto::tenants::Tenant;
 use teams_proto::user_settings::{
-    self as us, Change, ContactList, Delivery, Kind, NotificationSettings, PlannedRequest,
-    PrivacyFlag, PrivacySettings,
+    self as us, Change, ContactList, Delivery, Kind, MeetingChatMode, NotificationSettings,
+    PlannedRequest, PrivacyFlag, PrivacySettings, SoundField,
 };
 
 pub const DEVICES_FILE: &str = "devices.json";
 pub const FILES_FILE: &str = "files.json";
+pub const CALLS_FILE: &str = "calls.json";
 /// The per-app grants. The same file the Store settings write and the web host reads
 /// (`appstore/webhost_open.rs`), in the `app_store::Grants::to_json` shape.
 pub const PERMISSIONS_FILE: &str = "app-grants.json";
@@ -82,6 +84,36 @@ pub fn files_prefs() -> FilesPrefs {
         .unwrap_or_default()
 }
 
+/// Calls preferences, in `calls.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CallsPrefs {
+    /// "Ask about call quality after calls".
+    pub ask_feedback: call_feedback::Ask,
+    /// The sound of an incoming call.
+    pub ringtone: super::ringtone::RingtoneChoice,
+}
+
+/// The saved calls preferences, read from `calls.json` (the ringing path reads it each time, so
+/// a change in Settings applies to the next call).
+pub fn calls_prefs() -> CallsPrefs {
+    session::Paths::new()
+        .map(|p| read_json(&p.config_dir.join(CALLS_FILE)))
+        .unwrap_or_default()
+}
+
+static LINK_PREVIEWS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Whether messages show a card for their links (Settings › Chats › Link previews).
+pub fn link_previews() -> bool {
+    LINK_PREVIEWS.load(Ordering::Relaxed)
+}
+
+/// Applies the saved choice to the message renderer.
+pub fn set_link_previews(on: bool) {
+    LINK_PREVIEWS.store(on, Ordering::Relaxed);
+}
+
 fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
     std::fs::read(path)
         .ok()
@@ -112,6 +144,7 @@ pub struct Local {
     pub a11y: AccessibilityPrefs,
     pub devices: DevicePrefs,
     pub files: FilesPrefs,
+    pub calls: CallsPrefs,
     pub grants: Grants,
 }
 
@@ -131,6 +164,7 @@ impl Local {
             a11y: AccessibilityPrefs::load_from(&dir.join(appearance::accessibility::FILE_NAME)),
             devices: read_json(&dir.join(DEVICES_FILE)),
             files: read_json(&dir.join(FILES_FILE)),
+            calls: read_json(&dir.join(CALLS_FILE)),
             grants: Grants::from_json(&perms),
         }
     }
@@ -142,9 +176,12 @@ impl Local {
     }
 
     pub fn save_general(&self) -> anyhow::Result<()> {
-        Ok(self
-            .general
-            .save_to(&self.dir.join(appearance::general::FILE_NAME))?)
+        // Focus mode can be switched from the tray; this copy of the preferences may be older.
+        let mut general = self.general.clone();
+        if let Some(until) = super::quiet::focus_override() {
+            general.focus_until_ms = until;
+        }
+        Ok(general.save_to(&self.dir.join(appearance::general::FILE_NAME))?)
     }
 
     pub fn save_a11y(&self) -> anyhow::Result<()> {
@@ -164,6 +201,13 @@ impl Local {
         Ok(write_json(
             &self.dir.join(FILES_FILE),
             &serde_json::to_value(self.files)?,
+        )?)
+    }
+
+    pub fn save_calls(&self) -> anyhow::Result<()> {
+        Ok(write_json(
+            &self.dir.join(CALLS_FILE),
+            &serde_json::to_value(self.calls)?,
         )?)
     }
 
@@ -707,6 +751,78 @@ pub fn privacy_rows(p: Option<&PrivacySettings>) -> Vec<ToggleRow> {
 // ---------------------------------------------------------------------------------------------
 // Dry runs: Teams changes kelma plans but never sends.
 
+/// The sound and preview switches of Settings › Notifications. Teams keeps them as "On"/"Off".
+const SOUND_SWITCHES: &[(SoundField, &str, &str)] = &[
+    (
+        SoundField::ShowPreviewInToasts,
+        "Show message preview",
+        "Banners show the message text.",
+    ),
+    (
+        SoundField::CallAndMeetingStart,
+        "Sound for incoming calls and meetings starting",
+        "",
+    ),
+    (
+        SoundField::WhenBusyOrInMeetings,
+        "Play sounds when I'm busy or in a meeting",
+        "",
+    ),
+    (
+        SoundField::UrgentAndPriority,
+        "Play sounds for urgent and priority messages",
+        "",
+    ),
+    (
+        SoundField::ShowDuringCallsAndMeetings,
+        "Show notifications during calls and meetings",
+        "",
+    ),
+];
+
+/// The sound and preview switches, as Teams has them.
+pub fn sound_rows(n: Option<&NotificationSettings>) -> Vec<ToggleRow> {
+    SOUND_SWITCHES
+        .iter()
+        .map(|&(f, label, hint)| {
+            let on = n
+                .and_then(|n| n.sound(f))
+                .is_some_and(|v| v.eq_ignore_ascii_case("on"));
+            toggle(f.slug(), label, hint, on, n.is_some())
+        })
+        .collect()
+}
+
+/// The write that turns a sound or preview switch on or off.
+pub fn dry_run_sound(
+    chat_service: &str,
+    current: &NotificationSettings,
+    field: SoundField,
+    on: bool,
+) -> PlannedRequest {
+    let mut planned = current.clone();
+    planned.set_sound(field, if on { "On" } else { "Off" });
+    planned.write_request(chat_service)
+}
+
+/// Which meeting chats notify, as the page's choice (`all`, `participated`, `none`).
+pub fn meeting_chat_slug(n: Option<&NotificationSettings>) -> &'static str {
+    n.and_then(NotificationSettings::meeting_chat_mode)
+        .map(MeetingChatMode::slug)
+        .unwrap_or("")
+}
+
+/// The write that sets which meeting chats notify.
+pub fn dry_run_meeting_chat(
+    chat_service: &str,
+    current: &NotificationSettings,
+    mode: MeetingChatMode,
+) -> PlannedRequest {
+    let mut planned = current.clone();
+    planned.set_meeting_chat_mode(mode);
+    planned.write_request(chat_service)
+}
+
 /// The text shown for a planned request.
 pub fn dry_run_text(r: &PlannedRequest) -> String {
     r.dry_run()
@@ -747,14 +863,16 @@ pub fn dry_run_remove(middle_tier: &str, list: ContactList, mri: &str) -> Planne
 // ---------------------------------------------------------------------------------------------
 // Find in Settings.
 
-pub const PAGES: [(&str, &str); 10] = [
+pub const PAGES: [(&str, &str); 12] = [
     ("general", "General"),
+    ("chats", "Chats"),
     ("accounts", "Accounts and orgs"),
     ("privacy", "Privacy"),
     ("notifications", "Notifications and activity"),
     ("appearance", "Appearance"),
     ("accessibility", "Accessibility"),
     ("devices", "Devices"),
+    ("calls", "Calls"),
     ("files", "Files and links"),
     ("permissions", "App permissions"),
     ("about", "About"),
@@ -771,10 +889,47 @@ pub fn page_title(key: &str) -> &'static str {
 /// Every setting by page, with extra words people search for.
 const INDEX: &[(&str, &str, &str)] = &[
     ("general", "App language", "locale arabic english"),
+    (
+        "notifications",
+        "Turn on quiet hours",
+        "quiet hours schedule night do not disturb silent",
+    ),
+    (
+        "notifications",
+        "Focus mode",
+        "focus concentrate do not disturb mute banners",
+    ),
+    (
+        "notifications",
+        "Keyword alerts",
+        "keyword word phrase alert notify",
+    ),
     ("general", "Date format", "day month year"),
     ("general", "Time format", "clock 12 24 hour"),
     ("general", "Time zone", "timezone region"),
+    (
+        "chats",
+        "When I open a chat take me to",
+        "newest last read first unread divider open",
+    ),
+    (
+        "chats",
+        "Press Enter to send",
+        "enter send new line composer return",
+    ),
+    ("chats", "Read receipts", "seen read"),
+    ("chats", "Link previews", "url cards preview website"),
+    (
+        "chats",
+        "Snippets",
+        "quick replies saved reply template slash canned",
+    ),
     ("general", "Translation", "translate"),
+    (
+        "general",
+        "Check spelling",
+        "spell spelling dictionary typo",
+    ),
     (
         "general",
         "Start kelma when I sign in",
@@ -806,7 +961,7 @@ const INDEX: &[(&str, &str, &str)] = &[
     (
         "notifications",
         "Pause notifications",
-        "mute quiet do not disturb",
+        "mute quiet do not disturb hour tomorrow duration",
     ),
     ("notifications", "Test notification", "banner toast"),
     ("notifications", "Chat messages", "notification banner feed"),
@@ -837,6 +992,18 @@ const INDEX: &[(&str, &str, &str)] = &[
     ("devices", "Microphone", "audio input mic"),
     ("devices", "Camera", "video webcam"),
     ("devices", "Play test sound", "audio"),
+    (
+        "devices",
+        "Ask about call quality after calls",
+        "calls survey feedback rating",
+    ),
+    ("calls", "Ringtone", "incoming call sound ring"),
+    (
+        "calls",
+        "Call forwarding",
+        "forward calls unanswered redirect voicemail ring time",
+    ),
+    ("calls", "Voicemail greeting", "voicemail record greeting"),
     (
         "files",
         "Open Word, Excel and PowerPoint files in",
@@ -1048,8 +1215,73 @@ pub fn banner_decision(
     }
 }
 
+/// THE pause check for desktop notifications, and the only one `quiet::should_banner` relies on:
+/// the tray's Mute or an unfinished "Pause notifications" from Teams. Paused means no banner at
+/// all, keyword alerts and Focus exceptions included. A different pause source (a local
+/// pause-until time, say) changes only this function.
+pub fn notifications_paused(now: chrono::DateTime<chrono::Utc>) -> bool {
+    matches!(
+        banner_decision(
+            remembered_notification_settings().as_ref(),
+            Kind::ChatMessage,
+            crate::tray_wiring::notifications_muted(),
+            now,
+        ),
+        Banner::Hidden(Hidden::Muted | Hidden::Paused)
+    )
+}
+
+/// Whether banners carry the message text ("Show message and content previews"; on until Teams
+/// says otherwise).
+pub fn previews_enabled() -> bool {
+    remembered_notification_settings()
+        .and_then(|n| {
+            n.to_value()
+                .pointer("/toastSettings/ShowPreviewInToasts")
+                .and_then(serde_json::Value::as_bool)
+        })
+        .unwrap_or(true)
+}
+
+/// The people with priority access, as last read from Teams (the Focus mode exception).
+static PRIORITY_PEOPLE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Remembers the priority-access people (their MRIs).
+pub fn remember_priority_people(mris: Vec<String>) {
+    *PRIORITY_PEOPLE.lock().unwrap_or_else(|e| e.into_inner()) = mris;
+}
+
+pub fn is_priority_person(mri: &str) -> bool {
+    PRIORITY_PEOPLE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|m| m == mri)
+}
+
 /// The routing for one incoming message with the settings read from Teams and the tray mute: the
 /// call `live.rs` makes. `None`: no banner; `Some(preview)`: show it, with the text or without.
+/// The work location for a profile menu value.
+pub fn work_location_pin(v: &str) -> Option<::calendar::WorkLocation> {
+    match v {
+        "office" => Some(::calendar::WorkLocation::Office),
+        "remote" => Some(::calendar::WorkLocation::Remote),
+        "clear" => Some(::calendar::WorkLocation::Unset),
+        _ => None,
+    }
+}
+
+/// Midnight at the end of today in local time, as Teams pins a work location for the day.
+fn end_of_today_ms() -> i64 {
+    use chrono::{Duration, Local, TimeZone};
+    let tomorrow = Local::now().date_naive() + Duration::days(1);
+    tomorrow
+        .and_hms_opt(0, 0, 0)
+        .and_then(|t| Local.from_local_datetime(&t).earliest())
+        .map(|t| t.timestamp_millis())
+        .unwrap_or_else(|| teams_proto::time::now_ms() + 8 * 3_600_000)
+}
+
 pub fn banner_for(m: &teams_proto::model::Message, me: &str) -> Option<bool> {
     let kind = incoming_kind(&m.conversation_id, m.parent_id.is_some(), &m.mentions, me);
     match banner_decision(
@@ -1160,14 +1392,35 @@ pub struct ServerData {
     pub me_email: Option<String>,
     pub me_status: Option<String>,
     pub me_presence: Option<String>,
+    /// My work location pin as the presence service reports it (`office`, `remote`, a code).
+    pub me_work_location: Option<String>,
     pub apps: Vec<AppAsk>,
     /// What could not be read, one line each.
     pub errors: Vec<String>,
 }
 
-/// Commands the engine runs for Settings. Reads only.
+/// Commands the engine runs for Settings and the profile menu. Reads, plus the user's own status
+/// and work location (allowed on the work account since 2026-11-19).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsCmd {
+    /// Forces my status (`Available`, `Busy`, `DoNotDisturb`, `BeRightBack`, `Away`, `Offline`);
+    /// an empty value resets it to automatic. The second value is when the status ends
+    /// (`desiredExpirationTime`, UTC text), `None` for never. Then reads the profile menu again.
+    SetStatus(String, Option<String>),
+    /// Pins my work location for today: `office`, `remote`, or `clear`.
+    SetWorkLocation(String),
+    /// Sets my status message; an empty text clears it. Then when it is cleared (UTC text, `None`
+    /// for never) and whether it also shows when people message me.
+    SetStatusNote(String, Option<String>, bool),
+    /// Opens a file picker and makes the picture my profile photo (Graph; UNVERIFIED).
+    ChangePhoto,
+    /// Removes my profile photo (Graph beta; UNVERIFIED).
+    RemovePhoto,
+    /// "When I open a chat take me to".
+    SetOpenChatAt(session::OpenChatAt),
+    /// Sends a Teams settings change (notifications, privacy, a contact list), then reads the
+    /// settings again.
+    Apply(teams_proto::user_settings::PlannedRequest),
     /// Read the Teams side of Settings and push it to the window.
     Load,
     /// "Refresh license and restart": redeem the refresh token again (new access tokens and a new
@@ -1181,11 +1434,7 @@ pub enum SettingsCmd {
 impl Engine {
     pub(super) async fn settings_cmd(self: &Arc<Self>, cmd: SettingsCmd) -> anyhow::Result<()> {
         match cmd {
-            SettingsCmd::Load => {
-                let data = self.settings_read().await;
-                remember_notification_settings(data.notifications.clone());
-                self.ui.settings_server(data);
-            }
+            SettingsCmd::Load => self.settings_reload(true).await,
             SettingsCmd::Redraw => self.mark(|d| {
                 d.chats = true;
                 d.messages = true;
@@ -1195,6 +1444,91 @@ impl Engine {
                 let r = self.refresh_license().await.map_err(|e| e.to_string());
                 self.ui.settings_license(r);
             }
+            SettingsCmd::Apply(req) => {
+                // One write at a time, in the order they were made: the settings bag is written
+                // whole, so an older write landing last would undo a newer one.
+                let turn = self.settings_writes.lock().await;
+                let r = if self.offline.load(Ordering::Relaxed) {
+                    Err(anyhow::anyhow!("Not available offline."))
+                } else {
+                    self.client
+                        .send_planned(&req)
+                        .await
+                        .map_err(anyhow::Error::from)
+                };
+                drop(turn);
+                match r {
+                    Ok(_) => self.ui.settings_notice("Saved to Teams.".into()),
+                    Err(e) => {
+                        tracing::warn!(%e, "settings write failed");
+                        self.ui
+                            .settings_notice(format!("Teams did not take the change: {e}"));
+                    }
+                }
+                self.settings_reload(true).await;
+            }
+            SettingsCmd::ChangePhoto => self.change_photo().await,
+            SettingsCmd::RemovePhoto => self.remove_photo().await,
+            SettingsCmd::SetOpenChatAt(at) => {
+                self.cfg.lock().unwrap().open_chat_at = at;
+                self.save_cfg();
+            }
+            SettingsCmd::SetStatus(..)
+            | SettingsCmd::SetWorkLocation(_)
+            | SettingsCmd::SetStatusNote(..) => {
+                let turn = self.settings_writes.lock().await;
+                let r = self.set_my_presence(&cmd).await;
+                drop(turn);
+                if let Err(e) = r {
+                    tracing::warn!(%e, "could not change my status");
+                    self.ui
+                        .settings_notice(format!("Could not change your status: {e}"));
+                }
+                self.settings_reload(false).await;
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads the Teams-side settings and shows them, unless a newer read started meanwhile (an
+    /// older read can see the bag from before the latest write). `remember` keeps the
+    /// notification settings for the banners.
+    async fn settings_reload(self: &Arc<Self>, remember: bool) {
+        let ticket = self.settings_reads.fetch_add(1, Ordering::SeqCst) + 1;
+        let data = self.settings_read().await;
+        if self.settings_reads.load(Ordering::SeqCst) != ticket {
+            return;
+        }
+        if remember {
+            remember_notification_settings(data.notifications.clone());
+            remember_priority_people(data.priority.iter().map(|(m, _)| m.clone()).collect());
+        }
+        self.ui.settings_server(data);
+    }
+
+    /// The network part of the status and work location commands.
+    async fn set_my_presence(self: &Arc<Self>, cmd: &SettingsCmd) -> anyhow::Result<()> {
+        if self.offline.load(Ordering::Relaxed) {
+            anyhow::bail!("Not available offline.");
+        }
+        let c = &self.client;
+        match cmd {
+            SettingsCmd::SetStatus(s, _) if s.is_empty() => c.reset_presence().await?,
+            SettingsCmd::SetStatus(s, until) => {
+                let a = teams_proto::presence::Availability::from_wire(s)
+                    .ok_or_else(|| anyhow::anyhow!("unknown status {s}"))?;
+                c.set_presence(a, until.as_deref()).await?;
+            }
+            SettingsCmd::SetStatusNote(text, until, show) => {
+                c.set_status_note(text.trim(), until.as_deref(), *show)
+                    .await?
+            }
+            SettingsCmd::SetWorkLocation(w) => {
+                let pin = work_location_pin(w)
+                    .ok_or_else(|| anyhow::anyhow!("unknown work location {w}"))?;
+                ::calendar::set_work_location(c, pin, end_of_today_ms()).await?;
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -1222,6 +1556,9 @@ impl Engine {
                         NotificationSettings::from_properties(&p),
                     )),
                     Err(err) => tracing::debug!(%err, "notification settings not read"),
+                }
+                if let Ok(v) = us::contacts(&e.client, ContactList::Priority).await {
+                    remember_priority_people(v);
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(600)).await;
             }
@@ -1302,6 +1639,7 @@ impl Engine {
                 if let Some(p) = p.into_iter().next() {
                     d.me_status = p.note.map(|n| n.text).filter(|t| !t.trim().is_empty());
                     d.me_presence = Some(p.availability);
+                    d.me_work_location = p.work_location;
                 }
             }
             Err(e) => err("your status", &e),
@@ -1394,12 +1732,14 @@ mod tests {
         l.a11y.larger_text = true;
         l.devices.microphone = Some("alsa:pipewire".into());
         l.files.open_office_in = OpenFilesIn::Desktop;
+        l.calls.ask_feedback = call_feedback::Ask::Never;
         l.grants.set("app-1", DevicePermission::Media, true);
         l.save_appearance().unwrap();
         l.save_general().unwrap();
         l.save_a11y().unwrap();
         l.save_devices().unwrap();
         l.save_files().unwrap();
+        l.save_calls().unwrap();
         l.save_grants().unwrap();
         assert_eq!(Local::load(&dir), l);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1527,6 +1867,27 @@ mod tests {
         assert!(find("CAPTIONS").iter().all(|f| f.page == "accessibility"));
         assert!(find("block calls").iter().any(|f| f.page == "privacy"));
         assert!(find("zzz").is_empty());
+    }
+
+    #[test]
+    fn the_chats_page_is_listed_after_general_and_its_settings_are_found() {
+        assert_eq!(page_title("chats"), "Chats");
+        let keys: Vec<_> = PAGES.iter().map(|(k, _)| *k).collect();
+        assert_eq!(&keys[..2], ["general", "chats"]);
+        let on_chats = |q: &str| {
+            find(q)
+                .into_iter()
+                .filter(|f| f.page == "chats")
+                .map(|f| f.label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(on_chats("link preview"), ["Link previews"]);
+        assert_eq!(
+            on_chats("when i open a chat"),
+            ["When I open a chat take me to"]
+        );
+        assert_eq!(on_chats("enter"), ["Press Enter to send"]);
+        assert!(on_chats("read receipts").contains(&"Read receipts"));
     }
 
     #[test]
@@ -1753,6 +2114,33 @@ mod tests {
         );
         assert_eq!(banner_body(true, "hello".into()), "hello");
         assert_eq!(banner_body(false, "hello".into()), "New message");
+    }
+
+    #[test]
+    fn call_quality_questions_are_asked_sometimes_until_another_choice_is_saved() {
+        assert_eq!(
+            CallsPrefs::default().ask_feedback,
+            call_feedback::Ask::Sometimes
+        );
+        let p: CallsPrefs = serde_json::from_str("{}").unwrap();
+        assert_eq!(p.ask_feedback, call_feedback::Ask::Sometimes);
+        let p: CallsPrefs = serde_json::from_str(r#"{"ask_feedback":"always"}"#).unwrap();
+        assert_eq!(p.ask_feedback, call_feedback::Ask::Always);
+    }
+
+    #[test]
+    fn the_ringtone_defaults_to_the_chime_and_survives_a_save() {
+        use super::super::ringtone::RingtoneChoice;
+        assert_eq!(CallsPrefs::default().ringtone, RingtoneChoice::Chime);
+        let p: CallsPrefs = serde_json::from_str(r#"{"ask_feedback":"never"}"#).unwrap();
+        assert_eq!(p.ringtone, RingtoneChoice::Chime, "an old file has none");
+        let p = CallsPrefs {
+            ringtone: RingtoneChoice::Pulse,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"pulse\""), "{json}");
+        assert_eq!(serde_json::from_str::<CallsPrefs>(&json).unwrap(), p);
     }
 
     // ---- files and app grants (X1.6, X1.7) ----

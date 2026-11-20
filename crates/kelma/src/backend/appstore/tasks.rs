@@ -1,10 +1,17 @@
-//! Planner and To Do (read only): My tasks, plans with their board, and To Do lists.
+//! Planner and To Do: My tasks, plans with their board, and To Do lists, with New task,
+//! Complete, Edit and Delete (Graph `/me/todo/lists/{id}/tasks` and `/planner/tasks`).
 
+use super::form::{self, Pending, field};
 use super::view::{Column, Row, TasksData, day};
 use crate::backend::Engine;
 use std::sync::Arc;
-use teams_proto::planner::{Bucket, Plan, PlannerTask, TodoList, TodoTask};
-use teams_proto::time::now_ms;
+use teams_proto::graph::Write;
+use teams_proto::planner::{
+    Bucket, Plan, PlannerTask, TaskPatch, TodoList, TodoTask, planner_create_request,
+    planner_delete_request, planner_update_request, todo_create_request, todo_delete_request,
+    todo_update_request,
+};
+use teams_proto::time::{iso_utc, now_ms, parse_date_input};
 
 #[derive(Default)]
 pub struct Tasks {
@@ -78,7 +85,57 @@ fn tone(status: &str) -> &'static str {
     }
 }
 
+/// A due date as the dialog types it (`2026-11-25`), empty for none.
+fn due_input(ms: Option<i64>) -> String {
+    ms.map(|m| iso_utc(m)[..10].to_owned()).unwrap_or_default()
+}
+
+/// The typed due date: none when empty, else a real `YYYY-MM-DD` date.
+fn parse_due(text: &str) -> Result<Option<i64>, String> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    parse_date_input(text)
+        .map(Some)
+        .ok_or_else(|| "The due date must look like 2026-11-25.".to_owned())
+}
+
 impl Tasks {
+    fn todo_list(&self) -> Option<&str> {
+        self.nav.strip_prefix("todo:")
+    }
+
+    fn plan(&self) -> Option<&str> {
+        self.nav.strip_prefix("plan:")
+    }
+
+    /// A task's title, due date and whether it is done.
+    fn task(&self, id: &str) -> Option<(String, Option<i64>, bool)> {
+        if self.todo_list().is_some() {
+            let t = self.todo.iter().find(|t| t.id == id)?;
+            return Some((t.title.clone(), t.due_ms, t.is_completed()));
+        }
+        let t = self.planner.iter().find(|t| t.id == id)?;
+        Some((t.title.clone(), t.due_ms, t.percent_complete >= 100))
+    }
+
+    fn etag(&self, id: &str) -> Option<&str> {
+        self.planner
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.etag.as_deref())
+    }
+
+    /// The edit request for the open list or plan. Planner needs the task's etag.
+    fn update_write(&self, id: &str, p: &TaskPatch) -> Result<Write, String> {
+        match self.todo_list() {
+            Some(list) => Ok(todo_update_request(list, id, p)),
+            None => planner_update_request(id, self.etag(id), p).ok_or_else(|| {
+                "Planner needs a fresh copy of this task. Refresh and try again.".into()
+            }),
+        }
+    }
+
     fn nav_rows(&self) -> Vec<Row> {
         let header = |t: &str| Row {
             title: t.into(),
@@ -235,6 +292,7 @@ impl Tasks {
             title: self.title(),
             board: self.board,
             can_board: !rows.is_empty(),
+            can_add: self.todo_list().is_some() || self.plan().is_some(),
             summary,
             progress,
             status: if self.status.is_empty() && !self.loading && rows.is_empty() && self.loaded {
@@ -315,23 +373,37 @@ impl Engine {
             t.planner.clear();
             t.buckets.clear();
         });
+        // A list loaded for a place the user already left (another list was picked meanwhile)
+        // is dropped: it would show under the new place's name.
+        let here = |a: &super::Apps| a.tasks.nav == key;
         let result: anyhow::Result<()> = async {
             if let Some(list) = key.strip_prefix("todo:") {
                 let tasks = self.src_todo_tasks(list).await?;
-                self.apps.lock().unwrap().tasks.todo = tasks;
+                let mut a = self.apps.lock().unwrap();
+                if here(&a) {
+                    a.tasks.todo = tasks;
+                }
             } else if let Some(plan) = key.strip_prefix("plan:") {
                 let (tasks, buckets) =
                     tokio::join!(self.src_planner_tasks(Some(plan)), self.src_buckets(plan));
                 let mut a = self.apps.lock().unwrap();
-                a.tasks.planner = tasks?;
-                a.tasks.buckets = buckets.unwrap_or_default();
+                if here(&a) {
+                    a.tasks.planner = tasks?;
+                    a.tasks.buckets = buckets.unwrap_or_default();
+                }
             } else {
                 let tasks = self.src_planner_tasks(None).await?;
-                self.apps.lock().unwrap().tasks.planner = tasks;
+                let mut a = self.apps.lock().unwrap();
+                if here(&a) {
+                    a.tasks.planner = tasks;
+                }
             }
             Ok(())
         }
         .await;
+        if self.apps.lock().unwrap().tasks.nav != key {
+            return Ok(());
+        }
         self.tasks_edit(|t| {
             t.loading = false;
             if let Err(e) = result {
@@ -344,6 +416,163 @@ impl Engine {
     pub(super) fn tasks_mode(self: &Arc<Self>, mode: &str) -> anyhow::Result<()> {
         self.tasks_edit(|t| t.board = mode == "board");
         Ok(())
+    }
+
+    /// Shows what a write did: the banner, then the open list again from the service.
+    async fn tasks_sent(
+        self: &Arc<Self>,
+        w: Write,
+        done: &str,
+        failed: &str,
+    ) -> Result<(), String> {
+        match self.src_write("task change", w).await {
+            Ok(()) => {
+                self.ui.banner(done.to_owned());
+                let nav = self.apps.lock().unwrap().tasks.nav.clone();
+                let _ = self.tasks_nav(&nav).await;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "{failed}");
+                self.ui.banner(format!("{failed}: {err}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Opens the New task dialog for the open To Do list or plan.
+    pub(super) fn tasks_begin_new(self: &Arc<Self>) -> anyhow::Result<()> {
+        let (title, ok) = {
+            let a = self.apps.lock().unwrap();
+            let t = &a.tasks;
+            (t.title(), t.todo_list().is_some() || t.plan().is_some())
+        };
+        if !ok {
+            self.ui
+                .banner("Open a To Do list or a plan to add a task.".into());
+            return Ok(());
+        }
+        let mut spec = form::confirm(format!("New task in {title}"), String::new(), "Add", false);
+        spec.fields = vec![
+            ("Title".into(), String::new()),
+            ("Due date (2026-11-25, optional)".into(), String::new()),
+        ];
+        self.form_open(Pending::TaskNew, spec, String::new());
+        Ok(())
+    }
+
+    pub(super) fn tasks_begin_edit(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let task = self.apps.lock().unwrap().tasks.task(id);
+        let Some((title, due, _)) = task else {
+            return Ok(());
+        };
+        let mut spec = form::confirm("Edit task".into(), String::new(), "Save", false);
+        spec.fields = vec![
+            ("Title".into(), title),
+            (
+                "Due date (2026-11-25, empty for none)".into(),
+                due_input(due),
+            ),
+        ];
+        self.form_open(Pending::TaskEdit(id.to_owned()), spec, String::new());
+        Ok(())
+    }
+
+    pub(super) fn tasks_begin_delete(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let task = self.apps.lock().unwrap().tasks.task(id);
+        let Some((title, _, _)) = task else {
+            return Ok(());
+        };
+        let spec = form::confirm(
+            "Delete this task?".into(),
+            format!("\"{title}\" is deleted. This cannot be undone."),
+            "Delete",
+            true,
+        );
+        self.form_open(Pending::TaskDelete(id.to_owned()), spec, String::new());
+        Ok(())
+    }
+
+    /// Complete, or undo it. No dialog: it is one click to undo.
+    pub(super) async fn tasks_toggle(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
+        let (state, write) = {
+            let a = self.apps.lock().unwrap();
+            let Some((_, _, done)) = a.tasks.task(id) else {
+                return Ok(());
+            };
+            let patch = TaskPatch {
+                done: Some(!done),
+                ..Default::default()
+            };
+            (done, a.tasks.update_write(id, &patch))
+        };
+        match write {
+            Ok(w) => {
+                let (ok, bad) = if state {
+                    ("Marked as not completed.", "Could not change the task")
+                } else {
+                    ("Task completed.", "Could not complete the task")
+                };
+                let _ = self.tasks_sent(w, ok, bad).await;
+            }
+            Err(msg) => self.ui.banner(msg),
+        }
+        Ok(())
+    }
+
+    pub(super) async fn tasks_do_new(self: &Arc<Self>, fields: &[String]) -> Result<(), String> {
+        let title = field(fields, 0);
+        if title.is_empty() {
+            return Err("Give the task a title.".into());
+        }
+        let due = parse_due(&field(fields, 1))?;
+        let w = {
+            let a = self.apps.lock().unwrap();
+            let t = &a.tasks;
+            match (t.todo_list(), t.plan()) {
+                (Some(list), _) => todo_create_request(list, &title, due),
+                (None, Some(plan)) => {
+                    let bucket = t.buckets.first().map(|b| b.id.as_str());
+                    planner_create_request(plan, bucket, &title, due)
+                }
+                _ => return Err("Open a To Do list or a plan to add a task.".into()),
+            }
+        };
+        self.tasks_sent(w, "Task added.", "Could not add the task")
+            .await
+    }
+
+    pub(super) async fn tasks_do_edit(
+        self: &Arc<Self>,
+        id: &str,
+        fields: &[String],
+    ) -> Result<(), String> {
+        let title = field(fields, 0);
+        if title.is_empty() {
+            return Err("The title cannot be empty.".into());
+        }
+        let due = parse_due(&field(fields, 1))?;
+        let patch = TaskPatch {
+            title: Some(title),
+            due: Some(due),
+            done: None,
+        };
+        let w = self.apps.lock().unwrap().tasks.update_write(id, &patch)?;
+        self.tasks_sent(w, "Task saved.", "Could not save the task")
+            .await
+    }
+
+    pub(super) async fn tasks_do_delete(self: &Arc<Self>, id: &str) -> Result<(), String> {
+        let w = {
+            let a = self.apps.lock().unwrap();
+            match a.tasks.todo_list() {
+                Some(list) => todo_delete_request(list, id),
+                None => planner_delete_request(id, a.tasks.etag(id)).ok_or_else(|| {
+                    "Planner needs a fresh copy of this task. Refresh and try again.".to_owned()
+                })?,
+            }
+        };
+        self.tasks_sent(w, "Task deleted.", "Could not delete the task")
+            .await
     }
 }
 

@@ -12,8 +12,8 @@ use crate::data::{
 };
 use crate::reactions;
 use crate::{
-    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard, Msg,
-    PendingAttachment, ReactionItem, Recipient, TeamRow,
+    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard,
+    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -26,16 +26,23 @@ pub(crate) mod appstore;
 pub(crate) mod call;
 #[cfg(feature = "calls")]
 pub(crate) mod call_direct;
+#[cfg(feature = "calls")]
+pub(crate) mod calls_page;
 mod channels;
 mod composer_apps;
 pub(crate) mod drive;
 mod engage;
 mod find;
+mod gifs;
 mod lists;
 mod media;
+mod palette;
 mod people;
+pub(crate) mod popout;
+mod remind;
 pub(crate) mod settings;
 mod teams;
+pub(crate) mod topbar;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
@@ -77,6 +84,8 @@ fn chat_row(c: ChatData) -> ChatRow {
         group: c.group,
         muted: c.muted,
         channel: c.channel,
+        presence: c.presence.into(),
+        person: c.person.into(),
     }
 }
 
@@ -131,6 +140,8 @@ fn msg(m: MsgData) -> Msg {
                     name: f.name.into(),
                     url: f.url.into(),
                     ext: f.ext.into(),
+                    place: f.place.into(),
+                    detail: f.detail.into(),
                 })
                 .collect(),
         ),
@@ -180,6 +191,17 @@ fn msg(m: MsgData) -> Msg {
                 })
                 .collect(),
         ),
+        pinned: m.pinned,
+        urls: model(m.urls.into_iter().map(SharedString::from).collect()),
+        loops: model(
+            m.loops
+                .into_iter()
+                .map(|l| LoopCard {
+                    url: l.url.into(),
+                    title: l.title.into(),
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -208,6 +230,7 @@ fn picker_model(query: &str) -> ModelRc<EmojiItem> {
 
 /// Wires what the UI thread answers by itself, without the engine: the "More reactions" search.
 pub fn install_local(window: &AppWindow) {
+    palette::wire(window);
     window.set_picker_items(picker_model(""));
     let weak = window.as_weak();
     window.on_picker_search(move |q| {
@@ -265,10 +288,19 @@ impl UiHandle {
 
     /// Shows a transient message for 8 seconds.
     pub fn banner(&self, text: String) {
+        self.transient(text, false);
+    }
+
+    /// Shows a transient notice (not an error) for 8 seconds.
+    pub fn info(&self, text: String) {
+        self.transient(text, true);
+    }
+
+    fn transient(&self, text: String, info: bool) {
         self.run(move |w| {
             let shown: SharedString = text.into();
             w.set_banner_action(SharedString::new());
-            w.set_banner_info(false);
+            w.set_banner_info(info);
             w.set_banner(shown.clone());
             let weak = w.as_weak();
             slint::Timer::single_shot(std::time::Duration::from_secs(8), move || {
@@ -283,6 +315,11 @@ impl UiHandle {
 
     pub fn connected(&self, ok: bool) {
         self.run(move |w| w.set_connected(ok));
+    }
+
+    /// The first sync after start-up has finished ("While you were away" can show).
+    pub fn synced(&self) {
+        self.run(|w| w.set_synced(true));
     }
 
     pub fn typing(&self, text: String) {
@@ -323,6 +360,37 @@ impl UiHandle {
         self.run(move |w| {
             w.set_draft(text.into());
             w.set_cursor_tick(w.get_cursor_tick() + 1);
+        });
+    }
+
+    /// The open chat's scheduled messages ("Sending on …" bubbles).
+    pub fn scheduled(&self, items: Vec<crate::backend::ScheduledData>) {
+        self.run(move |w| {
+            w.global::<crate::SendStore>().set_scheduled(model(
+                items
+                    .into_iter()
+                    .map(|s| crate::ScheduledItem {
+                        id: s.id.into(),
+                        label: s.label.into(),
+                        text: s.text.into(),
+                    })
+                    .collect(),
+            ));
+        });
+    }
+
+    /// The composer's "Schedule message" choice: the banner above the box shows it and Send
+    /// schedules. `None` clears it.
+    pub fn schedule_choice(&self, at_ms: Option<i64>) {
+        self.run(move |w| {
+            let s = w.global::<crate::SendStore>();
+            s.set_schedule_at(at_ms.map(|m| m.to_string()).unwrap_or_default().into());
+            s.set_schedule_label(
+                at_ms
+                    .map(crate::send_options::when_label)
+                    .unwrap_or_default()
+                    .into(),
+            );
         });
     }
 
@@ -430,6 +498,7 @@ impl UiHandle {
             w.set_current_avatar(avatar);
             w.set_current_has_avatar(has);
             w.set_current_is_channel(h.is_channel);
+            w.set_current_muted(h.muted);
             w.set_thread_root(h.thread_root.into());
         });
     }
@@ -465,6 +534,10 @@ impl UiHandle {
                     w.set_divider_index(i as i32);
                     w.set_divider_tick(w.get_divider_tick() + 1);
                 }
+                Scroll::Anchor(i) => {
+                    w.set_anchor_index(i as i32);
+                    w.set_anchor_tick(w.get_anchor_tick() + 1);
+                }
                 Scroll::Bottom => {
                     // Two ticks: one now, one after layout settles with images.
                     w.set_scroll_tick(w.get_scroll_tick() + 1);
@@ -475,6 +548,17 @@ impl UiHandle {
                         }
                     });
                 }
+            }
+        });
+    }
+
+    /// Brings the window to the front (a notification was clicked); `compose` also puts the
+    /// cursor in the message box.
+    pub fn raise(&self, compose: bool) {
+        self.run(move |w| {
+            crate::tray_wiring::show_and_raise(&w);
+            if compose {
+                w.set_focus_tick(w.get_focus_tick() + 1);
             }
         });
     }

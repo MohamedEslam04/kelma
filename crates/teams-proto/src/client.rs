@@ -48,6 +48,9 @@ struct State {
     expires_at: SystemTime,
     chat_service: String,
     middle_tier: String,
+    presence: String,
+    /// `regionGtms.mcpService`, when the skypetoken answer has it.
+    mcp_service: Option<String>,
     region: Option<String>,
     /// Tokens for every other audience, minted on first use.
     cache: TokenCache,
@@ -113,6 +116,18 @@ fn audience_owns(aud: &Audience, url: &Url) -> bool {
             && url.host_str().map(str::to_ascii_lowercase).as_deref()
                 == Some("teams.microsoft.com")
             && url.path().starts_with("/fabric/");
+    }
+    // Teams web sends the presence token to the regional unified presence service
+    // (`regionGtms.presenceUPS`, under `/ups/` on the Teams web host), not to the resource host.
+    if *aud == Audience::Presence
+        && url.scheme() == "https"
+        && matches!(
+            url.host_str().map(str::to_ascii_lowercase).as_deref(),
+            Some("teams.microsoft.com" | "teams.cloud.microsoft")
+        )
+        && url.path().starts_with("/ups/")
+    {
+        return true;
     }
     let Ok(res) = Url::parse(&aud.resource()) else {
         return false;
@@ -208,6 +223,8 @@ impl Client {
             expires_at: SystemTime::UNIX_EPOCH,
             chat_service: String::new(),
             middle_tier: String::new(),
+            presence: String::new(),
+            mcp_service: None,
             region: None,
             cache: TokenCache::default(),
         };
@@ -229,6 +246,8 @@ impl Client {
             expires_at: SystemTime::now() + Duration::from_secs(365 * 24 * 3600),
             chat_service: "https://offline.invalid".into(),
             middle_tier: "https://offline.invalid".into(),
+            presence: "https://offline.invalid".into(),
+            mcp_service: None,
             region: None,
             cache: TokenCache::default(),
         };
@@ -308,6 +327,8 @@ impl Client {
         st.expires_at = SystemTime::now() + Duration::from_secs(min_s);
         st.chat_service = sky.chat_service;
         st.middle_tier = sky.middle_tier;
+        st.presence = sky.presence;
+        st.mcp_service = sky.mcp_service;
         st.region = sky.region;
         tracing::info!(chat_service = %st.chat_service, region = ?st.region, ttl_s = min_s, "tokens refreshed");
         Ok(())
@@ -496,6 +517,21 @@ impl Client {
     /// Middle-tier base URL for this user's region.
     pub async fn middle_tier(&self) -> String {
         self.state.lock().await.middle_tier.clone()
+    }
+
+    /// The meeting content service (`regionGtms.mcpService`), or one guessed from the middle tier
+    /// when the skypetoken answer did not name it (see [`crate::recaps::mcps_base`]).
+    pub async fn mcp_service(&self) -> String {
+        let st = self.state.lock().await;
+        match &st.mcp_service {
+            Some(u) => u.clone(),
+            None => crate::recaps::mcps_base(&st.middle_tier),
+        }
+    }
+
+    /// Presence service base URL (with `/v1`) for this user's region.
+    pub async fn presence_service(&self) -> String {
+        self.state.lock().await.presence.clone()
     }
 
     /// A snapshot of the current tokens (for the trouter connection).
@@ -714,6 +750,39 @@ mod tests {
         assert!(!audience_owns(
             &Audience::Yammer,
             &u("https://engage.cloud.microsoft/graphql")
+        ));
+        // The presence token also goes to the regional unified presence service under `/ups/`.
+        assert!(audience_owns(
+            &Audience::Presence,
+            &u("https://teams.cloud.microsoft/ups/noam/v1/presence/getpresence/")
+        ));
+        assert!(audience_owns(
+            &Audience::Presence,
+            &u("https://presence.teams.microsoft.com/v1/me/forceavailability/")
+        ));
+        assert!(audience_owns(
+            &Audience::Presence,
+            &u("https://teams.microsoft.com/ups/noam/v1/me/workLocation/")
+        ));
+        assert!(!audience_owns(
+            &Audience::Presence,
+            &u("https://teams.microsoft.com/api/mt/emea/beta/me")
+        ));
+        assert!(!audience_owns(
+            &Audience::Presence,
+            &u("https://teams.cloud.microsoft/api/csa/x")
+        ));
+        assert!(!audience_owns(
+            &Audience::Presence,
+            &u("https://teams.cloud.microsoft.evil.com/ups/noam/v1/x")
+        ));
+        assert!(!audience_owns(
+            &Audience::Presence,
+            &u("http://teams.cloud.microsoft/ups/noam/v1/x")
+        ));
+        assert!(!audience_owns(
+            &Audience::Teams,
+            &u("https://teams.cloud.microsoft/ups/noam/v1/x")
         ));
         let sp = Audience::sharepoint("contoso-my.sharepoint.com").unwrap();
         assert!(audience_owns(

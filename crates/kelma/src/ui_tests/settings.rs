@@ -200,6 +200,15 @@ fn checked(app: &AppWindow, label: &str) -> bool {
     control(app, label).accessible_checked().unwrap_or(false)
 }
 
+/// Controls scrolled out of the page are not found, so a long page needs a tall window to reach
+/// its last rows.
+fn tall_window(app: &AppWindow) {
+    app.window().set_size(LogicalSize::new(1000., 4000.));
+    for _ in 0..3 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
 fn open_page(app: &AppWindow, page: &str) {
     store(app).invoke_show(page.into());
 }
@@ -213,8 +222,8 @@ fn profile_menu_shows_who_is_signed_in_and_opens_settings() {
     assert_eq!(value_of(app, "Name"), "Test User");
     assert_eq!(value_of(app, "Email"), "test.user@example.invalid");
     assert_eq!(value_of(app, "Status message"), "", "read-only, none set");
-    let photo = control(app, "Change profile photo (not available yet)");
-    assert_eq!(photo.accessible_enabled(), Some(false));
+    let photo = control(app, "Change profile photo");
+    assert_eq!(photo.accessible_enabled(), Some(true));
 
     press(app, "Settings");
     assert!(!store(app).get_profile_open());
@@ -222,6 +231,362 @@ fn profile_menu_shows_who_is_signed_in_and_opens_settings() {
     assert_eq!(value_of(app, "Settings page"), "General");
 }
 
+#[test]
+fn the_profile_menu_sets_my_status_and_work_location_through_the_engine() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("status").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    app.window().set_size(LogicalSize::new(1200., 2600.));
+    press(app, "Profile menu");
+    while rx.try_recv().is_ok() {}
+    press(app, "Set status");
+    press(app, "Busy");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s, None))) if s == "Busy"
+    ));
+    // Picking closes the options; reset sends an empty status.
+    assert!(!store(app).get_status_open());
+    press(app, "Set status");
+    press(app, "Reset status");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s, None))) if s.is_empty()
+    ));
+    press(app, "Set status");
+    press(app, "Clear message");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t, None, false))) if t.is_empty()
+    ));
+    press(app, "Set status");
+    press(app, "In the office");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetWorkLocation(w))) if w == "office"
+    ));
+    // The engine's answer shows on the menu.
+    let handle = UiHandle::new(app.as_weak());
+    handle.settings_server(crate::backend::settings::ServerData {
+        me_presence: Some("Busy".into()),
+        me_work_location: Some("office".into()),
+        ..Default::default()
+    });
+    assert_eq!(value_of(app, "Status"), "Busy");
+    assert_eq!(value_of(app, "Work location"), "In the office today");
+    assert_eq!(value_of(app, "Presence"), "Busy");
+}
+
+/// The time a planned pause ends, from the request text.
+fn pause_time(run: &str) -> i64 {
+    let i = run.find("temporarilyPauseUntil").expect("a pause time");
+    let rest = &run[i..];
+    let j = rest.find("20").expect("a year");
+    teams_proto::time::parse_iso_ms(&rest[j..j + 24]).expect("an ISO time")
+}
+
+#[test]
+fn a_status_ends_after_the_chosen_duration_and_a_bad_custom_time_is_refused() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("status-for").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    // Tall enough that the whole list of options is on screen (the menu scrolls otherwise).
+    app.window().set_size(LogicalSize::new(1200., 2600.));
+    press(app, "Profile menu");
+    press(app, "Set status");
+    while rx.try_recv().is_ok() {}
+
+    // Never is the default: no end.
+    assert_eq!(store(app).get_status_duration(), "never");
+    press(app, "Reset status after: 1 hour");
+    assert_eq!(store(app).get_status_duration(), "1h");
+    press(app, "Busy");
+    let Ok(Cmd::Settings(SettingsCmd::SetStatus(status, Some(until)))) = rx.try_recv() else {
+        panic!("a status that ends");
+    };
+    assert_eq!(status, "Busy");
+    let ms = teams_proto::time::parse_iso_ms(&until).unwrap();
+    assert!((ms - (teams_proto::time::now_ms() + 3_600_000)).abs() < 60_000);
+
+    // A custom time in the past is refused with words and nothing is sent.
+    press(app, "Set status");
+    press(app, "Reset status after: Custom");
+    control(app, "Reset at").set_accessible_value("2000-01-01 10:00");
+    press(app, "Busy");
+    assert!(rx.try_recv().is_err());
+    assert!(
+        store(app).get_notice().contains("future"),
+        "{}",
+        store(app).get_notice()
+    );
+    // A time ahead goes out as a UTC time (the options stayed open after the refusal).
+    control(app, "Reset at").set_accessible_value("2099-12-31 17:30");
+    press(app, "Do not disturb");
+    let Ok(Cmd::Settings(SettingsCmd::SetStatus(status, Some(until)))) = rx.try_recv() else {
+        panic!("a custom end");
+    };
+    assert_eq!(status, "DoNotDisturb");
+    assert!(
+        ["2099-12-30T", "2099-12-31T", "2100-01-01T"]
+            .iter()
+            .any(|d| until.starts_with(d)),
+        "{until}"
+    );
+    assert!(until.ends_with('Z'));
+
+    // Resetting never has an end.
+    press(app, "Set status");
+    press(app, "Reset status");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatus(s, None))) if s.is_empty()
+    ));
+}
+
+#[test]
+fn a_status_message_clears_after_the_chosen_time_and_can_show_when_people_message_me() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("note-for").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    // Tall enough that the whole list of options is on screen (the menu scrolls otherwise).
+    app.window().set_size(LogicalSize::new(1200., 2600.));
+    press(app, "Profile menu");
+    press(app, "Set status");
+    while rx.try_recv().is_ok() {}
+
+    control(app, "New status message").set_accessible_value("Heads down");
+    press(app, "Save message");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t, None, false))) if t == "Heads down"
+    ));
+
+    press(app, "Set status");
+    control(app, "New status message").set_accessible_value("Out for lunch");
+    press(app, "Clear message after: 4 hours");
+    press(app, "Show when people message me");
+    press(app, "Save message");
+    let Ok(Cmd::Settings(SettingsCmd::SetStatusNote(text, Some(until), true))) = rx.try_recv()
+    else {
+        panic!("a message that clears and shows");
+    };
+    assert_eq!(text, "Out for lunch");
+    let ms = teams_proto::time::parse_iso_ms(&until).unwrap();
+    assert!((ms - (teams_proto::time::now_ms() + 4 * 3_600_000)).abs() < 60_000);
+
+    // Clearing the message never has an end.
+    press(app, "Set status");
+    press(app, "Clear message");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t, None, _))) if t.is_empty()
+    ));
+}
+
+#[test]
+fn the_profile_menu_changes_and_removes_the_photo_and_shows_it() {
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = window_with(Home::new("photo").with_accounts(), Some(tx), false);
+    let app = &ui.app;
+    press(app, "Profile menu");
+    while rx.try_recv().is_ok() {}
+    assert!(!store(app).get_me_has_photo());
+    assert!(
+        ElementHandle::find_by_accessible_label(app, "Remove photo")
+            .next()
+            .is_none(),
+        "nothing to remove yet"
+    );
+    press(app, "Change profile photo");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::ChangePhoto))
+    ));
+
+    // The engine's answer: the photo shows, and can be removed.
+    UiHandle::new(app.as_weak()).settings_photo(Some(
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(2, 2),
+    ));
+    assert!(store(app).get_me_has_photo());
+    press(app, "Remove photo");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::RemovePhoto))
+    ));
+    UiHandle::new(app.as_weak()).settings_photo(None);
+    assert!(!store(app).get_me_has_photo());
+    UiHandle::new(app.as_weak()).settings_notice("Teams did not take the photo: 403".into());
+    assert_eq!(
+        value_of(app, "Profile notice"),
+        "Teams did not take the photo: 403"
+    );
+}
+
+#[test]
+fn the_profile_menu_has_saved_zoom_and_keyboard_shortcuts() {
+    let ui = window(Home::new("profile-more").with_accounts());
+    let app = &ui.app;
+    let quick = Log::default();
+    let q = quick.clone();
+    app.global::<crate::FindStore>()
+        .on_command(move |n, a| q.borrow_mut().push(format!("{n} {a}")));
+    app.set_view("calendar".into());
+
+    press(app, "Profile menu");
+    press(app, "Zoom in");
+    assert!((app.global::<Theme>().get_font_scale() - 1.05).abs() < 1e-6);
+    assert_eq!(value_of(app, "Zoom level"), "105%");
+    press(app, "Zoom out");
+    assert_eq!(value_of(app, "Zoom level"), "100%");
+
+    press(app, "Keyboard shortcuts");
+    assert!(app.get_shortcuts_open());
+    assert!(!store(app).get_profile_open());
+
+    press(app, "Profile menu");
+    press(app, "Saved");
+    assert!(!store(app).get_profile_open());
+    assert_eq!(app.get_view(), "chat");
+    assert_eq!(*quick.borrow(), ["quick saved"]);
+}
+
+#[test]
+fn pausing_notifications_takes_a_duration_instead_of_a_plain_switch() {
+    let ui = window(Home::new("pause"));
+    let app = &ui.app;
+    open_page(app, "notifications");
+    UiHandle::new(app.as_weak()).settings_server(server(PrivacySettings::default()));
+    let newest = || store(app).get_dry_runs().row_data(0).unwrap().to_string();
+    let now = teams_proto::time::now_ms();
+
+    for (pill, hours) in [("1 hour", 1), ("2 hours", 2)] {
+        press(app, &format!("Pause notifications: {pill}"));
+        let until = pause_time(&newest());
+        assert!(
+            (until - (now + hours * 3_600_000)).abs() < 120_000,
+            "{pill}"
+        );
+    }
+    // Until tomorrow is 8:00 the next morning, local time.
+    press(app, "Pause notifications: Until tomorrow");
+    let until = pause_time(&newest());
+    assert!(until > now && until <= now + 33 * 3_600_000);
+    use chrono::Timelike;
+    assert_eq!(
+        appearance::formats::local(until).unwrap().hour(),
+        8,
+        "8:00 in the morning"
+    );
+
+    // Custom: a box and a button; a time in the past is refused.
+    press(app, "Pause notifications: Custom");
+    control(app, "Pause until").set_accessible_value("2000-01-01 10:00");
+    let before = store(app).get_dry_runs().row_count();
+    press(app, "Pause notifications until then");
+    assert_eq!(store(app).get_dry_runs().row_count(), before);
+    assert!(store(app).get_notice().contains("future"));
+    control(app, "Pause until").set_accessible_value("2099-12-31 17:30");
+    press(app, "Pause notifications until then");
+    assert!(
+        newest().contains("2099-12-3") || newest().contains("2100-01-01"),
+        "{}",
+        newest()
+    );
+
+    // Off ends the pause: the request has no pause time.
+    press(app, "Pause notifications: Off");
+    assert!(!newest().contains("temporarilyPauseUntil"), "{}", newest());
+}
+
+#[test]
+fn a_paused_state_from_teams_shows_when_it_ends() {
+    let ui = window(Home::new("paused-shown"));
+    let app = &ui.app;
+    open_page(app, "notifications");
+    let mut d = server(PrivacySettings::default());
+    d.notifications = Some(NotificationSettings::from_properties(&serde_json::json!({
+        "userPersonalSettings": serde_json::json!({
+            "toastSettings": {"temporarilyPauseUntil": "2099-06-01T12:00:00.000Z"},
+        }).to_string()
+    })));
+    UiHandle::new(app.as_weak()).settings_server(d);
+    assert!(store(app).get_paused());
+    assert!(
+        store(app).get_pause_until().starts_with("Paused until"),
+        "{}",
+        store(app).get_pause_until()
+    );
+    assert!(!checked(app, "Pause notifications: Off"));
+}
+
+#[test]
+fn the_chats_page_sets_where_a_chat_opens_enter_to_send_receipts_and_link_previews() {
+    use crate::PeopleStore;
+    use crate::backend::settings::SettingsCmd;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let home = Home::new("chats-page");
+    let config = home.paths().config_dir;
+    let ui = window_with(home, Some(tx), false);
+    let app = &ui.app;
+    let enter_log = Log::default();
+    {
+        let l = enter_log.clone();
+        app.on_set_enter_sends(move |on| l.borrow_mut().push(format!("enter-sends {on}")));
+    }
+    let people = Log::default();
+    {
+        let l = people.clone();
+        app.global::<PeopleStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    open_page(app, "chats");
+    while rx.try_recv().is_ok() {}
+    assert_eq!(value_of(app, "Settings page"), "Chats");
+    assert!(checked(app, "When I open a chat take me to: Last read"));
+
+    press(app, "When I open a chat take me to: Newest message");
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(Cmd::Settings(SettingsCmd::SetOpenChatAt(
+            session::OpenChatAt::Newest
+        )))
+    ));
+    assert_eq!(store(app).get_open_chat_at(), "newest");
+    assert!(checked(
+        app,
+        "When I open a chat take me to: Newest message"
+    ));
+
+    assert!(app.get_enter_sends());
+    press(app, "Press Enter to send");
+    assert!(!app.get_enter_sends());
+    assert_eq!(*enter_log.borrow(), ["enter-sends false"]);
+
+    press(app, "Read receipts");
+    assert_eq!(*people.borrow(), ["receipts off"]);
+
+    assert!(checked(app, "Link previews"));
+    press(app, "Link previews");
+    assert!(!Local::load(&config).general.link_previews);
+    assert!(
+        matches!(rx.try_recv(), Ok(Cmd::Settings(SettingsCmd::Redraw))),
+        "the messages are drawn again without their cards"
+    );
+}
+
+#[test]
+fn find_in_settings_reaches_the_chats_page() {
+    let ui = window(Home::new("chats-find"));
+    let app = &ui.app;
+    open_page(app, "general");
+    control(app, "Find in Settings").set_accessible_value("link preview");
+    press(app, "Result: Link previews in Chats");
+    assert_eq!(value_of(app, "Settings page"), "Chats");
+}
 #[test]
 fn activity_notification_settings_entry_opens_the_notifications_page() {
     let ui = window(Home::new("activity"));
@@ -239,7 +604,35 @@ fn activity_notification_settings_entry_opens_the_notifications_page() {
     assert_eq!(store(app).get_page(), "notifications");
     assert_eq!(value_of(app, "Settings page"), "Notifications and activity");
     // Not read from Teams yet: the types are listed, nothing is selected.
+    tall_window(app);
     assert!(!checked(app, "Chat messages: Off"));
+}
+
+/// Settings covers the page right of the rail. A click on the rail leaves Settings for that
+/// page, as in Teams, even for the page that is already open under it.
+#[test]
+fn a_rail_click_closes_settings_and_opens_the_page() {
+    let ui = window(Home::new("rail"));
+    let app = &ui.app;
+    let rail = |label: &str| {
+        ElementHandle::find_by_accessible_label(app, label)
+            .find(|e| e.absolute_position().x < 68.)
+            .unwrap_or_else(|| panic!("rail entry {label}"))
+    };
+    app.set_view("chat".into());
+    open_page(app, "general");
+    assert!(store(app).get_open());
+    rail("Chat").mock_single_click(PointerEventButton::Left);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(!store(app).get_open(), "Settings closed for the chat");
+    assert_eq!(app.get_view(), "chat");
+
+    open_page(app, "privacy");
+    assert!(store(app).get_open());
+    rail("Teams").mock_single_click(PointerEventButton::Left);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(!store(app).get_open(), "Settings closed for Teams");
+    assert_eq!(app.get_view(), "teams");
 }
 
 #[test]
@@ -276,6 +669,75 @@ fn the_page_list_and_find_in_settings_switch_pages() {
 
     store(app).invoke_close();
     assert!(!store(app).get_open());
+}
+
+#[test]
+fn the_calls_page_picks_a_ringtone_and_is_honest_about_forwarding() {
+    use crate::backend::ringtone::RingtoneChoice;
+    let home = Home::new("ringtone");
+    let dir = home.paths().config_dir;
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "general");
+    press(app, "Calls");
+    assert_eq!(value_of(app, "Settings page"), "Calls");
+    assert!(checked(app, "Ringtone: Chime"), "the chime is the default");
+
+    press(app, "Ringtone: Soft");
+    assert_eq!(store(app).get_ringtone(), "soft");
+    assert!(checked(app, "Ringtone: Soft"));
+    assert_eq!(Local::load(&dir).calls.ringtone, RingtoneChoice::Soft);
+    // Play makes no sound in tests, and changes nothing.
+    press(app, "Play ringtone");
+    assert_eq!(Local::load(&dir).calls.ringtone, RingtoneChoice::Soft);
+
+    // Forwarding and the voicemail greeting live in Teams: shown, not pretending to work.
+    for label in [
+        "Forward my calls: Don't forward",
+        "If unanswered: Voicemail",
+        "Ring for: 20 seconds",
+    ] {
+        let option = ElementHandle::find_by_accessible_label(app, label)
+            .next()
+            .unwrap_or_else(|| panic!("no {label}"));
+        assert_eq!(option.accessible_enabled(), Some(false), "{label}");
+        assert_eq!(option.accessible_checked(), Some(false), "{label}");
+    }
+    assert_eq!(
+        control(app, "Record a greeting").accessible_enabled(),
+        Some(false)
+    );
+
+    // Find in Settings leads to the page.
+    control(app, "Find in Settings").set_accessible_value("ringtone");
+    press(app, "Result: Ringtone in Calls");
+    assert_eq!(value_of(app, "Settings page"), "Calls");
+}
+
+#[test]
+fn a_find_result_scrolls_its_setting_into_view() {
+    // "Ask about call quality after calls" sits at the bottom of Devices: opening the page alone
+    // left it below the window.
+    let ui = window(Home::new("find-scroll"));
+    let app = &ui.app;
+    app.window().set_size(LogicalSize::new(1200., 500.));
+    open_page(app, "general");
+    let find = control(app, "Find in Settings");
+    find.set_accessible_value("call quality");
+    press(app, "Result: Ask about call quality after calls in Devices");
+    assert_eq!(value_of(app, "Settings page"), "Devices");
+    for _ in 0..4 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(100));
+    }
+    let pill =
+        ElementHandle::find_by_accessible_label(app, "Ask about call quality after calls: Always")
+            .next()
+            .expect("the setting is in view");
+    let (y, h) = (pill.absolute_position().y, pill.size().height);
+    assert!(
+        y >= 0. && y + h <= 500.,
+        "the setting is in view: y={y} h={h}"
+    );
 }
 
 #[test]
@@ -389,6 +851,27 @@ fn server(privacy: PrivacySettings) -> ServerData {
 }
 
 #[test]
+fn sound_switches_and_meeting_chats_build_the_teams_write() {
+    let ui = window(Home::new("sounds"));
+    let app = &ui.app;
+    open_page(app, "notifications");
+    let mut d = server(PrivacySettings::default());
+    d.notifications = Some(NotificationSettings::from_properties(&serde_json::json!({
+        "userPersonalSettings": serde_json::json!({
+            "toastSettings": {"ShowPreviewInToasts": "On"},
+            "chatSettings": {"meetingChatNotification": "MeetingsUserParticipatesIn"},
+        }).to_string()
+    })));
+    UiHandle::new(app.as_weak()).settings_server(d);
+    assert!(checked(app, "Show message preview"));
+    assert_eq!(store(app).get_meeting_chat(), "participated");
+    press(app, "Show message preview");
+    let first = store(app).get_dry_runs().row_data(0).unwrap().to_string();
+    assert!(first.contains("ShowPreviewInToasts"), "{first}");
+    assert!(first.contains("Off"), "{first}");
+}
+
+#[test]
 fn privacy_toggle_plans_a_dry_run_and_changes_nothing() {
     let ui = window(Home::new("privacy"));
     let app = &ui.app;
@@ -436,6 +919,7 @@ fn privacy_toggle_plans_a_dry_run_and_changes_nothing() {
 
     // A notification type is planned the same way.
     open_page(app, "notifications");
+    tall_window(app);
     press(app, "Chat messages: Off");
     let first = store(app).get_dry_runs().row_data(0).unwrap();
     assert!(
@@ -499,6 +983,77 @@ fn autostart_switch_follows_and_writes_the_desktop_entry() {
     assert!(tray::autostart::is_enabled_in(&xdg));
     let desktop = std::fs::read_to_string(tray::autostart::entry_path_in(&xdg)).unwrap();
     assert!(desktop.contains("--hidden"));
+}
+
+#[test]
+fn notification_look_switches_start_on_and_save() {
+    let home = Home::new("banner-look");
+    let dir = home.paths().config_dir;
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "notifications");
+    assert!(checked(app, "Show the sender's photo"));
+    assert!(checked(app, "Show Reply and Like buttons"));
+    press(app, "Show the sender's photo");
+    press(app, "Show Reply and Like buttons");
+    let g = Local::load(&dir).general;
+    assert!(!g.banner_photo && !g.banner_actions);
+}
+
+#[test]
+fn quiet_hours_and_keyword_alerts_save_to_the_temp_home() {
+    let home = Home::new("quiet-keywords");
+    let dir = home.paths().config_dir;
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "notifications");
+    assert!(!checked(app, "Turn on quiet hours"));
+    press(app, "Turn on quiet hours");
+    let cmd = |name: &str, arg: &str| store(app).invoke_command(name.into(), arg.into());
+    cmd("quiet-day", "5"); // Saturday off
+    cmd("quiet-start", "23:15");
+    cmd("quiet-end", "6:30");
+    cmd("quiet-end", "late"); // not a time: ignored
+    let q = Local::load(&dir).general.quiet_hours;
+    assert!(q.enabled && q.days[0] && !q.days[5]);
+    assert_eq!((q.start_min, q.end_min), (23 * 60 + 15, 6 * 60 + 30));
+    assert_eq!(store(app).get_quiet_start().as_str(), "23:15");
+
+    cmd("keyword-add", "  Deploy   window ");
+    cmd("keyword-add", "deploy window"); // the same words again
+    cmd("keyword-add", "نشر");
+    cmd("keyword-add", "   ");
+    assert_eq!(
+        Local::load(&dir).general.keyword_alerts,
+        ["Deploy window", "نشر"]
+    );
+    assert_eq!(slint::Model::row_count(&store(app).get_keywords()), 2);
+    cmd("keyword-remove", "Deploy window");
+    assert_eq!(Local::load(&dir).general.keyword_alerts, ["نشر"]);
+}
+
+#[test]
+fn call_audio_switches_start_on_and_save_with_the_device_prefs() {
+    let home = Home::new("call-audio");
+    let dir = home.paths().config_dir;
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "devices");
+    assert!(checked(app, "Noise suppression"));
+    assert!(checked(app, "Echo cancellation"));
+    press(app, "Noise suppression");
+    assert!(!checked(app, "Noise suppression"));
+    let saved = Local::load(&dir);
+    assert!(!saved.devices.noise_suppression);
+    assert!(saved.devices.echo_cancellation);
+    press(app, "Echo cancellation");
+    assert!(!Local::load(&dir).devices.echo_cancellation);
+
+    // A new window over the same home shows the saved switches.
+    let again = window(Home(ui.home.0.clone()));
+    assert!(!store(&again.app).get_noise_suppression());
+    assert!(!store(&again.app).get_echo_cancellation());
+    std::mem::forget(again.home); // `ui.home` removes the directory
 }
 
 const FAKE_RELEASE_URL: &str = "https://github.com/MohamedEslam04/kelma/releases/tag/v999.0.0";
@@ -784,4 +1339,34 @@ fn time_format_and_keep_running_reach_the_helpers_that_read_them() {
     // Leave the shared settings as every other test expects them.
     appearance::formats::set_from(&appearance::GeneralPrefs::default());
     crate::tray_wiring::set_keep_running(true);
+}
+#[test]
+fn settings_rows_stay_inside_at_the_smallest_window() {
+    let ui = window(Home::new("overflow").with_accounts());
+    let app = &ui.app;
+    app.window().set_size(LogicalSize::new(900., 560.));
+    for page in [
+        "general",
+        "accounts",
+        "privacy",
+        "notifications",
+        "appearance",
+        "accessibility",
+        "devices",
+        "files",
+        "permissions",
+        "about",
+    ] {
+        open_page(app, page);
+        for _ in 0..3 {
+            testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        }
+        for kind in ["SChoice", "SSwitch", "SButton", "SPersonRow", "SField"] {
+            for row in ElementHandle::find_by_element_type_name(app, kind)
+                .filter(|r| !super::overflow::texts(r).is_empty())
+            {
+                super::overflow::assert_texts_inside(&row, &format!("{kind} on the {page} page"));
+            }
+        }
+    }
 }

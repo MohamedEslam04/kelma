@@ -4,7 +4,7 @@ use super::util::*;
 use super::{Engine, PAGE};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use store::{ConvKind, ConversationRow, TeamRow, UserRow};
+use store::{ConvFilter, ConvKind, ConversationRow, TeamRow, UserRow};
 use teams_proto::model::Message;
 use teams_proto::time::now_ms;
 
@@ -26,6 +26,10 @@ impl Engine {
                 );
             }
         }
+
+        // With the teams read, a channel they no longer list was deleted (or is in a team the
+        // user left): it leaves the Teams view instead of showing as "Channel".
+        let teams_known = !snap.teams.is_empty();
 
         // Resolve names we need for titles.
         let mut wanted: Vec<String> = vec![];
@@ -68,6 +72,9 @@ impl Engine {
                     continue;
                 };
                 if meta.get(c.id.as_str()).is_some_and(|m| m.hidden) {
+                    continue;
+                }
+                if !channel_listed(kind, teams_known, channel_info.contains_key(&c.id)) {
                     continue;
                 }
                 seen.insert(c.id.clone());
@@ -133,6 +140,13 @@ impl Engine {
                     favorite: false,
                     read_horizon_ms: manual.unwrap_or(c.read_horizon_ms),
                 })?;
+            }
+            if teams_known {
+                for c in st.conversations(ConvFilter::Channels, 100_000)? {
+                    if !channel_info.contains_key(&c.id) {
+                        st.delete_conversation(&c.id)?;
+                    }
+                }
             }
             // Channels that had no recent activity still belong in the Teams view.
             for (id, (tid, tname, cname)) in &channel_info {
@@ -241,13 +255,25 @@ impl Engine {
         self.push_attachments();
         self.on_chat_opened(&id);
         self.find_chat_opened(&id);
+        self.scheduled_chat_opened();
         self.mark(|d| {
             d.header = true;
             d.messages = true;
             d.scroll = true;
             d.chats = true;
         });
-        let page = self.client.messages(&id, None, PAGE as u32).await?;
+        let page = match self.client.messages(&id, None, PAGE as u32).await {
+            Ok(p) => p,
+            Err(e) if is_soft_deleted(&e.to_string()) => {
+                self.store.lock().unwrap().delete_conversation(&id)?;
+                self.mark(|d| {
+                    d.chats = true;
+                    d.teams = true;
+                });
+                anyhow::bail!("This conversation was deleted.");
+            }
+            Err(e) => return Err(e.into()),
+        };
         self.store_messages(&page.messages, None);
         if let Some(last) = page.messages.iter().rev().find(|m| m.is_chat_content()) {
             self.store.lock().unwrap().mark_read(&id, last.compose_ms)?;
@@ -291,8 +317,52 @@ impl Engine {
                 }
             }
         }
-        self.view.lock().unwrap().limit = limit + PAGE;
+        // The first row shown now stays where it is once the older rows are above it.
+        let first = self
+            .store
+            .lock()
+            .unwrap()
+            .messages_before(&conv, None, limit)?
+            .first()
+            .map(|m| m.id.clone());
+        {
+            let mut v = self.view.lock().unwrap();
+            v.limit = limit + PAGE;
+            v.older_anchor = first;
+        }
         self.mark(|d| d.messages = true);
         Ok(())
+    }
+}
+
+/// Whether a conversation belongs in the lists: a channel only while its team lists it (once
+/// the teams were read).
+fn channel_listed(kind: ConvKind, teams_known: bool, in_a_team: bool) -> bool {
+    kind != ConvKind::Channel || !teams_known || in_a_team
+}
+
+/// The chat service's answer for a deleted channel or chat.
+fn is_soft_deleted(err: &str) -> bool {
+    err.contains("SoftDeleted") || err.contains("soft-deleted")
+}
+
+#[cfg(test)]
+mod deleted_tests {
+    use super::*;
+
+    #[test]
+    fn a_channel_its_team_no_longer_lists_is_dropped() {
+        assert!(channel_listed(ConvKind::Channel, true, true));
+        assert!(!channel_listed(ConvKind::Channel, true, false));
+        // Without the teams (the read failed) nothing is dropped.
+        assert!(channel_listed(ConvKind::Channel, false, false));
+        assert!(channel_listed(ConvKind::Group, true, false));
+    }
+
+    #[test]
+    fn the_soft_deleted_answer_is_recognised() {
+        let e = r#"messages: HTTP 404: {"errorCode":404,"message":"{\"subCode\":\"SoftDeleted\",\"details\":\"Thread was not found as it is soft-deleted.\"}"}"#;
+        assert!(is_soft_deleted(e));
+        assert!(!is_soft_deleted("messages: HTTP 404: not found"));
     }
 }

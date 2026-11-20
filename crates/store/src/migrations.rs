@@ -115,6 +115,41 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     // v6: the app cards of a queued `card` message (a JSON array string), so a card chosen in
     // the composer's apps picker survives the outbox and a retry sends the same cards.
     "ALTER TABLE outbox ADD COLUMN cards TEXT;",
+    // v7: offline full-text search over the cached messages (`Store::search_messages_local`).
+    //
+    // The index keeps its own copy of the text (a contentless table has no `snippet()`), and
+    // that text is the folded plain text of the HTML, which the `kelma_fts_*` functions
+    // (`fts::register`, Rust) compute, so the triggers keep it in sync on every write path:
+    // the upsert (whose conflict update fires the update trigger), `delete_message_local` and
+    // `delete_conversation`. Rows are tied by the messages rowid, so messages must never be
+    // written with `INSERT OR REPLACE` (it changes the rowid without a delete trigger) or
+    // VACUUMed without rebuilding the index. Deleted and `Control/` messages are not indexed.
+    "CREATE VIRTUAL TABLE messages_fts USING fts5(
+         body, sender, tokenize = 'unicode61 remove_diacritics 2'
+     );
+     INSERT INTO messages_fts (rowid, body, sender)
+         SELECT rowid, kelma_fts_body(content_html), kelma_fts_fold(sender_name) FROM messages
+         WHERE deleted = 0 AND message_type NOT LIKE 'Control/%';
+     CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages
+     WHEN new.deleted = 0 AND new.message_type NOT LIKE 'Control/%'
+     BEGIN
+         INSERT INTO messages_fts (rowid, body, sender) VALUES
+             (new.rowid, kelma_fts_body(new.content_html), kelma_fts_fold(new.sender_name));
+     END;
+     CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages
+     BEGIN
+         DELETE FROM messages_fts WHERE rowid = old.rowid;
+     END;
+     CREATE TRIGGER messages_fts_update
+     AFTER UPDATE OF content_html, sender_name, deleted, message_type ON messages
+     WHEN old.content_html IS NOT new.content_html OR old.sender_name IS NOT new.sender_name
+         OR old.deleted IS NOT new.deleted OR old.message_type IS NOT new.message_type
+     BEGIN
+         DELETE FROM messages_fts WHERE rowid = old.rowid;
+         INSERT INTO messages_fts (rowid, body, sender)
+             SELECT new.rowid, kelma_fts_body(new.content_html), kelma_fts_fold(new.sender_name)
+             WHERE new.deleted = 0 AND new.message_type NOT LIKE 'Control/%';
+     END;",
 ];
 
 pub(crate) fn run(conn: &mut Connection) -> Result<()> {

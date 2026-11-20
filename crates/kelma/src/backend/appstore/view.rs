@@ -166,6 +166,8 @@ pub struct TasksData {
     pub progress: f32,
     pub status: String,
     pub loading: bool,
+    /// New task works in a To Do list or a plan (not in My tasks).
+    pub can_add: bool,
 }
 
 #[derive(Clone, Default)]
@@ -174,8 +176,14 @@ pub struct FlowsData {
     pub runs: Vec<Row>,
     pub environment: String,
     pub selected_name: String,
+    pub selected_id: String,
     pub status: String,
     pub loading: bool,
+    /// The selected flow can be run now (a manual trigger, turned on).
+    pub can_run: bool,
+    /// The selected flow can be turned on or off; `selected_on` says which it is now.
+    pub can_toggle: bool,
+    pub selected_on: bool,
 }
 
 #[derive(Clone, Default)]
@@ -188,6 +196,8 @@ pub struct NotesData {
     pub can_open_web: bool,
     pub status: String,
     pub loading: bool,
+    /// A section is open, so a page can be added to it.
+    pub can_new_page: bool,
 }
 
 #[derive(Clone, Default)]
@@ -199,6 +209,59 @@ pub struct ListsData {
     pub title: String,
     pub status: String,
     pub loading: bool,
+    /// A list (not a library) is open, so an item can be added and edited.
+    pub can_edit: bool,
+}
+
+/// The confirm and input dialog of the app screens (`AppsStore.form-*`).
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct FormData {
+    /// `false` closes it.
+    pub open: bool,
+    /// A new dialog: the text fields start from `fields`. A refresh (a choice was picked, an
+    /// error shows) keeps what the user typed.
+    pub fresh: bool,
+    pub title: String,
+    pub body: String,
+    pub confirm: String,
+    pub danger: bool,
+    /// Up to three `(label, starting text)` fields.
+    pub fields: Vec<(String, String)>,
+    /// A second button that opens a link (`Open in Teams on the web`).
+    pub link_label: String,
+    /// What to pick from (a team, a chat); `selected` marks the pick.
+    pub choices: Vec<Row>,
+    pub error: String,
+}
+
+/// One meeting of the Meeting Recaps list.
+#[derive(Clone, Default)]
+pub struct RecapsData {
+    pub meetings: Vec<Row>,
+    pub query: String,
+    /// Where the list came from, or what went wrong.
+    pub note: String,
+    pub loading: bool,
+    pub detail: RecapDetail,
+}
+
+/// The detail of the selected meeting.
+#[derive(Clone, Default)]
+pub struct RecapDetail {
+    pub open: bool,
+    pub title: String,
+    pub when: String,
+    pub organizer: String,
+    pub has_recording: bool,
+    pub has_transcript: bool,
+    pub transcript: String,
+    pub transcript_note: String,
+    pub has_notes: bool,
+    pub notes_note: String,
+    /// "Not available" or what the AI recap offers.
+    pub ai: String,
+    pub has_ai_link: bool,
+    pub can_share: bool,
 }
 
 // -- helpers -------------------------------------------------------------------------------
@@ -266,13 +329,17 @@ pub fn cert_text(c: Certification) -> &'static str {
     }
 }
 
-/// A day as `Nov 20` (the year is added for another year than now).
+/// A day as `Nov 20` (the year is added for another year than now), in the time zone chosen in
+/// Settings.
 pub fn day(ms: i64) -> String {
-    use chrono::{Datelike, Local, TimeZone};
-    let Some(t) = Local.timestamp_millis_opt(ms).single() else {
+    use chrono::Datelike;
+    let (Some(t), Some(now)) = (
+        appearance::formats::local(ms),
+        appearance::formats::local_now(),
+    ) else {
         return String::new();
     };
-    if t.year() == Local::now().year() {
+    if t.year() == now.year() {
         t.format("%b %-d").to_string()
     } else {
         t.format("%b %-d, %Y").to_string()
@@ -281,10 +348,7 @@ pub fn day(ms: i64) -> String {
 
 /// A moment as `Nov 20, 14:03`.
 pub fn moment(ms: i64) -> String {
-    use chrono::{Local, TimeZone};
-    Local
-        .timestamp_millis_opt(ms)
-        .single()
+    appearance::formats::local(ms)
         .map(|t| t.format("%b %-d, %H:%M").to_string())
         .unwrap_or_default()
 }

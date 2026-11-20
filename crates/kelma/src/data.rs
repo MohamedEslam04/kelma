@@ -29,6 +29,10 @@ pub struct ChatData {
     pub muted: bool,
     /// A channel (its item menu has the channel items).
     pub channel: bool,
+    /// The other person's availability in a 1:1 chat (`""`: no dot).
+    pub presence: String,
+    /// The other person in a 1:1 chat (`""` otherwise), for the hover card.
+    pub person: String,
 }
 
 /// A chip above the composer.
@@ -67,6 +71,17 @@ pub struct FileData {
     pub name: String,
     pub url: String,
     pub ext: String,
+    /// `OneDrive`, `SharePoint`, or `""` for a file elsewhere (the card menu's "Open in …").
+    pub place: &'static str,
+    /// The card's second line: where a click opens the file.
+    pub detail: &'static str,
+}
+
+/// A Loop component link, drawn as a card.
+#[derive(Clone)]
+pub struct LoopData {
+    pub url: String,
+    pub title: String,
 }
 
 #[derive(Clone)]
@@ -133,6 +148,11 @@ pub struct MsgData {
     pub translate: &'static str,
     pub translate_from: String,
     pub links: Vec<LinkData>,
+    /// Pinned for everyone in the chat (the menu offers Unpin).
+    pub pinned: bool,
+    /// The links in the text, for the menu's Open link and Copy link.
+    pub urls: Vec<String>,
+    pub loops: Vec<LoopData>,
 }
 
 /// A person, or a team, channel or "everyone" entry, in a people list.
@@ -144,6 +164,8 @@ pub struct PersonData {
     pub avatar: Option<Pixels>,
     /// `person`, `team`, `channel` or `everyone`.
     pub kind: &'static str,
+    /// A person's availability for the dot on the photo (`""` draws none).
+    pub presence: String,
 }
 
 /// One pinned message of the open chat.
@@ -163,6 +185,12 @@ pub struct CardData {
     pub work: String,
     pub location: String,
     pub time: String,
+    /// The person's availability (`Busy`, …) for the dot, `""` when unknown.
+    pub presence: String,
+    /// The same in words ("Do not disturb").
+    pub presence_label: String,
+    /// Today's work location pin in words ("In the office today"), `""` when none.
+    pub work_location: String,
 }
 
 /// A forward target: an existing chat or channel.
@@ -185,6 +213,9 @@ pub enum Scroll {
     Bottom,
     /// Put the row at this index (the "New messages" divider) near the top.
     Divider(usize),
+    /// Older messages were added above: keep the row at this index (the one that was first)
+    /// where it was on screen.
+    Anchor(usize),
 }
 
 #[derive(Clone)]
@@ -207,6 +238,8 @@ pub struct HeaderData {
     pub avatar: Option<Pixels>,
     pub is_channel: bool,
     pub thread_root: String,
+    /// Notifications are off for this chat ("More chat options" offers Unmute).
+    pub muted: bool,
 }
 
 /// One row of the Activity list.

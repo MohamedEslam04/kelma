@@ -4,8 +4,13 @@ import { Edited, ComposerEmoji, PendingAttachment } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
 import { PeopleStore } from "people.slint";
 import { MentionApi, MentionPicker } from "mention_picker.slint";
+import { SnippetApi, SnippetItem, SnippetPicker, SnippetStore } from "snippet_picker.slint";
 import { FormatApi, FormatBar, FormatEdit, FormatPreview, FormatToggle } from "composer_format.slint";
 import { ComposerAppsButton } from "composer_apps.slint";
+import { GifPicker, GifStore } from "gif_picker.slint";
+import { SendStore, SendButton, SendMenu, SchedulePicker, ScheduleBanner } from "composer_send.slint";
+import { SpellApi, SpellOverlay, SpellWord } from "spelling.slint";
+import { SettingsStore } from "settings_store.slint";
 
 // Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
 export global EmojiApi {
@@ -60,6 +65,8 @@ export component Composer inherits Rectangle {
     // "Mark as important" (Ctrl+Shift+I): the next message is sent with the Important delivery
     // option. It shows as a red chip and is used up by the send.
     in-out property <bool> important: false;
+    // "Set delivery options" › Urgent: like `important`, for the next message only.
+    in-out property <bool> urgent: false;
     // True while the text box has the keyboard focus (the window leaves Ctrl+Shift+7 and 8 to the composer then).
     property <bool> input-focused: composer-input.has-focus;
     callback input-focus(bool);
@@ -96,11 +103,22 @@ export component Composer inherits Rectangle {
     property <string> mention-query: MentionApi.query(root.draft, composer-input.cursor-position-byte-offset);
     property <bool> mention-open: root.mention-active && PeopleStore.mention-items.length > 0 && root.mention-dismissed != root.draft;
 
+    // Snippets: the saved quick replies that fit the `/query` before the cursor (src/snippets.rs).
+    property <[SnippetItem]> snippet-matches: SnippetApi.matches(root.draft, composer-input.cursor-position-byte-offset, SnippetStore.items);
+    property <int> snippet-index: 0;
+    property <string> snippet-dismissed; // the draft for which Escape closed the picker
+    property <bool> snippet-open: root.snippet-matches.length > 0 && root.snippet-dismissed != root.draft;
+    changed snippet-matches => { root.snippet-index = 0; }
+
     changed cursor-tick => { composer-input.set-selection-offsets(2000000000, 2000000000); }
     changed suggestions => { root.sug-index = 0; }
     changed mention-active => { if root.mention-active { PeopleStore.command("mention-query", root.mention-query); } }
     changed mention-query => { if root.mention-active { PeopleStore.command("mention-query", root.mention-query); } }
-    changed draft => { if root.draft == "" { root.mention-names = ""; } }
+    changed draft => {
+        if root.draft == "" { root.mention-names = ""; }
+        spell-timer.running = true;
+        spell-timer.restart();
+    }
     property <int> mention-count: PeopleStore.mention-items.length;
     changed mention-count => { root.mention-index = 0; }
 
@@ -111,6 +129,30 @@ export component Composer inherits Rectangle {
             // The text now ends with the name and a space: keep the picker closed until it changes.
             root.mention-dismissed = root.draft;
             PeopleStore.command("mention-pick", PeopleStore.mention-items[i].id);
+        }
+    }
+
+    // Spell check: the draft is checked once typing pauses (`spell-text` is that snapshot); the
+    // underlines of words the draft no longer has in place hide until the next check.
+    property <string> spell-text;
+    property <int> spell-cursor;
+    property <[SpellWord]> spell-words: SettingsStore.check-spelling && root.spell-text != "" ? SpellApi.check(root.spell-text, root.mention-names, root.spell-cursor, SpellApi.generation) : [];
+    property <int> spell-stable: SpellApi.stable(root.spell-text, root.draft);
+    spell-timer := Timer {
+        interval: 500ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            root.spell-text = root.draft;
+            root.spell-cursor = composer-input.cursor-position-byte-offset;
+        }
+    }
+
+    function pick-snippet(i: int) {
+        if i >= 0 && i < root.snippet-matches.length {
+            root.put(SnippetApi.complete(root.draft, composer-input.cursor-position-byte-offset, root.snippet-matches[i].text));
+            // A snippet may itself start with `/`: keep the picker closed until the text changes.
+            root.snippet-dismissed = root.draft;
         }
     }
 
@@ -133,6 +175,7 @@ export component Composer inherits Rectangle {
     function format(act: string, a: int, c: int) {
         if act == "important" {
             root.important = !root.important;
+            root.urgent = false;
             root.focus-tick += 1;
             return;
         }
@@ -172,12 +215,39 @@ export component Composer inherits Rectangle {
         root.put(EmojiApi.complete(root.draft, composer-input.cursor-position-byte-offset, root.suggestions[root.sug-index].ch));
     }
 
+    // "Schedule message" is offered for a chat message (not a channel post, a reply or an edit).
+    property <bool> can-schedule: !root.current-is-channel && root.thread-root == "" && root.editing-id == "";
+
     function submit() {
+        // A chosen send time: the text is scheduled instead of sent (attachments stay here).
+        if SendStore.schedule-at != "" && root.can-schedule {
+            if composer-input.text != "" {
+                // Cleared first: a refused schedule puts the text (and the time) back.
+                let text = composer-input.text;
+                let at = SendStore.schedule-at;
+                composer-input.text = "";
+                SendStore.schedule-at = "";
+                SendStore.schedule-label = "";
+                root.important = false;
+                root.urgent = false;
+                SendStore.command("schedule", at + "\u{9}" + text);
+            }
+            return;
+        }
         if composer-input.text != "" || root.pending-attachments.length > 0 {
             root.send(composer-input.text);
             composer-input.text = "";
             root.important = false;
+            root.urgent = false;
         }
+    }
+
+    function open-schedule() {
+        if SendStore.schedule-at == "" {
+            SendStore.pick-day = 1;
+            SendStore.pick-minutes = 480;
+        }
+        schedule-popup.show();
     }
 
     // Size like the layout inside, so the parent layout treats this exactly as it did the bare layout.
@@ -207,7 +277,7 @@ export component Composer inherits Rectangle {
                         spacing: 8px;
                         Rectangle { width: 3px; background: Theme.accent; }
                         VerticalLayout {
-                            Text { text: root.editing-id != "" ? @tr("Editing message") : @tr("Replying to {}", root.reply-author); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; }
+                            Text { text: root.editing-id != "" ? @tr("Editing message") : @tr("Replying to {}", root.reply-author); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; font-weight: 600; overflow: elide; }
                             Text { text: root.reply-preview; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
                         }
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; clicked => { root.cancel-reply(); } }
@@ -239,7 +309,7 @@ export component Composer inherits Rectangle {
                             VerticalLayout {
                                 alignment: center;
                                 Text { text: a.name; color: Theme.fg; font-size: 12px * Theme.font-scale; font-weight: 600; overflow: elide; }
-                                Text { text: a.detail; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; }
+                                Text { text: a.detail; color: Theme.fg-muted; font-size: 11px * Theme.font-scale; overflow: elide; }
                             }
                             Rectangle {
                                 width: 22px;
@@ -256,7 +326,8 @@ export component Composer inherits Rectangle {
                         }
                     }
                 }
-                if root.important: HorizontalLayout {
+                if SendStore.schedule-at != "" && root.can-schedule: ScheduleBanner { }
+                if root.important || root.urgent: HorizontalLayout {
                     padding-left: 10px;
                     padding-top: 6px;
                     alignment: start;
@@ -268,10 +339,10 @@ export component Composer inherits Rectangle {
                         border-width: 1px;
                         border-color: Theme.danger;
                         accessible-role: groupbox;
-                        accessible-label: @tr("Important message");
+                        accessible-label: root.urgent ? @tr("Urgent message") : @tr("Important message");
                         important-text := Text {
                             x: 10px;
-                            text: @tr("IMPORTANT!");
+                            text: root.urgent ? @tr("URGENT!") : @tr("IMPORTANT!");
                             color: #ff7e83;
                             font-size: 11px;
                             font-weight: 800;
@@ -285,9 +356,15 @@ export component Composer inherits Rectangle {
                             border-radius: 9px;
                             background: important-x.has-hover ? #6b2f33 : transparent;
                             accessible-role: button;
-                            accessible-label: @tr("Remove important");
+                            accessible-label: root.urgent ? @tr("Remove urgent") : @tr("Remove important");
                             Text { text: "✕"; color: #ff7e83; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
-                            important-x := TouchArea { mouse-cursor: pointer; clicked => { root.important = false; } }
+                            important-x := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.important = false;
+                                    root.urgent = false;
+                                }
+                            }
                         }
                     }
                 }
@@ -323,6 +400,24 @@ export component Composer inherits Rectangle {
                             }
                             if root.try-shortcut(event) {
                                 return accept;
+                            }
+                            if root.snippet-open {
+                                if event.text == Key.DownArrow {
+                                    root.snippet-index = min(root.snippet-index + 1, root.snippet-matches.length - 1);
+                                    return accept;
+                                }
+                                if event.text == Key.UpArrow {
+                                    root.snippet-index = max(root.snippet-index - 1, 0);
+                                    return accept;
+                                }
+                                if event.text == Key.Escape {
+                                    root.snippet-dismissed = root.draft;
+                                    return accept;
+                                }
+                                if event.text == Key.Tab || (event.text == Key.Return && !event.modifiers.shift) {
+                                    root.pick-snippet(root.snippet-index);
+                                    return accept;
+                                }
                             }
                             if root.mention-open {
                                 if event.text == Key.DownArrow {
@@ -376,6 +471,21 @@ export component Composer inherits Rectangle {
                             }
                             reject
                         }
+                        SpellOverlay {
+                            x: composer-input.x;
+                            y: composer-input.y;
+                            width: composer-input.width;
+                            height: composer-input.height;
+                            text: root.spell-text;
+                            words: root.spell-words;
+                            stable: root.spell-stable;
+                            font-size: composer-input.font-size;
+                            align: composer-input.horizontal-alignment;
+                            replace(start, end, with) => {
+                                let e = SpellApi.replace(composer-input.text, start, end, with);
+                                if e.cursor >= 0 { root.put(e); }
+                            }
+                        }
                         composer-input := TextInput {
                             property <int> tick: root.focus-tick;
                             changed tick => { self.focus(); }
@@ -411,15 +521,23 @@ export component Composer inherits Rectangle {
                     alignment: end;
                     FormatToggle { on: root.format-open; clicked => { root.format-open = !root.format-open; } }
                     IconButton { icon: @image-url("icons/emoji.svg"); clicked => { root.emoji-query = ""; emoji-popup.show(); } }
-                    IconButton { icon: @image-url("icons/image.svg"); clicked => { root.attach-image(); } }
-                    IconButton { icon: @image-url("icons/attach.svg"); clicked => { root.attach-file(); } }
+                    IconButton { icon: @image-url("icons/attach.svg"); tooltip: @tr("Attach file"); clicked => { attach-popup.show(); } }
                     IconButton { icon: @image-url("icons/more.svg"); clicked => { more-popup.show(); } }
+                    IconButton {
+                        icon: @image-url("icons/gif.svg");
+                        tooltip: @tr("GIF");
+                        clicked => {
+                            GifStore.tab = "gif";
+                            GifStore.command("search", "");
+                            gif-popup.show();
+                        }
+                    }
                     ComposerAppsButton { }
                     Rectangle { width: 1px; background: Theme.border; }
-                    IconButton {
-                        icon: @image-url("icons/send.svg");
-                        tint: composer-input.text != "" || root.pending-attachments.length > 0 ? Theme.accent : Theme.fg-subtle;
-                        clicked => { root.submit(); }
+                    SendButton {
+                        ready: composer-input.text != "" || root.pending-attachments.length > 0;
+                        send => { root.submit(); }
+                        options => { send-popup.show(); }
                     }
                 }
             }
@@ -429,6 +547,15 @@ export component Composer inherits Rectangle {
                 background: composer-input.has-focus ? Theme.accent : transparent;
             }
         }
+    }
+
+    if root.snippet-open: SnippetPicker {
+        z: 100;
+        x: 20px;
+        y: -self.height - 4px;
+        items: root.snippet-matches;
+        index: root.snippet-index;
+        picked(i) => { root.pick-snippet(i); }
     }
 
     if root.mention-open: MentionPicker {
@@ -470,6 +597,54 @@ export component Composer inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    send-popup := PopupWindow {
+        x: parent.width - 300px;
+        y: parent.height - send-menu.menu-height - 60px;
+        width: 280px;
+        height: send-menu.menu-height;
+        close-policy: close-on-click-outside;
+        send-menu := SendMenu {
+            can-schedule: root.can-schedule;
+            important <=> root.important;
+            urgent <=> root.urgent;
+            schedule => {
+                send-popup.close();
+                root.open-schedule();
+            }
+            done => {
+                send-popup.close();
+                root.focus-tick += 1;
+            }
+        }
+    }
+
+    schedule-popup := PopupWindow {
+        x: parent.width - 340px;
+        y: parent.height - 256px;
+        width: 300px;
+        height: 196px;
+        close-policy: close-on-click-outside;
+        SchedulePicker {
+            done => {
+                schedule-popup.close();
+                root.focus-tick += 1;
+            }
+        }
+    }
+
+    gif-popup := PopupWindow {
+        x: parent.width - 420px;
+        y: parent.height - 530px;
+        width: 360px;
+        height: 440px;
+        close-policy: close-on-click-outside;
+        GifPicker {
+            width: parent.width;
+            height: parent.height;
+            picked => { gif-popup.close(); }
         }
     }
 
@@ -572,9 +747,9 @@ export component Composer inherits Rectangle {
 
     more-popup := PopupWindow {
         x: parent.width - 330px;
-        y: parent.height - 230px;
+        y: parent.height - 190px;
         width: 260px;
-        height: 190px;
+        height: 150px;
         Rectangle {
             background: Theme.surface;
             border-radius: 6px;
@@ -622,22 +797,52 @@ export component Composer inherits Rectangle {
                         clicked => { PeopleStore.command("receipts", PeopleStore.receipts-on ? "off" : "on"); }
                     }
                 }
-                Rectangle { height: 1px; background: Theme.border; }
-                cloud-opt := Rectangle {
+            }
+        }
+    }
+
+    attach-popup := PopupWindow {
+        x: parent.width - 330px;
+        y: parent.height - 130px;
+        width: 260px;
+        height: 82px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: Theme.surface;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Theme.border;
+            accessible-role: list;
+            accessible-label: @tr("Attach");
+            VerticalLayout {
+                padding: 8px;
+                spacing: 2px;
+                for opt[i] in [
+                    { icon: @image-url("icons/cloud.svg"), label: @tr("Attach cloud files") },
+                    { icon: @image-url("icons/upload.svg"), label: @tr("Upload from this device") },
+                ]: Rectangle {
                     height: 32px;
                     border-radius: 4px;
-                    background: cloud-touch.has-hover ? Theme.surface-hover : transparent;
+                    background: attach-touch.has-hover ? Theme.surface-hover : transparent;
                     accessible-role: button;
-                    accessible-label: @tr("Attach cloud files");
+                    accessible-label: opt.label;
+                    accessible-action-default => {
+                        if i == 0 { root.attach-cloud(); } else { root.attach-file(); }
+                        attach-popup.close();
+                    }
                     HorizontalLayout {
                         padding-left: 8px;
                         spacing: 8px;
-                        Icon { source: @image-url("icons/cloud.svg"); width: 16px; height: 16px; y: 8px; tint: Theme.accent; }
-                        Text { text: @tr("Attach cloud files"); color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; accessible-role: none; }
+                        Icon { source: opt.icon; width: 16px; height: 16px; y: 8px; tint: Theme.accent; }
+                        Text { text: opt.label; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; accessible-role: none; }
                     }
-                    cloud-touch := TouchArea {
+                    attach-touch := TouchArea {
                         mouse-cursor: pointer;
-                        clicked => { more-popup.close(); root.attach-cloud(); }
+                        clicked => {
+                            // Before closing: closing drops this row and its `i`.
+                            if i == 0 { root.attach-cloud(); } else { root.attach-file(); }
+                            attach-popup.close();
+                        }
                     }
                 }
             }

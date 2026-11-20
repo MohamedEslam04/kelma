@@ -228,6 +228,13 @@ pub(crate) struct State {
     tag_list: Vec<Tag>,
     names: HashMap<String, String>,
     guard: Option<Guard>,
+    /// Bumped per Discover and per member search, so a slower answer to an older query is
+    /// dropped.
+    discover_seq: u64,
+    member_seq: u64,
+    /// Bumped by every pin or unpin, so the service's answer to an older one does not undo a
+    /// newer one shown here already.
+    pin_seq: u64,
 }
 
 impl Default for State {
@@ -251,6 +258,9 @@ impl Default for State {
             tag_list: vec![],
             names: HashMap::new(),
             guard: Guard::from_env(),
+            discover_seq: 0,
+            member_seq: 0,
+            pin_seq: 0,
         }
     }
 }
@@ -301,6 +311,7 @@ impl State {
     fn data(&self) -> TeamsData {
         TeamsData {
             teams: self.page.rows(),
+            all_teams: self.page.all_rows(),
             stats: self.page.stats(),
             loading: self.loading,
             error: self.error.clone(),
@@ -576,17 +587,39 @@ impl Engine {
             "chan-pin" => {
                 let (id, on) = (c.arg(0).to_string(), c.flag(1));
                 self.manage_state(|s| s.allow_channel(&id))?;
-                st(&|s| {
+                let seq = self.manage_state(|s| {
                     if on {
                         s.page.pinned.push(id.clone());
                     } else {
                         s.page.pinned.retain(|p| p != &id);
                     }
+                    s.pin_seq += 1;
+                    s.pin_seq
                 });
                 self.mark(|d| d.teams = true);
                 self.manage_push();
-                let p = self.client.set_channel_pinned(&id, on).await?;
-                self.manage_state(|s| s.page.pinned = p.channel_ids);
+                let answer = self.client.set_channel_pinned(&id, on).await;
+                // Only the answer to the latest pin is the whole truth; an older one would undo
+                // the pins shown since.
+                let latest = self.manage_state(|s| s.pin_seq == seq);
+                match answer {
+                    Ok(p) if latest => self.manage_state(|s| s.page.pinned = p.channel_ids),
+                    Ok(_) => {}
+                    Err(err) => {
+                        if latest {
+                            self.manage_state(|s| {
+                                if on {
+                                    s.page.pinned.retain(|p| p != &id);
+                                } else {
+                                    s.page.pinned.push(id.clone());
+                                }
+                            });
+                            self.mark(|d| d.teams = true);
+                            self.manage_push();
+                        }
+                        return Err(err.into());
+                    }
+                }
                 self.manage_reload().await?;
             }
             "chan-default" => {
@@ -789,12 +822,20 @@ impl Engine {
             // ---- T1.2 discover and join ----
             "discover" => {
                 let q = c.arg(0).trim().to_string();
+                let seq = self.manage_state(|s| {
+                    s.discover_seq += 1;
+                    s.discover_seq
+                });
                 let found = if q.is_empty() {
                     self.client.suggested_teams(Access::Public).await?
                 } else {
                     self.client.find_teams(&q, Access::Public, "").await?
                 };
-                self.manage_state(|s| s.discover = found);
+                self.manage_state(|s| {
+                    if s.discover_seq == seq {
+                        s.discover = found;
+                    }
+                });
             }
             "join" => {
                 let group = c.arg(0).to_string();
@@ -891,6 +932,11 @@ impl Engine {
         const PAGE: u32 = 20;
         let page = self.client.community_feed(id, PAGE, older_than).await?;
         self.manage_state(|s| {
+            // Two quick "More" ask for the same page: only the first answer extends the feed
+            // (the second finds the last post moved), and a feed switched meanwhile keeps its own.
+            if s.community != Some(id) || s.posts.last().map(|p| p.id) != older_than {
+                return;
+            }
             s.posts_more = page.len() as u32 >= PAGE;
             s.posts.extend(page);
         });
@@ -1115,12 +1161,19 @@ impl Engine {
 
     async fn manage_member_search(&self, q: &str) -> anyhow::Result<()> {
         let q = q.trim();
+        let seq = self.manage_state(|s| {
+            s.member_seq += 1;
+            s.member_seq
+        });
         if q.chars().count() < 2 {
             self.manage_state(|s| s.dialog.candidates.clear());
             return Ok(());
         }
         let found = self.client.search_people(&self.me, q).await?;
         self.manage_state(|s| {
+            if s.member_seq != seq {
+                return;
+            }
             let have: Vec<String> = s.dialog.people.iter().map(|p| p.mri.clone()).collect();
             s.dialog.candidates = found
                 .into_iter()
@@ -1227,13 +1280,23 @@ impl Engine {
                     anyhow::bail!("Give the tag a name");
                 }
                 // A tag needs at least one member; we are the first.
+                let before = self.manage_state(|s| s.tag.clone());
                 let t = self
                     .client
                     .create_tag(&team, name, c.arg(1).trim(), std::slice::from_ref(&self.me))
                     .await?;
-                self.manage_state(|s| s.tag = Some(t.id.clone()));
+                // The new tag opens unless another tag was picked while it was being made.
+                let open = self.manage_state(|s| {
+                    let open = s.tag == before;
+                    if open {
+                        s.tag = Some(t.id.clone());
+                    }
+                    open
+                });
                 self.manage_load_tags(&team).await?;
-                self.manage_load_tag_people(&team, &t.id).await?;
+                if open {
+                    self.manage_load_tag_people(&team, &t.id).await?;
+                }
             }
             "tag-rename" => {
                 // The version a change must quote moves with every change: read it fresh.

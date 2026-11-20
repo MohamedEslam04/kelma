@@ -11,6 +11,7 @@ fn relay_only() -> MediaOptions {
     MediaOptions {
         udp_addrs: vec!["127.0.0.1:0".into()],
         relay_only: true,
+        ..Default::default()
     }
 }
 

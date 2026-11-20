@@ -26,9 +26,30 @@ export struct HitRow {
 export struct PickRow { id: string, title: string, subtitle: string }
 
 // One row of the Shared tab.
-export struct SharedRow { kind: string, name: string, ext: string, shared-by: string, date: string, url: string }
+// `editable` rows are SharePoint drive items (Download, Share, Rename and Delete apply);
+// `sharepoint` rows can be opened in SharePoint.
+export struct SharedRow { kind: string, name: string, ext: string, shared-by: string, date: string, url: string, editable: bool, sharepoint: bool }
+
+// A channel tab beyond Posts and Files (Notes, a website, Planner, …).
+export struct ChannelTabItem { name: string, url: string, id: string }
+
+// An installed app that can have a tab in a channel.
+export struct ChannelTabApp { id: string, name: string }
 
 export global FindStore {
+    // The open channel's other tabs, and the "Add a tab" dialog.
+    in property <[ChannelTabItem]> channel-tabs;
+    in-out property <bool> tab-add-open: false;
+    // The installed apps the "Add a tab" dialog offers, and which kind it adds (website | app).
+    in property <[ChannelTabApp]> tab-apps;
+    in-out property <string> tab-add-kind: "website";
+    // The tab whose menu is open (its id, name and place), and the dialog it leads to
+    // ("" | rename | remove).
+    in-out property <string> tab-menu-id;
+    in-out property <string> tab-menu-name;
+    in-out property <length> tab-menu-x;
+    in-out property <length> tab-menu-y;
+    in-out property <string> tab-dialog;
     // --- Search page (Ctrl+Alt+E) ---
     in-out property <string> query;
     in-out property <string> tab: "all"; // all | messages | files | people | channels | chats | meetings
@@ -62,6 +83,10 @@ export global FindStore {
     in property <[SharedRow]> shared;
     in property <[SharedRow]> recent;
     in property <bool> shared-loading;
+    // New folder and New document apply (a channel with a files folder), and the last file
+    // action's outcome.
+    in property <bool> shared-can-create;
+    in property <string> shared-note;
     in-out property <string> shared-filter: "recent"; // recent | files | links
     in-out property <bool> details-open: false;
 
@@ -70,8 +95,12 @@ export global FindStore {
 
     // (name, argument). Names: search, search-tab, editor, pick-query, pick, filter-clear, date, open,
     // more, close-search, quick, quick-close, unfollow, find-open, find-close, find-query, find-prev,
-    // find-next, tab, shared-filter, shared-keyword, shared-open, shared-upload, details, follow,
-    // unfollow-msg, menu-follow, people-profile.
+    // find-next, tab, shared-filter, shared-keyword, shared-open, shared-upload, shared-download,
+    // shared-copy-link, shared-share, shared-rename (url U+001F name), shared-delete,
+    // shared-new-folder, shared-new-doc (word | excel | powerpoint), channel-tab-open,
+    // channel-tab-add, channel-tab-add-app (app id U+001F name), channel-tab-rename (tab id
+    // U+001F name), channel-tab-remove, channel-tab-apps, details, follow, unfollow-msg,
+    // menu-follow, people-profile.
     callback command(string, string);
 }
 
@@ -81,7 +110,7 @@ component Chip inherits Rectangle {
     callback clicked();
     callback cleared();
     height: 30px;
-    width: chip-row.preferred-width;
+    width: min(chip-row.preferred-width, 280px);
     border-radius: 15px;
     border-width: 1px;
     border-color: root.value != "" ? Theme.accent : Theme.border;
@@ -93,7 +122,7 @@ component Chip inherits Rectangle {
         padding-left: 12px;
         padding-right: root.value != "" ? 4px : 12px;
         spacing: 6px;
-        Text { text: root.value != "" ? root.label + ": " + root.value : root.label; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+        Text { text: root.value != "" ? root.label + ": " + root.value : root.label; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
         if root.value != "": IconButton {
             icon: @image-url("icons/close.svg");
             tooltip: "Clear " + root.label;
@@ -500,6 +529,8 @@ component SharedLine inherits Rectangle {
     in property <SharedRow> data;
     in property <bool> compact: false;
     callback open();
+    // The "…" button or a right click: where the menu goes, in window coordinates.
+    callback more(length, length);
     height: root.compact ? 48px : 44px;
     background: t.has-hover ? Theme.surface-hover : transparent;
     accessible-role: list-item;
@@ -507,7 +538,7 @@ component SharedLine inherits Rectangle {
     accessible-description: root.data.shared-by + " · " + root.data.date;
     HorizontalLayout {
         padding-left: 12px;
-        padding-right: 12px;
+        padding-right: root.compact ? 12px : 48px;
         spacing: 12px;
         Rectangle {
             width: 28px;
@@ -526,12 +557,91 @@ component SharedLine inherits Rectangle {
         if !root.compact: Text { width: 140px; horizontal-stretch: 0; text: root.data.date; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
         if !root.compact: Text { width: 160px; horizontal-stretch: 0; text: root.data.shared-by; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
     }
-    t := TouchArea { mouse-cursor: pointer; clicked => { root.open(); } }
+    t := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open(); }
+        pointer-event(e) => {
+            if !root.compact && e.button == PointerEventButton.right && e.kind == PointerEventKind.up {
+                root.more(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    if !root.compact: IconButton {
+        x: parent.width - self.width - 12px;
+        y: (parent.height - self.height) / 2;
+        size: 28px;
+        icon: @image-url("icons/more.svg");
+        tooltip: @tr("More actions for {}", root.data.name);
+        clicked => { root.more(self.absolute-position.x, self.absolute-position.y + self.height); }
+    }
+}
+
+// One entry of a small menu (the file menu, the tab menu, the call history menu).
+export component FileMenuItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 32px;
+    border-radius: 4px;
+    background: item-touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Text {
+        x: 10px;
+        width: parent.width - 20px;
+        text: root.label;
+        color: root.danger ? Theme.danger : Theme.fg;
+        font-size: 13px * Theme.font-scale;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+    item-touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A small button of the Files toolbar.
+component FileToolButton inherits Rectangle {
+    in property <string> label;
+    in property <length> button-width: 100px;
+    callback clicked();
+    width: root.button-width;
+    height: 30px;
+    horizontal-stretch: 0;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: tool-touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Text { text: root.label; color: Theme.fg; font-size: 12px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; overflow: elide; accessible-role: none; }
+    tool-touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
 // The "Shared" tab of a chat or channel (the "Files" tab of a channel).
 export component SharedView inherits Rectangle {
+    // "" | row (the "…" menu of `row`) | new (the New document menu).
+    property <string> menu: "";
+    property <SharedRow> file;
+    property <length> menu-x;
+    property <length> menu-y;
+    // "" | rename | delete | folder.
+    property <string> prompt: "";
+    property <string> prompt-text;
     background: Theme.main;
+
+    function submit() {
+        if root.prompt == "folder" {
+            FindStore.command("shared-new-folder", root.prompt-text);
+        } else if root.prompt == "rename" {
+            FindStore.command("shared-rename", root.file.url + "\u{1f}" + root.prompt-text);
+        } else if root.prompt == "delete" {
+            FindStore.command("shared-delete", root.file.url);
+        }
+        root.prompt = "";
+    }
+
     VerticalLayout {
         padding-left: 20px;
         padding-right: 20px;
@@ -547,7 +657,7 @@ export component SharedView inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; }
             Rectangle {
-                width: 240px;
+                width: 200px;
                 height: 30px;
                 horizontal-stretch: 0;
                 border-radius: 4px;
@@ -566,6 +676,20 @@ export component SharedView inherits Rectangle {
                     edited => { FindStore.command("shared-keyword", self.text); }
                 }
                 if kw-input.text == "": Text { x: 10px; text: "Filter by keyword"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+            }
+            if FindStore.shared-can-create: FileToolButton {
+                label: @tr("New folder");
+                button-width: 92px;
+                clicked => { root.prompt-text = ""; root.prompt = "folder"; }
+            }
+            if FindStore.shared-can-create: FileToolButton {
+                label: @tr("New document");
+                button-width: 116px;
+                clicked => {
+                    root.menu-x = self.absolute-position.x - root.absolute-position.x;
+                    root.menu-y = self.absolute-position.y - root.absolute-position.y + self.height;
+                    root.menu = "new";
+                }
             }
             Rectangle {
                 width: 84px;
@@ -592,9 +716,18 @@ export component SharedView inherits Rectangle {
                 od := TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("shared-onedrive", ""); } }
             }
         }
+        if FindStore.shared-note != "": Text {
+            height: 18px;
+            text: FindStore.shared-note;
+            color: Theme.fg-muted;
+            font-size: 12px * Theme.font-scale;
+            overflow: elide;
+            vertical-alignment: center;
+            accessible-role: text;
+        }
         HorizontalLayout {
             padding-left: 52px;
-            padding-right: 12px;
+            padding-right: 48px;
             spacing: 12px;
             height: 24px;
             Text { text: "Name"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
@@ -608,10 +741,128 @@ export component SharedView inherits Rectangle {
                 for s in FindStore.shared: SharedLine {
                     data: s;
                     open => { FindStore.command("shared-open", s.url); }
+                    more(ax, ay) => {
+                        root.file = s;
+                        root.menu-x = ax - root.absolute-position.x;
+                        root.menu-y = ay - root.absolute-position.y;
+                        root.menu = "row";
+                    }
                 }
             }
             if FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
             if !FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Nothing has been shared here yet"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+
+    // The row menu and the New document menu, closed by a click anywhere else.
+    if root.menu != "": Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea { clicked => { root.menu = ""; } }
+        Rectangle {
+            x: max(8px, min(root.menu-x, root.width - self.width - 8px));
+            y: max(8px, min(root.menu-y, root.height - self.height - 8px));
+            width: 210px;
+            height: menu-col.preferred-height;
+            border-radius: 6px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000090;
+            accessible-role: groupbox;
+            accessible-label: root.menu == "new" ? @tr("New document") : @tr("File actions");
+            TouchArea { }
+            menu-col := VerticalLayout {
+                padding: 6px;
+                if root.menu == "new": FileMenuItem { label: @tr("Word document"); clicked => { root.menu = ""; FindStore.command("shared-new-doc", "word"); } }
+                if root.menu == "new": FileMenuItem { label: @tr("Excel workbook"); clicked => { root.menu = ""; FindStore.command("shared-new-doc", "excel"); } }
+                if root.menu == "new": FileMenuItem { label: @tr("PowerPoint presentation"); clicked => { root.menu = ""; FindStore.command("shared-new-doc", "powerpoint"); } }
+                if root.menu == "row": FileMenuItem { label: @tr("Open"); clicked => { root.menu = ""; FindStore.command("shared-open", root.file.url); } }
+                if root.menu == "row" && root.file.editable: FileMenuItem { label: @tr("Download"); clicked => { root.menu = ""; FindStore.command("shared-download", root.file.url); } }
+                if root.menu == "row": FileMenuItem { label: @tr("Copy link"); clicked => { root.menu = ""; FindStore.command("shared-copy-link", root.file.url); } }
+                if root.menu == "row" && root.file.editable: FileMenuItem { label: @tr("Share"); clicked => { root.menu = ""; FindStore.command("shared-share", root.file.url); } }
+                if root.menu == "row" && root.file.editable: FileMenuItem { label: @tr("Rename"); clicked => { root.menu = ""; root.prompt-text = root.file.name; root.prompt = "rename"; } }
+                if root.menu == "row" && root.file.editable: FileMenuItem { label: @tr("Delete"); danger: true; clicked => { root.menu = ""; root.prompt = "delete"; } }
+                if root.menu == "row" && root.file.sharepoint: FileMenuItem { label: @tr("Open in SharePoint"); clicked => { root.menu = ""; FindStore.command("shared-open", root.file.url); } }
+            }
+        }
+    }
+
+    // New folder, Rename and Delete ask for a name or a confirmation.
+    if root.prompt != "": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { clicked => { root.prompt = ""; } }
+        Rectangle {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+            width: 360px;
+            height: prompt-col.preferred-height;
+            border-radius: 8px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            accessible-role: groupbox;
+            accessible-label: root.prompt == "folder" ? @tr("New folder") : (root.prompt == "rename" ? @tr("Rename") : @tr("Delete"));
+            TouchArea { }
+            prompt-col := VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                Text {
+                    text: root.prompt == "folder" ? @tr("New folder") : (root.prompt == "rename" ? @tr("Rename") : (root.file.ext == "DIR" ? @tr("Delete this folder?") : @tr("Delete this file?")));
+                    color: Theme.fg;
+                    font-size: 16px * Theme.font-scale;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                if root.prompt == "delete": Text {
+                    text: root.file.ext == "DIR" ? @tr("{} and everything in it go to the site's recycle bin.", root.file.name) : @tr("{} goes to the site's recycle bin.", root.file.name);
+                    color: Theme.fg-muted;
+                    font-size: 12px * Theme.font-scale;
+                    wrap: word-wrap;
+                }
+                if root.prompt != "delete": Rectangle {
+                    height: 34px;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.main;
+                    name-input := TextInput {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text <=> root.prompt-text;
+                        color: Theme.fg;
+                        font-size: 13px * Theme.font-scale;
+                        single-line: true;
+                        vertical-alignment: center;
+                        accessible-role: text-input;
+                        accessible-label: @tr("Name");
+                        init => { self.focus(); self.select-all(); }
+                        accepted => { root.submit(); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    FileToolButton { label: @tr("Cancel"); button-width: 80px; clicked => { root.prompt = ""; } }
+                    Rectangle {
+                        width: 80px;
+                        height: 30px;
+                        border-radius: 4px;
+                        background: root.prompt == "delete" ? Theme.danger : Theme.accent-strong;
+                        accessible-role: button;
+                        accessible-label: root.prompt == "folder" ? @tr("Create") : (root.prompt == "rename" ? @tr("Save") : @tr("Delete"));
+                        accessible-action-default => { root.submit(); }
+                        Text { text: root.prompt == "folder" ? @tr("Create") : (root.prompt == "rename" ? @tr("Save") : @tr("Delete")); color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                        TouchArea { mouse-cursor: pointer; clicked => { root.submit(); } }
+                    }
+                }
+            }
         }
     }
 }
@@ -668,5 +919,304 @@ export component DetailsPane inherits Rectangle {
             Text { text: FindStore.shared-loading ? "Loading…" : "Nothing has been shared here yet"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
         }
         Rectangle { vertical-stretch: 1; }
+    }
+}
+
+// "Add a tab": a website with a name, added to the open channel for everyone in it.
+export component AddTabDialog inherits Rectangle {
+    in-out property <string> tab-name;
+    in-out property <string> tab-url;
+    // The app picked in the list, when adding an app's tab.
+    in-out property <string> app-id;
+    property <bool> ready: FindStore.tab-add-kind == "app" ? root.app-id != "" && root.tab-name != "" : root.tab-name != "" && root.tab-url != "";
+    init => { FindStore.tab-add-kind = "website"; }
+    width: 360px;
+    height: col.preferred-height;
+    border-radius: 8px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #000000a0;
+    accessible-role: groupbox;
+    accessible-label: @tr("Add a tab");
+    TouchArea { }
+    col := VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        Text { text: FindStore.tab-add-kind == "app" ? @tr("Add an app tab") : @tr("Add a website tab"); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; }
+        Text { text: @tr("Everyone in the channel sees the tab, and Teams posts that you added it."); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            height: 28px;
+            Pill { label: @tr("Website"); active: FindStore.tab-add-kind == "website"; clicked => { FindStore.tab-add-kind = "website"; } }
+            Pill { label: @tr("App"); active: FindStore.tab-add-kind == "app"; clicked => { FindStore.tab-add-kind = "app"; FindStore.command("channel-tab-apps", ""); } }
+        }
+        if FindStore.tab-add-kind == "app": Rectangle {
+            height: 150px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.main;
+            clip: true;
+            ListView {
+                for a in FindStore.tab-apps: Rectangle {
+                    height: 30px;
+                    background: root.app-id == a.id ? #3b3d6b : (app-touch.has-hover ? Theme.surface-hover : transparent);
+                    accessible-role: button;
+                    accessible-label: a.name;
+                    accessible-checkable: true;
+                    accessible-checked: root.app-id == a.id;
+                    accessible-action-default => { root.app-id = a.id; if root.tab-name == "" { root.tab-name = a.name; } }
+                    Text { x: 10px; width: parent.width - 20px; text: a.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; accessible-role: none; }
+                    app-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.app-id = a.id; if root.tab-name == "" { root.tab-name = a.name; } }
+                    }
+                }
+            }
+            if FindStore.tab-apps.length == 0: Text { text: @tr("No installed app has a channel tab."); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Rectangle {
+            height: 34px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.main;
+            name-input := TextInput {
+                x: 10px;
+                width: parent.width - 20px;
+                height: parent.height;
+                text <=> root.tab-name;
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                single-line: true;
+                vertical-alignment: center;
+                accessible-role: text-input;
+                accessible-label: @tr("Tab name");
+            }
+            if root.tab-name == "": Text { x: 10px; text: @tr("Docs"); color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; height: parent.height; }
+        }
+        if FindStore.tab-add-kind == "website": Rectangle {
+            height: 34px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.main;
+            url-input := TextInput {
+                x: 10px;
+                width: parent.width - 20px;
+                height: parent.height;
+                text <=> root.tab-url;
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                single-line: true;
+                vertical-alignment: center;
+                accessible-role: text-input;
+                accessible-label: @tr("Address");
+            }
+            if root.tab-url == "": Text { x: 10px; text: "https://"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; height: parent.height; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Rectangle {
+                width: 80px;
+                height: 32px;
+                border-radius: 4px;
+                background: cancel-touch.has-hover ? Theme.surface-hover : transparent;
+                border-width: 1px;
+                border-color: Theme.border;
+                accessible-role: button;
+                accessible-label: @tr("Cancel");
+                Text { text: @tr("Cancel"); color: Theme.fg; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                cancel-touch := TouchArea { mouse-cursor: pointer; clicked => { FindStore.tab-add-open = false; } }
+            }
+            Rectangle {
+                width: 80px;
+                height: 32px;
+                border-radius: 4px;
+                background: root.ready ? Theme.accent-strong : Theme.surface-hover;
+                accessible-role: button;
+                accessible-label: @tr("Add");
+                accessible-enabled: root.ready;
+                Text { text: @tr("Add"); color: #ffffff; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                add-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    enabled: root.ready;
+                    clicked => {
+                        if FindStore.tab-add-kind == "app" {
+                            FindStore.command("channel-tab-add-app", root.app-id + "\u{1f}" + root.tab-name);
+                        } else {
+                            FindStore.command("channel-tab-add", root.tab-name + "\u{1f}" + root.tab-url);
+                        }
+                        FindStore.tab-add-open = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A channel's tab in the header (beyond Posts and Files): a click opens it, the chevron or a
+// right click opens its menu (Rename, Remove).
+export component ChannelTabButton inherits Rectangle {
+    in property <ChannelTabItem> tab;
+    width: min(ct-label.preferred-width, 180px) + 22px;
+    accessible-role: AccessibleRole.tab;
+    accessible-label: root.tab.name;
+    function open-menu() {
+        FindStore.tab-menu-id = root.tab.id;
+        FindStore.tab-menu-name = root.tab.name;
+        FindStore.tab-menu-x = root.absolute-position.x;
+        FindStore.tab-menu-y = root.absolute-position.y + root.height;
+        FindStore.tab-dialog = "";
+    }
+    VerticalLayout {
+        alignment: center;
+        HorizontalLayout {
+            spacing: 4px;
+            ct-label := Text {
+                text: root.tab.name;
+                color: ct-open.has-hover ? Theme.fg : Theme.fg-muted;
+                font-size: 14px * Theme.font-scale;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            Icon { source: @image-url("icons/chevron-down.svg"); width: 14px; height: 14px; y: 5px; tint: Theme.fg-subtle; }
+        }
+        Rectangle { height: 3px; }
+    }
+    ct-open := TouchArea {
+        x: 0px;
+        width: parent.width - 20px;
+        mouse-cursor: pointer;
+        clicked => { FindStore.command("channel-tab-open", root.tab.url); }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.up {
+                root.open-menu();
+            }
+        }
+    }
+    TouchArea {
+        x: parent.width - 20px;
+        width: 20px;
+        mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: @tr("Tab options for {}", root.tab.name);
+        clicked => { root.open-menu(); }
+    }
+}
+
+// The menu of a channel tab and the Rename and Remove dialogs it leads to. Shown while
+// `FindStore.tab-menu-id` is set; fills its parent.
+export component ChannelTabOverlays inherits Rectangle {
+    in-out property <string> new-name: FindStore.tab-menu-name;
+    function close() {
+        FindStore.tab-menu-id = "";
+        FindStore.tab-dialog = "";
+    }
+    if FindStore.tab-dialog == "": Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea { clicked => { root.close(); } }
+        Rectangle {
+            x: max(8px, min(FindStore.tab-menu-x, root.width - self.width - 8px));
+            y: max(8px, min(FindStore.tab-menu-y, root.height - self.height - 8px));
+            width: 190px;
+            height: tab-menu-col.preferred-height;
+            border-radius: 6px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000090;
+            accessible-role: groupbox;
+            accessible-label: @tr("Tab actions");
+            TouchArea { }
+            tab-menu-col := VerticalLayout {
+                padding: 6px;
+                FileMenuItem { label: @tr("Rename tab"); clicked => { FindStore.tab-dialog = "rename"; } }
+                FileMenuItem { label: @tr("Remove tab"); danger: true; clicked => { FindStore.tab-dialog = "remove"; } }
+            }
+        }
+    }
+    if FindStore.tab-dialog != "": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { clicked => { root.close(); } }
+        Rectangle {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+            width: 360px;
+            height: tab-dialog-col.preferred-height;
+            border-radius: 8px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #000000a0;
+            accessible-role: groupbox;
+            accessible-label: FindStore.tab-dialog == "rename" ? @tr("Rename tab") : @tr("Remove tab");
+            TouchArea { }
+            tab-dialog-col := VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                Text { text: FindStore.tab-dialog == "rename" ? @tr("Rename tab") : @tr("Remove tab?"); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; }
+                if FindStore.tab-dialog == "remove": Text {
+                    text: @tr("{} is removed for everyone in the channel. Its content stays where it is.", FindStore.tab-menu-name);
+                    color: Theme.fg-muted;
+                    font-size: 12px * Theme.font-scale;
+                    wrap: word-wrap;
+                }
+                if FindStore.tab-dialog == "rename": Rectangle {
+                    height: 34px;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.main;
+                    tab-name-input := TextInput {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text <=> root.new-name;
+                        color: Theme.fg;
+                        font-size: 13px * Theme.font-scale;
+                        single-line: true;
+                        vertical-alignment: center;
+                        accessible-role: text-input;
+                        accessible-label: @tr("Tab name");
+                        init => { self.focus(); self.select-all(); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    FileToolButton { label: @tr("Cancel"); button-width: 80px; clicked => { root.close(); } }
+                    Rectangle {
+                        width: 80px;
+                        height: 30px;
+                        border-radius: 4px;
+                        background: FindStore.tab-dialog == "remove" ? Theme.danger : Theme.accent-strong;
+                        accessible-role: button;
+                        accessible-label: FindStore.tab-dialog == "rename" ? @tr("Save") : @tr("Remove");
+                        Text { text: FindStore.tab-dialog == "rename" ? @tr("Save") : @tr("Remove"); color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                if FindStore.tab-dialog == "rename" {
+                                    FindStore.command("channel-tab-rename", FindStore.tab-menu-id + "\u{1f}" + root.new-name);
+                                } else {
+                                    FindStore.command("channel-tab-remove", FindStore.tab-menu-id);
+                                }
+                                root.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

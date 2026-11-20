@@ -330,6 +330,8 @@ impl WorkLocation {
         let code = v
             .as_u64()
             .or_else(|| match v.as_str()?.to_ascii_lowercase().as_str() {
+                "1" => Some(1),
+                "2" => Some(2),
                 "office" | "inoffice" => Some(1),
                 "remote" | "remoteoffice" | "home" => Some(2),
                 _ => None,
@@ -340,34 +342,6 @@ impl WorkLocation {
             _ => WorkLocation::Unset,
         }
     }
-}
-
-/// A call to the presence service as documented by open-source clients (skypetoken and the web
-/// client headers). Not confirmed live: for this account `getpresence` answered 404 with the
-/// skypetoken, 401 with the presence audience bearer, and 405 on the `teams.microsoft.com/ups`
-/// alias, so reading and setting the work location is unverified.
-async fn presence(
-    client: &Client,
-    context: &'static str,
-    method: Method,
-    path: &str,
-    body: &Value,
-) -> Result<Value> {
-    let url = format!("https://presence.teams.microsoft.com/v1{path}");
-    let (status, text) = client
-        .request(
-            method,
-            &url,
-            Some(body),
-            &[
-                ("x-ms-client-user-agent", "Teams-V2-Web"),
-                ("x-ms-client-type", "cdlworker"),
-                ("x-ms-correlation-id", &teams_proto::client::new_epid()),
-                ("x-ms-client-version", "1415/26091712213"),
-            ],
-        )
-        .await?;
-    crate::graph::parse(context, status, &text)
 }
 
 /// The `PUT …/me/workLocation/` body. `expires_ms` is when the pin lapses (usually the end of
@@ -389,14 +363,14 @@ pub async fn set_work_location(
     expires_ms: i64,
 ) -> Result<()> {
     let body = work_location_body(location, expires_ms);
-    presence(
-        client,
-        "set work location",
-        Method::PUT,
-        "/me/workLocation/",
-        &body,
-    )
-    .await?;
+    client
+        .presence_json(
+            "set work location",
+            Method::PUT,
+            "me/workLocation/",
+            Some(&body),
+        )
+        .await?;
     Ok(())
 }
 
@@ -422,14 +396,14 @@ pub async fn work_location(client: &Client) -> Result<WorkLocation> {
         .and_then(Value::as_str)
         .ok_or_else(|| Error::Protocol("me: no id".into()))?;
     let body = json!([{"mri": format!("8:orgid:{oid}")}]);
-    let v = presence(
-        client,
-        "work location",
-        Method::POST,
-        "/presence/getpresence/",
-        &body,
-    )
-    .await?;
+    let v = client
+        .presence_json(
+            "work location",
+            Method::POST,
+            "presence/getpresence/",
+            Some(&body),
+        )
+        .await?;
     Ok(parse_work_location(&v))
 }
 

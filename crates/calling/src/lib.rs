@@ -7,10 +7,15 @@
 //! - [`signaling`]: the NGC conversation service (`epconv`): place, join, and every later step
 //!   POSTed to a `link` the service handed back.
 //! - [`invitation`]: parsing an incoming `callInvitation` push.
+//! - [`incoming`]: answering one, with or without the caller's offer in the ring.
 //! - [`relay`]: TURN credentials from `trap/tokens`.
 //! - [`media`]: one WebRTC peer (webrtc-rs) speaking Opus over ICE/TURN + SRTP.
 //! - [`audio`]: microphone/speaker I/O and the Opus codec.
+//! - [`video`]: video we send (screen share; the camera later): frames, H.264, the portal.
 //! - [`history`]: call history from the `48:calllogs` system thread.
+//! - [`emergency`]: emergency short codes kelma refuses to dial.
+//! - [`captions`]: live caption text from the media data channel.
+//! - [`voicemail`]: voicemails, which are Exchange mail read through Graph.
 //!
 //! Protocol sources: rusty-teams `crates/calling` and eisbaw/ost `src/calling` (MIT, code may be
 //! reused with attribution); mautrix-teams `pkg/msteams/calls.go` (AGPL) and teams-lite
@@ -18,14 +23,20 @@
 //! `docs/research/open-source.md` §3.15.
 
 pub mod audio;
+pub mod captions;
+pub mod emergency;
 pub mod error;
 pub mod history;
+pub mod incoming;
 pub mod invitation;
 pub mod media;
 pub mod ngc_trouter;
 pub mod relay;
+pub mod remote_control;
 pub mod signaling;
 pub mod types;
+pub mod video;
+pub mod voicemail;
 
 pub use error::{Error, Result};
 pub use types::*;

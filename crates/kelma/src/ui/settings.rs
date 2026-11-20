@@ -3,18 +3,26 @@
 //! changes), saves local preferences, and turns Teams changes into dry runs.
 //!
 //! Nothing here talks to Teams. Reads go through the engine (`SettingsCmd::Load`); every Teams
-//! write is built as a `PlannedRequest`, logged and shown on the page, never sent.
+//! write is built as a `PlannedRequest` and sent by the engine (`SettingsCmd::Apply`), which then
+//! reads the settings again. Without an engine (tests) a write stays a dry run, logged and shown.
 //!
 //! Commands from `SettingsStore.command(name, argument)`:
 //! open, close, page, query, profile, theme, accent, density, font-step, font-scale, skin-tone,
 //! language, date-format, time-format, time-zone, startup, high-contrast, reduced-motion,
 //! larger-text, a11y, notify, pause, test-notification, privacy, unblock, priority-remove,
-//! speaker, mic, camera, all-devices, test-sound, mic-test, open-files, perm, switch-account,
-//! switch-org, add-account, remove-account, refresh-license, restart, sign-out, view-account,
-//! report-problem, check-updates, check-now, release-notes.
+//! speaker, mic, camera, noise-suppression, echo-cancellation, all-devices, test-sound, mic-test,
+//! call-feedback, ringtone, ringtone-preview, open-files, perm, switch-account, switch-org, add-account, remove-account,
+//! refresh-license, restart, sign-out, view-account, report-problem, check-updates, check-now,
+//! release-notes, status, work-location, status-note, banner-photo, banner-actions, notify-sound,
+//! meeting-chat, check-spelling, quiet-on, quiet-day, quiet-start, quiet-end, focus,
+//! focus-duration, keyword-add, keyword-remove, open-chat-at, link-previews, photo-change,
+//! photo-remove, check-updates-menu.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
+use crate::backend::call_feedback::Ask;
+use crate::backend::expiry;
+use crate::backend::ringtone::RingtoneChoice;
 use crate::backend::settings::{
     self as st, DeviceLists, Local, Look, OpenFilesIn, ServerData, SettingsCmd,
 };
@@ -25,12 +33,15 @@ use crate::{
 };
 use app_store::DevicePermission;
 use appearance::{Density, PortalChange, PortalSettings, Rgb, Theme as ThemeChoice};
+use session::OpenChatAt;
 use slint::{ComponentHandle, ModelRc, SharedString};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use teams_proto::user_settings::{ContactList, Delivery, Kind, NotificationSettings, PrivacyFlag};
+use teams_proto::user_settings::{
+    ContactList, Delivery, Kind, MeetingChatMode, NotificationSettings, PrivacyFlag, SoundField,
+};
 
 /// Polls a running microphone test; `None` when there is no new reading.
 pub type MicPoll = Box<dyn FnMut() -> Option<f32>>;
@@ -194,6 +205,8 @@ struct Ctl {
     update_auto_done: bool,
     /// The release page of the newer version found, for "Release notes".
     update_url: Option<String>,
+    /// "When I open a chat take me to", as the engine has it.
+    open_chat_at: OpenChatAt,
 }
 
 type Shared = Rc<RefCell<Ctl>>;
@@ -208,6 +221,42 @@ fn ctl() -> Option<Shared> {
 
 fn s(v: impl Into<SharedString>) -> SharedString {
     v.into()
+}
+
+fn focus_slug(d: appearance::general::FocusDuration) -> &'static str {
+    use appearance::general::FocusDuration as D;
+    match d {
+        D::Hour1 => "1h",
+        D::Hour2 => "2h",
+        D::Tomorrow => "tomorrow",
+        D::Manual => "manual",
+    }
+}
+
+/// Shows Focus mode in the top bar indicator and on the Notifications page: off (`None` or an
+/// end in the past), running until I turn it off, or until a time today or tomorrow.
+pub fn show_focus(w: &AppWindow, until_ms: Option<i64>) {
+    use chrono::{Local, TimeZone};
+    let g = w.global::<SettingsStore>();
+    let now = Local::now();
+    let (kind, time) = match until_ms.filter(|u| *u > now.timestamp_millis()) {
+        None => ("", String::new()),
+        Some(appearance::general::FOCUS_FOREVER) => ("forever", String::new()),
+        Some(u) => match Local.timestamp_millis_opt(u).single() {
+            Some(t) => (
+                if t.date_naive() == now.date_naive() {
+                    "today"
+                } else {
+                    "later"
+                },
+                t.format("%H:%M").to_string(),
+            ),
+            None => ("forever", String::new()),
+        },
+    };
+    g.set_focus_on(!kind.is_empty());
+    g.set_focus_end_kind(s(kind));
+    g.set_focus_end_time(s(time));
 }
 
 fn bit(a: &str) -> bool {
@@ -230,6 +279,11 @@ pub fn install(
     env: SettingsEnv,
 ) {
     let mut local = Local::load(&env.paths.config_dir);
+    let open_chat_at = env
+        .paths
+        .load_config()
+        .map(|c| c.open_chat_at)
+        .unwrap_or_default();
     // The autostart entry is the truth: it may have been added or removed outside kelma.
     local.general.auto_start = (env.hooks.autostart.get)();
     let portal = if env.portal { read_portal() } else { None };
@@ -251,6 +305,7 @@ pub fn install(
         checking: false,
         update_auto_done: false,
         update_url: None,
+        open_chat_at,
     }));
     CTL.with(|c| *c.borrow_mut() = Some(shared.clone()));
     {
@@ -389,6 +444,7 @@ fn apply_general(g: &appearance::GeneralPrefs) {
     appearance::formats::set_from(g);
     crate::language::apply(g);
     crate::tray_wiring::set_keep_running(g.keep_running_on_close);
+    st::set_link_previews(g.link_previews);
 }
 
 fn toggles(rows: Vec<st::ToggleRow>) -> ModelRc<SToggle> {
@@ -444,6 +500,27 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_system_time_zone(s(iana_time_zone::get_timezone().unwrap_or_default()));
     g.set_startup(toggles(st::startup_rows(gp)));
     g.set_check_updates(gp.check_updates);
+    g.set_banner_photo(gp.banner_photo);
+    g.set_banner_actions(gp.banner_actions);
+    g.set_check_spelling(gp.check_spelling);
+    if gp.check_spelling {
+        crate::spell::ensure_loaded(w);
+    }
+    show_focus(w, crate::backend::quiet::focus_until(gp));
+    let q = &gp.quiet_hours;
+    g.set_quiet_on(q.enabled);
+    g.set_quiet_days(model(q.days.to_vec()));
+    g.set_quiet_start(s(teams_proto::user_settings::format_clock(q.start_min)));
+    g.set_quiet_end(s(teams_proto::user_settings::format_clock(q.end_min)));
+    g.set_focus_duration(s(focus_slug(gp.focus_duration)));
+    g.set_keywords(model(
+        gp.keyword_alerts.iter().map(|k| s(k.as_str())).collect(),
+    ));
+    g.set_link_previews(gp.link_previews);
+    g.set_open_chat_at(s(match c.open_chat_at {
+        OpenChatAt::FirstUnread => "last-read",
+        OpenChatAt::Newest => "newest",
+    }));
 
     let x = &l.a11y;
     g.set_high_contrast(s(st::switch_slug(x.high_contrast)));
@@ -454,7 +531,11 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_mic(s(l.devices.microphone.clone().unwrap_or_default()));
     g.set_speaker(s(l.devices.speaker.clone().unwrap_or_default()));
     g.set_camera(s(l.devices.camera.clone().unwrap_or_default()));
+    g.set_noise_suppression(l.devices.noise_suppression);
+    g.set_echo_cancellation(l.devices.echo_cancellation);
     g.set_open_files(s(l.files.open_office_in.slug()));
+    g.set_call_feedback(s(l.calls.ask_feedback.slug()));
+    g.set_ringtone(s(l.calls.ringtone.slug()));
     push_devices(w, c);
     push_perms(w, c);
 }
@@ -539,6 +620,20 @@ fn push_server(w: &AppWindow, c: &Ctl) {
             .collect(),
     ));
     g.set_paused(n.is_some_and(|n| n.paused_until().is_some()));
+    g.set_pause_until(s(n
+        .and_then(|n| n.paused_until())
+        .and_then(teams_proto::time::parse_iso_ms)
+        .and_then(appearance::formats::local)
+        .map(|t| {
+            format!(
+                "Paused until {} {}",
+                t.format(appearance::formats::date_pattern(false)),
+                t.format(appearance::formats::time_pattern())
+            )
+        })
+        .unwrap_or_default()));
+    g.set_notify_sounds(toggles(st::sound_rows(n)));
+    g.set_meeting_chat(s(st::meeting_chat_slug(n)));
     let status = match d {
         None => "Reading your Teams settings…".to_string(),
         Some(d) if d.offline => "Offline: your Teams settings were not read.".to_string(),
@@ -601,6 +696,16 @@ fn push_profile(w: &AppWindow, c: &Ctl) {
     g.set_me_email(s(email));
     g.set_me_status(s(d.and_then(|d| d.me_status.clone()).unwrap_or_default()));
     g.set_me_presence(s(d.and_then(|d| d.me_presence.clone()).unwrap_or_default()));
+    g.set_me_work_location(s(d
+        .and_then(|d| d.me_work_location.as_deref())
+        .map(
+            |w| match ::calendar::WorkLocation::from_value(&serde_json::json!(w)) {
+                ::calendar::WorkLocation::Office => "office",
+                ::calendar::WorkLocation::Remote => "remote",
+                ::calendar::WorkLocation::Unset => "",
+            },
+        )
+        .unwrap_or_default()));
     g.set_me_initials(w.get_me_initials());
 }
 
@@ -636,6 +741,21 @@ fn push_accounts(w: &AppWindow, c: &Ctl) {
 }
 
 impl UiHandle {
+    /// A message from the engine for the Settings window and the profile menu.
+    pub fn settings_notice(&self, text: String) {
+        self.run(move |w| notice(&w, text));
+    }
+
+    /// My profile photo (`None`: none), for the top bar and the profile menu.
+    pub fn settings_photo(&self, photo: Option<crate::data::Pixels>) {
+        self.run(move |w| {
+            let (image, has) = super::img(&photo);
+            let g = w.global::<SettingsStore>();
+            g.set_me_photo(image);
+            g.set_me_has_photo(has);
+        });
+    }
+
     /// "Refresh license and restart" finished in the engine: restart, or say why not.
     pub fn settings_license(&self, r: Result<(), String>) {
         self.run(move |w| license_done(&w, r));
@@ -658,6 +778,18 @@ fn notice(w: &AppWindow, text: impl Into<SharedString>) {
 }
 
 /// Records a Teams write that kelma only plans, and shows it.
+/// Sends a Teams settings change through the engine (allowed on the user's own account since
+/// 2026-11-19); without an engine (tests, the window alone) it stays a dry run.
+fn write_or_plan(w: &AppWindow, c: &mut Ctl, req: teams_proto::user_settings::PlannedRequest) {
+    let Some(tx) = c.tx.clone() else {
+        dry_run(w, c, req);
+        return;
+    };
+    tracing::info!(request = %st::dry_run_text(&req).lines().next().unwrap_or_default(), "settings: sending to Teams");
+    let _ = tx.send(Cmd::Settings(SettingsCmd::Apply(req)));
+    notice(w, "Saving to Teams…");
+}
+
 fn dry_run(w: &AppWindow, c: &mut Ctl, req: teams_proto::user_settings::PlannedRequest) {
     let text = st::dry_run_text(&req);
     tracing::info!(request = %text, "settings: dry run, not sent to Teams");
@@ -960,6 +1092,34 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             saved(w, r);
         }
         // --- Notifications (Teams: dry run) ---
+        "notify-sound" | "meeting-chat" => {
+            let mut c = shared.borrow_mut();
+            let Some((base, current)) = with_server_note(&c) else {
+                notice(
+                    w,
+                    "Your Teams settings were not read, so nothing can be changed.",
+                );
+                push_server(w, &c);
+                return;
+            };
+            let req = if name == "notify-sound" {
+                let Some(field) = SoundField::from_slug(parts[0]) else {
+                    return;
+                };
+                st::dry_run_sound(
+                    &base,
+                    &current,
+                    field,
+                    bit(parts.get(1).copied().unwrap_or("")),
+                )
+            } else {
+                let Some(mode) = MeetingChatMode::from_slug(arg) else {
+                    return;
+                };
+                st::dry_run_meeting_chat(&base, &current, mode)
+            };
+            write_or_plan(w, &mut c, req);
+        }
         "notify" | "pause" => {
             let mut c = shared.borrow_mut();
             let Some((base, current)) = with_server_note(&c) else {
@@ -978,20 +1138,35 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 };
                 st::dry_run_notify(&base, &current, kind, delivery)
             } else {
-                let until = bit(arg).then(|| {
-                    (chrono::Utc::now() + chrono::Duration::days(1))
-                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-                        .to_string()
-                });
+                // `off`, `1h`, `2h`, `tomorrow` or `custom` U+001F text. The first switch only
+                // knew 0 and 1: 1 meant a day.
+                let (choice, custom) = match parts[0] {
+                    "0" | "" => ("off", ""),
+                    "1" => ("tomorrow", ""),
+                    c => (c, parts.get(1).copied().unwrap_or("")),
+                };
+                let until = if choice == "off" {
+                    None
+                } else {
+                    match expiry::expiry_iso(choice, custom) {
+                        Ok(t) => t,
+                        Err(why) => {
+                            notice(w, why);
+                            push_server(w, &c);
+                            return;
+                        }
+                    }
+                };
+                g.set_pause_custom_open(false);
                 st::dry_run_pause(&base, &current, until)
             };
-            dry_run(w, &mut c, req);
+            write_or_plan(w, &mut c, req);
         }
         "test-notification" => {
             (shared.borrow().env.hooks.test_notification)();
             notice(w, "Sent a test notification to your desktop.");
         }
-        // --- Privacy (Teams: dry run) ---
+        // --- Privacy (Teams; a dry run without an engine) ---
         "privacy" | "unblock" | "priority-remove" => {
             let mut c = shared.borrow_mut();
             let Some(d) = c.server.as_ref().filter(|d| d.privacy.is_some()) else {
@@ -1013,7 +1188,7 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 "unblock" => st::dry_run_remove(&d.middle_tier, ContactList::Blocked, arg),
                 _ => st::dry_run_remove(&d.middle_tier, ContactList::Priority, arg),
             };
-            dry_run(w, &mut c, req);
+            write_or_plan(w, &mut c, req);
         }
         // --- Devices (local) ---
         "speaker" | "mic" | "camera" => {
@@ -1028,6 +1203,17 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             if name == "mic" && c.mic.is_some() {
                 stop_mic(w, &mut c);
             }
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "noise-suppression" | "echo-cancellation" => {
+            let mut c = shared.borrow_mut();
+            if name == "noise-suppression" {
+                c.local.devices.noise_suppression = bit(arg);
+            } else {
+                c.local.devices.echo_cancellation = bit(arg);
+            }
+            let r = c.local.save_devices();
             push_local(w, &c);
             saved(w, r);
         }
@@ -1064,6 +1250,25 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             } else {
                 stop_mic(w, &mut c);
             }
+        }
+        "call-feedback" => {
+            let mut c = shared.borrow_mut();
+            c.local.calls.ask_feedback = Ask::from_slug(arg).unwrap_or_default();
+            let r = c.local.save_calls();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "ringtone" => {
+            let mut c = shared.borrow_mut();
+            c.local.calls.ringtone = RingtoneChoice::from_slug(arg).unwrap_or_default();
+            let r = c.local.save_calls();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "ringtone-preview" => {
+            let _choice = RingtoneChoice::from_slug(arg).unwrap_or_default();
+            #[cfg(feature = "calls")]
+            crate::backend::call_direct::preview_ringtone(_choice);
         }
         // --- Files and app permissions (local) ---
         "open-files" => {
@@ -1115,6 +1320,92 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             push_accounts(w, &c);
         }
         // --- Updates (opt-in; local) ---
+        "banner-photo" | "banner-actions" => {
+            let mut c = shared.borrow_mut();
+            if name == "banner-photo" {
+                c.local.general.banner_photo = bit(arg);
+            } else {
+                c.local.general.banner_actions = bit(arg);
+            }
+            let r = c.local.save_general();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        // --- Quiet hours, Focus mode and keyword alerts (local; see backend/quiet.rs) ---
+        "quiet-on" | "quiet-day" | "quiet-start" | "quiet-end" => {
+            let mut c = shared.borrow_mut();
+            let q = &mut c.local.general.quiet_hours;
+            match name {
+                "quiet-on" => q.enabled = bit(arg),
+                "quiet-day" => {
+                    if let Some(d) = arg.parse::<usize>().ok().and_then(|i| q.days.get_mut(i)) {
+                        *d = !*d;
+                    }
+                }
+                _ => match teams_proto::user_settings::parse_clock(arg.trim()) {
+                    Some(m) if name == "quiet-start" => q.start_min = m,
+                    Some(m) => q.end_min = m,
+                    None => {
+                        push_local(w, &c);
+                        notice(w, "Write the time like 22:00.");
+                        return;
+                    }
+                },
+            }
+            let r = c.local.save_general();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "focus" => {
+            let mut c = shared.borrow_mut();
+            let now = chrono::Local::now();
+            let until = bit(arg).then(|| {
+                crate::backend::quiet::focus_end(
+                    c.local.general.focus_duration,
+                    now.naive_local(),
+                    now.timestamp_millis(),
+                )
+            });
+            crate::backend::quiet::set_focus(until);
+            c.local.general.focus_until_ms = until;
+            let r = c.local.save_general();
+            push_local(w, &c);
+            crate::tray_wiring::apply_focus(w, until);
+            saved(w, r);
+        }
+        "focus-duration" => {
+            use appearance::general::FocusDuration as D;
+            let Some(d) = [D::Hour1, D::Hour2, D::Tomorrow, D::Manual]
+                .into_iter()
+                .find(|d| focus_slug(*d) == arg)
+            else {
+                return;
+            };
+            let mut c = shared.borrow_mut();
+            c.local.general.focus_duration = d;
+            let r = c.local.save_general();
+            push_local(w, &c);
+            saved(w, r);
+        }
+        "keyword-add" | "keyword-remove" => {
+            let mut c = shared.borrow_mut();
+            let words = &mut c.local.general.keyword_alerts;
+            let word = arg.split_whitespace().collect::<Vec<_>>().join(" ");
+            if name == "keyword-add" {
+                let known = words.iter().any(|k| {
+                    crate::backend::quiet::normalise(k) == crate::backend::quiet::normalise(&word)
+                });
+                if word.is_empty() || known {
+                    return;
+                }
+                words.push(word);
+            } else {
+                words.retain(|k| *k != word);
+            }
+            let r = c.local.save_general();
+            push_local(w, &c);
+            saved(w, r);
+        }
         "check-updates" => {
             let mut c = shared.borrow_mut();
             c.local.general.check_updates = bit(arg);
@@ -1126,6 +1417,13 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 g.set_update_status(s(""));
                 g.set_update_available(false);
             }
+            saved(w, r);
+        }
+        "check-spelling" => {
+            let mut c = shared.borrow_mut();
+            c.local.general.check_spelling = bit(arg);
+            let r = c.local.save_general();
+            push_local(w, &c);
             saved(w, r);
         }
         "check-now" => check_updates(w, &mut shared.borrow_mut(), true),
@@ -1188,6 +1486,100 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 Err(e) => g.set_accounts_status(s(format!("Could not remove the account: {e}"))),
             }
             push_accounts(w, &c);
+        }
+        // --- Profile menu: my status and work location (sent to Teams) ---
+        "status" | "work-location" | "status-note" | "photo-change" | "photo-remove" => {
+            let c = shared.borrow();
+            let Some(tx) = &c.tx else {
+                notice(w, "Not signed in, so your profile can't change.");
+                return;
+            };
+            let cmd = match name {
+                // An empty status resets it; a forced one ends after "Reset status after".
+                "status" => {
+                    let until = if arg.is_empty() {
+                        Ok(None)
+                    } else {
+                        expiry::expiry_iso(&g.get_status_duration(), &g.get_status_custom())
+                    };
+                    match until {
+                        Ok(until) => SettingsCmd::SetStatus(arg.to_string(), until),
+                        Err(why) => {
+                            notice(w, why);
+                            return;
+                        }
+                    }
+                }
+                "status-note" => {
+                    let until = if arg.trim().is_empty() {
+                        Ok(None)
+                    } else {
+                        expiry::expiry_iso(&g.get_note_clear_after(), "")
+                    };
+                    match until {
+                        Ok(until) => SettingsCmd::SetStatusNote(
+                            arg.to_string(),
+                            until,
+                            g.get_note_show_when_messaged(),
+                        ),
+                        Err(why) => {
+                            notice(w, why);
+                            return;
+                        }
+                    }
+                }
+                "photo-change" => SettingsCmd::ChangePhoto,
+                "photo-remove" => SettingsCmd::RemovePhoto,
+                _ => SettingsCmd::SetWorkLocation(arg.to_string()),
+            };
+            let _ = tx.send(Cmd::Settings(cmd));
+            // The photo answers with its own notice; the status options close.
+            if !name.starts_with("photo") {
+                g.set_status_open(false);
+            }
+        }
+        // --- Chats (local, and where a chat opens: kept by the engine) ---
+        "open-chat-at" => {
+            let mut c = shared.borrow_mut();
+            let at = if arg == "newest" {
+                OpenChatAt::Newest
+            } else {
+                OpenChatAt::FirstUnread
+            };
+            c.open_chat_at = at;
+            if let Some(tx) = &c.tx {
+                let _ = tx.send(Cmd::Settings(SettingsCmd::SetOpenChatAt(at)));
+            }
+            push_local(w, &c);
+            notice(w, "Saved.");
+        }
+        "link-previews" => {
+            let mut c = shared.borrow_mut();
+            c.local.general.link_previews = bit(arg);
+            let r = c.local.save_general();
+            if c.env.apply_globals {
+                apply_general(&c.local.general);
+            }
+            if let Some(tx) = &c.tx {
+                // Messages already drawn keep their cards until the engine draws them again.
+                let _ = tx.send(Cmd::Settings(SettingsCmd::Redraw));
+            }
+            push_local(w, &c);
+            saved(w, r);
+        }
+        // The top bar menu's "Check for updates": the check is opt-in, so with the switch off it
+        // only opens About, where the switch is.
+        "check-updates-menu" => {
+            let on = shared.borrow().local.general.check_updates;
+            g.invoke_show(s("about"));
+            if on {
+                check_updates(w, &mut shared.borrow_mut(), true);
+            } else {
+                notice(
+                    w,
+                    "Update checks are off. Turn on \"Check for updates\" to let kelma ask GitHub for the latest release.",
+                );
+            }
         }
         "refresh-license" => {
             let c = shared.borrow();

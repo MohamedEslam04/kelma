@@ -68,6 +68,11 @@ export struct CalPeek {
     can-cancel: bool,
     can-delete: bool,
     has-attendees: bool,
+    // Browser pages: the meeting's notes and recap when the event names them, and the
+    // organizer's meeting options. Empty when there is none.
+    notes-url: string,
+    recap-url: string,
+    options-url: string,
 }
 export struct CalAttendeeRow { name: string, email: string, response: string, kind: string }
 export struct CalAttachmentRow { name: string, size: string }
@@ -96,7 +101,7 @@ export struct CalRoom { name: string, email: string, capacity: string, place: st
 
 export global CalStore {
     in property <string> title;
-    in property <string> view-kind: "workweek"; // day | workweek | week | month
+    in property <string> view-kind: "workweek"; // day | workweek | week | month | split
     in property <int> day-count: 1;
     in property <int> scale: 30;
     in property <[CalDay]> days;

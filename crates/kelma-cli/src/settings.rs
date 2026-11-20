@@ -38,13 +38,13 @@ pub fn plan_set(
     middle_tier: &str,
     args: &[String],
 ) -> Result<PlannedRequest> {
-    if !args.iter().any(|a| a == "--dry-run") {
-        bail!("settings set only prints the request: add --dry-run (writes are not enabled)");
+    if !args.iter().any(|a| a == "--dry-run" || a == "--apply") {
+        bail!("settings set needs --dry-run (print the request) or --apply (send it)");
     }
     let rest: Vec<&str> = args
         .iter()
         .map(String::as_str)
-        .filter(|a| *a != "--dry-run")
+        .filter(|a| *a != "--dry-run" && *a != "--apply")
         .collect();
     let mut n = NotificationSettings::from_properties(props);
     let contact = |list, change| -> Result<PlannedRequest> {
@@ -261,7 +261,16 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
                 &client.middle_tier().await,
                 &args[1..],
             )?;
-            println!("{}", req.dry_run());
+            if args.iter().any(|a| a == "--apply") {
+                client.send_planned(&req).await?;
+                println!(
+                    "sent {} {}",
+                    req.method,
+                    req.url.split('?').next().unwrap_or_default()
+                );
+            } else {
+                println!("{}", req.dry_run());
+            }
         }
         _ => bail!("{USAGE}"),
     }

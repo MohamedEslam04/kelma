@@ -1,4 +1,5 @@
-// Planner and To Do (read only): navigation, a task list and a board.
+// Planner and To Do: navigation, a task list and a board. A task can be completed, edited and
+// deleted from the list; New task adds one to the open To Do list or plan.
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconButton } from "widgets.slint";
@@ -7,13 +8,20 @@ import { KitButton, KitNavRow, KitNavHeader, KitBadge, KitNote } from "apps_kit.
 
 component TaskCheck inherits Rectangle {
     in property <bool> done;
+    in property <string> label;
+    callback toggled();
     width: 18px;
     height: 18px;
     border-radius: 9px;
     border-width: 1.5px;
     border-color: root.done ? #6bd69b : Theme.fg-subtle;
     background: root.done ? #1d3a2a : transparent;
+    accessible-role: checkbox;
+    accessible-label: root.label;
+    accessible-checked: root.done;
+    accessible-action-default => { root.toggled(); }
     Text { text: root.done ? "✓" : ""; color: #6bd69b; font-size: 11px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
 }
 
 component TaskRowView inherits Rectangle {
@@ -29,7 +37,12 @@ component TaskRowView inherits Rectangle {
         padding-left: 12px;
         padding-right: 12px;
         spacing: 12px;
-        TaskCheck { y: 17px; done: root.t.done; }
+        TaskCheck {
+            y: 17px;
+            done: root.t.done;
+            label: root.t.done ? "Mark " + root.t.title + " as not completed" : "Complete " + root.t.title;
+            toggled => { TasksStore.command("task-toggle", root.t.id); }
+        }
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;
@@ -38,6 +51,8 @@ component TaskRowView inherits Rectangle {
             Text { text: root.t.subtitle + (root.t.subtitle != "" && root.t.meta != "" ? " · " : "") + root.t.meta; color: root.t.subtitle.ends-with("(overdue)") ? #ff8a8f : Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
         }
         KitBadge { y: 16px; text: root.t.badge; tone: root.t.tone; }
+        IconButton { y: 12px; size: 28px; icon: @image-url("icons/edit.svg"); tooltip: "Edit " + root.t.title; clicked => { TasksStore.command("task-edit", root.t.id); } }
+        IconButton { y: 12px; size: 28px; icon: @image-url("icons/trash.svg"); tooltip: "Delete " + root.t.title; clicked => { TasksStore.command("task-delete", root.t.id); } }
     }
 }
 
@@ -93,6 +108,7 @@ export component TasksView inherits Rectangle {
                     padding-right: 16px;
                     spacing: 8px;
                     Text { text: TasksStore.title; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    KitButton { y: 12px; label: "New task"; primary: true; enabled: TasksStore.can-add; clicked => { TasksStore.command("task-new", ""); } }
                     KitButton { y: 12px; label: "List"; active: TasksStore.mode == "list"; clicked => { TasksStore.command("tasks-mode", "list"); } }
                     KitButton { y: 12px; label: "Board"; active: TasksStore.mode == "board"; enabled: TasksStore.can-board; clicked => { TasksStore.command("tasks-mode", "board"); } }
                     IconButton { y: 12px; icon: @image-url("icons/sync.svg"); tooltip: "Refresh tasks"; clicked => { TasksStore.command("tasks-refresh", ""); } }

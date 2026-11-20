@@ -33,18 +33,46 @@ pub struct AudioProcessor {
     stream_delay_ms: u32,
 }
 
-impl AudioProcessor {
-    pub fn new() -> Self {
-        let config = Config {
+/// Which parts of the processing run. Gain control and the high-pass filter always do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessingOptions {
+    pub echo_cancellation: bool,
+    pub noise_suppression: bool,
+}
+
+impl Default for ProcessingOptions {
+    fn default() -> Self {
+        ProcessingOptions {
+            echo_cancellation: true,
+            noise_suppression: true,
+        }
+    }
+}
+
+impl ProcessingOptions {
+    /// The sonora configuration for these options.
+    pub fn config(self) -> Config {
+        Config {
             high_pass_filter: Some(HighPassFilter::default()),
-            echo_canceller: Some(EchoCanceller::default()),
-            noise_suppression: Some(NoiseSuppression::default()),
+            echo_canceller: self.echo_cancellation.then(EchoCanceller::default),
+            noise_suppression: self.noise_suppression.then(NoiseSuppression::default),
             gain_controller2: Some(GainController2 {
                 adaptive_digital: Some(AdaptiveDigital::default()),
                 ..Default::default()
             }),
             ..Default::default()
-        };
+        }
+    }
+}
+
+impl AudioProcessor {
+    /// Echo cancellation, noise suppression and gain control, all on.
+    pub fn new() -> Self {
+        Self::with_options(ProcessingOptions::default())
+    }
+
+    pub fn with_options(options: ProcessingOptions) -> Self {
+        let config = options.config();
         let stream = StreamConfig::new(SAMPLE_RATE, 1);
         let mut processor = Self {
             apm: AudioProcessing::builder()

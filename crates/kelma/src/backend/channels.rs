@@ -220,7 +220,12 @@ impl Engine {
             .filter(|r| !r.message_type.starts_with("Control/"))
             .collect();
         let mut posts = Vec::with_capacity(roots.len());
-        for (root, data) in roots.iter().zip(out) {
+        // Thread activity (renames, settings, archiving) is not a post: no card, no Reply.
+        for (root, data) in roots
+            .iter()
+            .zip(out)
+            .filter(|(r, _)| !r.message_type.starts_with("ThreadActivity/"))
+        {
             let (replies, outbox) = {
                 let st = self.store.lock().unwrap();
                 let replies = st.thread_replies(&root.id, 500).unwrap_or_default();

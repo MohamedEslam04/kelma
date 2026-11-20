@@ -32,6 +32,78 @@ pub struct PeekData {
     pub can_cancel: bool,
     pub can_delete: bool,
     pub has_attendees: bool,
+    /// Where the meeting's notes and recap are, found in the event text (empty when the event
+    /// names none), and the organizer's meeting options page. All open in the browser.
+    pub notes_url: String,
+    pub recap_url: String,
+    pub options_url: String,
+}
+
+/// The web addresses in a text or an HTML body (an `href` or a bare link), in order.
+fn urls_in(text: &str) -> Vec<String> {
+    let text = text.replace("&amp;", "&");
+    let mut out = vec![];
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find("https://") {
+        let tail = &rest[at..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || "\"'<>)]".contains(c))
+            .unwrap_or(tail.len());
+        let url = tail[..end].trim_end_matches(['.', ',', ';']);
+        if url.len() > "https://".len() {
+            out.push(url.to_string());
+        }
+        rest = &tail[end..];
+    }
+    out
+}
+
+fn host_and_path(url: &str) -> (String, String) {
+    let rest = url.strip_prefix("https://").unwrap_or(url);
+    let (host, path) = rest.split_once(['/', '?', '#']).unwrap_or((rest, ""));
+    (host.to_ascii_lowercase(), path.to_ascii_lowercase())
+}
+
+/// The meeting notes and recap links an event's text carries. Notes are a Loop page (a Loop
+/// address, or a `.loop` file on SharePoint); the recap is a Teams address that names a recap.
+/// UNVERIFIED: where Teams puts these links in an event is not documented, so an event that
+/// carries none shows no entry.
+pub fn meeting_links(text: &str) -> (Option<String>, Option<String>) {
+    let (mut notes, mut recap) = (None, None);
+    for url in urls_in(text) {
+        let (host, path) = host_and_path(&url);
+        let loop_host = host == "loop.microsoft.com"
+            || host.ends_with(".loop.microsoft.com")
+            || host == "loop.cloud.microsoft"
+            || host.ends_with(".loop.cloud.microsoft");
+        let teams_host = matches!(
+            host.as_str(),
+            "teams.microsoft.com" | "teams.cloud.microsoft" | "teams.live.com"
+        );
+        let path_only = path.split(['?', '#']).next().unwrap_or("");
+        if notes.is_none()
+            && (loop_host || (host.ends_with(".sharepoint.com") && path_only.ends_with(".loop")))
+        {
+            notes = Some(url);
+        } else if recap.is_none() && teams_host && path.contains("recap") {
+            recap = Some(url);
+        }
+    }
+    (notes, recap)
+}
+
+impl PeekData {
+    /// Fills the notes and recap entries from more event text (the body of the full view),
+    /// keeping what was found already.
+    pub fn add_links_from(&mut self, text: &str) {
+        let (notes, recap) = meeting_links(text);
+        if self.notes_url.is_empty() {
+            self.notes_url = notes.unwrap_or_default();
+        }
+        if self.recap_url.is_empty() {
+            self.recap_url = recap.unwrap_or_default();
+        }
+    }
 }
 
 fn day_label(d: Date) -> String {
@@ -109,7 +181,7 @@ pub fn peek_data(e: &Event, off: Offset) -> PeekData {
     } else {
         &e.organizer_name
     };
-    PeekData {
+    let mut peek = PeekData {
         id: e.id.clone(),
         title: if e.subject.is_empty() {
             "(No title)".into()
@@ -141,7 +213,18 @@ pub fn peek_data(e: &Event, off: Offset) -> PeekData {
         can_delete: (!has_attendees && (organizer || e.response == Response::None))
             || e.is_cancelled,
         has_attendees,
-    }
+        notes_url: String::new(),
+        recap_url: String::new(),
+        // Only the organizer can open the page.
+        options_url: e
+            .join_url
+            .as_deref()
+            .filter(|_| organizer)
+            .and_then(::calendar::meeting_options_url)
+            .unwrap_or_default(),
+    };
+    peek.add_links_from(&e.body_preview);
+    peek
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -860,6 +943,63 @@ mod tests {
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
         event(v)
+    }
+
+    #[test]
+    fn notes_and_recap_links_are_found_in_the_event_text() {
+        let html = r#"<p>Agenda</p><a href="https://contoso.loop.microsoft.com/p/abc?x=1&amp;y=2">Meeting notes</a>
+            See https://teams.microsoft.com/l/meeting/recap/19%3Ameeting_x?ctx=1. Also https://example.com/notes."#;
+        let (notes, recap) = meeting_links(html);
+        assert_eq!(
+            notes.as_deref(),
+            Some("https://contoso.loop.microsoft.com/p/abc?x=1&y=2")
+        );
+        assert_eq!(
+            recap.as_deref(),
+            Some("https://teams.microsoft.com/l/meeting/recap/19%3Ameeting_x?ctx=1"),
+            "a trailing full stop is not part of the link"
+        );
+        let (notes, _) = meeting_links("https://contoso.sharepoint.com/:fl:/g/Notes.loop?e=1");
+        assert!(
+            notes.is_some(),
+            "a .loop file on SharePoint is a notes page"
+        );
+        assert_eq!(
+            meeting_links("no links, https://example.com/recap"),
+            (None, None)
+        );
+        assert_eq!(meeting_links(""), (None, None));
+    }
+
+    #[test]
+    fn the_peek_offers_notes_recap_and_options_only_where_they_exist() {
+        let link = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%22Tid%22%3a%22aa-11%22%2c%22Oid%22%3a%22bb-22%22%7d";
+        // Mine (the organizer's): options, and notes from the preview.
+        let mine = event(json!({
+            "responseStatus": {"response": "organizer"},
+            "isOnlineMeeting": true,
+            "onlineMeeting": {"joinUrl": link},
+            "bodyPreview": "Notes: https://contoso.loop.microsoft.com/p/n",
+        }));
+        let p = peek_data(&mine, &utc);
+        assert!(
+            p.options_url.contains("organizerId=bb-22"),
+            "{}",
+            p.options_url
+        );
+        assert_eq!(p.notes_url, "https://contoso.loop.microsoft.com/p/n");
+        assert_eq!(p.recap_url, "");
+        // An invitation: no options page (organizer only), nothing found in its preview.
+        let theirs = invited(json!({"onlineMeeting": {"joinUrl": link}}));
+        let p = peek_data(&theirs, &utc);
+        assert_eq!((p.options_url.as_str(), p.notes_url.as_str()), ("", ""));
+        // The body of the full view adds what the preview did not carry, and keeps the rest.
+        let mut p = peek_data(&mine, &utc);
+        p.add_links_from(
+            "<a href=\"https://teams.microsoft.com/l/recap/x\">Recap</a> https://contoso.loop.microsoft.com/p/other",
+        );
+        assert_eq!(p.recap_url, "https://teams.microsoft.com/l/recap/x");
+        assert_eq!(p.notes_url, "https://contoso.loop.microsoft.com/p/n");
     }
 
     #[test]

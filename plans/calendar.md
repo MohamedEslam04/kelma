@@ -152,7 +152,7 @@ are the same as in `plans/chat.md`.
       `new_event::tests::a_series_goes_out_in_the_windows_zone`).
   - **Tester session.** `kelma-cli calendar tester invite <address> | status | accept-proposal | move | forward <address> | cancel | cleanup`
     runs the meeting checks of C2.1, C2.2 and C2.5 with one consenting tester, one step at a time.
-- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: needs test tenant (waits for the tester session; cancel, forward and moving a meeting mail the attendee; create, move and delete of private appointments pass live, see C2.1). Impact 4, effort 3.
+- [ ] **C2.2 Edit, cancel and other organizer actions.** DEFERRED: needs test tenant (waits for the tester session; moving and forwarding a real meeting pass live with the user's personal account as the attendee; cancel and delete of that meeting wait until C2.5's proposal is in). Impact 4, effort 3.
   - **What.**
     - Edit sends an update.
     - Cancel meeting with a message, for one occurrence or the whole series.
@@ -166,6 +166,11 @@ are the same as in `plans/chat.md`.
     it (snapped to 15 minutes, across days) and dragging its bottom edge resizes it, asking first when it is a
     meeting with attendees. Tested offline end to end. Not run live (cancel and forward never are, per the
     live rules; the ignored `live_form_round_trip` covers create, move and delete of a private appointment).
+  - **Evidence (2026-11-19, live, the user's own accounts).** `kelma-cli calendar tester invite <personal
+    address>` created a Teams meeting (1 attendee, online, join link, start as sent). It arrived in the
+    personal mailbox with the right subject, time and join link; the attendee's Yes came back as `Accepted`.
+    `tester move` moved it 30 minutes (true) and Exchange reset the answer to `NotResponded`; `tester forward`
+    answered OK. The meeting is kept for C2.5.
 - [x] **C2.3 Scheduling assistant ("Scheduler").** Impact 4, effort 3.
   - **What.** A grid of attendees by time slot with busy, tentative and out-of-office shading, each attendee's time zone, suggested times, and room availability.
   - **How.** `POST /me/calendar/getSchedule` and `POST /me/findMeetingTimes`.
@@ -245,6 +250,12 @@ are the same as in `plans/chat.md`.
     (`snoozeReminder`, `dismissReminder`) and have not been run against a live account. Not built: the
     "Meeting started" notification (deferred, see above; it would hook the trouter `Event/Call` message in
     `backend/live.rs`).
+  - **Status (2026-11-19, `feat/calls-page`).** A calendar-driven "started" notification now goes out at a Teams
+    meeting's start time (once, within its first 5 minutes) with Join, Snooze and Dismiss
+    (`reminders::just_started`). The Join banner and that notification skip the meeting that is already running,
+    being joined or on the pre-join screen (`CallManager::is_in_meeting`), and Join opens the pre-join screen
+    titled with the meeting's subject (`reminders::subject_for_link`). Tests: `cargo test -p kelma reminders`.
+    Still open: the chat's "Meeting started" from the trouter `Event/Call` push (the payload is not captured).
 - [ ] **C3.2 Meet now and Join with an ID.** DEFERRED: needs test tenant (Meet now and meetings are never exercised on the work account). Impact 4, effort 2.
   - **What.**
     - Meet now creates an instant meeting with a share link.
@@ -293,14 +304,19 @@ are the same as in `plans/chat.md`.
     with only `second_tz_min` still loads, `the_zone_picker_finds_zones_by_name_or_display_name`,
     `share_roles_are_limited_to_what_the_permission_allows` and the UI test
     `the_share_dialog_offers_only_the_roles_the_permission_allows`.
-- [ ] **C3.4 Work location.** DEFERRED: needs test tenant (work location is never exercised on the work account). Impact 3, effort 2.
+- [ ] **C3.4 Work location.** DEFERRED: needs test tenant (a colleague's pin on their profile card needs a colleague who set one, to compare with Teams; my own pin from the day header and the profile menu passes live, and the card shows a pin when the presence service reports one). Impact 3, effort 2.
   - **What.** A per-day work location pin (Office, Remote, a specific building) in the day header and in the profile menu. Colleagues' locations show in profile cards.
-  - **How.** Discover the endpoint; purple-teams uses `/v1/me/workLocation` on the presence service.
-  - **Status.** UI only, as the endpoint is unverified: a day header opens Office, Remote and Clear, the pin shows
-    in the header, and ⋯ has the same for today. The pin is kept in memory; the call to the presence service
-    is made but never run. DEFERRED: needs test tenant (work location is never exercised on the work account);
-    a refusal leaves a note. The profile menu and colleagues'
-    pins are not built.
+  - **How.** `PUT me/workLocation/` with `{location, expirationTime}` (1 office, 2 remote, 0 clears) on the regional
+    presence service (`regionGtms.presenceUPS`); the pin is read back from `getpresence` (`workLocation`).
+  - **Status.** A day header opens Office, Remote and Clear, the pin shows in the header, and ⋯ has the same for
+    today; a refusal leaves a note. The profile menu's "Set status" has In the office, Remote and Clear location
+    for today (until local midnight) and shows the pin. A profile card reads the person's presence and shows
+    their pin for today ("In the office today", "Working remotely today") under "Today".
+  - **Evidence (2026-11-19, live, the user's own work account):** `kelma-cli calendar worklocation remote` answered
+    and read back Remote (`presence` showed `work location=Remote`), then `worklocation clear` read back Unset, so
+    the pin was set for under a minute and is cleared. Teams documents the work location as shown on the profile
+    card and presence only, with no notification to anyone. The earlier 404 and 401 came from the global presence
+    host; see chat plan 6.4.
 - [x] **C3.5 Calendar in chat.** Impact 3, effort 1.
   - **What.** "Schedule a meeting" from a chat's header pre-fills its members.
   - **Status.** Built: a calendar button in the chat header opens the new-event form in the calendar with the

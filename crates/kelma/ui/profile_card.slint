@@ -13,10 +13,17 @@ export component ProfileCard inherits Rectangle {
     in property <string> work;
     in property <string> location;
     in property <string> local-time;
+    in property <string> presence;
+    in property <string> presence-label;
+    in property <string> work-location;
+    // Opened by hovering a name or photo: it closes once the pointer leaves it (or never comes).
+    in property <bool> hover-mode;
+    callback quick-message(string);
     callback copy-email();
     callback chat(string);
     callback send-email(string);
     callback close();
+    property <bool> entered: false;
 
     width: 320px;
     height: content.preferred-height;
@@ -29,6 +36,8 @@ export component ProfileCard inherits Rectangle {
     accessible-role: groupbox;
     accessible-label: "Profile card";
 
+    hover-area := TouchArea {
+    changed has-hover => { if self.has-hover { root.entered = true; } }
     content := VerticalLayout {
         padding: 16px;
         spacing: 10px;
@@ -39,6 +48,7 @@ export component ProfileCard inherits Rectangle {
                 tone: root.person.color;
                 img: root.person.avatar;
                 has-img: root.person.has-avatar;
+                presence: root.presence;
                 size: 72px;
             }
             VerticalLayout {
@@ -51,6 +61,69 @@ export component ProfileCard inherits Rectangle {
             IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; size: 28px; clicked => { root.close(); } }
         }
 
+        if root.presence-label != "": Rectangle {
+            height: 34px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            HorizontalLayout {
+                padding-left: 10px;
+                spacing: 8px;
+                Rectangle {
+                    width: 12px;
+                    height: 12px;
+                    y: (parent.height - 12px) / 2;
+                    border-radius: 6px;
+                    background: (root.presence == "Available" || root.presence == "AvailableIdle") ? #6bb700
+                        : (root.presence == "Busy" || root.presence == "BusyIdle" || root.presence == "DoNotDisturb") ? #c4314b
+                        : (root.presence == "BeRightBack" || root.presence == "Away") ? #ffaa44 : #8a8886;
+                }
+                card-presence := Text { text: root.presence-label; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; accessible-role: text; accessible-label: "Availability"; accessible-value: self.text; }
+            }
+        }
+        if root.person.kind == "person" && !root.loading: Rectangle {
+            height: 32px;
+            border-radius: 4px;
+            background: Theme.main;
+            border-width: 1px;
+            border-color: quick.has-focus ? Theme.accent : Theme.border;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 4px;
+                spacing: 4px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    quick := TextInput {
+                        width: parent.width;
+                        height: parent.height;
+                        color: Theme.fg;
+                        font-size: 13px * Theme.font-scale;
+                        single-line: true;
+                        vertical-alignment: center;
+                        accessible-role: text-input;
+                        accessible-label: "Send a quick message";
+                        accepted => {
+                            if self.text != "" {
+                                root.quick-message(self.text);
+                                self.text = "";
+                            }
+                        }
+                    }
+                    if quick.text == "": Text { x: 0; text: "Send a quick message"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; vertical-alignment: center; height: parent.height; }
+                }
+                quick-send := IconButton {
+                    icon: @image-url("icons/send.svg");
+                    tooltip: "Send";
+                    size: 28px;
+                    clicked => {
+                        if quick.text != "" {
+                            root.quick-message(quick.text);
+                            quick.text = "";
+                        }
+                    }
+                }
+            }
+        }
         if root.email != "": card-email := Rectangle {
             height: 30px;
             border-radius: 4px;
@@ -81,6 +154,15 @@ export component ProfileCard inherits Rectangle {
                 spacing: 8px;
                 Text { text: "Location"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
                 card-location := Text { text: root.location; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        if root.work-location != "": Rectangle {
+            height: 24px;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Today"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-work-location := Text { text: root.work-location; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; accessible-role: text; accessible-label: "Work location"; accessible-value: self.text; }
             }
         }
         if root.local-time != "": Rectangle {
@@ -116,5 +198,16 @@ export component ProfileCard inherits Rectangle {
             }
             if DirectCallStore.available && root.person.kind == "person" && !root.loading: CallPersonButton { mri: root.person.id; }
         }
+    }
+    }
+    Timer {
+        interval: 400ms;
+        running: root.hover-mode && root.entered && !hover-area.has-hover;
+        triggered => { root.close(); }
+    }
+    Timer {
+        interval: 2500ms;
+        running: root.hover-mode && !root.entered;
+        triggered => { root.close(); }
     }
 }

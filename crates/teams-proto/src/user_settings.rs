@@ -30,11 +30,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 /// A request this module would make, kept as data so callers can print it instead of sending it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannedRequest {
     pub method: Method,
     pub url: String,
     pub body: Option<Value>,
+}
+
+impl Client {
+    /// Sends a planned settings write (the user's own Teams settings).
+    pub async fn send_planned(&self, r: &PlannedRequest) -> Result<Value> {
+        self.json("settings write", r.method.clone(), &r.url, r.body.as_ref())
+            .await
+    }
 }
 
 impl PlannedRequest {

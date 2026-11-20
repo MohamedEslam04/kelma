@@ -1,0 +1,393 @@
+// The top bar's pieces: Back and Forward, the search box with its dropdown (suggestions, recent
+// searches, slash commands) and the "Settings and more" menu. Rust fills `TopBarStore`
+// (`src/ui/topbar.rs`, logic in `src/topbar.rs`); the UI reports what the user did through
+// `command(name, argument)`.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Avatar, Icon } from "widgets.slint";
+import { SettingsStore } from "settings_store.slint";
+import { SFont, ZoomRow } from "settings_widgets.slint";
+
+// One row of the dropdown. `kind`: command | person | chat | channel | search | recent | clear.
+export struct TopRow {
+    kind: string,
+    id: string,
+    title: string,
+    subtitle: string,
+    initials: string,
+    color: color,
+    section: string,
+    insert: string,
+}
+
+export global TopBarStore {
+    // The text of the search box.
+    in-out property <string> input;
+    in-out property <bool> search-open: false;
+    in property <[TopRow]> rows;
+    // The row the arrow keys chose, -1 for none.
+    in-out property <int> selected: -1;
+    in property <bool> can-back: false;
+    in property <bool> can-forward: false;
+    // Where the box is, so the dropdown opens under it.
+    in-out property <length> box-x: 288px;
+    in-out property <length> box-w: 420px;
+    in-out property <bool> more-open: false;
+
+    // input, focus, close, activate, submit, back, forward, visit.
+    callback command(string, string);
+}
+
+// Back or Forward: an arrow that is dimmed when there is nowhere to go.
+component NavButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <angle> turn: 0deg;
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    background: touch.has-hover && root.enabled ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    Icon {
+        source: root.icon;
+        width: 16px;
+        height: 16px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        transform-rotation: root.turn;
+        tint: root.enabled ? Theme.fg-muted : Theme.fg-subtle;
+        opacity: root.enabled ? 1.0 : 0.45;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component NavButtons inherits Rectangle {
+    width: 60px;
+    NavButton {
+        x: 0px;
+        y: 10px;
+        icon: @image-url("icons/back.svg");
+        label: @tr("Go back");
+        enabled: TopBarStore.can-back;
+        clicked => { TopBarStore.command("back", ""); }
+    }
+    NavButton {
+        x: 32px;
+        y: 10px;
+        icon: @image-url("icons/chevron-right.svg");
+        label: @tr("Go forward");
+        enabled: TopBarStore.can-forward;
+        clicked => { TopBarStore.command("forward", ""); }
+    }
+}
+
+// The search box. Typing filters the chat list as before and opens the dropdown; Enter searches,
+// or runs a command that starts with "/".
+export component TopSearch inherits Rectangle {
+    public function focus-input() { input.focus(); }
+    // Puts the cursor in the box with a "/" typed, so the command list opens (Ctrl+/).
+    public function start-command() {
+        input.focus();
+        TopBarStore.input = "/";
+        TopBarStore.command("input", "/");
+    }
+    height: 32px;
+    y: 8px;
+    min-width: 180px;
+    max-width: 640px;
+    horizontal-stretch: 2;
+    border-radius: 4px;
+    background: input.has-focus ? Theme.sidebar : Theme.surface;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    changed width => { TopBarStore.box-x = self.absolute-position.x; TopBarStore.box-w = self.width; }
+    scope := FocusScope {
+        capture-key-pressed(event) => {
+            if event.text == Key.DownArrow && TopBarStore.search-open && TopBarStore.rows.length > 0 {
+                TopBarStore.selected = min(TopBarStore.selected + 1, TopBarStore.rows.length - 1);
+                return accept;
+            }
+            if event.text == Key.UpArrow && TopBarStore.search-open && TopBarStore.rows.length > 0 {
+                TopBarStore.selected = max(TopBarStore.selected - 1, -1);
+                return accept;
+            }
+            if event.text == Key.Escape && TopBarStore.search-open {
+                TopBarStore.command("close", "");
+                return accept;
+            }
+            if event.text == Key.Return {
+                if TopBarStore.search-open && TopBarStore.selected >= 0 && TopBarStore.selected < TopBarStore.rows.length {
+                    TopBarStore.command("activate", "" + TopBarStore.selected);
+                } else {
+                    TopBarStore.command("submit", input.text);
+                }
+                return accept;
+            }
+            reject
+        }
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 8px;
+            Icon { source: @image-url("icons/search.svg"); width: 16px; height: 16px; y: 8px; }
+            input := TextInput {
+                text <=> TopBarStore.input;
+                color: Theme.fg;
+                font-size: 13px * Theme.font-scale;
+                vertical-alignment: center;
+                single-line: true;
+                accessible-role: text-input;
+                accessible-label: @tr("Search");
+                edited => { TopBarStore.command("input", self.text); }
+                changed has-focus => {
+                    if self.has-focus {
+                        TopBarStore.box-x = root.absolute-position.x;
+                        TopBarStore.box-w = root.width;
+                        TopBarStore.command("focus", self.text);
+                    }
+                }
+            }
+        }
+    }
+    if input.text == "": Text {
+        x: 36px;
+        text: @tr("Search, or type / for commands");
+        color: Theme.fg-subtle;
+        font-size: 13px * Theme.font-scale;
+        vertical-alignment: center;
+        overflow: elide;
+        width: parent.width - 46px;
+    }
+}
+
+// One row of the dropdown.
+component DropRow inherits Rectangle {
+    in property <TopRow> data;
+    in property <bool> chosen;
+    callback clicked();
+    property <length> head: root.data.section != "" ? 24px : 0px;
+    height: root.head + 36px;
+    VerticalLayout {
+        if root.data.section != "": HorizontalLayout {
+            height: 24px;
+            padding-left: 12px;
+            Text {
+                text: root.data.section;
+                color: Theme.fg-muted;
+                font-size: 11px * Theme.font-scale;
+                font-weight: 700;
+                vertical-alignment: bottom;
+                horizontal-alignment: Theme.start-align;
+            }
+        }
+        Rectangle {
+            height: 36px;
+            border-radius: 4px;
+            background: root.chosen || touch.has-hover ? Theme.surface-hover : transparent;
+            accessible-role: list-item;
+            accessible-label: root.data.title;
+            accessible-description: root.data.subtitle;
+            accessible-action-default => { root.clicked(); }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
+                if root.data.kind == "person" || root.data.kind == "chat" || root.data.kind == "channel": Avatar {
+                    y: 6px;
+                    size: 24px;
+                    initials: root.data.initials;
+                    tone: root.data.color;
+                }
+                if root.data.kind == "recent" || root.data.kind == "search": Icon {
+                    y: 10px;
+                    width: 16px;
+                    height: 16px;
+                    source: root.data.kind == "recent" ? @image-url("icons/history.svg") : @image-url("icons/search.svg");
+                }
+                if root.data.kind == "command": Text {
+                    text: root.data.title;
+                    color: Theme.mention;
+                    font-size: 13px * Theme.font-scale;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 0;
+                    max-width: 200px;
+                }
+                if root.data.kind != "command": Text {
+                    text: root.data.title;
+                    color: root.data.kind == "clear" ? Theme.accent : Theme.fg;
+                    font-size: 13px * Theme.font-scale;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.data.subtitle;
+                    color: Theme.fg-subtle;
+                    font-size: 12px * Theme.font-scale;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: root.data.kind == "command" ? 1 : 0;
+                }
+            }
+            touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+        }
+    }
+}
+
+// The list under the search box. Placed by `app.slint` over everything else.
+export component SearchDropdown inherits Rectangle {
+    property <length> shown-height: min(420px, col.preferred-height + 8px);
+    property <int> chosen: TopBarStore.selected;
+    // Keeps the row the arrow keys chose in view.
+    changed chosen => {
+        if self.chosen >= 0 {
+            // Every row is 36px, the first also carries its group's heading.
+            root.top-of-chosen = self.chosen * 36px + (TopBarStore.rows.length > 0 && TopBarStore.rows[0].section != "" ? 24px : 0px);
+            if root.top-of-chosen < -sv.content-y {
+                sv.content-y = -root.top-of-chosen;
+            } else if root.top-of-chosen + 36px > -sv.content-y + sv.height {
+                sv.content-y = -(root.top-of-chosen + 36px - sv.height);
+            }
+        }
+    }
+    property <length> top-of-chosen;
+    width: max(340px, TopBarStore.box-w);
+    height: TopBarStore.rows.length == 0 ? 44px : root.shown-height;
+    border-radius: 8px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 8px;
+    drop-shadow-color: #00000080;
+    accessible-role: list;
+    accessible-label: @tr("Search suggestions");
+    // Keeps clicks on the list from closing it.
+    TouchArea { }
+    if TopBarStore.rows.length == 0: Text {
+        x: 12px;
+        width: parent.width - 24px;
+        height: parent.height;
+        text: @tr("Search chats, people and messages. Type / for commands.");
+        color: Theme.fg-muted;
+        font-size: 12px * Theme.font-scale;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    sv := ScrollView {
+        visible: TopBarStore.rows.length > 0;
+        col := VerticalLayout {
+            padding: 4px;
+            for r[i] in TopBarStore.rows: DropRow {
+                data: r;
+                chosen: TopBarStore.selected == i;
+                clicked => { TopBarStore.command("activate", "" + i); }
+            }
+        }
+    }
+}
+
+// A line of the "Settings and more" menu.
+component MenuItem inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    callback clicked();
+    height: 36px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    HorizontalLayout {
+        padding-left: 12px;
+        spacing: 10px;
+        Icon { source: root.icon; width: 16px; height: 16px; y: 10px; }
+        Text { text: root.label; color: Theme.fg; font-size: SFont.body; vertical-alignment: center; overflow: elide; }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// The "…" button next to the avatar.
+export component MoreButton inherits Rectangle {
+    width: 30px;
+    height: 30px;
+    border-radius: 4px;
+    background: touch.has-hover || TopBarStore.more-open ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: @tr("Settings and more");
+    accessible-action-default => { TopBarStore.more-open = !TopBarStore.more-open; }
+    Icon { source: @image-url("icons/more.svg"); width: 18px; height: 18px; x: 6px; y: 6px; }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { TopBarStore.more-open = !TopBarStore.more-open; }
+    }
+}
+
+// "Settings and more": Settings, Zoom, Keyboard shortcuts, Check for updates, About and Help.
+export component MoreMenu inherits Rectangle {
+    callback show-shortcuts();
+    // Clicking outside closes it.
+    TouchArea { clicked => { TopBarStore.more-open = false; } }
+    menu-keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { TopBarStore.more-open = false; return accept; }
+            reject
+        }
+    }
+    init => { menu-keys.focus(); }
+    Rectangle {
+        x: root.width - self.width - 52px;
+        y: 46px;
+        width: 260px;
+        height: items.preferred-height;
+        border-radius: 8px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000080;
+        accessible-role: groupbox;
+        accessible-label: @tr("Settings and more");
+        TouchArea { }
+        items := VerticalLayout {
+            padding: 6px;
+            spacing: 2px;
+            MenuItem {
+                label: @tr("Settings");
+                icon: @image-url("icons/settings.svg");
+                clicked => { TopBarStore.more-open = false; SettingsStore.show("general"); }
+            }
+            ZoomRow { }
+            MenuItem {
+                label: @tr("Keyboard shortcuts");
+                icon: @image-url("icons/shortcut.svg");
+                clicked => { TopBarStore.more-open = false; root.show-shortcuts(); }
+            }
+            MenuItem {
+                label: @tr("Check for updates");
+                icon: @image-url("icons/sync.svg");
+                clicked => { TopBarStore.more-open = false; SettingsStore.command("check-updates-menu", ""); }
+            }
+            MenuItem {
+                label: @tr("About");
+                icon: @image-url("icons/info.svg");
+                clicked => { TopBarStore.more-open = false; SettingsStore.show("about"); }
+            }
+            MenuItem {
+                label: @tr("Help");
+                icon: @image-url("icons/open.svg");
+                clicked => { TopBarStore.more-open = false; TopBarStore.command("help", ""); }
+            }
+        }
+    }
+}

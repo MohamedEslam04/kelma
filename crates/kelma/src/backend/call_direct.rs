@@ -4,10 +4,18 @@
 //!
 //! Incoming: the manager hands us each `callInvitation`. The toast rings (a generated tone through
 //! cpal) and, when the window is not focused, a desktop notification goes out. Accept builds a
-//! media session from the caller's offer and accepts with our answer (attach first when the
-//! invitation is forked, then ringing, then accept; `NgcClient::accept_invitation`). Decline posts
+//! media session and runs `calling::incoming::answer_invitation`: attach first when the
+//! invitation is forked (asking for the caller's offer when the ring has none, as seen live
+//! 2026-11-19), then ringing, then accept with our answer; or, when no offer comes at all, accept
+//! with our own offer and apply the caller's answer from our `mediaAnswer` callback. Decline posts
 //! to the invitation's rejection link (or to the leg `attach` hands back). The caller cancelling
 //! closes the toast.
+//!
+//! Call waiting: an invitation while a call runs rings too, with a short beep instead of the
+//! ringtone, and the toast offers Hold and accept, End and accept, and Decline. The call in
+//! progress is held (or left) once the new one is answered ([`CallManager::adopt`]); the manager
+//! keeps both, the held one on the call window's "On hold" bar. A third call, while one is on
+//! hold, is ignored (left to ring on the other clients).
 //!
 //! Outgoing: Call in a 1:1 chat's header (or on a profile card) places an audio call with
 //! `place_call`; the ringing screen follows the callbacks of our session until the far end
@@ -18,9 +26,11 @@
 //! and the ringtone and notifications stay silent (`crate::external::suppressed`).
 
 use super::Engine;
-use super::call::{self, CallKind, CallManager};
+use super::call::{self, CallKind, CallManager, CurrentCall};
+use super::ringtone::RingtoneChoice;
 use crate::data::{Pixels, color_for, initials};
 use anyhow::Context;
+use calling::incoming::NoOffer;
 use calling::invitation::{CallEvent, NgcPush, classify};
 use calling::media::MediaSession;
 use calling::ngc_trouter::CallPush;
@@ -212,13 +222,19 @@ pub fn is_direct_chat(id: &str) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallCmd {
-    /// Accept the ringing call; `video` when "Accept with video" was pressed (audio only for now).
+    /// Accept the ringing call; `video` when "Accept with video" was pressed (the camera starts
+    /// once the call runs, with `KELMA_CAMERA=1`).
     Accept {
         video: bool,
     },
+    /// Call waiting: "Hold and accept" (`CurrentCall::Hold`) or "End and accept".
+    AcceptWaiting(CurrentCall),
     Decline,
     /// Call the other person of this 1:1 chat.
     DialChat(String),
+    /// The chat header's "Share screen": call the other person of this 1:1 chat and share once
+    /// connected (the screen and window picker opens).
+    ShareScreen(String),
     /// Call this MRI (profile card).
     DialPerson(String),
     /// Cancel the outgoing call while it rings.
@@ -232,8 +248,11 @@ impl CallCmd {
         Some(match name {
             "accept-video" => CallCmd::Accept { video: true },
             "accept-audio" => CallCmd::Accept { video: false },
+            "hold-accept" => CallCmd::AcceptWaiting(CurrentCall::Hold),
+            "end-accept" => CallCmd::AcceptWaiting(CurrentCall::End),
             "decline" => CallCmd::Decline,
             "dial" if !arg.is_empty() => CallCmd::DialChat(arg.to_owned()),
+            "share-screen" if !arg.is_empty() => CallCmd::ShareScreen(arg.to_owned()),
             "dial-person" if !arg.is_empty() => CallCmd::DialPerson(arg.to_owned()),
             "cancel" => CallCmd::Cancel,
             "close" => CallCmd::Close,
@@ -253,6 +272,8 @@ pub struct CallView {
     pub video: bool,
     pub status: String,
     pub over: bool,
+    /// The call rings while another runs: the toast offers Hold and accept and End and accept.
+    pub waiting: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -264,9 +285,14 @@ struct IncomingCall {
     mri: String,
     name: String,
     video: bool,
+    /// It rang while another call ran (call waiting).
+    waiting: bool,
     state: IncomingState,
     /// `None` for the fake (demo and test) invitation.
     inv: Option<Box<CallInvitation>>,
+    /// Our session (endpoint) id once Accept started: its callbacks go to `events`.
+    session: Option<String>,
+    events: Option<mpsc::UnboundedSender<CallEvent>>,
 }
 
 struct OutgoingCall {
@@ -296,6 +322,14 @@ pub struct Calls {
     inner: Mutex<Inner>,
 }
 
+/// The banner's words for a failed answer: plain text for what the service refused (the raw
+/// answer stays in the log), else the error as it reads.
+fn answer_failure_text(err: &anyhow::Error) -> String {
+    err.chain()
+        .find_map(|e| e.downcast_ref::<calling::Error>())
+        .map_or_else(|| err.to_string(), calling::incoming::answer_error_text)
+}
+
 /// Runs `f` in the background, except in tests (they drive every step themselves) and outside a
 /// runtime.
 fn later(f: impl Future<Output = ()> + Send + 'static) {
@@ -304,6 +338,21 @@ fn later(f: impl Future<Output = ()> + Send + 'static) {
     }
     if let Ok(rt) = tokio::runtime::Handle::try_current() {
         rt.spawn(f);
+    }
+}
+
+/// What Accept does with a ring that carries no offer: `KELMA_CALL_NO_OFFER=fetch|new-offer|
+/// accept-offer|attach-offer` (see `calling::incoming::NoOffer`), `fetch` by default. For trying
+/// the unverified paths live without a rebuild.
+fn no_offer_mode() -> NoOffer {
+    let mode = std::env::var("KELMA_CALL_NO_OFFER").ok();
+    match mode.as_deref().map(NoOffer::parse) {
+        Some(Some(m)) => m,
+        Some(None) => {
+            tracing::warn!("KELMA_CALL_NO_OFFER: unknown mode; using fetch");
+            NoOffer::default()
+        }
+        None => NoOffer::default(),
     }
 }
 
@@ -410,33 +459,20 @@ impl Engine {
         });
     }
 
-    pub(super) async fn direct_call_cmd(self: &Arc<Self>, c: CallCmd) -> anyhow::Result<()> {
+    /// Runs in order with the other call commands (`in_order`): nothing here waits on the network.
+    pub(super) fn direct_call_cmd(self: &Arc<Self>, c: CallCmd) -> anyhow::Result<()> {
         match c {
-            CallCmd::Accept { video } => self.accept_incoming(video),
+            CallCmd::Accept { video } => self.accept_incoming(video, None),
+            CallCmd::AcceptWaiting(current) => self.accept_incoming(false, Some(current)),
             CallCmd::Decline => self.decline_incoming(),
-            CallCmd::DialChat(chat) => {
-                let peer = super::util::one_on_one_members(&chat)
-                    .into_iter()
-                    .find(|m| *m != self.me)
-                    .context("not a 1:1 chat")?;
-                let title = self
-                    .store
-                    .lock()
-                    .unwrap()
-                    .conversation(&chat)
-                    .ok()
-                    .flatten()
-                    .map(|c| c.title)
-                    .filter(|t| !t.is_empty());
-                let name = title.unwrap_or_else(|| self.person_name(&peer));
-                self.dial(peer, name)
-            }
+            CallCmd::DialChat(chat) => self.dial_chat(&chat, false),
+            CallCmd::ShareScreen(chat) => self.dial_chat(&chat, true),
             CallCmd::DialPerson(mri) => {
                 if mri == self.me {
                     anyhow::bail!("You can't call yourself");
                 }
                 let name = self.person_name(&mri);
-                self.dial(mri, name)
+                self.dial(mri, name, false)
             }
             CallCmd::Cancel => {
                 self.cancel_outgoing();
@@ -457,7 +493,7 @@ impl Engine {
     // --- incoming ------------------------------------------------------------------------------
 
     /// A `callInvitation` from the manager. Ignored (left to ring on the other clients) while
-    /// another call rings or connects here.
+    /// another call rings or connects here, or while two calls already run (one on hold).
     pub(crate) fn on_invitation(self: &Arc<Self>, inv: Box<CallInvitation>) -> bool {
         let mri = inv.from.mri.clone();
         let name = inv
@@ -479,9 +515,13 @@ impl Engine {
         call_id: String,
         inv: Option<Box<CallInvitation>>,
     ) -> bool {
+        // Call waiting: a call runs in the call window. Two already (one on hold) is the limit.
+        let waiting = self.calls.in_call();
+        let full = waiting && self.calls.has_held();
         let mut c = self.direct();
         let busy = c.incoming.as_ref().is_some_and(|i| !i.state.is_over())
-            || c.outgoing.as_ref().is_some_and(|o| o.state.is_live());
+            || c.outgoing.as_ref().is_some_and(|o| o.state.is_live())
+            || full;
         if busy {
             tracing::info!("incoming call ignored: another call is in progress");
             return false;
@@ -494,13 +534,22 @@ impl Engine {
             mri: mri.clone(),
             name: name.clone(),
             video,
+            waiting,
             state: IncomingState::Ringing,
             inv,
+            session: None,
+            events: None,
         });
-        c.ringtone = Ringtone::start();
+        // Over a call, a short beep rather than the full ringtone.
+        c.ringtone = if waiting {
+            Ringtone::waiting()
+        } else {
+            Ringtone::start(super::settings::calls_prefs().ringtone)
+        };
         drop(c);
         let mut view = self.call_view(&mri, &name);
         view.video = video;
+        view.waiting = waiting;
         self.ui.call_incoming(view);
         self.notify_call(
             &name,
@@ -532,6 +581,7 @@ impl Engine {
         };
         let mut view = self.call_view(&i.mri, &i.name);
         view.video = i.video;
+        view.waiting = i.waiting;
         if i.state == IncomingState::Accepting {
             view.status = "Connecting…".into();
         }
@@ -583,8 +633,19 @@ impl Engine {
         Some(state)
     }
 
-    fn accept_incoming(self: &Arc<Self>, video: bool) -> anyhow::Result<()> {
-        let (id, inv, name) = {
+    /// Accept. `current`: what happens to the call in progress, if one runs (call waiting); a
+    /// plain Accept over a call holds it, as Teams does.
+    fn accept_incoming(
+        self: &Arc<Self>,
+        video: bool,
+        current: Option<CurrentCall>,
+    ) -> anyhow::Result<()> {
+        call::camera::accept_with_video(video);
+        let current = self
+            .calls
+            .in_call()
+            .then(|| current.unwrap_or(CurrentCall::Hold));
+        let (id, inv, name, mri) = {
             let c = self.direct();
             let Some(i) = c
                 .incoming
@@ -593,16 +654,33 @@ impl Engine {
             else {
                 return Ok(());
             };
-            (i.id, i.inv.clone(), i.name.clone())
+            (i.id, i.inv.clone(), i.name.clone(), i.mri.clone())
         };
         self.incoming_event(id, IncomingEvent::Accept);
         let Some(inv) = inv else {
             // Fake invitation (demo and tests).
             self.direct().log.push(format!(
-                "accept audio{}",
+                "{}accept audio{}",
+                match current {
+                    Some(CurrentCall::Hold) => "hold and ",
+                    Some(CurrentCall::End) => "end and ",
+                    None => "",
+                },
                 if video { " (video asked)" } else { "" }
             ));
             self.incoming_event(id, IncomingEvent::Connected);
+            // Over a call, the fake call joins the call window so both can be seen.
+            if current.is_some() {
+                let chat_id = super::util::one_on_one_chat_id(&self.me, &mri).unwrap_or_default();
+                self.calls.adopt_without_engine(
+                    CallKind::Direct {
+                        peer_name: name,
+                        chat_id,
+                    },
+                    current,
+                );
+                return Ok(());
+            }
             if self.offline.load(Ordering::Relaxed) && !cfg!(test) {
                 self.ui.banner(format!(
                     "Demo: call with {name} accepted. Calls need a signed-in account."
@@ -612,10 +690,10 @@ impl Engine {
         };
         let e = self.clone();
         later(async move {
-            let r = e.accept_live(id, &inv, name).await;
+            let r = e.accept_live(id, &inv, name, current).await;
             if let Err(err) = r {
                 tracing::warn!(%err, "answering a call failed");
-                e.incoming_event(id, IncomingEvent::Failed(err.to_string()));
+                e.incoming_event(id, IncomingEvent::Failed(answer_failure_text(&err)));
             }
         });
         Ok(())
@@ -627,16 +705,18 @@ impl Engine {
         id: u64,
         inv: &CallInvitation,
         name: String,
+        current: Option<CurrentCall>,
     ) -> anyhow::Result<()> {
         let m = manager()?;
         let ngc = m.ngc().await?;
         let surl = m.surl().context("the calling connection is down")?;
-        let s = CallSession::for_invitation(&surl, &self.me, &self.my_name, inv);
-        let offer = inv
-            .offer
-            .as_ref()
-            .context("the call carries no media offer")?
-            .decode()?;
+        let mut s = CallSession::for_invitation(&surl, &self.me, &self.my_name, inv);
+        // Callbacks under our session (the caller's media answer) come to this flow.
+        let (tx, mut events) = mpsc::unbounded_channel();
+        if let Some(i) = self.direct().incoming.as_mut().filter(|i| i.id == id) {
+            i.session = Some(s.callbacks.session_id().to_owned());
+            i.events = Some(tx);
+        }
         let ice =
             match calling::relay::resolve_ice_servers(&self.client, &ngc.endpoints().region, None)
                 .await
@@ -647,23 +727,48 @@ impl Engine {
                     vec![]
                 }
             };
-        let (media, events) = MediaSession::new(ice).await?;
-        let answer = media.accept_offer(&offer).await?;
-        let links = ngc
-            .accept_invitation(&s, inv, &[Modality::Audio], &SdpBlob::ngc(answer))
-            .await?;
+        let (media, media_events) =
+            MediaSession::with_options(ice, call::share::media_options()).await?;
+        let observe = |name: &str, text: &str| call::live::dump_answer(name, text);
+        let links = match calling::incoming::answer_invitation(
+            &ngc,
+            &mut s,
+            inv,
+            &media,
+            &mut events,
+            no_offer_mode(),
+            &observe,
+        )
+        .await
+        {
+            Ok(l) => l,
+            Err(e) => {
+                let _ = media.close().await;
+                return Err(e.into());
+            }
+        };
         // The caller may have given up while we answered.
         if self.incoming_event(id, IncomingEvent::Connected) != Some(IncomingState::Connected) {
             let _ = ngc.hang_up(&s, &links).await;
             let _ = media.close().await;
             return Ok(());
         }
+        // The ring names the 1:1 chat; else it follows from both of us.
+        let chat_id = inv.raw["groupChat"]["threadId"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| super::util::one_on_one_chat_id(&self.me, &inv.from.mri))
+            .unwrap_or_default();
         m.adopt(
             s,
             links,
             media,
-            events,
-            CallKind::Direct { peer_name: name },
+            media_events,
+            CallKind::Direct {
+                peer_name: name,
+                chat_id,
+            },
+            current,
         )
     }
 
@@ -707,6 +812,16 @@ impl Engine {
     pub(crate) fn on_unmatched(self: &Arc<Self>, push: &CallPush) {
         if let NgcPush::Call { session_id, event } = classify(&push.url, &push.body) {
             let c = self.direct();
+            // The call we are answering: it waits for the caller's media answer. An end still
+            // falls through to the cancel check below.
+            if let Some(i) = c
+                .incoming
+                .as_ref()
+                .filter(|i| i.session.as_deref() == Some(session_id.as_str()))
+                && let Some(tx) = &i.events
+            {
+                let _ = tx.send(event.clone());
+            }
             if let Some(o) = c
                 .outgoing
                 .as_ref()
@@ -750,7 +865,26 @@ impl Engine {
 
     // --- outgoing ------------------------------------------------------------------------------
 
-    fn dial(self: &Arc<Self>, mri: String, name: String) -> anyhow::Result<()> {
+    /// Calls the other person of the 1:1 chat `chat`; `share`: share the screen once connected.
+    fn dial_chat(self: &Arc<Self>, chat: &str, share: bool) -> anyhow::Result<()> {
+        let peer = super::util::one_on_one_members(chat)
+            .into_iter()
+            .find(|m| *m != self.me)
+            .context("not a 1:1 chat")?;
+        let title = self
+            .store
+            .lock()
+            .unwrap()
+            .conversation(chat)
+            .ok()
+            .flatten()
+            .map(|c| c.title)
+            .filter(|t| !t.is_empty());
+        let name = title.unwrap_or_else(|| self.person_name(&peer));
+        self.dial(peer, name, share)
+    }
+
+    fn dial(self: &Arc<Self>, mri: String, name: String, share: bool) -> anyhow::Result<()> {
         let mut c = self.direct();
         let busy = c.incoming.as_ref().is_some_and(|i| !i.state.is_over())
             || c.outgoing.as_ref().is_some_and(|o| o.state.is_live());
@@ -774,6 +908,9 @@ impl Engine {
         self.push_outgoing(id);
         if self.offline.load(Ordering::Relaxed) {
             self.direct().log.push(format!("dial {mri}"));
+            if share {
+                self.direct().log.push("share when connected".into());
+            }
             let e = self.clone();
             // Demo: rings, then connects (there is no in-call window without an account).
             later(async move {
@@ -790,7 +927,7 @@ impl Engine {
         }
         let e = self.clone();
         later(async move {
-            if let Err(err) = e.dial_live(id, mri, name, cancel_rx, ev_rx).await {
+            if let Err(err) = e.dial_live(id, mri, name, share, cancel_rx, ev_rx).await {
                 tracing::warn!(%err, "placing a call failed");
                 e.outgoing_event(id, OutgoingEvent::Failed(err.to_string()));
             }
@@ -805,6 +942,7 @@ impl Engine {
         id: u64,
         mri: String,
         name: String,
+        share: bool,
         mut cancel: oneshot::Receiver<()>,
         mut events: mpsc::UnboundedReceiver<CallEvent>,
     ) -> anyhow::Result<()> {
@@ -821,13 +959,15 @@ impl Engine {
                     vec![]
                 }
             };
-        let (media, media_events) = MediaSession::new(ice).await?;
+        let (media, media_events) =
+            MediaSession::with_options(ice, call::share::media_options()).await?;
         let offer = media.create_offer().await?;
         let s = CallSession::new(&surl, &self.me, &self.my_name);
         // Callbacks under our session come to this call from now on.
         if let Some(o) = self.direct().outgoing.as_mut().filter(|o| o.id == id) {
             o.session = Some(s.callbacks.session_id().to_owned());
         }
+        let chat_id = super::util::one_on_one_chat_id(&self.me, &mri).unwrap_or_default();
         let callee = Participant {
             mri,
             display_name: Some(name.clone()),
@@ -892,7 +1032,11 @@ impl Engine {
                     let Some(oe) = outgoing_event(&ev) else { continue };
                     match self.outgoing_event(id, oe) {
                         Some(OutgoingState::Connected) => {
-                            return m.adopt(s, links, media, media_events, CallKind::Direct { peer_name: name });
+                            m.adopt(s, links, media, media_events, CallKind::Direct { peer_name: name, chat_id }, None)?;
+                            if share {
+                                m.share_when_ready();
+                            }
+                            return Ok(());
                         }
                         Some(st) if !st.is_live() => {
                             let _ = media.close().await;
@@ -1044,13 +1188,99 @@ pub fn ring_sample(n: u64) -> i16 {
     (0.2 * 32767.0 * fade * s) as i16
 }
 
+/// The call-waiting beep (a call rings over another): two short 440 Hz beeps every 4 s,
+/// quieter than the ringtone, since it plays over the call.
+const WAIT_CYCLE: u64 = RING_RATE * 4;
+const BEEP: u64 = RING_RATE * 3 / 20;
+const SECOND_BEEP_AT: u64 = RING_RATE / 4;
+
+/// Sample `n` (48 kHz mono) of the call-waiting beep.
+pub fn waiting_sample(n: u64) -> i16 {
+    let t = n % WAIT_CYCLE;
+    let start = if t < BEEP {
+        0
+    } else if (SECOND_BEEP_AT..SECOND_BEEP_AT + BEEP).contains(&t) {
+        SECOND_BEEP_AT
+    } else {
+        return 0;
+    };
+    let i = (t - start) as f64;
+    let fade = (i / 480.0).min((BEEP as f64 - i) / 480.0).min(1.0);
+    let x = 2.0 * std::f64::consts::PI * 440.0 * n as f64 / RING_RATE as f64;
+    (0.12 * 32767.0 * fade * x.sin()) as i16
+}
+
+impl RingtoneChoice {
+    fn sample(self) -> fn(u64) -> i16 {
+        match self {
+            RingtoneChoice::Chime => ring_sample,
+            RingtoneChoice::Soft => soft_sample,
+            RingtoneChoice::Pulse => pulse_sample,
+        }
+    }
+}
+
+/// The "Soft" ringtone: one 800 ms note of 660 Hz with slow fades, every 3 s.
+const SOFT_NOTE: u64 = RING_RATE * 4 / 5;
+
+/// Sample `n` (48 kHz mono) of the soft ringtone.
+pub fn soft_sample(n: u64) -> i16 {
+    let t = n % RING_CYCLE;
+    if t >= SOFT_NOTE {
+        return 0;
+    }
+    let i = t as f64;
+    let fade = (i / 4800.0).min((SOFT_NOTE as f64 - i) / 4800.0).min(1.0);
+    let x = 2.0 * std::f64::consts::PI * 660.0 * n as f64 / RING_RATE as f64;
+    (0.18 * 32767.0 * fade * x.sin()) as i16
+}
+
+/// The "Pulse" ringtone: three 120 ms beeps of 880 Hz, 250 ms apart, every 3 s.
+const PULSE_BEEP: u64 = RING_RATE * 3 / 25;
+const PULSE_GAP: u64 = RING_RATE / 4;
+
+/// Sample `n` (48 kHz mono) of the pulse ringtone.
+pub fn pulse_sample(n: u64) -> i16 {
+    let t = n % RING_CYCLE;
+    let beep = t / PULSE_GAP;
+    let i = t % PULSE_GAP;
+    if beep > 2 || i >= PULSE_BEEP {
+        return 0;
+    }
+    let i = i as f64;
+    let fade = (i / 240.0).min((PULSE_BEEP as f64 - i) / 240.0).min(1.0);
+    let x = 2.0 * std::f64::consts::PI * 880.0 * n as f64 / RING_RATE as f64;
+    (0.18 * 32767.0 * fade * x.sin()) as i16
+}
+
+/// Plays a ringtone for three seconds, for the Settings preview. Silent in tests and demo mode.
+pub(crate) fn preview_ringtone(choice: RingtoneChoice) {
+    if let Some(tone) = Ringtone::start(choice) {
+        let _ = std::thread::Builder::new()
+            .name("kelma-ringtone-preview".into())
+            .spawn(move || {
+                std::thread::sleep(Duration::from_secs(3));
+                drop(tone);
+            });
+    }
+}
+
 /// Plays while it lives. Never plays in tests or demo mode.
 pub(crate) struct Ringtone {
     stop: Arc<AtomicBool>,
 }
 
 impl Ringtone {
-    fn start() -> Option<Ringtone> {
+    fn start(choice: RingtoneChoice) -> Option<Ringtone> {
+        Self::play(choice.sample())
+    }
+
+    /// The call-waiting beep instead of the ringtone.
+    fn waiting() -> Option<Ringtone> {
+        Self::play(waiting_sample)
+    }
+
+    fn play(sample: fn(u64) -> i16) -> Option<Ringtone> {
         if crate::external::suppressed() {
             return None;
         }
@@ -1058,7 +1288,7 @@ impl Ringtone {
         let flag = stop.clone();
         let spawned = std::thread::Builder::new()
             .name("kelma-ringtone".into())
-            .spawn(move || play_ring(&flag));
+            .spawn(move || play_ring(&flag, sample));
         match spawned {
             Ok(_) => Some(Ringtone { stop }),
             Err(err) => {
@@ -1075,7 +1305,7 @@ impl Drop for Ringtone {
     }
 }
 
-fn play_ring(stop: &AtomicBool) {
+fn play_ring(stop: &AtomicBool, sample: fn(u64) -> i16) {
     use calling::audio::FrameSink;
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -1099,7 +1329,7 @@ fn play_ring(stop: &AtomicBool) {
     let mut next = started;
     let mut n = 0u64;
     while !stop.load(Ordering::Relaxed) && started.elapsed() < RING_MAX {
-        let samples: Vec<i16> = (n..n + frame).map(ring_sample).collect();
+        let samples: Vec<i16> = (n..n + frame).map(sample).collect();
         n += frame;
         if rt.block_on(out.write_frame(&samples)).is_err() {
             break;
@@ -1114,6 +1344,30 @@ mod tests {
     use super::*;
     use calling::invitation::EndReason;
     use serde_json::json;
+
+    #[test]
+    fn a_late_answer_reads_as_the_call_having_ended_even_under_context() {
+        let late = calling::Error::Status {
+            op: "attach",
+            status: 412,
+            body: r#"{"operationFailure":{"code":487,"subCode":10021}}"#.into(),
+        };
+        let plain: anyhow::Error = late.into();
+        assert_eq!(
+            answer_failure_text(&plain),
+            "The call ended before you answered."
+        );
+        let wrapped = plain.context("answering the call");
+        assert_eq!(
+            answer_failure_text(&wrapped),
+            "The call ended before you answered.",
+            "found through the context chain"
+        );
+        assert_eq!(
+            answer_failure_text(&anyhow::anyhow!("the calling connection is down")),
+            "the calling connection is down"
+        );
+    }
 
     #[test]
     fn incoming_accept_then_connect() {
@@ -1266,8 +1520,21 @@ mod tests {
         );
         assert_eq!(CallCmd::parse("dial", ""), None);
         assert_eq!(
+            CallCmd::parse("share-screen", "19:a_b@unq.gbl.spaces"),
+            Some(CallCmd::ShareScreen("19:a_b@unq.gbl.spaces".into()))
+        );
+        assert_eq!(CallCmd::parse("share-screen", ""), None);
+        assert_eq!(
             CallCmd::parse("dial-person", "8:orgid:x"),
             Some(CallCmd::DialPerson("8:orgid:x".into()))
+        );
+        assert_eq!(
+            CallCmd::parse("hold-accept", ""),
+            Some(CallCmd::AcceptWaiting(CurrentCall::Hold))
+        );
+        assert_eq!(
+            CallCmd::parse("end-accept", ""),
+            Some(CallCmd::AcceptWaiting(CurrentCall::End))
         );
         assert_eq!(CallCmd::parse("cancel", ""), Some(CallCmd::Cancel));
         assert_eq!(CallCmd::parse("close", ""), Some(CallCmd::Close));
@@ -1300,7 +1567,60 @@ mod tests {
     }
 
     #[test]
+    fn every_ringtone_choice_sounds_repeats_and_stays_quiet() {
+        for choice in RingtoneChoice::ALL {
+            let f = choice.sample();
+            let peak = (0..RING_CYCLE).map(|n| f(n).unsigned_abs()).max().unwrap();
+            assert!(peak > 1000, "{choice:?} is audible: {peak}");
+            assert!(peak < 8000, "{choice:?} is quiet enough: {peak}");
+            assert_eq!(f(0), 0, "{choice:?} starts from silence");
+            assert_eq!(
+                f(RING_RATE / 10),
+                f(RING_CYCLE + RING_RATE / 10),
+                "{choice:?} repeats"
+            );
+            assert_eq!(f(RING_RATE * 2), 0, "{choice:?} rests");
+            assert_eq!(RingtoneChoice::from_slug(choice.slug()), Some(choice));
+        }
+        // The pulse beeps three times, not four.
+        assert_ne!(
+            pulse_sample(PULSE_GAP * 2 + PULSE_BEEP / 2),
+            0,
+            "third beep"
+        );
+        assert_eq!(pulse_sample(PULSE_GAP * 3 + PULSE_BEEP / 2), 0, "no fourth");
+        assert_eq!(RingtoneChoice::from_slug("siren"), None);
+        assert_eq!(RingtoneChoice::default(), RingtoneChoice::Chime);
+    }
+
+    #[test]
     fn tests_never_ring() {
-        assert!(Ringtone::start().is_none());
+        assert!(Ringtone::start(RingtoneChoice::default()).is_none());
+        assert!(Ringtone::waiting().is_none());
+    }
+
+    #[test]
+    fn the_waiting_beep_is_two_short_quiet_beeps_then_a_long_rest() {
+        assert_ne!(waiting_sample(BEEP / 2 + 7), 0, "first beep");
+        assert_ne!(
+            waiting_sample(SECOND_BEEP_AT + BEEP / 2 + 7),
+            0,
+            "second beep"
+        );
+        assert_eq!(waiting_sample(BEEP + 10), 0, "gap");
+        assert_eq!(waiting_sample(RING_RATE), 0, "rest");
+        assert_eq!(waiting_sample(0), 0, "starts from silence");
+        assert_eq!(waiting_sample(77), waiting_sample(WAIT_CYCLE + 77));
+        let peak = (0..WAIT_CYCLE)
+            .map(|n| waiting_sample(n).unsigned_abs())
+            .max();
+        let ring = (0..RING_CYCLE).map(|n| ring_sample(n).unsigned_abs()).max();
+        assert!(
+            peak < ring,
+            "quieter than the ringtone: {peak:?} < {ring:?}"
+        );
+        // Under a second of sound in every four.
+        let loud = (0..WAIT_CYCLE).filter(|n| waiting_sample(*n) != 0).count() as u64;
+        assert!(loud < RING_RATE / 2, "{loud}");
     }
 }

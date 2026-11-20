@@ -115,6 +115,22 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - Store recent emoji and the skin tone in config.
   - **Done when.** UI tests cover search, `:heart` autocomplete and inserting at the cursor.
 
+  - **Evidence (GIFs and named reactions, 2026-11-19).** The composer has a GIF button: trending GIFs, a search box
+    and a three-column grid; a pick is sent as Teams sends a GIF (`<img itemtype="http://schema.skype.com/Giphy">`,
+    `teams_proto::gifs`, search through the middle tier's Giphy extension; live, read only: `kelma-cli gifs happy`
+    returned 27 results). UI test `the_gif_button_shows_trending_gifs_and_a_pick_is_sent`. Reactions Teams sends by
+    their Skype name (`loudlycrying`, `cwl`, `yes`, …) now show as emoji (`markdown::reaction_emoji`, test
+    `named_teams_reactions_become_emoji`). Stickers stay out.
+  - **Evidence (composer gaps, 2026-11-20).** Spell check: misspelled words get a red underline once typing pauses
+    (500 ms) and a right click offers up to five suggestions and "Add to dictionary" (`src/spell.rs`,
+    `ui/spelling.slint`). Slint's TextInput has no spell-check hook, so the words are checked in Rust (`spellbook`,
+    the system's Hunspell English and Arabic dictionaries, none installed means nothing is flagged) and each word's
+    position comes from a hidden, disabled copy of the input whose cursor is moved to the word's ends
+    (`cursor-position-changed`). Settings › General › Writing › "Check spelling" turns it off. Added words are kept in
+    `spelling-words.txt` in the config dir. The composer has one Attach button with "Attach cloud files" and "Upload
+    from this device"; the "+" menu has "Schedule a meeting" (the calendar form with the chat's members) and "Meet now"
+    in chats; the GIF picker has a Stickers tab (Teams' sticker catalogue, see docs/protocol.md); the @ picker lists a
+    channel's team tags. Tests: `cargo test -p kelma --bin kelma spell composer_gaps stickers`.
 ### 5.6 Unread handling
 - [x] Impact 4, effort 2. Seen: settings › Chats ("When I open a chat, take me to"), chat menu, shortcuts.
   - **What.**
@@ -234,7 +250,7 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Status.** Built, not ticked. Pencil renames in place; the people button opens the participants popover (members, Add people with an "Include chat history" switch, Leave with a confirmation); Leave is also in the chat item menu of groups. Live in the one test group: rename and leave worked. Add people was not run live (it would add a person to a chat). The group photo is not built: no endpoint is known, it needs a capture from Teams web first.
 
 ### 6.4 Presence
-- [ ] DEFERRED: needs test tenant (presence and status are not allowed on the work account). Impact 5, effort 3. Seen: profile menu, participants list, avatars everywhere.
+- [ ] DEFERRED: needs test tenant (the Done-when compares dots with Teams web for 5 people; dots now show in the chat list and on profile cards, see Status; the participants list and people picker do not show them yet). Impact 5, effort 3. Seen: profile menu, participants list, avatars everywhere.
   - **What.**
     - Status dots on every avatar: green Available, red Busy or Do not disturb, yellow Away or Be right back, grey Offline, with an out-of-office marker.
     - The profile menu changes your status: Available, Busy, Do not disturb, Be right back, Appear away, Appear offline, Reset status.
@@ -243,12 +259,32 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     - Automatic Away when idle.
     - "Notify me when this person is available" (settings › Presence).
   - **How (known).**
-    - Read: `POST presence.teams.microsoft.com/v1/presence/getpresence/` with `[{mri}]`, batched over visible people, plus presence change events from trouter (already registered).
+    - Read: `POST <presence service>/presence/getpresence/` with `[{mri}]`, where the presence service is the regional `regionGtms.presenceUPS` + `/v1` (for example `teams.microsoft.com/ups/noam/v1`), batched over visible people, plus presence change events from trouter (already registered).
     - Set: `PUT /v1/me/forceavailability/` with `{availability}`.
     - Note: `PUT /v1/me/publishnote`.
     - Idle: `POST /v1/me/reportmyactivity/`.
   - **Done when.** Dots match Teams web for 5 people, and setting Busy in kelma shows Busy in Teams web.
-  - **Status.** Not built, on purpose. The presence endpoint answers 401 on the work account and presence experiments are not allowed on it, so this stays open until a token that works is available. `crates/teams-proto/src/presence.rs` is unused.
+  - **Status.** The profile menu has "Set status" (Available, Busy, Do not disturb, Be right back, Appear away,
+    Appear offline, Reset status) and today's work location; the engine sets them (`SettingsCmd::SetStatus`,
+    `SetWorkLocation`) and reads the menu again, which shows the status, the location and a presence dot on my
+    avatar (`Avatar.presence`, usable for any avatar). kelma registers this device at sign-in (`my_presence.rs`),
+    removes it while the screen is locked (`org.freedesktop.ScreenSaver.GetActive`, checked each minute) and on
+    quit; a call publishes "In a call" (`call_presence.rs`). UI test
+    `the_profile_menu_sets_my_status_and_work_location_through_the_engine`. The chat list draws a dot on each
+    1:1 chat's avatar (`people_presence.rs`: the people drawn are looked up once a minute in batches, and
+    trouter presence events update them). A profile card shows the dot, the availability in words and today's
+    work location. The status options also edit the status message (Save and Clear message). Evidence
+    (2026-11-19, live): `kelma-cli presence note kelma test` read back `note="kelma test"`, and `presence note`
+    cleared it. Not built: dots in the participants list and people picker, "Pause notifications" and
+    "Notify me when available".
+  - **Evidence (2026-11-19, live, work account):** the global `presence.teams.microsoft.com` host answered 401 to
+    the presence token. A capture of Teams web showed it uses the regional unified presence service from the sign-in
+    answer (`regionGtms.presenceUPS`) with the same token audience. With that address `kelma-cli presence` answered
+    200 and read the user's own availability (Away / Away). `kelma-cli presence set Busy|DoNotDisturb` (ten-minute
+    expiry) and `presence reset` then read back Busy, DoNotDisturb and Available. A forced status only shows while
+    some Teams client of the user is active: with none, the service kept answering Away; with Teams web open it
+    showed the forced value at once. So the GUI has to register its endpoint (`PUT me/endpoints/`) and report
+    activity for a status set in kelma to show. The status was reset at the end.
 
 ### 6.5 Profile card
 - [ ] DEFERRED: needs test tenant (comparing the card needs a second account; built and tested offline). Impact 4, effort 3. Seen: avatars and names.
@@ -261,6 +297,11 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   - **Done when.** The card matches the Teams card for 3 colleagues.
   - **Status.** Built, not ticked. Clicking an avatar or a sender name opens a card with photo, name, title and department, email (click to copy), company, office, and the Chat and Email buttons; Chat opens the 1:1. Live (read-only): 3 cards read, all with an email, none with a job title, so the title row stays empty on this tenant until Delve answers. Local time is not shown (no source for a person's time zone), and presence needs 6.4. The comparison with Teams for 3 colleagues was not done.
 
+  - **Evidence (hover card, 2026-11-19).** Resting on a sender's photo or name for 0.6 s opens the card as a hover
+    card that closes when the pointer leaves it; it shows the person's availability row with its dot, today's work
+    location, and "Send a quick message", which queues the text for the 1:1 chat without leaving the open chat. UI
+    test `resting_on_a_photo_opens_a_hover_card_whose_quick_message_goes_to_their_chat`. Hover in the chat list and
+    the participants list is not built.
 ### 6.6 Pinned messages banner
 - [ ] DEFERRED: needs test tenant (comparing the banner needs a real group with a second account; built and tested offline). Impact 3, effort 2. Seen: the group chat banner ("📌 <sender> … 9/6" with "…").
   - **What.**
@@ -449,7 +490,7 @@ Moved to its own plan: `plans/activity.md`.
 ## Phase 9: notifications, settings, polish
 
 ### 9.1 Notification settings
-- [ ] DEFERRED: needs test tenant (the settings live in the Teams account, `userPersonalSettings`; every change is a write to it, so it stays a dry run on the work account, and sounds, mute all and the meeting-chat options have no UI for the same reason). Impact 4, effort 2. Seen: settings › Notifications and activity.
+- [x] Impact 4, effort 2. Seen: settings › Notifications and activity.
   - **What.**
     - Mute all.
     - Sounds on or off.
@@ -463,6 +504,8 @@ Moved to its own plan: `plans/activity.md`.
   - **Evidence (UI, box stays open).** 2026-11-19: Settings › Notifications and activity lists the 19 types in three groups (Chat; Teams and channels; Meetings and people), each with Banner and feed, Only show in feed, Off, read from `userPersonalSettings` by the engine; Pause notifications; and a Test notification button (a local desktop notification through `notify-rust`). Changes are dry runs: `NotificationSettings::write_request` on a copy, logged and listed as planned, the page keeps showing the Teams value. Verified: `privacy_toggle_plans_a_dry_run_and_changes_nothing` (Chat messages: Off gives the `userPersonalSettings` PUT), `notify_rows_group_and_read_delivery`. Still open: sending the write, sounds and meeting-chat options in the UI, `should_notify` routing, per-chat and per-channel settings. Tests: `cargo test -p kelma settings`.
   - **Evidence (routing and test button; 2026-11-19).** The two Done-when parts are met locally: unit tests cover the routing and the Test notification button works. The routing is `backend/settings.rs`: `incoming_kind(conversation id, is reply, mentions, me)` gives the notification type of a new message (chat: message, @mention of me, Everyone; channel: post, reply, @mention of me, channel, team or tag mention), and the pure `banner_decision(settings, kind, tray_muted, now)` says `Show { preview }` or `Hidden(Muted | Paused | Delivery)`: the tray mute first, then "Pause notifications" while its end time is in the future, then the type's own switch (banner and feed shows; feed only and off hide; no value from Teams shows, as before), and `toastSettings.ShowPreviewInToasts = false` replaces the text with "New message". `live.rs::notify()` calls `settings::banner_for` and `banner_body` (two lines); the engine keeps the settings fresh (`start_notify_prefs`: a read of the properties bag at start and every ten minutes, and again whenever Settings reads them), until then every message notifies as before. Per-chat mute and per-channel Off still apply first (`lists_silenced`). Verified: `incoming_messages_map_to_the_notification_types`, `without_settings_every_event_notifies_as_before`, `each_types_own_switch_decides`, `mute_and_pause_beat_every_type`, `the_preview_switch_only_changes_the_text` (`cargo test -p kelma settings`); `the_test_notification_button_raises_a_desktop_notification` presses the real button in the window (the hook is recorded in the test; on the desktop it is a `notify-rust` notification). Not done, and why the box stays open: the Teams-side writes (DEFERRED on the checkbox line), the sound switches, a "Mute all" switch in Settings (the tray's Mute exists), and the "Show message and content previews" setting is read by the routing but has no switch on the page (it is a Teams setting too).
 
+  - **Evidence (writes, 2026-11-19).** The user allowed the writes on the work account: a change on the page is sent (`SettingsCmd::Apply`) and the page reads Teams again. Live: `kelma-cli settings set notify like-in-chat feed --apply` read back "feed only", then `banner` read back "banner and feed" (the whole notification settings are written back from what was read).
+  - **Evidence (sounds and meeting chats, 2026-11-19).** Settings › Notifications also has Sounds and previews (Show message preview, sounds for calls and meetings starting, sounds when busy, sounds for urgent and priority, notifications during calls) and Meeting chats (all, participated, unmuted); each change is sent like the others. "Mute all" is Pause notifications. UI test `sound_switches_and_meeting_chats_build_the_teams_write`; live: `settings set sound show-in-calls On --apply` read back On, then Off read back Off (its value before). Routing: `banner_for` applies the Teams types, pause and previews to desktop notifications (unit tests in `backend/settings.rs`).
 ### 9.2 Tray icon and badge
 - [x] Impact 4, effort 3.
   - **What.** A tray icon with the unread count, a menu (Open, Status, Quit), close to tray, and optional autostart. The taskbar badge shows the unread count.
@@ -471,6 +514,10 @@ Moved to its own plan: `plans/activity.md`.
   - **Evidence (tray crate only, app wiring missing, box stays open; same work as X3.3 in `plans/settings-and-platform.md`).** 2026-11-19: new crate `crates/tray` (`ksni` 0.3.7 over zbus 5, pure Rust, no new system package). `Tray::start(TrayOptions) -> TrayHandle` runs on its own thread with a private runtime, so it sits beside the Slint loop. `TrayHandle` (cheap to clone): `set_unread(n)` (overlay badge pixmap in 4 sizes drawn in code, title `kelma (12 unread)`, tooltip), `set_muted(bool)`, `set_launcher_count(n)`, `events()` (a cloneable crossbeam `Receiver<TrayEvent {Open, ToggleMute(bool), Quit}>`), `tray_error()`, `launcher_ready()`, `shutdown()` (removes the icon and clears the launcher badge). The icon is the `kelma` theme name with a pixmap fallback drawn from the `packaging/kelma.svg` shapes. Menu: Open kelma, Mute notifications (checkmark), separator, Quit; left click is `Open`. The badge is 0 hidden, 1 to 99 as is, `99+` above. `launcher::launcher_update` builds the `com.canonical.Unity.LauncherEntry.Update` body (`application://kelma.desktop`, `count` int64, `count-visible`), and `set_unread` sends it too unless `sync_launcher_badge` is off. `autostart::enable(exec, hidden_flag)`/`disable()`/`is_enabled()` write `$XDG_CONFIG_HOME/autostart/kelma.desktop` from the fields of `packaging/kelma.desktop` plus `X-GNOME-Autostart-enabled=true`. Live on KDE Plasma Wayland (`kelma-cli tray-demo`): the item showed up in `org.kde.StatusNotifierWatcher.RegisteredStatusNotifierItems` as `org.kde.StatusNotifierItem-<pid>-1/StatusNotifierItem` and left it on exit; `Activate` produced `Open`, the dbusmenu `Event` on Mute produced `ToggleMute(true)`; the item's Title, ToolTip and `OverlayIconPixmap` (4 sizes) followed 3, 12, 120 and 0; `dbus-monitor` saw LauncherEntry updates 3, 12, 120, 0 and a final 0 on shutdown. Autostart enabled, validated with `desktop-file-validate` and disabled under a scratch `XDG_CONFIG_HOME`. Not verified: how Plasma draws the overlay (no screenshot taken), the task manager badge on a pinned launcher, GNOME (needs the AppIndicator extension). Not done: the app has to call `Tray::start`, handle the events (show and focus the window, mute, quit), pass a `--hidden` flag it does not parse yet, close to tray, and a Settings toggle for autostart; the Flatpak uses the Background portal for autostart instead of the file. Tests: `cargo test -p tray -p kelma-cli`.
   - **Evidence (app wiring done, box ticked for the KDE Plasma tray; 2026-11-19).** `crates/kelma/src/tray_wiring.rs` starts `Tray::start` before the event loop and replaces `window.run()` with `show` (or not) plus `slint::run_event_loop_until_quit()`. `--hidden` starts with the tray only (it shows the window anyway when the tray did not register, so the user is never locked out). Closing hides the window when the item registered, and quits as before when it did not. Tray Open shows, un-minimizes and focuses the window, Quit quits, and Mute toggles an in-process flag that `backend/live.rs` `notify()` checks (there was no notification setting; the flag is not saved and a Settings toggle can take it over). The unread total (Activity items plus unread chats, the same number as the window title) goes from `UiHandle::badges` through a 300 ms debounce to `TrayHandle::set_unread`, which also drives the launcher badge. Tests: `cargo test -p kelma tray_wiring` (close decision, hidden start, unread total, debounce). Live on KDE Plasma Wayland with `KELMA_DEMO=1 KELMA_HOME=<tmp> kelma --hidden`: `RegisteredStatusNotifierItems` gained `org.kde.StatusNotifierItem-<pid>-1/StatusNotifierItem` and lost it when the process was killed; no kelma window existed while hidden; the item's `Activate` (left click) showed the window, active, titled `(5) kelma` (the demo's unread count); Alt+F4 hid the window and left the process and the tray item alive; `Activate` again showed it. Not verified: the Quit and Mute menu entries inside this app (the `tray` crate's own live check covers the events), the launcher badge on a pinned task manager entry, GNOME. Not done here: the Settings toggle for autostart (belongs to Settings; `tray::autostart` and the `--hidden` flag it writes are ready).
 
+  - **Evidence (notification look, 2026-11-19).** Message notifications follow Teams: the chat as the title, the
+    sender in bold in a group, "📷 Image" for a picture, the sender's photo, kelma's icon and desktop entry, and Open
+    (click), Reply and Like actions (`backend/banner.rs`, tests for the text). Settings › Notifications has "Show the
+    sender's photo" and "Show Reply and Like buttons". Not compared side by side with a Teams notification yet.
 ### 9.3 Appearance
 - [x] Impact 3, effort 3. Seen: settings › Appearance and Chats.
   - **What.** Theme (light, dark, follow the OS), message density (Comfy or Compact), skin tone, font size.
@@ -530,6 +577,9 @@ Moved to its own plan: `plans/activity.md`.
   - **Evidence (data side done, UI missing, box stays open).** Data side done (session::window_state): `crates/session/src/window_state.rs`, stored as `window-state.json` in the config dir (next to `config.json`, `KELMA_HOME` applies). Fields `width`, `height`, `x`, `y` (both `None` when the window manager places it), `maximized`, `last_chat`, `collapsed_sections` (set of section ids), all `#[serde(default)]`, so old and partial files load. API: `WindowState::load()` / `load_from(path)` (never fails: a missing or corrupt file gives the defaults, values are clamped), `save()` / `save_to(path)` (atomic: temp file plus rename), setters `set_size`, `set_position`, `set_maximized`, `set_last_chat`, `toggle_section`, `set_section_collapsed`, `is_collapsed`. `Config` is untouched. `Debug` hides the chat id and the module never logs. Still to do: the GUI reads it at start, writes it on resize, move, chat change and section toggle (debounced), and applies it. Tests: `cargo test -p session window_state`.
   - **Evidence (UI wiring done, 2026-11-19).** `crates/kelma/src/window_state.rs`. Start: `WindowState::load()` is applied before the window shows (size, position only when `Some`, `maximized`; a maximized state only calls `set_maximized(true)` and keeps the saved geometry; a state still at the defaults leaves the UI's own size; a position on a monitor that is gone is moved back on screen after the first show). The last chat reopens once sign-in is done and the window is visible, if the sidebar models have it (chat, favorite, pinned channel or team channel), and is skipped silently if not. Save: one UI timer every 500 ms folds size, position, maximized and the open chat into the state and writes only when it changed (so at most one write per 500 ms), plus a final write when the window closes (including close to tray) and on quit. Position is never read or stored where the platform reports none (Wayland). Collapsed teams: `View.collapsed_teams` is seeded from the state and written back on every toggle (section ids `team:<id>`), as a Rust-only hook in `backend/mod.rs` (no sidebar.slint change). Demo mode (`KELMA_DEMO`) neither restores nor saves. Tests: `cargo test -p kelma window_state` (restore plan, observe/maximized rules, Wayland, write spacing, off-screen, last-chat lookup, collapsed teams) and `ui_tests/window_state.rs` on the Slint testing backend (size applied, first run untouched, chat lookup in the real models). The testing backend has no window manager, so a maximized restore is checked as a plan, not as `is_maximized()`. Not verified live: restore across a real restart with a signed-in session (needs the user's account; the logic is covered by the tests above).
 
+  - **Evidence (chat list width, 2026-11-19).** The divider beside the chat and teams list drags it between 220 and
+    600 px (also a keyboard slider); the width is saved with the window state (`sidebar_width`) and restored. A
+    channel in the chat list shows its own name first, its team on the second line.
 ---
 
 ## Later ⏭️ (dropped for now, with the reason)
@@ -540,7 +590,8 @@ Moved to its own plan: `plans/activity.md`.
 - Message extensions (Create Planner task, Jira, Polly, Workflows): third-party apps.
 - Team and channel admin: new team, join team, new channel, Edit, Manage, tags, email address, Archive, Delete, Add members.
 - Communities, Copilot, Meeting Recaps, work location, suggested replies, priority and blocked contacts, missed-activity emails.
-- Schedule send, spell check (Slint has no hook), and Home/End in RTL lines (upstream Slint, see ADR 0001).
+- Spell check (Slint has no hook), and Home/End in RTL lines (upstream Slint, see ADR 0001).
+- Schedule send. BLOCKED: not offered to this user (2026-11-19): Teams web and the Teams mobile app show no "Schedule message" on the Send button, and the chat service answers `GET /v1/users/ME/drafts` with 404 `LocationLookupFailed` (the user's `teamsstream_drafts` thread does not exist) and `POST` with 404 `ThreadNotFound`. The client is built and unit-tested (`teams_proto::scheduled`: `schedule_message`, `scheduled_messages`, `cancel_scheduled`; `kelma-cli schedule <conversation> <minutes> <text> | list | cancel <id>`). 2026-11-20: Teams web now offers "Schedule message" on this account, so the composer has it (right-click Send or its chevron: "Schedule message" with a day and time picker, the "Select Send to deliver on …" banner, and "Sending on …" bubbles with Edit and Delete; `backend/scheduled.rs`). It uses the same server drafts API and is UNVERIFIED live; a refused schedule puts the text back in the composer with the error.
 
 ## Order
 

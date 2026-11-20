@@ -22,8 +22,14 @@ mod appstore;
 mod call;
 #[cfg(feature = "calls")]
 mod call_direct;
+#[cfg(feature = "calls")]
+mod call_waiting;
+mod catch_up;
 mod channels;
+mod chat_header;
 mod composer_apps;
+mod composer_gaps;
+mod composer_send;
 mod drive;
 mod engage;
 mod find;
@@ -33,11 +39,17 @@ mod global_search;
 mod language;
 mod lists;
 mod media;
+mod msg_extras;
+pub(crate) mod overflow;
+mod palette;
 mod people;
+pub(crate) mod responsive;
 mod saved;
 mod settings;
 mod shortcuts;
+mod snippets;
 mod teams;
+mod topbar;
 mod window_state;
 
 type Log = Rc<RefCell<Vec<String>>>;
@@ -393,6 +405,10 @@ fn menu_for_others_message() {
             "Save this message",
             "Pin for everyone",
             "Mark as unread",
+            "Remind me",
+            "Immersive Reader",
+            "Share to Outlook",
+            "Report this message",
         ]
     );
 }
@@ -409,6 +425,9 @@ fn menu_for_own_message_has_edit_and_delete_but_no_save() {
             "Copy message link",
             "Pin for everyone",
             "Mark as unread",
+            "Remind me",
+            "Immersive Reader",
+            "Share to Outlook",
             "Edit",
             "Delete",
         ]
@@ -416,7 +435,7 @@ fn menu_for_own_message_has_edit_and_delete_but_no_save() {
 }
 
 #[test]
-fn menu_in_a_channel_has_no_pin_and_a_saved_message_offers_unsave() {
+fn menu_in_a_channel_offers_pin_and_a_saved_message_offers_unsave() {
     let app = app_with_messages(vec![Msg {
         saved: true,
         ..msg("m1", "theirs", false)
@@ -424,8 +443,9 @@ fn menu_in_a_channel_has_no_pin_and_a_saved_message_offers_unsave() {
     app.set_current_is_channel(true);
     open_menu(&app, &rows(&app)[0]);
     let labels = menu_labels(&app);
+    // The post pin is offered; its write is not known and says so (backend/actions.rs).
     assert!(
-        !labels.contains(&"Pin for everyone".to_string()),
+        labels.contains(&"Pin for everyone".to_string()),
         "{labels:?}"
     );
     assert!(
@@ -445,6 +465,88 @@ fn right_click_opens_the_same_menu() {
 
     open_menu(&app, &rows(&app)[0]);
     assert_eq!(menu_labels(&app), others, "bar and right click agree");
+}
+
+/// The bubble of a row (the `MessageRow::bubble` inside it).
+fn bubble_of(app: &AppWindow, row: &ElementHandle) -> ElementHandle {
+    let (top, bottom) = (
+        row.absolute_position().y,
+        row.absolute_position().y + row.size().height,
+    );
+    ElementHandle::find_by_element_id(app, "MessageRow::bubble")
+        .find(|b| {
+            let y = b.absolute_position().y;
+            y >= top && y < bottom
+        })
+        .expect("the row's bubble")
+}
+
+/// Left and right edge of an element.
+fn span(e: &ElementHandle) -> (f32, f32) {
+    let x = e.absolute_position().x;
+    (x, x + e.size().width)
+}
+
+/// Teams puts the hover bar at the top right corner of the hovered message: for someone else's
+/// message (on the left) it sits at the bubble, not at the far edge of the pane.
+#[test]
+fn the_hover_bar_sits_at_the_hovered_bubble() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false), msg("m2", "mine", true)]);
+    let rows = rows(&app);
+    let bar = |app: &AppWindow| {
+        ElementHandle::find_by_element_id(app, "MessageRow::bar")
+            .next()
+            .expect("the hover bar")
+    };
+
+    hover(&app, &rows[0]);
+    let (b_left, b_right) = span(&bubble_of(&app, &rows[0]));
+    let (left, right) = span(&bar(&app));
+    assert!(
+        left >= b_left - 0.5 && left <= b_right,
+        "the bar starts at the bubble ({left}..{right}, bubble {b_left}..{b_right})"
+    );
+    assert!(
+        right <= (b_right - 8.).max(b_left + (right - left)) + 0.5,
+        "and ends at its right edge, or as close as the bar allows ({left}..{right}, bubble \
+         {b_left}..{b_right})"
+    );
+    // Its buttons are still the band at the top of the row.
+    assert_eq!(bar_buttons(&app, &rows[0]).len(), 3);
+
+    // Mine (on the right): its right edge just inside the bubble's, as before.
+    hover(&app, &rows[1]);
+    let (_, b_right) = span(&bubble_of(&app, &rows[1]));
+    let (_, right) = span(&bar(&app));
+    assert!((right - (b_right - 8.)).abs() < 0.5, "{right} vs {b_right}");
+}
+
+/// A right click on the words of a message opens the "…" menu too. The text takes the press
+/// (it is selectable), so the row never sees it; the window reports it (`main.rs`).
+#[test]
+fn right_click_on_the_message_text_opens_the_menu() {
+    let app = app_with_messages(vec![msg("m1", "some words from someone else", false)]);
+    let row = &rows(&app)[0];
+    let bubble = bubble_of(&app, row);
+    // On the text: the last line of the bubble, above its bottom padding.
+    let at = LogicalPosition::new(
+        bubble.absolute_position().x + 40.,
+        bubble.absolute_position().y + bubble.size().height - 18.,
+    );
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    crate::right_click_released(&app);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(app.get_menu_open(), "the menu opened");
+    assert_eq!(app.get_menu_msg().id, "m1");
 }
 
 #[test]
@@ -687,16 +789,15 @@ fn send_button_sends_draft() {
     let app = app_with_messages(vec![]);
     let sent = record_send(&app);
     app.set_draft(SharedString::from("from button"));
-    // The composer's buttons, not the header's (find and details sit at the header's right edge).
-    let send = ElementHandle::find_by_element_id(&app, "IconButton::touch")
-        .filter(|e| e.absolute_position().y > 400.0)
-        .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
+    let send = ElementHandle::find_by_element_id(&app, "SendButton::touch")
+        .next()
         .unwrap();
     send.mock_single_click(PointerEventButton::Left);
     assert_eq!(*sent.borrow(), vec!["from button".to_string()]);
 }
 
-/// Composer toolbar buttons below the input, left to right: emoji, image, file, send.
+/// Composer toolbar buttons below the input, left to right: emoji, attach, more, GIF, apps
+/// (Send and its options are the `SendButton`).
 fn toolbar(app: &AppWindow) -> Vec<ElementHandle> {
     let input_y = composer(app).absolute_position().y;
     let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "IconButton::touch")
@@ -706,22 +807,26 @@ fn toolbar(app: &AppWindow) -> Vec<ElementHandle> {
     v
 }
 
+/// One Attach button, like Teams: its menu has "Attach cloud files" and "Upload from this device".
 #[test]
-fn toolbar_emoji_picker_and_attach_buttons() {
+fn toolbar_attach_menu_offers_cloud_files_and_this_device() {
     let app = app_with_messages(vec![]);
     let log = Log::default();
     {
         let l = log.clone();
-        app.on_attach_image(move || l.borrow_mut().push("image".into()));
-        let l = log.clone();
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 6, "emoji, image, file, more, apps, send");
+    assert_eq!(tb.len(), 5, "emoji, attach, more, GIF, apps");
 
     tb[1].mock_single_click(PointerEventButton::Left);
-    tb[2].mock_single_click(PointerEventButton::Left);
-    assert_eq!(*log.borrow(), vec!["image", "file"]);
+    assert_eq!(find_label(&app, "Attach cloud files").len(), 1);
+    find_label(&app, "Upload from this device")[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), vec!["file"]);
+    assert!(
+        find_label(&app, "Upload from this device").is_empty(),
+        "the menu closes"
+    );
 }
 
 /// Buttons in the strip directly above the composer input (reply or edit preview).
@@ -965,6 +1070,252 @@ fn opening_at_the_divider_puts_it_near_the_top_of_a_long_list() {
     assert!((108. ..108. + 120.).contains(&y), "divider at y={y}");
 }
 
+#[test]
+fn older_messages_keep_the_view_in_place_and_load_once() {
+    let page = |from: usize| -> Vec<Msg> {
+        (from..160)
+            .map(|i| {
+                let text = if i % 3 == 0 {
+                    "a longer message that wraps over a few lines because it says rather a lot "
+                        .repeat(3)
+                } else {
+                    "short".to_string()
+                };
+                let mut m = msg(&format!("m{i}"), &text, false);
+                m.sender = format!("S{i}").into();
+                m
+            })
+            .collect()
+    };
+    let app = app_with_messages(page(100));
+    let loads = Rc::new(RefCell::new(0));
+    {
+        let l = loads.clone();
+        app.on_load_older(move || *l.borrow_mut() += 1);
+    }
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    // Wheel up to the top: one older page is asked for, not one per wheel step.
+    for _ in 0..40 {
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: LogicalPosition::new(700., 400.),
+            delta_x: 0.,
+            delta_y: 400.,
+        });
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+    assert_eq!(*loads.borrow(), 1, "one older page asked for");
+    let first = find_label(&app, "Open profile of S100");
+    assert!(!first.is_empty(), "the first row is on screen at the top");
+    let before = first[0].absolute_position().y;
+
+    // The older page lands above: the row that was first stays where it was.
+    app.set_messages(ModelRc::new(VecModel::from(page(40))));
+    app.set_anchor_index(60);
+    app.set_anchor_tick(app.get_anchor_tick() + 1);
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    let after = find_label(&app, "Open profile of S100");
+    assert!(!after.is_empty(), "the old first row is still on screen");
+    let y = after[0].absolute_position().y;
+    assert!((y - before).abs() < 40., "moved from {before} to {y}");
+    for _ in 0..20 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(*loads.borrow(), 1, "no cascade of loads once in place");
+}
+
+#[test]
+fn a_channel_shows_its_other_tabs_and_add_a_tab_sends_a_name_and_address() {
+    use crate::{ChannelTabItem, FindStore};
+    let app = app_with_messages(vec![]);
+    app.set_current_id("19:tests@thread.tacv2".into());
+    app.set_current_is_channel(true);
+    let tabs = vec![ChannelTabItem {
+        name: "Board".into(),
+        url: "https://tasks.office.com/board".into(),
+        id: "t1".into(),
+    }];
+    app.global::<FindStore>()
+        .set_channel_tabs(ModelRc::new(VecModel::from(tabs)));
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let l = log.clone();
+        app.global::<FindStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let board = find_label(&app, "Board");
+    assert!(!board.is_empty(), "the Board tab is in the header");
+    click(&board[0]);
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "channel-tab-open https://tasks.office.com/board"
+    );
+
+    find_label(&app, "Add a tab")[0].invoke_accessible_default_action();
+    assert!(app.global::<FindStore>().get_tab_add_open());
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    find_label(&app, "Tab name")[0].set_accessible_value("Docs");
+    find_label(&app, "Address")[0].set_accessible_value("example.com/docs");
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let add = find_label(&app, "Add")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+        .expect("the Add button");
+    click(&add);
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "channel-tab-add Docs\u{1f}example.com/docs"
+    );
+    assert!(!app.global::<FindStore>().get_tab_add_open());
+}
+
+#[test]
+fn a_channel_tab_can_be_renamed_or_removed_from_its_menu() {
+    use crate::{ChannelTabItem, FindStore};
+    let app = app_with_messages(vec![]);
+    app.set_current_id("19:tests@thread.tacv2".into());
+    app.set_current_is_channel(true);
+    app.global::<FindStore>()
+        .set_channel_tabs(ModelRc::new(VecModel::from(vec![ChannelTabItem {
+            name: "Board".into(),
+            url: "https://tasks.office.com/board".into(),
+            id: "t1".into(),
+        }])));
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let l = log.clone();
+        app.global::<FindStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    click(&find_label(&app, "Tab options for Board")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert_eq!(app.global::<FindStore>().get_tab_menu_id(), "t1");
+    assert!(!find_label(&app, "Remove tab").is_empty());
+
+    // Rename sends the tab's id and the new name.
+    click(&find_label(&app, "Rename tab")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let name = find_label(&app, "Tab name")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::TextInput))
+        .expect("the name field");
+    assert_eq!(
+        name.accessible_value().unwrap_or_default().as_str(),
+        "Board"
+    );
+    name.set_accessible_value("Plan");
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    click(&find_label(&app, "Save")[0]);
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "channel-tab-rename t1\u{1f}Plan"
+    );
+    assert_eq!(
+        app.global::<FindStore>().get_tab_menu_id(),
+        "",
+        "all closed"
+    );
+
+    // Remove asks first, then sends the id.
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    click(&find_label(&app, "Tab options for Board")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    click(&find_label(&app, "Remove tab")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert_ne!(log.borrow().last().unwrap(), "channel-tab-remove t1");
+    let confirm = find_label(&app, "Remove")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+        .expect("the confirm button");
+    click(&confirm);
+    assert_eq!(log.borrow().last().unwrap(), "channel-tab-remove t1");
+}
+
+#[test]
+fn add_a_tab_can_add_an_installed_apps_tab() {
+    use crate::{ChannelTabApp, FindStore};
+    let app = app_with_messages(vec![]);
+    app.set_current_id("19:tests@thread.tacv2".into());
+    app.set_current_is_channel(true);
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let l = log.clone();
+        app.global::<FindStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    find_label(&app, "Add a tab")[0].invoke_accessible_default_action();
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    // The App choice asks for the installed apps, and offers them by name.
+    click(&find_label(&app, "App")[0]);
+    assert_eq!(log.borrow().last().unwrap(), "channel-tab-apps ");
+    app.global::<FindStore>()
+        .set_tab_apps(ModelRc::new(VecModel::from(vec![
+            ChannelTabApp {
+                id: "app-1".into(),
+                name: "Planner".into(),
+            },
+            ChannelTabApp {
+                id: "app-2".into(),
+                name: "Wiki".into(),
+            },
+        ])));
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let add = || {
+        find_label(&app, "Add")
+            .into_iter()
+            .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+            .expect("the Add button")
+    };
+    assert_eq!(add().accessible_enabled(), Some(false), "no app picked yet");
+    click(&find_label(&app, "Planner")[0]);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert_eq!(add().accessible_enabled(), Some(true));
+    click(&add());
+    // The name starts as the app's name.
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        "channel-tab-add-app app-1\u{1f}Planner"
+    );
+    assert!(!app.global::<FindStore>().get_tab_add_open());
+}
+
+#[test]
+fn the_gif_button_shows_trending_gifs_and_a_pick_is_sent() {
+    use crate::{GifItem, GifStore};
+    let app = app_with_messages(vec![]);
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let l = log.clone();
+        app.global::<GifStore>()
+            .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    }
+    find_label(&app, "GIF")[0].invoke_accessible_default_action();
+    assert_eq!(log.borrow().last().unwrap(), "search ", "trending first");
+    let items = vec![
+        GifItem {
+            title: "Happy Dance GIF".into(),
+            ..Default::default()
+        },
+        GifItem {
+            title: "Thumbs Up GIF".into(),
+            ..Default::default()
+        },
+    ];
+    app.global::<GifStore>()
+        .set_items(ModelRc::new(VecModel::from(items)));
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    let thumbs = find_label(&app, "Thumbs Up GIF");
+    assert!(!thumbs.is_empty(), "the results are in the grid");
+    thumbs[0].invoke_accessible_default_action();
+    assert_eq!(log.borrow().last().unwrap(), "pick 1");
+}
+
 // ---- failed sends (plans/chat.md 5.8) -----------------------------------
 
 fn outgoing(id: &str, text: &str, pending: bool, failed: bool) -> Msg {
@@ -1066,7 +1417,7 @@ fn composer_more_menu_switches_the_enter_behavior() {
         let l = log.clone();
         app.on_set_enter_sends(move |on| l.borrow_mut().push(format!("enter-sends {on}")));
     }
-    let more = &toolbar(&app)[3];
+    let more = &toolbar(&app)[2];
     assert_eq!(
         ElementHandle::find_by_element_id(&app, "Composer::enter-opt").count(),
         0

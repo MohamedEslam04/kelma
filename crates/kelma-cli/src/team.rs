@@ -704,6 +704,21 @@ pub async fn run(client: &Client, args: &[String]) -> Result<()> {
             probe(client, which, arg(2).context("missing path")?).await?
         }
         (Some("raw"), _) => raw(client, &args[1..]).await?,
+        (Some("tabs"), _) => {
+            // Read only: the sandbox channel's tabs (names, apps and the host they open).
+            let s = load_sandbox()?;
+            let group = s["team"]["group_id"].as_str().unwrap_or_default();
+            let chan = s["channels"]["tests"].as_str().unwrap_or_default();
+            let tabs = client.channel_tabs(group, chan).await?;
+            println!("{} tab(s) besides Files", tabs.len());
+            for t in &tabs {
+                let host = url::Url::parse(&t.open_url)
+                    .ok()
+                    .and_then(|u| u.host_str().map(str::to_string))
+                    .unwrap_or_default();
+                println!("  {} ({}), opens {host}", t.name, t.app_name);
+            }
+        }
         (Some("ls"), _) => list(client).await?,
         (Some("sandbox"), Some("create")) => {
             if load_sandbox().is_ok() {

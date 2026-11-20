@@ -62,6 +62,7 @@ impl UiHandle {
             s.set_channel_level(m.level.into());
             s.set_channel_private(m.private);
             s.set_channel_hidden(m.hidden);
+            s.set_channel_pinned(m.pinned);
         });
     }
 

@@ -19,6 +19,8 @@ use teams_proto::model::FileRef;
 use teams_proto::translate::{self, MessageRef, Scope, Settings, Status, Trigger};
 use teams_proto::urlpreview::{self, LinkPreview};
 
+mod extras;
+
 /// Link cards shown under one message.
 const MAX_CARDS: usize = 3;
 /// The service rate-limits previews: one thumbnail at a time, with this pause after each.
@@ -41,6 +43,26 @@ pub enum MediaCmd {
     ImageCopy,
     Translate(String),
     ShowOriginal(String),
+    /// The file card's "…" menu: `download`, `copy`, `share` or `web`, and the file's address.
+    FileCard {
+        action: String,
+        url: String,
+    },
+    /// The message menu's "Copy link" of a link in the text.
+    CopyLink(String),
+    /// "Share to Outlook" of a message (its id).
+    ShareToOutlook(String),
+    /// "Report this message" (its id).
+    Report(String),
+    /// Opens a chat in its own window.
+    PopOut(String),
+    /// The popped-out chat's composer sent text: the chat and the text.
+    PopOutSend {
+        conv: String,
+        text: String,
+    },
+    /// The popped-out chat's window was closed.
+    PopOutClose,
 }
 
 impl MediaCmd {
@@ -59,6 +81,25 @@ impl MediaCmd {
             "image-copy" => MediaCmd::ImageCopy,
             "translate" => MediaCmd::Translate(arg.to_string()),
             "original" => MediaCmd::ShowOriginal(arg.to_string()),
+            "file" => {
+                let (action, url) = arg.split_once('\u{1f}')?;
+                MediaCmd::FileCard {
+                    action: action.to_string(),
+                    url: url.to_string(),
+                }
+            }
+            "link-copy" => MediaCmd::CopyLink(arg.to_string()),
+            "outlook" => MediaCmd::ShareToOutlook(arg.to_string()),
+            "report" => MediaCmd::Report(arg.to_string()),
+            "popout" => MediaCmd::PopOut(arg.to_string()),
+            "popout-send" => {
+                let (conv, text) = arg.split_once('\u{1f}')?;
+                MediaCmd::PopOutSend {
+                    conv: conv.to_string(),
+                    text: text.to_string(),
+                }
+            }
+            "popout-close" => MediaCmd::PopOutClose,
             _ => return None,
         })
     }
@@ -102,6 +143,8 @@ pub(super) struct State {
     thumbs: HashMap<String, Thumb>,
     /// Serializes preview image fetches.
     gate: Arc<tokio::sync::Mutex<()>>,
+    /// The chat shown in the pop-out window, if one is open (see `extras`).
+    popout: Option<String>,
 }
 
 /// What a message row shows about translation.
@@ -256,6 +299,16 @@ impl Engine {
             MediaCmd::ImageCopy => self.viewer_copy().await?,
             MediaCmd::Translate(id) => self.translate_msg(id).await,
             MediaCmd::ShowOriginal(id) => self.translate_hide(&id),
+            MediaCmd::FileCard { action, url } => self.file_card_action(&action, &url).await?,
+            MediaCmd::CopyLink(url) => {
+                arboard::Clipboard::new()?.set_text(url)?;
+                self.ui.banner("Link copied".into());
+            }
+            MediaCmd::ShareToOutlook(id) => self.share_to_outlook(&id).await?,
+            MediaCmd::Report(id) => self.report_message(&id).await?,
+            MediaCmd::PopOut(conv) => self.popout_open(&conv).await?,
+            MediaCmd::PopOutSend { conv, text } => self.popout_send(&conv, &text).await?,
+            MediaCmd::PopOutClose => self.media.lock().unwrap().popout = None,
         }
         Ok(())
     }
@@ -670,6 +723,9 @@ impl Engine {
     /// The preview cards of a message from its stored `links`. Thumbnails come from the preview
     /// service one at a time; a card shows without its picture until it is there.
     pub(super) fn link_cards(self: &Arc<Self>, props: &Value) -> Vec<LinkData> {
+        if !super::settings::link_previews() {
+            return Vec::new();
+        }
         links_from_props(props)
             .into_iter()
             .take(MAX_CARDS)
@@ -774,6 +830,29 @@ mod tests {
         assert_eq!(
             MediaCmd::parse("original", "7"),
             Some(MediaCmd::ShowOriginal("7".into()))
+        );
+        assert_eq!(
+            MediaCmd::parse("file", "download\u{1f}https://a.sharepoint.com/x.docx"),
+            Some(MediaCmd::FileCard {
+                action: "download".into(),
+                url: "https://a.sharepoint.com/x.docx".into()
+            })
+        );
+        assert_eq!(MediaCmd::parse("file", "no-separator"), None);
+        assert_eq!(
+            MediaCmd::parse("popout-send", "19:a@thread.v2\u{1f}hi\u{1f}there"),
+            Some(MediaCmd::PopOutSend {
+                conv: "19:a@thread.v2".into(),
+                text: "hi\u{1f}there".into()
+            })
+        );
+        assert_eq!(
+            MediaCmd::parse("outlook", "5"),
+            Some(MediaCmd::ShareToOutlook("5".into()))
+        );
+        assert_eq!(
+            MediaCmd::parse("popout-close", ""),
+            Some(MediaCmd::PopOutClose)
         );
         assert_eq!(MediaCmd::parse("nope", ""), None);
     }

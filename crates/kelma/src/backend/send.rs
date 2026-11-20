@@ -15,7 +15,7 @@ impl Engine {
     ) -> anyhow::Result<()> {
         let text = text.trim().to_string();
         // The importance applies to this one message (and never to an edit or a chip).
-        let important = std::mem::take(&mut self.view.lock().unwrap().important);
+        let importance = std::mem::take(&mut self.view.lock().unwrap().importance);
         let editing_now = self.view.lock().unwrap().editing.is_some();
         // Chips go first, each as its own outbox item (an image or a file card), then the text.
         if !editing_now && let Err(err) = self.queue_attachments() {
@@ -137,9 +137,8 @@ impl Engine {
             None,
         );
         item.mentions = mentions::property(&prepared);
-        if important {
-            item.importance = teams_proto::delivery::Importance::Important.wire().into();
-        }
+        // "high" or "urgent"; Standard leaves it empty.
+        item.importance = importance.wire().into();
         if !cards.is_empty() {
             // One message holds the typed text and every card, as in Teams, where the card
             // chosen from an extension is attached to the message being written.
@@ -163,10 +162,9 @@ impl Engine {
         Ok(())
     }
 
+    /// Reacts to any stored message, not only one of the open chat (the Activity preview and
+    /// the pop-out window react too): a channel reply is addressed in its thread.
     pub(super) async fn react(self: &Arc<Self>, msg_id: &str, key: &str) -> anyhow::Result<()> {
-        let Some(target) = self.current_target() else {
-            return Ok(());
-        };
         let row = self.store.lock().unwrap().message(msg_id)?;
         let Some(mut row) = row else { return Ok(()) };
         let mut props: Value =
@@ -182,10 +180,9 @@ impl Engine {
                     .as_array()
                     .is_some_and(|u| u.iter().any(|x| x == self.me.as_str()))
         });
-        let conv_for_msg = if row.parent_id.is_some() {
-            target.clone()
-        } else {
-            row.conversation_id.clone()
+        let conv_for_msg = match &row.parent_id {
+            Some(root) => format!("{};messageid={root}", row.conversation_id),
+            None => row.conversation_id.clone(),
         };
         if mine {
             self.client

@@ -1105,3 +1105,389 @@ fn messages_containing_finds_text_in_one_chat_or_all_of_them() {
             .is_empty()
     );
 }
+
+// ---- offline full-text search (migration v7) ---------------------------------------------
+
+fn html_msg(id: &str, conv: &str, ms: i64, html: &str) -> MessageRow {
+    MessageRow {
+        content_html: html.into(),
+        ..msg(id, conv, ms)
+    }
+}
+
+fn find(s: &Store, q: &str) -> Vec<String> {
+    s.search_messages_local(q, &LocalFilters::default(), 50)
+        .unwrap()
+        .into_iter()
+        .map(|h| h.message_id)
+        .collect()
+}
+
+fn marked(snippet: &str) -> String {
+    snippet.replace(MARK_START, "[").replace(MARK_END, "]")
+}
+
+#[test]
+fn fts5_is_compiled_in_and_the_index_has_its_triggers() {
+    let s = Store::open_in_memory().unwrap();
+    let fts5: i64 = s
+        .conn
+        .query_row("SELECT sqlite_compileoption_used('ENABLE_FTS5')", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(fts5, 1);
+    let n: i64 = s
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'trigger' AND name LIKE 'messages_fts%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 3);
+}
+
+#[test]
+fn plain_text_strips_markup_and_decodes_entities() {
+    assert_eq!(
+        fts::plain_text("<p>one</p><p>two&nbsp;&amp;&#x41;&#66;</p>"),
+        "one two &AB"
+    );
+    assert_eq!(fts::plain_text("<b>wo</b>rd <i>x</i>"), "word x");
+    assert_eq!(
+        fts::plain_text("<style>p { color: red }</style>hi <SCRIPT>x()</SCRIPT>there"),
+        "hi there"
+    );
+    assert_eq!(
+        fts::plain_text("a < b &unknown; c & d"),
+        "a < b &unknown; c & d"
+    );
+    assert_eq!(
+        fts::plain_text("é&#1;&;&ééééééééééé"),
+        "é\u{1}&;&ééééééééééé"
+    );
+}
+
+#[test]
+fn search_finds_words_of_the_text_and_the_sender_with_a_marked_snippet() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_message(&MessageRow {
+        sender_name: "Nour Tester".into(),
+        ..html_msg(
+            "1",
+            "c",
+            10,
+            "<p>The <b>quarterly</b> report&nbsp;is <i>ready</i>.</p>",
+        )
+    })
+    .unwrap();
+    s.upsert_message(&html_msg("2", "c", 20, "<p>lunch?</p>"))
+        .unwrap();
+    assert_eq!(find(&s, "quarterly"), ["1"]);
+    assert_eq!(find(&s, "REPORT"), ["1"]);
+    assert_eq!(find(&s, "nour"), ["1"], "the sender's name is indexed");
+    // Markup is not text.
+    assert!(find(&s, "nbsp").is_empty());
+    assert!(find(&s, "b").is_empty());
+    let hit = &s
+        .search_messages_local("quarterly", &LocalFilters::default(), 5)
+        .unwrap()[0];
+    assert_eq!(hit.conversation_id, "c");
+    assert_eq!(hit.compose_ms, 10);
+    assert_eq!(hit.parent_id, None);
+    assert_eq!(hit.sender_name, "Nour Tester");
+    assert_eq!(hit.sender_mri, "8:orgid:a");
+    assert_eq!(marked(&hit.snippet), "The [quarterly] report is ready.");
+}
+
+#[test]
+fn a_long_message_gives_a_cut_snippet_around_the_match() {
+    let s = Store::open_in_memory().unwrap();
+    let words: Vec<String> = (0..60).map(|i| format!("w{i}")).collect();
+    let html = format!("<p>{} needle {}</p>", words.join(" "), words.join(" "));
+    s.upsert_message(&html_msg("1", "c", 1, &html)).unwrap();
+    let hit = &s
+        .search_messages_local("needle", &LocalFilters::default(), 5)
+        .unwrap()[0];
+    let snip = marked(&hit.snippet);
+    assert!(snip.starts_with('…') && snip.ends_with('…'), "{snip}");
+    assert!(snip.contains("[needle]"), "{snip}");
+    assert!(snip.chars().count() < 120, "{snip}");
+}
+
+#[test]
+fn edits_deletes_and_forgotten_chats_keep_the_index_in_sync() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_message(&html_msg("1", "c", 1, "<p>alpha</p>"))
+        .unwrap();
+    s.upsert_message(&html_msg("2", "c", 2, "<p>alpha beta</p>"))
+        .unwrap();
+    s.upsert_message(&html_msg("3", "d", 3, "<p>alpha</p>"))
+        .unwrap();
+    assert_eq!(find(&s, "alpha"), ["3", "2", "1"]);
+
+    // An edit replaces the indexed text.
+    s.upsert_message(&html_msg("1", "c", 1, "<p>gamma</p>"))
+        .unwrap();
+    assert_eq!(find(&s, "alpha"), ["3", "2"]);
+    assert_eq!(find(&s, "gamma"), ["1"]);
+
+    // A reactions-only update keeps the row findable.
+    s.upsert_message(&MessageRow {
+        reactions_json: "[{\"key\":\"like\"}]".into(),
+        ..html_msg("1", "c", 1, "<p>gamma</p>")
+    })
+    .unwrap();
+    assert_eq!(find(&s, "gamma"), ["1"]);
+
+    // Deleted on the server, deleted here, and a forgotten conversation.
+    s.upsert_message(&MessageRow {
+        deleted: true,
+        ..html_msg("2", "c", 2, "<p>alpha beta</p>")
+    })
+    .unwrap();
+    assert!(find(&s, "beta").is_empty());
+    s.delete_message_local("1").unwrap();
+    assert!(find(&s, "gamma").is_empty());
+    s.delete_conversation("d").unwrap();
+    assert!(find(&s, "alpha").is_empty());
+    let left: i64 = s
+        .conn
+        .query_row("SELECT COUNT(*) FROM messages_fts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0, "no stale index rows");
+
+    // Control messages are not searchable.
+    s.upsert_message(&MessageRow {
+        message_type: "Control/Typing".into(),
+        ..html_msg("4", "c", 4, "alpha")
+    })
+    .unwrap();
+    assert!(find(&s, "alpha").is_empty());
+}
+
+#[test]
+fn words_match_as_prefixes_and_all_are_required() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_message(&html_msg("1", "c", 1, "<p>Deployment finished today</p>"))
+        .unwrap();
+    s.upsert_message(&html_msg("2", "c", 2, "<p>deploy tomorrow</p>"))
+        .unwrap();
+    assert_eq!(find(&s, "deploy"), ["2", "1"]);
+    assert_eq!(find(&s, "deploym"), ["1"]);
+    assert!(find(&s, "ployment").is_empty(), "prefixes, not infixes");
+    assert_eq!(find(&s, "deploy to"), ["2", "1"]);
+    assert_eq!(find(&s, "deploy fin"), ["1"]);
+    assert!(find(&s, "deploy yesterday").is_empty());
+    assert!(find(&s, "   ").is_empty());
+}
+
+#[test]
+fn query_syntax_characters_are_plain_text() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_message(&html_msg(
+        "1",
+        "c",
+        1,
+        "<p>The e-mail &quot;draft&quot; is 100% done (near) the end</p>",
+    ))
+    .unwrap();
+    for q in [
+        "\"draft",
+        "draft\"",
+        "\"draft\"",
+        "draft*",
+        "-draft",
+        "e-mail",
+        "100%",
+        "(near)",
+        "NEAR",
+        "NEAR(the",
+        "the end",
+    ] {
+        assert_eq!(find(&s, q), ["1"], "query {q:?}");
+    }
+    // Operators and column filters are words that must occur, never syntax.
+    for q in [
+        "draft AND",
+        "draft OR missing",
+        "draft NOT",
+        "NEAR(draft end)",
+        "body:draft",
+        "sender:draft",
+        "{body}",
+        "^draft xyz",
+    ] {
+        assert!(find(&s, q).is_empty(), "query {q:?}");
+    }
+    // Nothing to search for.
+    for q in ["*", "\"", "(", ")", "-", ":", "\"\"", "^", "+"] {
+        assert!(find(&s, q).is_empty(), "query {q:?}");
+    }
+}
+
+#[test]
+fn arabic_matches_across_letter_variants_and_tashkeel() {
+    let s = Store::open_in_memory().unwrap();
+    // "I went to the school yesterday" with tashkeel, hamza alef, alef maksura and teh marbuta.
+    s.upsert_message(&html_msg("1", "c", 1, "<p>ذَهَبْتُ إلى المدرسةِ أمس</p>"))
+        .unwrap();
+    s.upsert_message(&MessageRow {
+        sender_name: "أحمد".into(),
+        ..html_msg("2", "c", 2, "<p>مرحبا</p>")
+    })
+    .unwrap();
+    for q in [
+        "ذهبت",
+        "ذَهَبْتُ",
+        "الى",
+        "إلى",
+        "الي",
+        "المدرسه",
+        "المدرسة",
+        "المدرس",
+        "امس",
+        "آمس",
+        "ذهبت المدرسة",
+    ] {
+        assert_eq!(find(&s, q), ["1"], "query {q:?}");
+    }
+    assert_eq!(find(&s, "احمد"), ["2"], "the sender's name is folded too");
+    assert_eq!(find(&s, "أحمد"), ["2"]);
+    // The snippet keeps the message's own spelling, the marks on the original letters.
+    let hit = &s
+        .search_messages_local("المدرسه", &LocalFilters::default(), 5)
+        .unwrap()[0];
+    assert_eq!(marked(&hit.snippet), "ذَهَبْتُ إلى [المدرسةِ] أمس");
+}
+
+#[test]
+fn search_filters_narrow_by_conversation_sender_and_time() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_message(&html_msg("1", "c", 100, "<p>plan</p>"))
+        .unwrap();
+    s.upsert_message(&MessageRow {
+        sender_mri: "8:orgid:b".into(),
+        ..html_msg("2", "c", 200, "<p>plan</p>")
+    })
+    .unwrap();
+    s.upsert_message(&html_msg("3", "d", 300, "<p>plan</p>"))
+        .unwrap();
+    let found = |f: LocalFilters<'_>| -> Vec<String> {
+        s.search_messages_local("plan", &f, 50)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.message_id)
+            .collect()
+    };
+    assert_eq!(found(LocalFilters::default()), ["3", "2", "1"]);
+    let in_c = LocalFilters {
+        conversation: Some("c"),
+        ..Default::default()
+    };
+    assert_eq!(found(in_c), ["2", "1"]);
+    assert_eq!(
+        found(LocalFilters {
+            sender: Some("8:orgid:a"),
+            ..Default::default()
+        }),
+        ["3", "1"]
+    );
+    assert_eq!(
+        found(LocalFilters {
+            since_ms: Some(200),
+            ..Default::default()
+        }),
+        ["3", "2"]
+    );
+    assert!(
+        found(LocalFilters {
+            sender: Some("8:orgid:a"),
+            since_ms: Some(150),
+            ..in_c
+        })
+        .is_empty()
+    );
+    assert_eq!(
+        s.search_messages_local("plan", &LocalFilters::default(), 2)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn messages_cached_before_the_migration_are_backfilled() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    for sql in &migrations::MIGRATIONS[..6] {
+        conn.execute_batch(sql).unwrap();
+    }
+    conn.execute_batch("PRAGMA user_version = 6").unwrap();
+    let tx = conn.transaction().unwrap();
+    for (id, html, deleted) in [
+        ("old1", "<p>legacy <b>invoice</b></p>", false),
+        ("old2", "<p>legacy invoice</p>", true),
+        ("old3", "<p>المدرسة</p>", false),
+    ] {
+        tx.execute(
+            "INSERT INTO messages (id, conversation_id, sender_mri, sender_name, compose_ms, \
+                 deleted, message_type, content_html, reactions_json) \
+             VALUES (?1, 'c', '8:orgid:a', 'A', 1, ?2, 'RichText/Html', ?3, '[]')",
+            params![id, deleted, html],
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    let s = Store::init(conn).unwrap();
+    assert_eq!(
+        find(&s, "invoice"),
+        ["old1"],
+        "deleted rows are not indexed"
+    );
+    assert_eq!(find(&s, "المدرسه"), ["old3"]);
+    // And the triggers work from then on.
+    s.upsert_message(&html_msg("new", "c", 2, "<p>invoice</p>"))
+        .unwrap();
+    assert_eq!(find(&s, "invoice"), ["new", "old1"]);
+}
+
+/// Index writes ride on every message upsert of a sync: 5,000 upserts with and without the
+/// triggers (`cargo test -p store indexing_5000 -- --nocapture` prints the times).
+#[test]
+fn indexing_5000_messages_stays_cheap() {
+    let html = "<div><p>Hi <span itemtype=\"http://schema.skype.com/Mention\">Team</span>, \
+                the <b>release</b> notes for build 4.2 are in the shared folder &amp; the \
+                demo is at 3pm.</p><p>ذهبت إلى المدرسة</p></div>";
+    let run = |index: bool| {
+        let s = Store::open_in_memory().unwrap();
+        if !index {
+            s.conn
+                .execute_batch(
+                    "DROP TRIGGER messages_fts_insert; DROP TRIGGER messages_fts_update; \
+                     DROP TRIGGER messages_fts_delete;",
+                )
+                .unwrap();
+        }
+        let t = std::time::Instant::now();
+        for i in 0..5000 {
+            s.upsert_message(&html_msg(&format!("m{i}"), "c", i, html))
+                .unwrap();
+        }
+        (t.elapsed(), s)
+    };
+    let (plain, _) = run(false);
+    let (indexed, s) = run(true);
+    eprintln!("5000 upserts: {plain:?} without the index, {indexed:?} with it");
+    assert_eq!(
+        s.search_messages_local("release", &LocalFilters::default(), 10_000)
+            .unwrap()
+            .len(),
+        5000
+    );
+    assert!(
+        indexed < std::time::Duration::from_secs(30),
+        "5000 indexed upserts took {indexed:?}"
+    );
+}

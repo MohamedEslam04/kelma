@@ -135,6 +135,10 @@ component PreviewList inherits Rectangle {
     in property <string> highlight;
     in property <string> key;          // changes with every new preview
     callback open-url(string);
+    // Reactions and the "…" menu of a preview row (window coordinates).
+    callback react(string, string);
+    callback more-reactions(string, length, length);
+    callback menu(Msg, length, length);
 
     // The backend sends a short window with the source a few rows from the top, so a new
     // preview only has to start at the top.
@@ -150,10 +154,12 @@ component PreviewList inherits Rectangle {
                 if self.hl: hl-marker := Rectangle { x: 0; width: 3px; background: Theme.accent; }
                 mr := MessageRow {
                     width: parent.width;
-                    enabled: false;
                     m: m;
                     max-bubble: min(720px, pv.width * 0.8);
                     open-url(u) => { root.open-url(u); }
+                    react(k) => { root.react(m.id, k); }
+                    more-reactions(x, y) => { root.more-reactions(m.id, x, y); }
+                    menu(x, y) => { root.menu(m, x, y); }
                 }
             }
         }
@@ -183,6 +189,9 @@ export component ActivityView inherits Rectangle {
     callback go-to();
     callback send-reply(string);
     callback open-url(string);
+    callback react(string, string);
+    callback more-reactions(string, length, length);
+    callback menu(Msg, length, length);
     callback notification-settings();
     callback dismiss-banner();
 
@@ -371,6 +380,9 @@ export component ActivityView inherits Rectangle {
                             highlight: root.highlight;
                             key: root.preview-id;
                             open-url(u) => { root.open-url(u); }
+                            react(id, k) => { root.react(id, k); }
+                            more-reactions(id, x, y) => { root.more-reactions(id, x, y); }
+                            menu(m, x, y) => { root.menu(m, x, y); }
                         }
                         if root.preview-loading || (root.preview-id != root.selected-id && root.preview.length == 0): Text {
                             text: "Loading…";

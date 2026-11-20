@@ -15,6 +15,7 @@ use store::{ConvKind, ConversationRow, MessageRow, OutboxKind, UserRow};
 use teams_proto::mentions::{Mention, MentionKind, parse_mentions};
 use teams_proto::people::{Person, oid_of_mri};
 use teams_proto::receipts::{Horizon, seen_by};
+use teams_proto::tags::Tag;
 use teams_proto::threads::one_on_one_id;
 use teams_proto::time::now_ms;
 
@@ -52,6 +53,8 @@ pub enum PeopleCmd {
     Profile(String),
     ProfileCopyEmail,
     ProfileChat(String),
+    /// "Send a quick message" on the profile card: to the person the card shows.
+    ProfileMessage(String),
     PinJump(String),
     PinUnpin(String),
     Receipts(bool),
@@ -79,6 +82,7 @@ impl PeopleCmd {
             "profile" => PeopleCmd::Profile(a),
             "profile-copy-email" => PeopleCmd::ProfileCopyEmail,
             "profile-chat" => PeopleCmd::ProfileChat(a),
+            "profile-message" => PeopleCmd::ProfileMessage(a),
             "pin-jump" => PeopleCmd::PinJump(a),
             "pin-unpin" => PeopleCmd::PinUnpin(a),
             "receipts" => PeopleCmd::Receipts(arg == "on"),
@@ -104,12 +108,22 @@ pub(super) struct State {
     candidates: Vec<Entry>,
     /// Mentions picked in the composer for the draft.
     pub(super) entries: Vec<Entry>,
+    /// The tags of each team (by team thread id), fetched the first time a channel mentions one.
+    tags: HashMap<String, Vec<Tag>>,
     /// Bumped by every search; a slow answer for an older one is dropped.
     seq: u64,
+    /// The same for @mention queries, so typing a mention and a New chat search do not drop each
+    /// other's answers.
+    mention_seq: u64,
+    /// The same for the New chat search. Opening, closing and adding a person bump it too, so a
+    /// search still on its way does not fill the list again after them.
+    new_chat_seq: u64,
     new_chat: NewChat,
     add_history: bool,
     add_results: Vec<Person>,
     card_email: Option<String>,
+    /// The person the profile card shows.
+    card_mri: Option<String>,
     pins: HashMap<String, Vec<PinnedData>>,
     horizons: HashMap<String, Vec<Horizon>>,
     /// `readReceiptsEnabled` of the account, once known.
@@ -251,12 +265,18 @@ impl Engine {
                 Ok(())
             }
             PeopleCmd::NewChatOpen => {
-                self.people.lock().unwrap().new_chat = NewChat::default();
+                let mut p = self.people.lock().unwrap();
+                p.new_chat = NewChat::default();
+                p.new_chat_seq += 1;
+                drop(p);
                 self.push_new_chat(true);
                 Ok(())
             }
             PeopleCmd::NewChatClose => {
-                self.people.lock().unwrap().new_chat = NewChat::default();
+                let mut p = self.people.lock().unwrap();
+                p.new_chat = NewChat::default();
+                p.new_chat_seq += 1;
+                drop(p);
                 self.push_new_chat(false);
                 Ok(())
             }
@@ -304,6 +324,7 @@ impl Engine {
                 tracing::debug!(%id, "opened chat from the profile card");
                 Ok(())
             }
+            PeopleCmd::ProfileMessage(text) => self.quick_message(text).await,
             PeopleCmd::PinJump(id) => self.jump_to(&id).await,
             PeopleCmd::PinUnpin(id) => self.unpin(&id).await,
             PeopleCmd::Receipts(on) => {
@@ -323,6 +344,7 @@ impl Engine {
             p.add_results.clear();
         }
         self.ui.card(false, CardData::default());
+        self.ui.close_participants();
         self.ui.members(vec![], vec![]);
         self.ui.pinned(
             self.people
@@ -338,6 +360,7 @@ impl Engine {
         tokio::spawn(async move {
             let _ = e.ensure_members(&conv).await;
             e.push_group_header(&conv);
+            e.load_channel_tabs(&conv).await;
             e.refresh_pins(&conv).await;
             e.refresh_horizons(&conv).await;
         });
@@ -439,6 +462,7 @@ impl Engine {
                 .unwrap_or_default(),
             avatar: self.avatar(&p.mri),
             kind: "person",
+            presence: super::people_presence::want(&p.mri),
         }
     }
 
@@ -459,6 +483,7 @@ impl Engine {
             subtitle: user.and_then(|u| u.email).unwrap_or_default(),
             avatar: self.avatar(mri),
             kind: "person",
+            presence: super::people_presence::want(mri),
         }
     }
 
@@ -506,8 +531,8 @@ impl Engine {
         let kind = row.as_ref().map_or(ConvKind::Group, |r| r.kind);
         let seq = {
             let mut p = self.people.lock().unwrap();
-            p.seq += 1;
-            p.seq
+            p.mention_seq += 1;
+            p.mention_seq
         };
         let mut list: Vec<Entry> = Vec::new();
         let person = |mri: &str, name: String| Entry {
@@ -529,6 +554,14 @@ impl Engine {
                             name: name.clone(),
                             kind: MentionKind::Team,
                         });
+                    }
+                    // @tags: the team's groups of people, mentioned as `tag:<id>`.
+                    if let Some(team) = &r.team_id {
+                        list.extend(self.team_tags(team).await.iter().map(|t| Entry {
+                            mri: t.mri(),
+                            name: t.name.clone(),
+                            kind: MentionKind::Tag,
+                        }));
                     }
                 }
             }
@@ -563,10 +596,14 @@ impl Engine {
         let wants_search = matches!(kind, ConvKind::Channel | ConvKind::Meeting)
             && !q.trim().is_empty()
             && !self.offline.load(std::sync::atomic::Ordering::Relaxed);
+        // Loading the members waits on the network: a newer query may have answered meanwhile.
+        if self.people.lock().unwrap().mention_seq != seq {
+            return Ok(());
+        }
         self.set_candidates(list.clone());
         if wants_search && let Ok(found) = self.client.search_people(&self.me, q.trim()).await {
             let p = self.people.lock().unwrap();
-            if p.seq == seq {
+            if p.mention_seq == seq {
                 for f in found {
                     if list.len() >= MENTION_LIMIT {
                         break;
@@ -593,6 +630,7 @@ impl Engine {
                     MentionKind::Everyone => "Everyone in this chat".into(),
                     MentionKind::Team => "Team".into(),
                     MentionKind::Channel => "Channel".into(),
+                    MentionKind::Tag => self.tag_subtitle(&e.mri),
                     _ => String::new(),
                 },
                 avatar: matches!(e.kind, MentionKind::Person)
@@ -602,12 +640,56 @@ impl Engine {
                     MentionKind::Everyone => "everyone",
                     MentionKind::Team => "team",
                     MentionKind::Channel => "channel",
+                    MentionKind::Tag => "tag",
                     _ => "person",
                 },
+                presence: String::new(),
             })
             .collect();
         self.people.lock().unwrap().candidates = list;
         self.ui.mention_items(data);
+    }
+
+    /// The tags of a team, fetched once (none offline or when the fetch fails).
+    async fn team_tags(&self, team: &str) -> Vec<Tag> {
+        if let Some(t) = self.people.lock().unwrap().tags.get(team) {
+            return t.clone();
+        }
+        if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
+            return Vec::new();
+        }
+        match self.client.tags(team).await {
+            Ok(t) => {
+                self.people
+                    .lock()
+                    .unwrap()
+                    .tags
+                    .insert(team.to_string(), t.clone());
+                t
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "team tags for mentions");
+                Vec::new()
+            }
+        }
+    }
+
+    /// "Tag · 3 people" under a tag in the mention picker.
+    fn tag_subtitle(&self, mri: &str) -> String {
+        let count = self
+            .people
+            .lock()
+            .unwrap()
+            .tags
+            .values()
+            .flatten()
+            .find(|t| t.mri() == mri)
+            .map_or(0, |t| t.member_count);
+        match count {
+            0 => "Tag".into(),
+            1 => "Tag · 1 person".into(),
+            n => format!("Tag · {n} people"),
+        }
     }
 
     fn mention_pick(&self, id: &str) {
@@ -681,8 +763,8 @@ impl Engine {
     async fn new_chat_query(self: &Arc<Self>, q: String) -> anyhow::Result<()> {
         let seq = {
             let mut p = self.people.lock().unwrap();
-            p.seq += 1;
-            p.seq
+            p.new_chat_seq += 1;
+            p.new_chat_seq
         };
         if q.trim().is_empty() {
             self.people.lock().unwrap().new_chat.results.clear();
@@ -692,7 +774,7 @@ impl Engine {
         let found = self.client.search_people(&self.me, q.trim()).await?;
         {
             let mut p = self.people.lock().unwrap();
-            if p.seq != seq {
+            if p.new_chat_seq != seq {
                 return Ok(());
             }
             let picked: Vec<String> = p.new_chat.to.iter().map(|x| x.mri.clone()).collect();
@@ -714,8 +796,15 @@ impl Engine {
                 p.new_chat.to.push(f);
             }
             p.new_chat.results.clear();
+            p.new_chat_seq += 1;
         }
         self.push_new_chat(true);
+    }
+
+    /// The New chat search's sequence number (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn new_chat_seq_for_test(&self) -> u64 {
+        self.people.lock().unwrap().new_chat_seq
     }
 
     /// Opens (creating it when needed) the chat with `others` and returns its id. A new group is
@@ -802,6 +891,38 @@ impl Engine {
             favorite: false,
             read_horizon_ms: 0,
         });
+    }
+
+    /// Sends `text` to the 1:1 chat with the person on the profile card, without leaving the
+    /// chat that is open.
+    async fn quick_message(self: &Arc<Self>, text: String) -> anyhow::Result<()> {
+        let text = text.trim().to_string();
+        let Some(mri) = self.people.lock().unwrap().card_mri.clone() else {
+            return Ok(());
+        };
+        if text.is_empty() || mri == self.me {
+            return Ok(());
+        }
+        let id = match plan(&self.me, std::slice::from_ref(&mri), &self.groups()) {
+            Plan::Existing(id) => id,
+            Plan::Direct(id) => {
+                self.ensure_direct_row(&id, Some(&mri));
+                id
+            }
+            _ => return Ok(()),
+        };
+        let item = self.new_outbox_item(
+            id,
+            OutboxKind::Text,
+            render::text_to_teams_html(&text),
+            None,
+            None,
+            None,
+        );
+        self.enqueue(item)?;
+        self.flush_outbox(false).await;
+        self.mark(|d| d.chats = true);
+        Ok(())
     }
 
     async fn new_chat_send(self: &Arc<Self>, text: String) -> anyhow::Result<()> {
@@ -932,6 +1053,9 @@ impl Engine {
                 p.add_history,
             )
         };
+        if self.conv_kind(&conv) == Some(ConvKind::OneOnOne) {
+            return self.group_from_direct(&conv, person);
+        }
         // Whole history: 0. No history: from now on.
         let from = if history { 0 } else { now_ms() };
         self.client.add_member(&conv, &mri, from).await?;
@@ -961,6 +1085,39 @@ impl Engine {
             "Added {}",
             person.map_or_else(|| "a person".into(), |p| p.display_name)
         ));
+        Ok(())
+    }
+
+    /// "Add people" in a 1:1 chat: a 1:1 chat takes no members, so, as in Teams, a group chat
+    /// with the other person and the one picked is started instead. The New chat pane opens
+    /// with both in To:; its first message creates the group (or opens one that exists).
+    fn group_from_direct(
+        self: &Arc<Self>,
+        conv: &str,
+        picked: Option<Person>,
+    ) -> anyhow::Result<()> {
+        let mut to: Vec<Person> = one_on_one_members(conv)
+            .into_iter()
+            .filter(|m| *m != self.me)
+            .map(|m| Person {
+                display_name: self.name_of(&m),
+                mri: m,
+                email: None,
+                job_title: None,
+                department: None,
+            })
+            .collect();
+        to.extend(picked);
+        {
+            let mut p = self.people.lock().unwrap();
+            p.new_chat = NewChat {
+                to,
+                ..NewChat::default()
+            };
+            p.add_results.clear();
+        }
+        self.ui.close_participants();
+        self.push_new_chat(true);
         Ok(())
     }
 
@@ -1030,13 +1187,17 @@ impl Engine {
                 subtitle: String::new(),
                 avatar: self.card_photo(&mri),
                 kind: "person",
+                presence: String::new(),
             },
             loading: true,
             email: known.and_then(|u| u.email).unwrap_or_default(),
             ..Default::default()
         };
-        self.people.lock().unwrap().card_email =
-            (!card.email.is_empty()).then(|| card.email.clone());
+        {
+            let mut p = self.people.lock().unwrap();
+            p.card_email = (!card.email.is_empty()).then(|| card.email.clone());
+            p.card_mri = Some(mri.clone());
+        }
         self.ui.card(true, card.clone());
         let fetched = self.client.profile_card(&mri).await;
         card.loading = false;
@@ -1056,6 +1217,19 @@ impl Engine {
                 card.person.avatar = self.card_photo(&mri);
             }
             Err(err) => tracing::debug!(%err, "profile card"),
+        }
+        match self.client.get_presence(std::slice::from_ref(&mri)).await {
+            Ok(found) => {
+                if let Some(p) = found.into_iter().next() {
+                    super::people_presence::set(&mri, &p.availability);
+                    card.presence_label = super::people_presence::label(&p.availability).into();
+                    card.presence = p.availability;
+                    card.work_location =
+                        super::people_presence::work_location_label(p.work_location.as_deref())
+                            .into();
+                }
+            }
+            Err(err) => tracing::debug!(%err, "profile card presence"),
         }
         self.people.lock().unwrap().card_email =
             (!card.email.is_empty()).then(|| card.email.clone());
@@ -1109,6 +1283,18 @@ impl Engine {
         if self.current_chat().as_deref() == Some(conv) {
             self.ui.pinned(data);
         }
+        // The message menu offers Unpin on pinned rows.
+        self.mark(|d| d.messages = true);
+    }
+
+    /// Whether a message is pinned for everyone in its chat (as last read).
+    pub(super) fn is_pinned(&self, conv: &str, id: &str) -> bool {
+        self.people
+            .lock()
+            .unwrap()
+            .pins
+            .get(conv)
+            .is_some_and(|p| p.iter().any(|x| x.id == id))
     }
 
     /// Loads older history of `conv` until all `ids` are stored (at most `pages` pages).
@@ -1378,6 +1564,11 @@ impl Engine {
             .unwrap()
             .members
             .insert(conv.into(), members.iter().map(|m| m.to_string()).collect());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_set_tags(&self, team: &str, tags: Vec<Tag>) {
+        self.people.lock().unwrap().tags.insert(team.into(), tags);
     }
 
     #[cfg(test)]

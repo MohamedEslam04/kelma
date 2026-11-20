@@ -56,6 +56,52 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
+/// The date for a day count since 1970-01-01 (the inverse of `days_from_civil`).
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+/// Unix milliseconds as `2026-11-25T00:00:00Z` (UTC, whole seconds).
+pub fn iso_utc(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let t = secs.rem_euclid(86_400);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        t / 3600,
+        t % 3600 / 60,
+        t % 60
+    )
+}
+
+/// A typed date `YYYY-MM-DD` as Unix milliseconds at 00:00 UTC. `None` for anything else,
+/// including dates that do not exist (`2026-02-30`).
+pub fn parse_date_input(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    if !b
+        .iter()
+        .enumerate()
+        .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+    {
+        return None;
+    }
+    let ms = parse_iso_ms(&format!("{s}T00:00:00Z"))?;
+    // Reject a day that rolled into the next month.
+    (iso_utc(ms)[..10] == *s).then_some(ms)
+}
+
 /// Current Unix time in milliseconds.
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -67,6 +113,25 @@ pub fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_utc_and_reads_typed_dates() {
+        assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(iso_utc(1_795_001_078_052), "2026-11-18T11:24:38Z");
+        assert_eq!(iso_utc(-1000), "1969-12-31T23:59:59Z");
+        assert_eq!(parse_date_input("2026-11-25"), Some(1_795_564_800_000));
+        assert_eq!(parse_date_input(" 2024-02-29 "), Some(1_709_164_800_000));
+        for bad in [
+            "",
+            "2026-2-3",
+            "2026-02-30",
+            "2026-13-01",
+            "25/11/2026",
+            "2026-11-25T01",
+        ] {
+            assert_eq!(parse_date_input(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn parses_teams_timestamps() {

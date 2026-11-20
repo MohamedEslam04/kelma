@@ -181,6 +181,10 @@ Everything Teams web has, inside a kelma-owned window. Each item is "verify it w
   flows, which hand connected calls back through `CallManager::adopt`. Reactions, spotlight, admitting from
   the lobby, captions and recording control are not built. Scope: participants, mute and unmute, raise hand, reactions, spotlight, admit from the lobby, captions, and recording start and stop (bot commands to the roster URL).
   - **Evidence (live, 2026-11-19).** The user's own two accounts (no colleague): the work account in kelma, the personal account on a phone. A consumer Meet now joined from kelma's GUI with Calendar › Join with an ID: pre-join (mic switch, microphone and speaker pickers, Join now), the lobby, Admit on the phone, then two-way audio; People showed both, Mute/Unmute, Raise and Leave worked, and the mic dropdown switched devices. The same call window and controls also carried a native 1:1 call (calls plan K2.1).
+  - **Reactions request (2026-11-19, `feat/calls-page`, unverified live).** `calling::signaling::controls::reaction_request`
+    builds `POST sendMessage` with one `Reaction` item (`like`, `heart`, `applause`, `laugh`, `surprised`; skin tone 2
+    on like and applause), fresh operation and value ids, no sequence number and no `removeState` (facts: rusty-teams
+    `reaction.rs`, MIT). The React button is not wired yet.
 - [ ] **M5.4 Switch the default launcher to Native** DEFERRED: needs test tenant (meetings are not allowed on the work account; native media is owned by the parallel calling work). once M5.1–M5.3 pass. ChromiumWindow stays for breakout rooms, Whiteboard, PowerPoint Live and apps.
 
 ## Order

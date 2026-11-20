@@ -2,7 +2,7 @@
 #![cfg(feature = "aec")]
 
 use calling::FRAME_SAMPLES;
-use calling::audio::{AudioProcessor, Frame, FrameSource, echo_cancelled};
+use calling::audio::{AudioProcessor, Frame, FrameSource, ProcessingOptions, echo_cancelled};
 use std::collections::VecDeque;
 
 /// 10 ms at 48 kHz.
@@ -121,6 +121,30 @@ fn accepts_10_and_20_ms_frames_and_keeps_their_length() {
         p.process_render(&vec![0; len]).unwrap();
         assert_eq!(p.process_capture(&vec![0; len]).unwrap().len(), len);
     }
+}
+
+#[test]
+fn options_switch_echo_cancellation_and_noise_suppression() {
+    let all = ProcessingOptions::default().config();
+    assert!(all.echo_canceller.is_some() && all.noise_suppression.is_some());
+    let none = ProcessingOptions {
+        echo_cancellation: false,
+        noise_suppression: false,
+    }
+    .config();
+    assert!(none.echo_canceller.is_none() && none.noise_suppression.is_none());
+    // Gain control stays on either way.
+    assert!(none.gain_controller2.is_some());
+    // A processor with parts off still takes frames.
+    let mut p = AudioProcessor::with_options(ProcessingOptions {
+        echo_cancellation: false,
+        noise_suppression: true,
+    });
+    p.process_render(&vec![0; FRAME_SAMPLES]).unwrap();
+    assert_eq!(
+        p.process_capture(&vec![0; FRAME_SAMPLES]).unwrap().len(),
+        FRAME_SAMPLES
+    );
 }
 
 #[test]

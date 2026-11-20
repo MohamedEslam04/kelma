@@ -55,12 +55,12 @@ export component NewChatPane inherits Rectangle {
                     Text { text: @tr("To:"); color: Theme.fg-muted; font-size: 14px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 0; }
                     for p in root.to: chip := Rectangle {
                         height: 26px;
-                        width: chip-text.preferred-width + 30px;
+                        width: min(chip-text.preferred-width, 200px) + 30px;
                         border-radius: 13px;
                         background: #34365c;
                         accessible-role: button;
                         accessible-label: @tr("Remove {}", p.name);
-                        chip-text := Text { x: 10px; text: p.name; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                        chip-text := Text { x: 10px; width: parent.width - 30px; text: p.name; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
                         Text { x: parent.width - 18px; text: "×"; color: Theme.fg-muted; font-size: 15px * Theme.font-scale; vertical-alignment: center; }
                         TouchArea { mouse-cursor: pointer; clicked => { root.remove(p.id); } }
                     }
@@ -147,7 +147,7 @@ export component NewChatPane inherits Rectangle {
                             HorizontalLayout {
                                 padding-left: 12px;
                                 spacing: 10px;
-                                Avatar { initials: r.initials; tone: r.color; img: r.avatar; has-img: r.has-avatar; size: 32px; y: 8px; }
+                                Avatar { initials: r.initials; tone: r.color; img: r.avatar; has-img: r.has-avatar; presence: r.presence; size: 32px; y: 8px; }
                                 VerticalLayout {
                                     alignment: center;
                                     Text { text: r.name; color: Theme.fg; font-size: 14px * Theme.font-scale; overflow: elide; }

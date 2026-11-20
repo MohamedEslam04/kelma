@@ -3,6 +3,7 @@
 //! pushes the result to the UI.
 
 mod chip;
+pub(super) use chip::file_card_labels;
 mod cmd;
 pub(crate) mod state;
 
@@ -140,6 +141,8 @@ const PAGE_WIDTH: u32 = 1000;
 pub struct Drive {
     s: State,
     entered: bool,
+    /// Bumped per share-dialog people search; an older, slower answer is dropped.
+    share_seq: u64,
     /// Libraries, favorites and the "For you" cards load once, from whichever feature needs
     /// them first (the OneDrive view or the cloud-file picker).
     background_started: bool,
@@ -647,6 +650,12 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// The list's filter text (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn drive_filter_for_test(&self) -> String {
+        self.drive.lock().unwrap().s.filter.clone()
     }
 
     /// The commands that only change the view state (see `DriveCmd::is_instant`).
@@ -1741,14 +1750,24 @@ impl Engine {
         let Some(item) = self.drive_one() else {
             return Ok(());
         };
+        // The dialog's item is set before the list loads, so a Close sent meanwhile ends it.
+        self.drive.lock().unwrap().versions_of = Some(item.clone());
         let list = if self.drive_offline() {
             crate::demo::drive_versions(now_ms())
         } else {
             ops::versions(&self.client, &ItemRef::from(&item)).await?
         };
-        self.drive.lock().unwrap().versions_of = Some(item.clone());
-        self.ui
-            .drive_versions(item.name, version_data(&list, now_ms()));
+        let still_open = self
+            .drive
+            .lock()
+            .unwrap()
+            .versions_of
+            .as_ref()
+            .is_some_and(|v| v.id == item.id);
+        if still_open {
+            self.ui
+                .drive_versions(item.name, version_data(&list, now_ms()));
+        }
         Ok(())
     }
 
@@ -1771,6 +1790,13 @@ impl Engine {
         let Some(item) = self.drive_one() else {
             return Ok(());
         };
+        self.drive_share_open(item).await
+    }
+
+    /// Opens the Share dialog for `item`, which need not be the OneDrive view's selection
+    /// (Meeting Recaps shares a recording this way). The dialog lives in the OneDrive view.
+    pub(super) async fn drive_share_open(self: &Arc<Self>, item: DriveItem) -> anyhow::Result<()> {
+        self.ui.open_view("onedrive".into());
         self.drive.lock().unwrap().share = Some(Share {
             item: item.clone(),
             role: Role::Write,
@@ -1843,6 +1869,11 @@ impl Engine {
     }
 
     async fn drive_share_search(self: &Arc<Self>, q: &str) -> anyhow::Result<()> {
+        let seq = {
+            let mut d = self.drive.lock().unwrap();
+            d.share_seq += 1;
+            d.share_seq
+        };
         if q.chars().count() < 2 {
             if let Some(s) = self.drive.lock().unwrap().share.as_mut() {
                 s.results.clear();
@@ -1865,8 +1896,15 @@ impl Engine {
                 email: p.email,
             })
             .collect();
-        if let Some(s) = self.drive.lock().unwrap().share.as_mut() {
-            s.results = results;
+        {
+            let mut d = self.drive.lock().unwrap();
+            // A slower answer to an older query never replaces a newer one.
+            if d.share_seq != seq {
+                return Ok(());
+            }
+            if let Some(s) = d.share.as_mut() {
+                s.results = results;
+            }
         }
         self.drive_share_push();
         Ok(())
@@ -2301,7 +2339,7 @@ fn plural(n: usize) -> &'static str {
 }
 
 /// A file name that is safe to create in a directory of ours.
-fn sanitize_file_name(name: &str) -> String {
+pub(super) fn sanitize_file_name(name: &str) -> String {
     let s: String = name
         .chars()
         .map(|c| {

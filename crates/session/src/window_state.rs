@@ -48,6 +48,8 @@ pub struct WindowState {
     pub last_chat: Option<String>,
     /// Ids of the collapsed sidebar sections.
     pub collapsed_sections: BTreeSet<String>,
+    /// Width of the chat and teams list the user dragged it to; `None` keeps the default.
+    pub sidebar_width: Option<u32>,
 }
 
 impl Default for WindowState {
@@ -60,6 +62,7 @@ impl Default for WindowState {
             maximized: false,
             last_chat: None,
             collapsed_sections: BTreeSet::new(),
+            sidebar_width: None,
         }
     }
 }

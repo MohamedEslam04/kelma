@@ -48,6 +48,8 @@ pub enum ListsCmd {
     Unmute(String),
     CopyLink(String),
     Hide(String),
+    /// The chat header's "Remove chat history": the messages so far are gone for this user.
+    RemoveHistory(String),
     /// `previews`, `times` or `combined`, on or off.
     Option(String, bool),
     ChannelMenu(String),
@@ -78,6 +80,7 @@ impl ListsCmd {
             "unmute" => ListsCmd::Unmute(a),
             "copy-link" => ListsCmd::CopyLink(a),
             "hide" => ListsCmd::Hide(a),
+            "remove-history" => ListsCmd::RemoveHistory(a),
             "option" => ListsCmd::Option(a, b == "on"),
             "channel-menu" => ListsCmd::ChannelMenu(a),
             "channel-show" => ListsCmd::ChannelShow(a),
@@ -391,6 +394,10 @@ impl Engine {
 
     /// True when a new message in this chat or channel must not pop a notification.
     pub(super) fn lists_silenced(&self, conversation_id: &str) -> bool {
+        // A snoozed chat is silent until it comes back.
+        if self.remind_is_snoozed(conversation_id) {
+            return true;
+        }
         let st = self.lists.lock().unwrap();
         st.muted.contains(conversation_id)
             || st
@@ -557,6 +564,7 @@ impl Engine {
             ListsCmd::Unmute(conv) => self.set_mute(&conv, false).await,
             ListsCmd::CopyLink(conv) => self.copy_text(&chat_link(&conv), "Chat link copied"),
             ListsCmd::Hide(conv) => self.hide_chat(&conv).await,
+            ListsCmd::RemoveHistory(conv) => self.remove_history(&conv).await,
             ListsCmd::Option(name, on) => self.set_option(&name, on),
             ListsCmd::ChannelMenu(id) => self.channel_menu(&id).await,
             ListsCmd::ChannelShow(id) => self.set_channel_shown(&id, true).await,
@@ -752,7 +760,11 @@ impl Engine {
             }
             was
         };
-        self.mark(|d| d.chats = true);
+        // The chat header's "More chat options" shows Mute or Unmute too.
+        self.mark(|d| {
+            d.chats = true;
+            d.header = true;
+        });
         if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
@@ -765,7 +777,10 @@ impl Engine {
                 st.muted.remove(conv);
             }
             drop(st);
-            self.mark(|d| d.chats = true);
+            self.mark(|d| {
+                d.chats = true;
+                d.header = true;
+            });
             return Err(err.into());
         }
         Ok(())
@@ -795,7 +810,51 @@ impl Engine {
         Ok(())
     }
 
+    /// "Remove chat history" (chat header, "More chat options"): Teams clears the history up to
+    /// now for this user only. Here the cached messages and draft go, and the chat leaves the
+    /// list until a newer message arrives. The account is written first; when it refuses,
+    /// nothing changes here.
+    async fn remove_history(self: &Arc<Self>, conv: &str) -> anyhow::Result<()> {
+        let at = now_ms();
+        if !self.offline.load(std::sync::atomic::Ordering::Relaxed) {
+            self.client.clear_history(conv, at).await?;
+        }
+        self.store.lock().unwrap().delete_conversation(conv)?;
+        self.lists
+            .lock()
+            .unwrap()
+            .local
+            .hidden
+            .insert(conv.to_string(), at);
+        self.lists_save();
+        let was_open = {
+            let mut v = self.view.lock().unwrap();
+            let open = v.current.as_deref() == Some(conv);
+            if open {
+                v.current = None;
+                v.thread_root = None;
+            }
+            open
+        };
+        self.mark(|d| {
+            d.chats = true;
+            d.header = true;
+            d.messages = true;
+        });
+        if was_open {
+            self.banner("Chat history removed");
+        }
+        Ok(())
+    }
+
     // ---- filters and options ----
+
+    /// The previews and times options (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn list_options_for_test(&self) -> (bool, bool) {
+        let st = self.lists.lock().unwrap();
+        (st.local.opts.previews, st.local.opts.times)
+    }
 
     fn set_option(&self, name: &str, on: bool) -> anyhow::Result<()> {
         let opts = {
@@ -836,6 +895,7 @@ impl Engine {
                 .as_ref()
                 .is_some_and(|c| c.kind == ChannelKind::Private),
             hidden: info.as_ref().is_some_and(|c| !c.shown),
+            pinned: self.pinned_ids().iter().any(|p| p == id),
         });
     }
 
@@ -884,14 +944,21 @@ impl Engine {
         let Some(l) = notify_level(level) else {
             return Ok(());
         };
+        // Shown at once, so the menu opened right after has it; put back when the service
+        // refuses, unless another choice came meanwhile.
+        let before = self
+            .lists
+            .lock()
+            .unwrap()
+            .channels
+            .get_mut(id)
+            .and_then(|c| c.notify.replace(l));
+        self.push_channel_menu(id);
         if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
-            if let Some(c) = self.lists.lock().unwrap().channels.get_mut(id) {
-                c.notify = Some(l);
-            }
-            self.push_channel_menu(id);
             return Ok(());
         }
-        self.client
+        let answer = self
+            .client
             .set_channel_notifications(
                 id,
                 ChannelNotify {
@@ -899,11 +966,16 @@ impl Engine {
                     include_replies: false,
                 },
             )
-            .await?;
-        if let Some(c) = self.lists.lock().unwrap().channels.get_mut(id) {
-            c.notify = Some(l);
+            .await;
+        if let Err(err) = answer {
+            if let Some(c) = self.lists.lock().unwrap().channels.get_mut(id)
+                && c.notify == Some(l)
+            {
+                c.notify = before;
+            }
+            self.push_channel_menu(id);
+            return Err(err.into());
         }
-        self.push_channel_menu(id);
         Ok(())
     }
 
@@ -953,10 +1025,25 @@ impl Engine {
             id: id.to_string(),
             kind: info.kind,
         };
-        self.client
+        // Off the list at once (a second Leave or the channel menu finds it gone); back when the
+        // service refuses. The chat's messages are deleted only once the service agreed.
+        let kept = self.lists.lock().unwrap().channels.remove(id);
+        self.dirty_lists();
+        if let Err(err) = self
+            .client
             .remove_private_channel_member(&team, &r, &self.me)
-            .await?;
-        self.lists.lock().unwrap().channels.remove(id);
+            .await
+        {
+            if let Some(c) = kept {
+                self.lists
+                    .lock()
+                    .unwrap()
+                    .channels
+                    .insert(id.to_string(), c);
+            }
+            self.dirty_lists();
+            return Err(err.into());
+        }
         self.store.lock().unwrap().delete_conversation(id)?;
         self.dirty_lists();
         self.banner("You left the channel");
@@ -996,9 +1083,19 @@ impl Engine {
         self.lists_silenced(id)
     }
 
+    /// The chat is muted (the header's menu offers Unmute).
+    pub(super) fn is_muted(&self, id: &str) -> bool {
+        self.lists.lock().unwrap().muted.contains(id)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_is_muted(&self, id: &str) -> bool {
-        self.lists.lock().unwrap().muted.contains(id)
+        self.is_muted(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_is_hidden(&self, id: &str) -> bool {
+        self.lists.lock().unwrap().local.hidden.contains_key(id)
     }
 
     #[cfg(test)]
@@ -1025,6 +1122,14 @@ mod tests {
             hidden_channels: ["chan-hidden".to_string()].into(),
             unknown_sections: HashSet::new(),
         }
+    }
+
+    #[test]
+    fn parses_remove_history() {
+        assert_eq!(
+            ListsCmd::parse("remove-history", "19:x"),
+            Some(ListsCmd::RemoveHistory("19:x".into()))
+        );
     }
 
     #[test]

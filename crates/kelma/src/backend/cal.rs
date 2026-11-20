@@ -16,11 +16,10 @@ use super::Engine;
 use ::calendar::{
     Calendar, CalendarInfo, Date, Event, EventCache, EventDetail, EventFilter, Rsvp, View, Weekday,
 };
-use chrono::{Local, TimeZone};
 use grid::DAY_MS;
 pub use grid::{CalData, Ctx};
 #[cfg(test)]
-pub use grid::{DEFAULT_PREFS, Prefs, build, parse_view};
+pub use grid::{DEFAULT_PREFS, Prefs, build, build_split, parse_view};
 pub use model::{
     DetailData, FormOpen, Panels, PeekData, PermRow, RoomsPush, SchedPush, SettingsData,
     share_roles,
@@ -50,12 +49,10 @@ const SNOOZE_MS: i64 = 5 * 60_000;
 const SCALES: [u32; 3] = [15, 30, 60];
 const GRAPH_EVENTS: &str = "https://graph.microsoft.com/v1.0/me/events";
 
-/// Milliseconds local time is ahead of UTC at the UTC instant `ms`.
+/// Milliseconds local time is ahead of UTC at the UTC instant `ms`, in the time zone chosen in
+/// Settings (the system zone when none is).
 fn local_offset(ms: i64) -> i64 {
-    Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map_or(0, |t| i64::from(t.offset().local_minus_utc()) * 1000)
+    appearance::formats::offset_ms(ms)
 }
 
 pub fn today() -> Date {
@@ -116,6 +113,8 @@ pub enum CalCmd {
     JoinEvent,
     CopyLink,
     Chat,
+    /// Opens a page of the open meeting in the browser: `notes`, `recap` or `options`.
+    MeetingLink(String),
     Rsvp {
         rsvp: Rsvp,
         send: bool,
@@ -248,6 +247,9 @@ impl CalCmd {
             "join-event" => CalCmd::JoinEvent,
             "copy-link" => CalCmd::CopyLink,
             "chat" => CalCmd::Chat,
+            "meeting-link" if matches!(arg, "notes" | "recap" | "options") => {
+                CalCmd::MeetingLink(arg.into())
+            }
             "rsvp" => {
                 let p = parts(arg, 3);
                 CalCmd::Rsvp {
@@ -378,6 +380,8 @@ struct Inner {
     cache: EventCache,
     date: Date,
     view: View,
+    /// The Split view: one day, a column per calendar. `view` stays `Day(1)` meanwhile.
+    split: bool,
     scale: u32,
     mini: Date,
     /// The delta window `[start, end)`, once the first delta finished.
@@ -385,6 +389,8 @@ struct Inner {
     /// Ranges fetched with calendarView outside the delta window.
     fetched: Vec<(i64, i64)>,
     fired: HashSet<Key>,
+    /// Teams meetings whose "started" notification went out.
+    started: HashSet<Key>,
     snoozed: HashMap<Key, i64>,
     dismissed: HashSet<Key>,
     banner: Option<Key>,
@@ -416,9 +422,15 @@ struct Inner {
     editing: Option<Editing>,
     pending_move: Option<PendingMove>,
     meet_link: Option<String>,
+    /// Bumped by every command that opens the event form (New, Edit, Duplicate, a meeting from a
+    /// chat), so a form still loading never replaces one opened after it.
+    form_seq: u64,
     room_lists: Vec<(String, String)>,
     last_panels: Option<Panels>,
 }
+
+/// The saved view key of the Split view (the grid's own keys only know single views).
+const SPLIT: &str = "split";
 
 /// Calendar state shared by the engine.
 pub struct CalState(Mutex<Inner>);
@@ -441,10 +453,14 @@ impl CalState {
         CalState(Mutex::new(Inner {
             cache: EventCache::default(),
             date: today,
-            view: cfg
-                .calendar_view
-                .as_deref()
-                .map_or(View::WorkWeek, grid::parse_view),
+            view: cfg.calendar_view.as_deref().map_or(View::WorkWeek, |k| {
+                if k == SPLIT {
+                    View::Day(1)
+                } else {
+                    grid::parse_view(k)
+                }
+            }),
+            split: cfg.calendar_view.as_deref() == Some(SPLIT),
             scale: cfg
                 .calendar_scale
                 .filter(|s| SCALES.contains(s))
@@ -453,6 +469,7 @@ impl CalState {
             window: None,
             fetched: Vec::new(),
             fired: HashSet::new(),
+            started: HashSet::new(),
             snoozed: HashMap::new(),
             dismissed: HashSet::new(),
             banner: None,
@@ -476,6 +493,7 @@ impl CalState {
             editing: None,
             pending_move: None,
             meet_link: None,
+            form_seq: 0,
             room_lists: Vec::new(),
             last_panels: None,
         }))
@@ -542,11 +560,11 @@ impl Inner {
                 self.mini = self.date;
             }
             CalCmd::SetView(k) => {
-                self.view = grid::parse_view(k);
+                self.set_view_key(k);
                 return true;
             }
             CalCmd::Days(d) => {
-                if let View::Day(n) = self.view {
+                if let (View::Day(n), false) = (self.view, self.split) {
                     let n = (n as i32 + d).clamp(1, grid::MAX_DAYS as i32);
                     self.view = View::Day(n as u32);
                     return true;
@@ -569,6 +587,7 @@ impl Inner {
             CalCmd::Range(a, b) => {
                 let (from, to) = if a <= b { (*a, *b) } else { (*b, *a) };
                 let days = ((to.midnight_ms() - from.midnight_ms()) / DAY_MS + 1) as u32;
+                self.split = false;
                 self.view = View::Day(days.clamp(1, grid::MAX_DAYS));
                 self.date = from;
                 self.mini = from;
@@ -576,7 +595,7 @@ impl Inner {
             }
             CalCmd::SavedApply(name) => {
                 if let Some(v) = self.saved_views.iter().find(|v| v.name == *name).cloned() {
-                    self.view = grid::parse_view(&v.view);
+                    self.set_view_key(&v.view);
                     if SCALES.contains(&v.scale) {
                         self.scale = v.scale;
                     }
@@ -588,7 +607,7 @@ impl Inner {
                 if !name.is_empty() {
                     let v = session::SavedView {
                         name: name.into(),
-                        view: grid::view_key(self.view),
+                        view: self.view_key(),
                         scale: self.scale,
                     };
                     match self.saved_views.iter_mut().find(|x| x.name == v.name) {
@@ -677,23 +696,73 @@ impl Inner {
         v
     }
 
+    /// The Split view's columns: my calendar, then each ticked one in the list's order, each with
+    /// its events of the range, narrowed by the filters.
+    fn split_columns(&self, s: i64, e: i64) -> Vec<(String, Vec<&Event>)> {
+        let name = self
+            .calendars
+            .iter()
+            .find(|c| c.is_default)
+            .map_or_else(|| "My calendar".to_owned(), |c| c.name.clone());
+        let mut mine = self.cache.in_range(s, e);
+        mine.retain(|x| self.filter.matches(x));
+        let mut cols = vec![(name, mine)];
+        for c in self
+            .calendars
+            .iter()
+            .filter(|c| !c.is_default && self.visible.contains(&c.id))
+        {
+            let events: Vec<&Event> = self
+                .extras
+                .get(&c.id)
+                .map(|(evs, _)| {
+                    evs.iter()
+                        .filter(|x| overlaps(x, s, e) && self.filter.matches(x))
+                        .collect()
+                })
+                .unwrap_or_default();
+            cols.push((c.name.clone(), events));
+        }
+        cols
+    }
+
+    /// The view as the config file and saved views name it.
+    fn view_key(&self) -> String {
+        if self.split {
+            SPLIT.into()
+        } else {
+            grid::view_key(self.view)
+        }
+    }
+
+    /// Switches to the view a key names (`split` or one of the grid's).
+    fn set_view_key(&mut self, key: &str) {
+        self.split = key == SPLIT;
+        self.view = if self.split {
+            View::Day(1)
+        } else {
+            grid::parse_view(key)
+        };
+    }
+
     fn data(&self, now: i64) -> CalData {
         let (s, e) = self.range();
-        let events = self.visible_events(s, e);
         let prefs = self.prefs(now);
-        let mut data = grid::build(
-            &events,
-            &Ctx {
-                date: self.date,
-                view: self.view,
-                scale: self.scale,
-                now_ms: now,
-                first_day: self.first_day(),
-                mini_anchor: self.mini,
-                off: &local_offset,
-                prefs: &prefs,
-            },
-        );
+        let ctx = Ctx {
+            date: self.date,
+            view: self.view,
+            scale: self.scale,
+            now_ms: now,
+            first_day: self.first_day(),
+            mini_anchor: self.mini,
+            off: &local_offset,
+            prefs: &prefs,
+        };
+        let mut data = if self.split {
+            grid::build_split(&self.split_columns(s, e), &ctx)
+        } else {
+            grid::build(&self.visible_events(s, e), &ctx)
+        };
         for b in &mut data.blocks {
             if let Some(c) = self.tones.get(&b.id) {
                 b.look.color = *c;
@@ -785,6 +854,49 @@ fn snooze_body(until_ms: i64) -> serde_json::Value {
 
 impl Engine {
     /// Starts the calendar sync and reminder loops.
+    /// The date the calendar shows (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn calendar_date_for_test(&self) -> Date {
+        self.cal.lock().date
+    }
+
+    /// Puts an event in the cache and reads one back (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn calendar_put_for_test(&self, e: Event) {
+        self.cal
+            .lock()
+            .cache
+            .apply(vec![::calendar::EventChange::Upsert(e)]);
+    }
+
+    #[cfg(test)]
+    pub(super) fn calendar_event_for_test(&self, id: &str) -> Option<Event> {
+        self.cal.lock().find(id).cloned()
+    }
+
+    /// A reminder's snooze time and whether it is done (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn calendar_reminder_for_test(
+        &self,
+        id: &str,
+        start_ms: i64,
+    ) -> (Option<i64>, bool) {
+        let s = self.cal.lock();
+        let k = (id.to_owned(), start_ms);
+        (s.snoozed.get(&k).copied(), s.fired.contains(&k))
+    }
+
+    /// Meet now's link, read and set (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn calendar_meet_link_for_test(&self) -> Option<String> {
+        self.cal.lock().meet_link.clone()
+    }
+
+    #[cfg(test)]
+    pub(super) fn calendar_set_meet_link_for_test(&self, link: &str) {
+        self.cal.lock().meet_link = Some(link.to_owned());
+    }
+
     pub(super) fn start_calendar(self: &Arc<Self>) {
         let e = self.clone();
         tokio::spawn(async move {
@@ -829,7 +941,9 @@ impl Engine {
     /// Fires due reminders, updates the Join banner and refreshes the view (the now line moves).
     fn calendar_tick(self: &Arc<Self>, notify: bool) {
         let now = now_ms();
-        let (due, banner) = {
+        // The meeting we are in (or about to join) neither banners nor notifies again.
+        let joined = |url: &str| self.calls.is_in_meeting(url);
+        let (due, started, banner) = {
             let mut s = self.cal.lock();
             let s = &mut *s;
             let due = reminders::due_reminders(s.nearby(now), now, &s.fired, &s.snoozed);
@@ -838,10 +952,27 @@ impl Engine {
                 s.snoozed.remove(&k);
                 s.fired.insert(k);
             }
-            let banner = reminders::join_banner(s.nearby(now), now, &s.dismissed);
+            let started =
+                reminders::just_started(s.nearby(now), now, &s.started, &s.dismissed, joined);
+            for r in &started {
+                s.started.insert((r.id.clone(), r.start_ms));
+            }
+            let banner = reminders::join_banner(
+                s.nearby(now)
+                    .into_iter()
+                    .filter(|e| !e.join_url.as_deref().is_some_and(joined)),
+                now,
+                &s.dismissed,
+            );
             s.banner = banner.as_ref().map(|b| (b.id.clone(), b.start_ms));
-            (due, banner)
+            (due, started, banner)
         };
+        for r in started {
+            tracing::info!("calendar: a Teams meeting started");
+            if notify {
+                self.notify_reminder(r, now);
+            }
+        }
         for r in due {
             tracing::info!(
                 minutes_to_start = (r.start_ms - now) / 60_000,
@@ -952,7 +1083,12 @@ impl Engine {
     pub(super) async fn calendar_cmd(self: &Arc<Self>, cmd: CalCmd) -> anyhow::Result<()> {
         match cmd {
             CalCmd::Join(url) => {
-                if url.starts_with("https://") && !self.call_prejoin_link("Meeting", &url) {
+                let title = {
+                    let s = self.cal.lock();
+                    reminders::subject_for_link(s.nearby(now_ms()), &url)
+                }
+                .unwrap_or_else(|| "Meeting".to_owned());
+                if url.starts_with("https://") && !self.call_prejoin_link(&title, &url) {
                     let _ = crate::external::open(&url);
                 }
                 return Ok(());
@@ -1001,7 +1137,7 @@ impl Engine {
         let (view, scale, settings, saved) = {
             let s = self.cal.lock();
             (
-                grid::view_key(s.view),
+                s.view_key(),
                 s.scale,
                 s.settings.clone(),
                 s.saved_views.clone(),
@@ -1086,19 +1222,23 @@ impl Engine {
     /// `POST /me/events/{id}/snoozeReminder`: remind again in five minutes.
     async fn snooze_reminder(&self, id: String, start_ms: i64) -> anyhow::Result<()> {
         let until = now_ms() + SNOOZE_MS;
+        // Here first, so a Dismiss pressed right after wins, then the server.
+        self.cal
+            .lock()
+            .snoozed
+            .insert((id.clone(), start_ms), until);
         self.reminder_call(&id, "snoozeReminder", Some(&snooze_body(until)))
-            .await?;
-        self.cal.lock().snoozed.insert((id, start_ms), until);
-        Ok(())
+            .await
     }
 
     /// `POST /me/events/{id}/dismissReminder`.
     async fn dismiss_reminder(&self, id: String, start_ms: i64) -> anyhow::Result<()> {
-        self.reminder_call(&id, "dismissReminder", None).await?;
-        let mut s = self.cal.lock();
-        s.snoozed.remove(&(id.clone(), start_ms));
-        s.fired.insert((id, start_ms));
-        Ok(())
+        {
+            let mut s = self.cal.lock();
+            s.snoozed.remove(&(id.clone(), start_ms));
+            s.fired.insert((id.clone(), start_ms));
+        }
+        self.reminder_call(&id, "dismissReminder", None).await
     }
 }
 
@@ -1158,6 +1298,49 @@ mod tests {
 
     fn state(cfg: session::Config) -> CalState {
         CalState::new(&cfg)
+    }
+
+    #[test]
+    fn split_view_is_one_day_with_a_column_per_ticked_calendar_and_is_saved() {
+        let cal = |id: &str, name: &str, default: bool| CalendarInfo {
+            id: id.into(),
+            name: name.into(),
+            color: "auto".into(),
+            hex_color: None,
+            is_default: default,
+            can_edit: false,
+            can_share: false,
+            owner_name: String::new(),
+            owner_email: String::new(),
+        };
+        let s = state(session::Config::default());
+        let mut s = s.lock();
+        s.calendars = vec![
+            cal("c0", "Mine", true),
+            cal("c1", "Team", false),
+            cal("c2", "Hidden", false),
+        ];
+        s.visible.insert("c1".into());
+        assert!(s.apply(&CalCmd::SetView("split".into()), NOV_18));
+        assert_eq!((s.view, s.split), (View::Day(1), true));
+        assert_eq!(s.view_key(), "split", "the config and saved views keep it");
+        assert!(
+            !s.apply(&CalCmd::Days(2), NOV_18),
+            "a split view is always one day"
+        );
+        let names: Vec<_> = s.split_columns(0, 1).into_iter().map(|c| c.0).collect();
+        assert_eq!(names, ["Mine", "Team"], "unticked calendars have no column");
+        assert_eq!(s.data(0).view_kind, "split");
+        // Another view leaves it, and a restored config brings it back.
+        s.apply(&CalCmd::SetView("week".into()), NOV_18);
+        assert_eq!((s.view, s.split), (View::Week, false));
+        drop(s);
+        let g = state(session::Config {
+            calendar_view: Some("split".into()),
+            ..Default::default()
+        });
+        let g = g.lock();
+        assert_eq!((g.view, g.split), (View::Day(1), true));
     }
 
     const NOV_18: Date = Date {

@@ -66,6 +66,11 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 | `properties.edittime` / `deletetime` | Edited / deleted markers ✅ |
 | `ThreadActivity/*`, `Event/Call` | System lines |
 
+Sending a sticker (composer Stickers tab, `backend/stickers.rs`): a `RichText/Html` message that is only
+`<img src="https://statics.teams.cdn.office.net/evergreen-assets/stickerassets/<category lowercase>-250x250/<file>?v=5" width="250" height="250" alt="<name>" itemtype="http://schema.skype.com/Sticker">`;
+nothing is uploaded. The image CDN needs no sign-in. Shape and catalogue from rusty-teams (MIT); 🧪 UNVERIFIED by kelma
+(nothing sent live). A Praise card (the Praise app's Adaptive Card) is not documented in the references, so kelma has none.
+
 ### Delivery options (9.4)
 
 `crates/teams-proto/src/delivery.rs` (`kelma-cli deliver`). Sources: the Teams web client JS bundle
@@ -184,6 +189,9 @@ messages were deleted afterwards.
 | Mark as unread | `PUT …/properties?name=consumptionHorizonBookmark` `"<prevId>;<nowMs>;<cmid>"`. `mark_read` now also writes `"0;<nowMs>;0"`, because a read horizon alone does not clear the bookmark | ✅ 200 |
 | Mute | `PUT …/properties?name=alerts` `{"alerts":"false"}` (`"true"` unmutes) | unit-tested |
 | Hide | `PUT …/properties?name=unpinnedTime` `{unpinnedTime:<ms>}` then `historyHiddenTime` `"<ms>"`; unhide `{unpinnedTime:null}`. A hidden chat comes back with its next message | unit-tested |
+| Share to Outlook | Graph `POST /me/messages` `{subject, body:{contentType:"HTML", content}}` (Mail.ReadWrite, in the Graph `.default` token per plans/README.md) creates an unsent draft; its `webLink` opens in Outlook on the web. `Client::create_mail_draft` | documented Graph call, not tried live |
+| Report this message | **UNVERIFIED**: the call Teams makes was never captured. `report_message_unverified` (backend/media/extras.rs) sends nothing and tells the user to report it in Teams on the web | not built |
+| Pin a chat | No separate write: new Teams keeps pinned chats in the Favorites folder (`migratedPinnedToFavorites` in `conversationFolders`, see docs/research/open-source.md). The chat menu's Favorite / Unfavorite is that write | ✅ (Favorites) |
 
 ## OneDrive (`crates/onedrive`) ✅ 2026-11-18
 
@@ -383,6 +391,40 @@ accepts those two API hosts as well, and still refuses every other host.
 alone finds none. Sections can sit in nested section groups, so kelma follows `sectionGroupsUrl`
 up to 4 levels.
 
+## Store, app bar and built-in apps: writes, Meeting Recaps 2026-11-20
+
+The screens send these after a confirm dialog (`crates/kelma/src/backend/appstore/form.rs`).
+**None was ever sent against a real account** (build and offline tests only; the demo mode and
+the tests log them as `Engine::apps_sent`). "Known" means a Microsoft docs or web client source
+names the request; **UNVERIFIED** means the shape is a best reading and a refusal is shown as it
+came.
+
+| Action | Request | Source | Status |
+|---|---|---|---|
+| Add an app (me, team, chat, meeting) | `POST MT/beta/{users\|teams/<id>\|chats/<id>}/apps/entitlements`, body the app definition | web client bundle, plans/store-and-apps.md S2.3 | known, unsent. The team, chat or meeting id comes from kelma's own store (the dialog's picker) |
+| Remove an app | `DELETE MT/beta/users/apps/entitlements/<appId>` | same | known, unsent. A permanent (built-in) app is refused before sending |
+| Update an app | `POST MT/beta/users/apps/Upgrade/<appId>?version=` | same | known, unsent |
+| Pin, unpin, reorder | `POST MT/beta/users/apps/pinned`, body `[{appId, appBarOrder}]` | web client bundle, plans S1.1 | known, unsent. The bar changes here first; if Teams refuses, the banner says the change is on this computer only |
+| To Do task: new, edit, complete, delete | Graph `POST /me/todo/lists/{id}/tasks`, `PATCH`, `DELETE …/tasks/{id}`; complete is `status: completed`, undo is `notStarted`; the due date is a `dateTimeTimeZone` at 00:00 UTC | Microsoft Graph docs (To Do) | known, unsent |
+| Planner task: new, edit, complete, delete | Graph `POST /planner/tasks` (`planId`, `bucketId`, `title`, `dueDateTime`), `PATCH`/`DELETE /planner/tasks/{id}` with `If-Match: <@odata.etag>`; complete is `percentComplete: 100` | Microsoft Graph docs (Planner) | known, unsent. A task without an etag is not edited (the screen asks to refresh). The `tasks.office.com` audience is not used (no usable path, see above) |
+| Flow: turn on or off | `POST https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments/{env}/flows/{flow}/start` and `…/stop` (`?api-version=2016-11-01`) | Power Automate management API | **UNVERIFIED**, unsent |
+| Flow: run a manual flow | `POST …/flows/{flow}/triggers/manual/run` with `{"inputs": {}}` | the maker portal's Run button; trigger name `manual` is the default | **UNVERIFIED**, unsent. Only a flow with a button trigger that is on offers Run |
+| OneNote: new page | Graph `POST <section pagesUrl>` (`/me/onenote/sections/{id}/pages`, or the group's path) with an HTML document, `Content-Type: text/html`; the `<title>` is the page title | Microsoft Graph docs (OneNote) | known, unsent |
+| Lists: new item, edit item | Graph `POST /sites/{site}/lists/{list}/items` `{"fields": {…}}`, `PATCH …/items/{id}/fields` | Microsoft Graph docs (lists) | known, unsent. The form covers Title and the first two other editable columns (text, number, choice, yes/no, date); an empty value clears the field on edit |
+
+### Meeting Recaps (`teams_proto::recaps`, plans/meeting-recaps.md R1)
+
+All reads. Sources, in the order kelma tries them:
+
+| What | Request | Status |
+|---|---|---|
+| Meetings with a recording or transcript | MCPS `GET https://teams.microsoft.com/api/mcps/<geo>/user/meetings/contents?top=&startDateTime=&endDateTime=&includeTypes=Recording,TranscriptV2`; each entry is `threadInfo` (`threadId`, `iCalUid`, `subject`, `start`, `end`, `organizer`) with `resources` (`Recording`, `TranscriptV2`, `AISummary`; `metadata` `driveId`, `driveItemId`, `webUrl`, `transcriptId`) | shape from the mautrix OpenAPI (captured web client). **UNVERIFIED**: the capture strips the bearer, so kelma sends the Teams host credentials (a live EMEA tenant answered 401: the audience is still unknown). The host is `regionGtms.mcpService` from the skypetoken answer; only when that is absent is `<geo>` guessed from the middle tier (`emea` to `eu`, `amer` to `us`, `apac` to `ap`; the middle tier's partition is not the data geo: the capture pairs `mt/part/amer-03` with `mcps/eu`). Any MCPS failure falls back to the OneDrive and channel `Recordings` folders (read side by side, capped at 45 s) |
+| Fallback list | the recordings of the user's OneDrive `Recordings` folder and channel libraries (`onedrive::meeting_recordings`, Graph), grouped by the name `<subject>-<yyyymmdd_hhmmss>UTC-Meeting Recording.mp4` | known, used when MCPS fails or is empty |
+| Transcript text | SharePoint `GET <tenant>.sharepoint.com/_api/v2.1/drives/<d>/items/<i>/media/transcripts` (named by the plan) then `…/transcripts/<id>/streamContent?format=vtt` | list: plan; **streamContent path UNVERIFIED**. A `.vtt` file of the Recordings folder is read with Graph `GET /drives/{d}/items/{i}/content` (known). A `.docx` transcript is not read |
+| Meeting notes link | Graph `GET /chats/{thread}/tabs?$expand=teamsApp`, the tab named "Notes" | Graph docs; the tab name is **UNVERIFIED** |
+| Play, Share | Play opens the recording's `webUrl` in the browser (no native player). Share opens the OneDrive share dialog for the recording's drive item | known |
+| AI notes, tasks, chapters | not read: they need Teams Premium or Copilot, and the screen says "Not available" (or "Available in Teams" when the service lists an `AISummary`) | by design |
+
 ## Teams and channels (`teams_proto::teams`, `tags`, `engage`) 2026-11-19
 
 Code: `crates/teams-proto/src/{teams,tags,engage}.rs`, CLI `kelma-cli team …`. Plan:
@@ -471,7 +513,7 @@ channel), `GID` = the AAD group id (`teamSiteInformation.groupId`).
 | Members `GET …/tags/<id>/members?pageSize=200` | `{members:[{memberId}], totalMembersCount}` | ✅ |
 | Add people `POST …/memberTags?tagType=Team&action=add` | `{memberIds, tagNames}` (by tag **name**) | ✅ (myself) |
 | Remove people `POST …/memberTags?tagType=Team&action=delete` | `{memberIds, tagIds}`. Removing the last member deletes the tag | ✅ |
-| Mention | mri `tag:<tagId>`, `mentionType:"tag"` (`Tag::mention`, see `mentions.rs`) | 🧪 |
+| Mention | mri `tag:<tagId>`, `mentionType:"tag"` (`Tag::mention`, see `mentions.rs`). The composer's @ picker in a channel lists the team's tags (fetched once per team with the List call) and sends them in this shape | 🧪 UNVERIFIED (not sent live) |
 
 ### T2.5 Channel email address
 `GET MT/beta/channels/<c>/email` answers `404` until an address exists, then
@@ -561,7 +603,7 @@ already see.
 | Announcement | `POST …/conversations/<channel>/messages` through `delivery::Delivery::Announcement` (`send_message_delivery`): `properties.title` = the headline, `properties.cards` = a JSON **string** of one card `{appId:"announcement-card", cardClientId, contentType:"application/vnd.microsoft.teams.messaging-announcementBanner", content:{colorTheme:"<0..11>"}}`, and `properties.subject`. kelma offers five colors (theme 0, 1, 2, 3 and 5). The theme palette of Teams was not captured, so the banner is drawn in an approximate color | ✅ stored and read back with title, theme and subject, parsed by `delivery::parse_announcement`. How Teams draws the banner was not seen |
 | Follow a thread | `PUT chat/v1/users/ME/conversations/<channel>/rcmetadata/<root id>` `{"f": 1}` (0 unfollows). `{"f": true}` answers `400 Unexpected character`. Read back with `POST …/getrcmetadata` `{"rootMessageIds":[<root>]}` → `rcMetadataList[].rcMetadata.f` | ✅ 1 then 0 |
 | Also send to channel | not found in the web client's public JavaScript (no property or call by that name), so kelma does not offer it | not built |
-| Pin a post | the web client reads pinned posts; the write call was not captured | not built |
+| Pin a post | **UNVERIFIED**: the web client reads pinned posts; the write call was not captured. The message menu offers "Pin for everyone" on posts; `pin_channel_post_unverified` (backend/actions.rs) sends nothing and says so | not built |
 
 ### Adaptive cards (8.8)
 `teams_proto::chat_card` turns the card JSON into a flat list of rows (text with size, weight,
@@ -570,5 +612,32 @@ container `style` as a band color on its rows; the announcement banner). `Action
 browser, every other action is drawn disabled. The raw attachments are stored with the message (key
 `c` of the stored extras), so cards are drawn from the structure and the flattened text stays the
 preview.
+
+## Top bar gaps: status duration, profile photo, pause durations (feat/gaps-global) 2026-11-20
+| Call | Notes | Live |
+|---|---|---|
+| Status ends after a duration | `PUT <presence>/v1/me/forceavailability/` with `desiredExpirationTime` (UTC `…T…Z`) next to `availability`. "Reset status after" in the profile menu is 30 minutes, 1 hour, 2 hours, today (midnight), this week (midnight before next Monday) or a typed time, counted in the zone chosen in Settings. Documented by the reference clients (`docs/research/open-source.md`), body built by `presence::force_availability_body` | ⚠️ unverified live: kelma never sent the expiry field to a real account |
+| Status message ends | `PUT <presence>/v1/me/publishnote` `{"message":"<escaped text>[<pinnednote></pinnednote>]","expiry":"<UTC>"}`; the suffix is "Show when people message me", `expiry` is the "Clear after" choice (never = `9999-12-31T23:59:59.999Z`). `presence::status_note_body` | ⚠️ unverified live for a real expiry and for the suffix |
+| Pause notifications for a time | the same `toastSettings.temporarilyPauseUntil` write as before (plans/chat.md 9.1); the value is now now+1 h, now+2 h, 08:00 the next day or a typed time instead of always +1 day | ✅ the property; ⚠️ the new durations were not sent live |
+| Change profile photo | `PUT https://graph.microsoft.com/v1.0/me/photo/$value`, body = the JPEG or PNG bytes, `Content-Type` image/jpeg or image/png, at most 4 MB (`teams_proto::photo`). Needs the Graph `User.ReadWrite` scope; the `.default` Graph token of the app (plans/README.md) may not carry it, in which case the answer is a 403 that the profile menu shows as it is | **UNVERIFIED**: not sent to any account |
+| Remove profile photo | `DELETE https://graph.microsoft.com/beta/me/photo` (Graph documents the removal on beta only) | **UNVERIFIED**: not sent to any account |
+| My photo read | the same `profilepicturev2` read as every avatar (`mt::avatar`), for my own MRI, once at start and after a change | ✅ (the read path of all avatars) |
+
+### Files tab actions, channel tabs, meeting pages and call settings (gaps)
+Built from the calls and endpoints above. **UNVERIFIED** means no request was sent to a tenant.
+| Feature | Call | Status |
+|---|---|---|
+| Files tab: Download, Rename, Delete, New folder, New document, Share, Copy link | the OneDrive crate's `ops::download`, `rename` (PATCH), `delete`, `create_folder`, `create_office_doc` and `share::create_link` (organization view link) on the drive items of the channel's `filesFolder`. Only rows listed from that folder have a drive item; a file that came from a message offers Open and Copy link only | calls verified in the OneDrive module; **not exercised** from the Files tab |
+| Rename a tab | `PATCH graph/v1.0/teams/<g>/channels/<c>/tabs/<tab>` `{"displayName"}` (Graph "Update tab") | **UNVERIFIED** |
+| Remove a tab | `DELETE graph/v1.0/teams/<g>/channels/<c>/tabs/<tab>` | **UNVERIFIED** |
+| Add an app's tab | `POST …/tabs` `{"displayName", "teamsApp@odata.bind": ".../appCatalogs/teamsApps/<appId>"}` with no `configuration`. Apps come from the user's installed apps (`aggregatedEntitlements`) that work in a team and have tabs. Graph may refuse apps whose tab needs setup | **UNVERIFIED** |
+| Meeting options | no call: the organizer's page `https://teams.microsoft.com/meetingOptions/?organizerId=<Oid>&tenantId=<Tid>&threadId=<thread>&messageId=0&language=en-US`, built from the join URL's thread and `context` (`Tid`, `Oid`), opened in the browser (shape from `docs/research/calendar-meetings.md`) | **UNVERIFIED** (page not opened) |
+| Meeting notes and Recap | no call: links found in the event body or preview. Notes are a Loop address or a `.loop` file on SharePoint; the recap is a Teams address that names a recap. Where Teams puts them in an event is not documented, so an event without such a link shows no entry | **UNVERIFIED** |
+| Attendance report | not built: Graph `OnlineMeetings` is refused for this client and no web address is documented | skipped |
+| Delete a voicemail | `DELETE graph/v1.0/me/messages/<id>` (the voicemail is a mail item); Mark as unread is the existing `PATCH {"isRead": false}` | **UNVERIFIED** (delete); read PATCH verified |
+| Call back a voicemail | the caller's mail address is looked up in the directory (`search_people`) and dialled as a 1:1 call | **UNVERIFIED** live |
+| Call forwarding, unanswered redirect, ring time, voicemail greeting | the endpoint is not documented in `docs/research/`, `plans/` or the reference clones (the fields would mirror `Get-CsUserCallingSettings`). Settings › Calls shows the controls disabled and says so | not built |
+| Dial a phone number | the calling crate cannot place PSTN calls. The Calls search box shows a disabled "Call <number>" row with the reason | not built |
+| Ringtone, hide a call, speed dial | local only: `calls.json` (`ringtone`) and `config.json` (`hidden_calls`) | n/a |
 
 Docs synced to commit 09fe5c2 ("feat(kelma): chat list sections and menus, channel post cards, cloud attach and adaptive cards (chat 8.1 to 8.8)", 2026-11-19)

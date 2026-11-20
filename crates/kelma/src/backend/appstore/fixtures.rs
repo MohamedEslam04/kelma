@@ -17,6 +17,7 @@ pub const ONENOTE: &str = "demo-onenote";
 pub const WORKFLOWS: &str = "demo-workflows";
 pub const LISTS: &str = "demo-lists";
 pub const SHIFTS: &str = "demo-shifts";
+pub const RECAPS: &str = "demo-recaps";
 pub const POLLS: &str = "demo-polls";
 pub const AGENT: &str = "demo-agent";
 
@@ -160,6 +161,16 @@ const APPS: &[App] = &[
             "4.2.0",
         )
     },
+    app(
+        RECAPS,
+        "Meeting Recaps",
+        "Microsoft Corporation",
+        "Recordings, transcripts and notes of your meetings",
+        "#5b5fc7",
+        &["Personal"],
+        false,
+        "1.0.0",
+    ),
     app(
         "demo-tickets",
         "Contoso Tickets",
@@ -332,7 +343,7 @@ pub fn installed() -> Value {
             e
         })
         .collect();
-    for id in [ONENOTE, LISTS, SHIFTS, "demo-tickets"] {
+    for id in [ONENOTE, LISTS, SHIFTS, RECAPS, "demo-tickets"] {
         ents.push(json!({"id": id, "state": "Installed"}));
     }
     ents.push(json!({"id": POLLS, "state": "Featured"}));
@@ -513,6 +524,7 @@ pub fn planner_tasks(plan: Option<&str>, now_ms: i64) -> Value {
         .filter(|t| plan.is_none_or(|p| p == t.1))
         .map(|(id, plan, bucket, title, pct, prio, due)| {
             let mut t = json!({"id": id, "planId": plan, "bucketId": bucket, "title": title,
+                "@odata.etag": format!("W/\"etag-{id}\""),
                 "percentComplete": pct, "priority": prio, "assignments": {"someone": {}}});
             if let Some(d) = due {
                 t["dueDateTime"] = json!(iso(now_ms + d * MS_DAY));
@@ -540,6 +552,9 @@ pub fn flows(now_ms: i64) -> Value {
         {"name": "flow-3", "properties": {"displayName": "Copy a file to OneDrive", "state": "Stopped",
             "createdTime": iso(now_ms - 90 * MS_DAY), "lastModifiedTime": iso(now_ms - 40 * MS_DAY),
             "definitionSummary": {"triggers": [{"kind": "Button"}], "actions": [{}, {}]}}},
+        {"name": "flow-4", "properties": {"displayName": "Send my weekly status", "state": "Started",
+            "createdTime": iso(now_ms - 20 * MS_DAY), "lastModifiedTime": iso(now_ms - 5 * MS_DAY),
+            "definitionSummary": {"triggers": [{"kind": "Button"}], "actions": [{}]}}},
     ]})
 }
 
@@ -630,5 +645,50 @@ pub fn list_items() -> Value {
         {"id": "1", "fields": {"Title": "Login fails on mobile", "Status": "Open", "Owner": "Ada", "Done": false}},
         {"id": "2", "fields": {"Title": "Slow start-up", "Status": "In progress", "Owner": "Grace", "Done": false}},
         {"id": "3", "fields": {"Title": "Typo on the pricing page", "Status": "Closed", "Owner": "Ada", "Done": true}},
+    ]})
+}
+
+// -- Meeting Recaps ------------------------------------------------------------------------
+
+/// The meeting content service's list: a recorded and transcribed meeting with an AI summary, a
+/// meeting with only a recording, and one with only a transcript.
+pub fn recap_meetings(now_ms: i64) -> Value {
+    let rec = |item: &str| {
+        json!({"type": "Recording", "metadata": {"driveId": "b!demo", "driveItemId": item,
+            "webUrl": format!("https://contoso-my.sharepoint.com.invalid/{item}.mp4")}})
+    };
+    let tr = |item: &str| {
+        json!({"type": "TranscriptV2", "metadata": {"transcriptId": "tr-1", "driveId": "b!demo",
+            "driveItemId": item}})
+    };
+    json!({"value": [
+        {"threadInfo": {"threadId": "19:meeting_demo1@thread.v2", "iCalUid": "uid-demo-1",
+            "subject": "Weekly sync", "start": iso(now_ms - 2 * MS_DAY),
+            "end": iso(now_ms - 2 * MS_DAY + 1_800_000),
+            "organizer": {"emailAddress": "ada@example.invalid"}},
+         "resources": [rec("01DEMO1"), tr("01DEMO1"), {"type": "AISummary", "metadata": {}}]},
+        {"threadInfo": {"threadId": "19:meeting_demo2@thread.v2", "iCalUid": "uid-demo-2",
+            "subject": "Design review", "start": iso(now_ms - 5 * MS_DAY),
+            "end": iso(now_ms - 5 * MS_DAY + 3_600_000)},
+         "resources": [rec("01DEMO2")]},
+        {"threadInfo": {"threadId": "19:meeting_demo3@thread.v2", "iCalUid": "uid-demo-3",
+            "subject": "Retro", "start": iso(now_ms - 9 * MS_DAY)},
+         "resources": [tr("01DEMO3")]},
+    ]})
+}
+
+/// A WebVTT transcript with voice tags, as Teams writes it.
+pub fn transcript_vtt() -> &'static str {
+    "WEBVTT\n\n00:00:02.000 --> 00:00:05.000\n<v Ada>Welcome everyone.</v>\n\n\
+     00:00:06.000 --> 00:00:09.500\n<v Sam>Let us start with the release.</v>\n"
+}
+
+/// A meeting chat's tabs (Graph `chats/{id}/tabs?$expand=teamsApp`).
+pub fn meeting_tabs() -> Value {
+    json!({"value": [
+        {"displayName": "Whiteboard", "webUrl": "https://example.invalid/whiteboard",
+         "teamsApp": {"id": "wb", "displayName": "Whiteboard"}},
+        {"displayName": "Notes", "webUrl": "https://example.invalid/notes",
+         "teamsApp": {"id": "notes", "displayName": "Meeting notes"}},
     ]})
 }

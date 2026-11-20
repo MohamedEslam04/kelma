@@ -66,7 +66,7 @@ pub use settings::{
 };
 pub use teams_meet::{
     EventType, MeetNow, join_by_id_url, meet_now, meet_now_body, meeting_chat_thread_id,
-    parse_meet_now,
+    meeting_options_url, parse_meet_now,
 };
 pub use tz::{
     CustomZone, Transition, date_time_zone_ms, iana_name, local_to_utc_ms, parse_custom_zone,

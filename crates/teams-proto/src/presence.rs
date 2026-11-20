@@ -1,13 +1,14 @@
 //! Presence: read people's availability, set ours, and publish a status note.
 //!
-//! `presence.teams.microsoft.com/v1`, endpoints from `docs/research/open-source.md` §3.1 (rusty,
-//! teams-lite, better-teams, purple-teams). Requests carry the presence-audience bearer token
-//! ([`Audience::Presence`]) and the `x-ms-*` client headers the service insists on. Push updates
-//! arrive on trouter and are already parsed into [`crate::model::Event::Presence`].
+//! The regional unified presence service named in the sign-in answer (`regionGtms.presenceUPS`,
+//! e.g. `teams.cloud.microsoft/ups/noam/v1`, as Teams web uses it), endpoints from
+//! `docs/research/open-source.md` §3.1 (rusty, teams-lite, better-teams, purple-teams). Requests
+//! carry the presence-audience bearer token ([`Audience::Presence`]) and the `x-ms-*` client
+//! headers the service insists on. Push updates arrive on trouter and are already parsed into
+//! [`crate::model::Event::Presence`].
 //!
-//! Live status (2026-11-18, one work tenant): the service answers 401 to every request here,
-//! even with a freshly minted `PresenceRW` token whose `aud` is the presence host, so only the
-//! bodies and parsers are covered (by the shapes in the research notes).
+//! Live status (2026-11-19, one work tenant): the global `presence.teams.microsoft.com` host
+//! answers 401 to this token; the regional service answers `getpresence` with 200.
 
 use crate::broker::Audience;
 use crate::client::Client;
@@ -16,7 +17,6 @@ use crate::error::{Error, Result};
 use reqwest::Method;
 use serde_json::{Value, json};
 
-const BASE: &str = "https://presence.teams.microsoft.com/v1";
 /// Presence lookups per request. Teams web uses 200; the service accepts more.
 const LOOKUP_CHUNK: usize = 200;
 /// Expiry Teams sends for a status note that never expires.
@@ -179,21 +179,35 @@ pub fn status_note_body(text: &str, expiry_iso: Option<&str>, show_when_messaged
     json!({ "message": message, "expiry": expiry_iso.unwrap_or(NEVER_EXPIRES) })
 }
 
+/// Body for `PUT me/endpoints/`: this device's own presence, which the service aggregates with
+/// the user's other devices (and which lets a forced status show, see chat plan 6.4).
+/// `activity` is e.g. `Available`, `InACall` or `InAConferenceCall`.
+pub fn endpoint_body(endpoint_id: &str, a: Availability, activity: &str) -> Value {
+    json!({
+        "id": endpoint_id,
+        "availability": a.as_str(),
+        "activity": activity,
+        "activityReporting": "Transport",
+        "deviceType": "Desktop",
+    })
+}
+
 /// Body for `reportmyactivity`.
 pub fn activity_body(endpoint_id: &str, active: bool) -> Value {
     json!({ "endpointId": endpoint_id, "isActive": active })
 }
 
 impl Client {
-    /// One presence request with the audience token and client headers.
-    async fn presence_json(
+    /// One presence request with the audience token and client headers. `path` is relative to
+    /// the regional presence service's `/v1/`.
+    pub async fn presence_json(
         &self,
         context: &'static str,
         method: Method,
         path: &str,
         body: Option<&Value>,
     ) -> Result<Value> {
-        let url = format!("{BASE}/{path}");
+        let url = format!("{}/{path}", self.presence_service().await);
         let corr = uuid::Uuid::new_v4().to_string();
         let (status, text) = self
             .request_as(
@@ -265,6 +279,27 @@ impl Client {
     ) -> Result<()> {
         let body = status_note_body(text, expiry_iso, show_when_messaged);
         self.presence_json("status note", Method::PUT, "me/publishnote", Some(&body))
+            .await
+            .map(|_| ())
+    }
+
+    /// Publishes this device's presence (registers the endpoint on first use).
+    pub async fn publish_endpoint(&self, a: Availability, activity: &str) -> Result<()> {
+        let body = endpoint_body(self.epid(), a, activity);
+        self.presence_json(
+            "publish endpoint",
+            Method::PUT,
+            "me/endpoints/",
+            Some(&body),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Removes this device's presence (on sign-out or quit), so it no longer counts.
+    pub async fn remove_endpoint(&self) -> Result<()> {
+        let path = format!("me/endpoints/{}", self.epid());
+        self.presence_json("remove endpoint", Method::DELETE, &path, None)
             .await
             .map(|_| ())
     }
@@ -369,6 +404,15 @@ mod tests {
         assert_eq!(shown["expiry"], "2030-01-01T00:00:00.000Z");
         // Clearing never carries the suffix.
         assert_eq!(status_note_body("", None, true)["message"], "");
+    }
+
+    #[test]
+    fn endpoint_body_carries_this_devices_presence() {
+        assert_eq!(
+            endpoint_body("ep-1", Availability::Busy, "InACall"),
+            json!({"id": "ep-1", "availability": "Busy", "activity": "InACall",
+                   "activityReporting": "Transport", "deviceType": "Desktop"})
+        );
     }
 
     #[test]

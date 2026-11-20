@@ -1,14 +1,16 @@
 //! Install, uninstall and update requests ("Add for me / to a team / to a chat / to a meeting",
 //! "Manage your apps" › Remove / Update). Built from the web client's own request builders
-//! (`createAppEntitlement`, `deleteAppEntitlement`, `upgradeAppEntitlement`). kelma never
-//! sends them on the work tenant: they are printed as dry runs until a test tenant exists.
+//! (`createAppEntitlement`, `deleteAppEntitlement`, `upgradeAppEntitlement`). The app's screens
+//! send them after a confirm dialog; `kelma-cli` only prints them as dry runs. They have not
+//! been sent against a real account yet (the shapes come from the web client's code).
 
 use reqwest::Method;
 use serde_json::Value;
 
 use crate::model::enc;
 
-/// A request kelma would send. Writes are only ever built and printed (dry run).
+/// A request to the app service. The builders only build it; `api::send` sends it (kelma's
+/// screens do, after the user confirms), `kelma-cli` prints it as a dry run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Request {
     pub method: Method,
@@ -17,6 +19,11 @@ pub struct Request {
 }
 
 impl Request {
+    /// The request as one line (method and URL), for logs.
+    pub fn describe(&self) -> String {
+        format!("{} {}", self.method, self.url)
+    }
+
     /// The request as text: method, URL and a summary of the body (its top-level keys or its
     /// length), never the body itself, which can hold tenant data.
     pub fn dry_run(&self) -> String {
@@ -146,5 +153,9 @@ mod tests {
         assert!(!s.contains("secret"));
         let d = uninstall_request(MT, &Target::Me, "x").dry_run();
         assert!(d.contains("DELETE") && d.contains("no body"));
+        assert_eq!(
+            uninstall_request(MT, &Target::Me, "x").describe(),
+            format!("DELETE {MT}/beta/users/apps/entitlements/x")
+        );
     }
 }

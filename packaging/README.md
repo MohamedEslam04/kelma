@@ -7,8 +7,26 @@
 | AUR (`kelma-git`) | `aur/` | see the status table at the end |
 | Per-user install script | `install.sh` | builds with cargo, installs to `~/.local` |
 
-Shared files: `kelma.desktop` (with a "Report a problem" action) and `kelma.svg` (icon). The
-Flatpak ships its own AppStream file, `flatpak/io.github.mohamedeslam04.kelma.metainfo.xml`.
+Shared files, all named after the app id `io.github.mohamedeslam04.kelma`: the desktop file (with a
+"Report a problem" action), the icon (`.svg`) and the AppStream metadata (`.metainfo.xml`). Every
+package installs them under that name.
+
+## The app id
+
+kelma uses one reverse-DNS id everywhere: the desktop file, icon and AppStream id, the Wayland app
+id and X11 window class (`StartupWMClass`), the launcher-badge URI, the notification
+`desktop-entry` hint, and the id it registers with the desktop portal
+(`org.freedesktop.host.portal.Registry`) before the ScreenCast, RemoteDesktop and Camera
+dialogs. The constant is `tray::APP_ID`; a test in `crates/kelma/src/main.rs` checks the Flatpak
+manifest, the desktop file and the metainfo against it.
+
+The portal looks the id up with GLib (`GDesktopAppInfo`), which skips a desktop file whose `Exec`
+program is not on the portal's `PATH`. `xdg-desktop-portal` runs as a systemd user service with
+`PATH=/usr/local/bin:/usr/bin:/bin`, so a desktop file saying `Exec=kelma` for a binary in
+`~/.local/bin` is "not found" and the registration fails with `App info not found for
+'io.github.mohamedeslam04.kelma'` (KDE then names the dialogs after the terminal). The packages
+install to `/usr/bin`, which is on that `PATH`. `install.sh` writes the full path of
+`~/.local/bin/kelma` into the per-user desktop file for the same reason.
 
 ## Native build dependencies
 

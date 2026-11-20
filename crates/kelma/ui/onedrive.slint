@@ -234,6 +234,8 @@ component NavEntry inherits Rectangle {
     in property <string> label;
     in property <image> icon;
     in property <bool> active;
+    // Icon only (a narrow window).
+    in property <bool> compact;
     callback clicked();
     height: 34px;
     border-radius: 4px;
@@ -247,7 +249,7 @@ component NavEntry inherits Rectangle {
         padding-right: 8px;
         spacing: 10px;
         Icon { source: root.icon; width: 16px; height: 16px; y: 9px; tint: root.active ? Theme.accent : Theme.fg-muted; }
-        Text { text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: root.active ? 600 : 400; vertical-alignment: center; overflow: elide; }
+        if !root.compact: Text { text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: root.active ? 600 : 400; vertical-alignment: center; overflow: elide; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -495,10 +497,12 @@ component SearchBox inherits Rectangle {
     }
     if input.text == "": Text {
         x: 36px;
+        width: parent.width - 44px;
         text: root.placeholder;
         color: Theme.fg-subtle;
         font-size: 13px * Theme.font-scale;
         vertical-alignment: center;
+        overflow: elide;
     }
 }
 
@@ -683,12 +687,12 @@ component ShareDialog inherits DialogFrame {
                 alignment: start;
                 for p in DriveStore.share-picked: Rectangle {
                     height: 24px;
-                    width: pn.preferred-width + 26px;
+                    width: min(pn.preferred-width, 160px) + 26px;
                     border-radius: 12px;
                     background: Theme.dark ? #34365c : #e3e4fa;
                     accessible-role: button;
                     accessible-label: "Remove " + p.name;
-                    pn := Text { x: 10px; text: p.name; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                    pn := Text { x: 10px; width: parent.width - 26px; text: p.name; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
                     Text { x: parent.width - 16px; text: "×"; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
                     TouchArea { mouse-cursor: pointer; clicked => { DriveStore.command("share-pick", p.id); } }
                 }
@@ -704,7 +708,7 @@ component ShareDialog inherits DialogFrame {
                     padding-left: 8px;
                     padding-right: 8px;
                     spacing: 10px;
-                    Text { text: p.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                    Text { text: p.name; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                     Text { text: p.detail; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                     Text { text: p.picked ? "✓" : ""; color: Theme.accent; font-size: 15px * Theme.font-scale; vertical-alignment: center; }
                 }
@@ -819,6 +823,9 @@ export component OneDriveView inherits Rectangle {
     property <bool> bin: DriveStore.section == "bin";
     property <bool> one: DriveStore.sel-count == 1;
     property <bool> some: DriveStore.sel-count > 0;
+    // A narrow window: the navigation shows its icons only and the search boxes are shorter.
+    in property <length> window-width: 1400px;
+    property <bool> narrow: root.window-width < 970px;
 
     function open-menu(name: string, x: length, y: length, full: bool) {
         root.menu = name;
@@ -853,7 +860,7 @@ export component OneDriveView inherits Rectangle {
     HorizontalLayout {
         // Navigation
         Rectangle {
-            width: 224px;
+            width: root.narrow ? 48px : 224px;
             background: Theme.sidebar;
             VerticalLayout {
                 padding-top: 12px;
@@ -863,7 +870,7 @@ export component OneDriveView inherits Rectangle {
                 alignment: start;
                 Rectangle {
                     height: 40px;
-                    Text { x: 6px; text: "OneDrive"; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
+                    if !root.narrow: Text { x: 6px; text: "OneDrive"; color: Theme.fg; font-size: 18px * Theme.font-scale; font-weight: 700; vertical-alignment: center; }
                 }
                 for n in [
                     {key: "home", label: "Home", icon: @image-url("icons/home.svg")},
@@ -874,6 +881,7 @@ export component OneDriveView inherits Rectangle {
                     {key: "libraries", label: "Libraries", icon: @image-url("icons/library.svg")},
                     {key: "bin", label: "Recycle bin", icon: @image-url("icons/trash.svg")}
                 ]: NavEntry {
+                    compact: root.narrow;
                     label: n.label;
                     icon: n.icon;
                     active: DriveStore.section == n.key;
@@ -881,13 +889,14 @@ export component OneDriveView inherits Rectangle {
                 }
                 Rectangle {
                     height: 34px;
-                    Text { x: 14px; y: 12px; text: "Browse files by"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 700; }
+                    if !root.narrow: Text { x: 14px; y: 12px; text: "Browse files by"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 700; }
                 }
                 for n in [
                     {key: "people", label: "People", icon: @image-url("icons/people.svg")},
                     {key: "meetings", label: "Meetings", icon: @image-url("icons/video.svg")},
                     {key: "media", label: "Media", icon: @image-url("icons/image.svg")}
                 ]: NavEntry {
+                    compact: root.narrow;
                     label: n.label;
                     icon: n.icon;
                     active: DriveStore.section == n.key || (n.key == "people" && DriveStore.section.starts-with("person:"));
@@ -895,9 +904,10 @@ export component OneDriveView inherits Rectangle {
                 }
                 if DriveStore.quick.length > 0: Rectangle {
                     height: 34px;
-                    Text { x: 14px; y: 12px; text: "Quick access"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 700; }
+                    if !root.narrow: Text { x: 14px; y: 12px; text: "Quick access"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; font-weight: 700; }
                 }
                 for q in DriveStore.quick: NavEntry {
+                    compact: root.narrow;
                     label: q.label;
                     icon: @image-url("icons/library.svg");
                     active: DriveStore.section == q.key;
@@ -905,6 +915,7 @@ export component OneDriveView inherits Rectangle {
                 }
                 Rectangle { height: 12px; }
                 NavEntry {
+                    compact: root.narrow;
                     label: "Sync";
                     icon: @image-url("icons/sync.svg");
                     clicked => { DriveStore.command("sync", ""); }
@@ -929,7 +940,7 @@ export component OneDriveView inherits Rectangle {
                     IconButton { y: 10px; icon: @image-url("icons/grid.svg"); tooltip: "Grid view"; active: DriveStore.grid; clicked => { DriveStore.command("view", "grid"); } }
                     IconButton { y: 10px; icon: @image-url("icons/sync.svg"); tooltip: "Refresh"; clicked => { DriveStore.command("refresh", ""); } }
                     SearchBox {
-                        width: 260px;
+                        width: root.narrow ? 200px : 260px;
                         y: 10px;
                         placeholder: "Search OneDrive and SharePoint";
                         label: "Search files";
@@ -1053,7 +1064,7 @@ export component OneDriveView inherits Rectangle {
                     }
                     Rectangle { horizontal-stretch: 1; }
                     SearchBox {
-                        width: 260px;
+                        width: root.narrow ? 160px : 260px;
                         y: 6px;
                         placeholder: "Filter by name or person";
                         label: "Filter by name or person";

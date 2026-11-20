@@ -11,6 +11,9 @@ pub fn action(key: &str, ctrl: bool, alt: bool, shift: bool) -> &'static str {
     let k = key.to_lowercase();
     match (ctrl, alt, shift, k.as_str()) {
         (true, false, false, ".") => "shortcuts",
+        (true, false, true, "p") => "palette",
+        (true, false, false, "e") => "search-box",
+        (true, false, false, "/") => "commands",
         (true, true, false, "g") => "goto",
         (true, false, true, "f") => "filter-box",
         (true, true, false, "u") => "filter-unread",
@@ -21,6 +24,8 @@ pub fn action(key: &str, ctrl: bool, alt: bool, shift: bool) -> &'static str {
         (false, true, true, "m") => "focus-messages",
         (true, false, true, "x") => "expand-composer",
         (false, true, true, "o") => "attach-file",
+        // The chat header's "More chat options" › Share screen (1:1 chats).
+        (true, false, true, "e") => "share-screen",
         _ => "",
     }
 }
@@ -39,6 +44,7 @@ pub fn wire(window: &AppWindow) {
     let api = window.global::<ShortcutApi>();
     api.on_action(|key: SharedString, ctrl, alt, shift| action(&key, ctrl, alt, shift).into());
     api.on_last_own(|msgs| last_own(&msgs).into());
+    crate::catch_up::attach(window);
 }
 
 #[cfg(test)]
@@ -49,6 +55,9 @@ mod tests {
     #[test]
     fn every_chord_of_the_plan_has_an_action() {
         assert_eq!(action(".", true, false, false), "shortcuts");
+        assert_eq!(action("P", true, false, true), "palette");
+        assert_eq!(action("e", true, false, false), "search-box");
+        assert_eq!(action("/", true, false, false), "commands");
         assert_eq!(action("g", true, true, false), "goto");
         assert_eq!(action("F", true, false, true), "filter-box");
         assert_eq!(action("u", true, true, false), "filter-unread");
@@ -58,6 +67,7 @@ mod tests {
         assert_eq!(action("R", false, true, true), "focus-composer");
         assert_eq!(action("M", false, true, true), "focus-messages");
         assert_eq!(action("X", true, false, true), "expand-composer");
+        assert_eq!(action("E", true, false, true), "share-screen");
         assert_eq!(action("O", false, true, true), "attach-file");
     }
 

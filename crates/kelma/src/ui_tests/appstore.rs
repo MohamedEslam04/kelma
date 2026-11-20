@@ -1,12 +1,12 @@
 //! The app bar, the flyout, the Store and the built-in app screens (Planner and To Do, Workflows,
-//! OneNote, Lists) driven through the real window. The engine runs behind it in demo mode (no
-//! network): every `command` goes through `AppsCmd::parse` and the engine, and what the window
-//! shows is read back from the globals and from the rendered elements. Nothing here can reach a
-//! server; the install, remove and pin requests are only text.
+//! OneNote, Lists, Meeting Recaps) driven through the real window. The engine runs behind it in
+//! demo mode (no network): every `command` goes through `AppsCmd::parse` and the engine, and what
+//! the window shows is read back from the globals and from the rendered elements. Nothing here
+//! can reach a server; a change the screens confirm is only logged (`Engine::apps_sent`).
 
 use super::*;
 use crate::backend::AppsCmd;
-use crate::{AppsStore, FlowsStore, ListsStore, NotesStore, TasksStore};
+use crate::{AppsStore, DriveStore, FlowsStore, ListsStore, NotesStore, RecapsStore, TasksStore};
 use i_slint_backend_testing::AccessibleRole;
 
 struct AppsHarness {
@@ -38,6 +38,7 @@ impl AppsHarness {
         wire!(FlowsStore);
         wire!(NotesStore);
         wire!(ListsStore);
+        wire!(RecapsStore);
         let a = AppsHarness { h, log };
         a.run(AppsCmd::Load);
         a
@@ -80,6 +81,21 @@ impl AppsHarness {
             .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
             .unwrap_or_else(|| panic!("no button labelled {label:?}"))
             .mock_single_click(button);
+    }
+
+    /// Clicks the last button with this label: a dialog's buttons come after the page's own
+    /// button of the same name (Add, Remove, Update).
+    fn click_last(&self, label: &str) {
+        self.find(label)
+            .into_iter()
+            .rfind(|e| e.accessible_role() == Some(AccessibleRole::Button))
+            .unwrap_or_else(|| panic!("no button labelled {label:?}"))
+            .mock_single_click(PointerEventButton::Left);
+    }
+
+    /// The changes the screens sent (offline: would have sent), oldest first.
+    fn sent(&self) -> Vec<String> {
+        self.h.engine.apps_sent()
     }
 
     /// Clicks the first element of a component type with this label.
@@ -174,15 +190,16 @@ fn the_rail_lists_the_pinned_apps_after_the_fixed_entries_with_store_and_more() 
 }
 
 #[test]
-fn right_click_unpins_and_the_request_is_only_shown() {
+fn right_click_unpins_and_sends_the_new_bar_to_teams() {
     let a = AppsHarness::open();
     a.click_with("Planner", PointerEventButton::Right);
     a.click_menu("Unpin");
     assert_eq!(a.rail(), ["Calling", "Workflows"]);
-    let banner = a.banner();
-    assert!(banner.contains("Unpinned Planner"), "{banner}");
-    assert!(banner.contains("not sent"), "{banner}");
-    assert!(banner.contains("DRY RUN POST") && banner.contains("/beta/users/apps/pinned"));
+    assert_eq!(a.banner(), "Unpinned Planner.");
+    assert_eq!(
+        a.sent(),
+        ["POST https://teams.example.invalid/api/mt/demo/beta/users/apps/pinned"]
+    );
     assert_eq!(
         *a.log.borrow(),
         vec!["unpin com.microsoft.teamspace.tab.planner"]
@@ -295,7 +312,7 @@ fn more_opens_a_searchable_list_of_installed_apps_that_are_not_pinned() {
     // Installed, not pinned, with a personal tab: not Planner (pinned) or Contoso Tickets (a
     // message extension only).
     let names = AppsHarness::card_names(a.store().get_flyout_apps());
-    assert_eq!(names, ["Lists", "OneNote", "Shifts"]);
+    assert_eq!(names, ["Lists", "Meeting Recaps", "OneNote", "Shifts"]);
 
     type_text(&a.h.app, "note");
     assert_eq!(a.store().get_flyout_query(), "note");
@@ -337,8 +354,8 @@ fn pin_from_the_flyout_adds_the_app_to_the_rail() {
     a.click("More apps");
     a.click("Pin Shifts");
     assert_eq!(a.rail(), ["Calling", "Planner", "Workflows", "Shifts"]);
-    assert!(a.banner().contains("Pinned Shifts"), "{}", a.banner());
-    assert!(a.banner().contains("not sent"));
+    assert_eq!(a.banner(), "Pinned Shifts.");
+    assert_eq!(a.sent().len(), 1, "the new bar went to Teams");
     // It is on the bar now, so it leaves the flyout.
     a.send("flyout-open", "");
     assert!(!AppsHarness::card_names(a.store().get_flyout_apps()).contains(&"Shifts".to_owned()));
@@ -495,7 +512,7 @@ fn an_app_page_shows_the_listing_facts() {
 }
 
 #[test]
-fn add_shows_the_request_and_never_sends_it() {
+fn add_asks_first_and_then_sends_the_install() {
     let a = AppsHarness::open();
     a.send("store-search", "polls");
     a.click("Contoso Polls");
@@ -516,15 +533,22 @@ fn add_shows_the_request_and_never_sends_it() {
     a.click("Add");
     a.click_menu("Add to a team");
     let s = a.store();
-    assert_eq!(s.get_install_title(), "Add Contoso Polls to a team");
-    let req = s.get_install_request().to_string();
-    assert!(req.contains("DRY RUN POST"), "{req}");
-    assert!(
-        req.contains("/beta/teams/") && req.contains("/apps/entitlements"),
-        "{req}"
-    );
-    assert!(req.contains("Nothing was sent"), "{req}");
-    assert!(req.contains("Pick the team in Teams."), "{req}");
+    assert_eq!(s.get_form_title(), "Add Contoso Polls to a team");
+    let teams: Vec<String> = s
+        .get_form_choices()
+        .iter()
+        .map(|c| c.title.to_string())
+        .collect();
+    assert!(!teams.is_empty(), "the teams to pick from");
+    assert!(a.sent().is_empty(), "nothing is sent before Confirm");
+
+    // Confirming without a pick keeps the dialog open and says why.
+    a.click_last("Add");
+    assert_eq!(s.get_form_error(), "Pick one first.");
+    assert_eq!(s.get_form_title(), "Add Contoso Polls to a team");
+    assert!(a.sent().is_empty());
+
+    // The link button opens the app in Teams on the web and leaves the dialog open.
     a.click("Open in Teams on the web");
     assert!(
         a.h.engine
@@ -532,17 +556,41 @@ fn add_shows_the_request_and_never_sends_it() {
             .iter()
             .any(|u| u.ends_with("/l/app/demo-polls"))
     );
-    assert_eq!(s.get_install_title(), "", "the dialog closes");
+    assert_eq!(s.get_form_title(), "Add Contoso Polls to a team");
 
-    // Add for me posts to the user's own scope.
+    a.click_last(&teams[0]);
+    assert!(s.get_form_choices().row_data(0).unwrap().selected);
+    a.click_last("Add");
+    let sent = a.sent();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(
+        sent[0].starts_with("POST ")
+            && sent[0].contains("/beta/teams/")
+            && sent[0].ends_with("/apps/entitlements"),
+        "{sent:?}"
+    );
+    assert_eq!(s.get_form_title(), "", "the dialog closes");
+    assert_eq!(a.banner(), "Added Contoso Polls to the team.");
+
+    // Add for me asks once and posts to the user's own scope.
     a.send("app-page", "demo-agent");
     a.send("app-add", "me");
-    let req = a.store().get_install_request().to_string();
-    assert!(req.contains("/beta/users/apps/entitlements"), "{req}");
+    assert_eq!(s.get_form_title(), "Add Fabrikam Agent for you");
+    a.click("Cancel");
+    assert_eq!(s.get_form_title(), "");
+    assert_eq!(a.sent().len(), 1, "Cancel sends nothing");
+    a.send("app-add", "me");
+    a.click_last("Add");
+    let sent = a.sent();
+    assert!(
+        sent[1].ends_with("/beta/users/apps/entitlements"),
+        "{sent:?}"
+    );
+    assert_eq!(a.banner(), "Added Fabrikam Agent.");
 }
 
 #[test]
-fn manage_your_apps_lists_installed_apps_with_updates_and_shows_remove_as_a_request() {
+fn manage_your_apps_lists_installed_apps_with_updates_and_removes_after_a_confirmation() {
     let a = AppsHarness::open();
     a.send("store-open", "");
     a.click("Manage your apps");
@@ -557,18 +605,35 @@ fn manage_your_apps_lists_installed_apps_with_updates_and_shows_remove_as_a_requ
 
     a.send("app-remove", "com.microsoft.teamspace.tab.planner");
     let s = a.store();
-    assert_eq!(s.get_install_title(), "Remove Planner");
-    assert!(
-        s.get_install_request().contains("DRY RUN DELETE"),
-        "{}",
-        s.get_install_request()
+    assert_eq!(s.get_form_title(), "Remove Planner?");
+    assert!(s.get_form_danger());
+    assert!(a.sent().is_empty());
+    a.click_last("Remove");
+    assert_eq!(
+        a.sent(),
+        [
+            "DELETE https://teams.example.invalid/api/mt/demo/beta/users/apps/entitlements/com.microsoft.teamspace.tab.planner"
+        ]
     );
+    assert_eq!(a.banner(), "Removed Planner.");
+    assert_eq!(s.get_form_title(), "");
+
     a.send("app-update", "com.microsoft.teamspace.tab.planner");
+    assert_eq!(s.get_form_title(), "Update Planner?");
+    a.click_last("Update");
+    let sent = a.sent();
     assert!(
-        a.store().get_install_request().contains("/apps/Upgrade/"),
-        "{}",
-        a.store().get_install_request()
+        sent[1].starts_with("POST ")
+            && sent[1].ends_with("/apps/Upgrade/com.microsoft.teamspace.tab.planner?version=1.9.0"),
+        "{sent:?}"
     );
+    assert_eq!(a.banner(), "Updated Planner to version 1.9.0.");
+
+    // A built-in app cannot be removed: no dialog, a message.
+    a.send("app-remove", "demo-calling");
+    assert_eq!(s.get_form_title(), "");
+    assert_eq!(a.banner(), "Calling is built in and cannot be removed.");
+    assert_eq!(a.sent().len(), 2);
 }
 
 #[test]
@@ -666,7 +731,7 @@ fn planner_opens_to_do_with_a_board_and_plans() {
 }
 
 #[test]
-fn workflows_list_flows_with_their_run_history_and_offer_no_way_to_run_one() {
+fn workflows_list_flows_with_their_run_history_and_run_or_switch_them_after_a_confirmation() {
     let a = AppsHarness::open();
     a.click("Workflows");
     assert_eq!(a.view(), "workflows");
@@ -676,7 +741,7 @@ fn workflows_list_flows_with_their_run_history_and_offer_no_way_to_run_one() {
         .iter()
         .map(|r| (r.title.to_string(), r.badge.to_string()))
         .collect();
-    assert_eq!(flows.len(), 3);
+    assert_eq!(flows.len(), 4);
     assert_eq!(flows[0].1, "On");
     assert_eq!(flows[2].1, "Off");
     // The first flow is selected and its runs shown, newest first.
@@ -694,21 +759,303 @@ fn workflows_list_flows_with_their_run_history_and_offer_no_way_to_run_one() {
         ]
     );
     assert_eq!(f.get_environment(), "Demo (default)");
+    // Its trigger is not a button, so it cannot be run by hand; it can be turned off.
+    assert!(!f.get_can_run());
+    assert!(f.get_can_toggle() && f.get_selected_on());
     // A flow that never ran says so.
     a.click("Copy a file to OneDrive");
     assert_eq!(f.get_runs().row_count(), 0);
     assert_eq!(f.get_status(), "This flow has not run yet.");
-    // Read only: nothing to turn on or run.
-    for label in ["Run", "Turn on", "Turn off", "Run flow", "Delete"] {
-        assert!(!a.has_label(label), "{label}");
-    }
+    assert!(!f.get_can_run(), "a flow that is off is not run");
+
+    // Turn it on: confirm first, then the request.
+    a.click("Turn on");
+    assert_eq!(
+        a.store().get_form_title(),
+        "Turn on Copy a file to OneDrive?"
+    );
+    assert!(a.sent().is_empty());
+    a.click_last("Turn on");
+    assert_eq!(
+        a.sent(),
+        [
+            "POST https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments/Default-demo/flows/flow-3/start?api-version=2016-11-01"
+        ]
+    );
+    assert_eq!(a.banner(), "Turned on Copy a file to OneDrive.");
+
+    // A manual flow that is on can be run, after asking.
+    a.click("Send my weekly status");
+    assert!(f.get_can_run());
+    a.click("Run");
+    assert_eq!(a.store().get_form_title(), "Run Send my weekly status?");
+    a.click("Cancel");
+    assert_eq!(a.sent().len(), 1, "Cancel sends nothing");
+    a.click("Run");
+    a.click_last("Run");
+    let sent = a.sent();
+    assert!(
+        sent[1].starts_with("POST https://api.flow.microsoft.com/")
+            && sent[1].contains("/flows/flow-4/triggers/manual/run?api-version="),
+        "{sent:?}"
+    );
+    assert_eq!(a.banner(), "Started Send my weekly status.");
+    a.click("Turn off");
+    a.click_last("Turn off");
+    assert!(
+        a.sent()[2].contains("/flows/flow-4/stop?"),
+        "{:?}",
+        a.sent()
+    );
+    assert_eq!(a.banner(), "Turned off Send my weekly status.");
     assert!(
         a.log
             .borrow()
             .iter()
-            .all(|l| l.starts_with("open-app") || l.starts_with("flows-")),
+            .all(|l| l.starts_with("open-app") || l.starts_with("flow") || l.starts_with("form-")),
         "{:?}",
         a.log.borrow()
+    );
+}
+
+#[test]
+fn tasks_can_be_added_completed_edited_and_deleted() {
+    let a = AppsHarness::open();
+    a.click("Planner");
+    let t = a.h.app.global::<TasksStore>();
+    let s = a.store();
+    assert_eq!(t.get_title(), "Tasks");
+    assert!(t.get_can_add());
+
+    // New task: a title is needed and the due date has to be a date.
+    a.click("New task");
+    assert_eq!(s.get_form_title(), "New task in Tasks");
+    a.click_last("Add");
+    assert_eq!(s.get_form_error(), "Give the task a title.");
+    s.set_form_text1("Plan the offsite".into());
+    s.set_form_text2("tomorrow".into());
+    a.click_last("Add");
+    assert_eq!(
+        s.get_form_error(),
+        "The due date must look like 2026-11-25."
+    );
+    assert!(a.sent().is_empty());
+    s.set_form_text2("2026-11-25".into());
+    a.click_last("Add");
+    let sent = a.sent();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(
+        sent[0].starts_with("POST https://graph.microsoft.com/v1.0/me/todo/lists/todo-1/tasks ")
+            && sent[0].contains("dueDateTime")
+            && !sent[0].contains("Plan the offsite"),
+        "{sent:?}"
+    );
+    assert_eq!(a.banner(), "Task added.");
+    assert_eq!(s.get_form_title(), "");
+
+    // Complete, then undo.
+    a.click_any("Complete Send the quarterly report");
+    assert!(
+        a.sent()[1].starts_with("PATCH ") && a.sent()[1].contains("/todo/lists/todo-1/tasks/t1 "),
+        "{:?}",
+        a.sent()
+    );
+    assert_eq!(a.banner(), "Task completed.");
+    a.click_any("Mark Review the design doc as not completed");
+    assert!(a.sent()[2].contains("/tasks/t3 "), "{:?}", a.sent());
+    assert_eq!(a.banner(), "Marked as not completed.");
+
+    // Edit starts from what the task has.
+    a.click("Edit Book the team offsite");
+    assert_eq!(s.get_form_title(), "Edit task");
+    assert_eq!(s.get_form_text1(), "Book the team offsite");
+    assert_eq!(s.get_form_text2(), "");
+    s.set_form_text1("Book the offsite".into());
+    a.click_last("Save");
+    assert!(
+        a.sent()[3].starts_with("PATCH ") && a.sent()[3].contains("/tasks/t2 "),
+        "{:?}",
+        a.sent()
+    );
+    assert_eq!(a.banner(), "Task saved.");
+
+    // Delete asks first.
+    a.click("Groceries");
+    a.click("Delete Coffee beans");
+    assert_eq!(s.get_form_title(), "Delete this task?");
+    assert_eq!(a.sent().len(), 4);
+    a.click_last("Delete");
+    assert!(
+        a.sent()[4].starts_with("DELETE ") && a.sent()[4].ends_with("/todo/lists/todo-2/tasks/g1"),
+        "{:?}",
+        a.sent()
+    );
+    assert_eq!(a.banner(), "Task deleted.");
+
+    // A plan: the task goes to the plan, and Planner edits carry the task's etag.
+    a.click("Sprint board");
+    a.click("New task");
+    assert_eq!(s.get_form_title(), "New task in Sprint board");
+    s.set_form_text1("Write the spec".into());
+    a.click_last("Add");
+    assert!(
+        a.sent()[5].starts_with("POST https://graph.microsoft.com/v1.0/planner/tasks "),
+        "{:?}",
+        a.sent()
+    );
+    a.click_any("Complete Draft the release notes");
+    assert!(
+        a.sent()[6].starts_with("PATCH ")
+            && a.sent()[6].ends_with("/planner/tasks/p1 (json: percentComplete)"),
+        "{:?}",
+        a.sent()
+    );
+
+    // My tasks has no list to add to.
+    a.click("My tasks");
+    assert!(!t.get_can_add());
+}
+
+#[test]
+fn onenote_adds_a_page_to_the_open_section() {
+    let a = AppsHarness::open();
+    a.send("open-app", "demo-onenote");
+    let s = a.store();
+    a.click("New page");
+    assert_eq!(s.get_form_title(), "New page in Meeting notes");
+    a.click_last("Add");
+    assert_eq!(s.get_form_error(), "Give the page a title.");
+    s.set_form_text1("Planning".into());
+    s.set_form_text2("First item".into());
+    a.click_last("Add");
+    let sent = a.sent();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(
+        sent[0].starts_with("POST https://graph.microsoft.com/v1.0/demo/sec-1/pages (html, "),
+        "{sent:?}"
+    );
+    assert_eq!(a.banner(), "Page \"Planning\" added.");
+    assert_eq!(s.get_form_title(), "");
+}
+
+#[test]
+fn lists_add_and_edit_items_with_typed_columns() {
+    let a = AppsHarness::open();
+    a.send("open-app", "demo-lists");
+    let l = a.h.app.global::<ListsStore>();
+    let s = a.store();
+    assert!(l.get_can_edit());
+    a.click("New item");
+    assert_eq!(s.get_form_title(), "New item in Issue tracker");
+    assert_eq!(s.get_form_label1(), "Title");
+    assert_eq!(s.get_form_label2(), "Status");
+    assert_eq!(s.get_form_label3(), "Owner");
+    a.click_last("Add");
+    assert_eq!(s.get_form_error(), "Give the item a title.");
+    s.set_form_text1("Crash on save".into());
+    s.set_form_text2("Open".into());
+    a.click_last("Add");
+    let sent = a.sent();
+    assert!(
+        sent.len() == 1
+            && sent[0].starts_with(
+                "POST https://graph.microsoft.com/v1.0/sites/site-1/lists/list-1/items (json: fields)"
+            ),
+        "{sent:?}"
+    );
+    assert_eq!(a.banner(), "Item added.");
+
+    // Edit starts from the row's values.
+    a.click("Edit Login fails on mobile");
+    assert_eq!(s.get_form_title(), "Edit item in Issue tracker");
+    assert_eq!(s.get_form_text1(), "Login fails on mobile");
+    assert_eq!(s.get_form_text2(), "Open");
+    assert_eq!(s.get_form_text3(), "Ada");
+    s.set_form_text2("Closed".into());
+    a.click_last("Save");
+    let sent = a.sent();
+    assert!(
+        sent[1].starts_with(
+            "PATCH https://graph.microsoft.com/v1.0/sites/site-1/lists/list-1/items/1/fields "
+        ),
+        "{sent:?}"
+    );
+    assert_eq!(a.banner(), "Item saved.");
+
+    // A document library is not edited here.
+    a.click("Documents");
+    assert!(!l.get_can_edit());
+}
+
+#[test]
+fn meeting_recaps_list_meetings_with_a_recording_or_transcript_and_open_their_parts() {
+    let a = AppsHarness::open();
+    a.click("More apps");
+    a.click("Meeting Recaps");
+    assert_eq!(a.view(), "recaps");
+    assert!(a.has_label("Search for meetings"));
+    let r = a.h.app.global::<RecapsStore>();
+    let titles: Vec<String> = r
+        .get_meetings()
+        .iter()
+        .map(|m| m.title.to_string())
+        .collect();
+    assert_eq!(titles, ["Weekly sync", "Design review", "Retro"]);
+    let meta: Vec<String> = r
+        .get_meetings()
+        .iter()
+        .map(|m| m.meta.to_string())
+        .collect();
+    assert_eq!(meta, ["Recording · Transcript", "Recording", "Transcript"]);
+
+    // The newest meeting is open: transcript, notes and the AI recap.
+    assert!(r.get_detail_open());
+    assert_eq!(r.get_detail_title(), "Weekly sync");
+    assert!(r.get_has_recording() && r.get_has_notes() && r.get_can_share());
+    assert!(
+        r.get_transcript()
+            .contains("[0:00:02] Ada: Welcome everyone."),
+        "{}",
+        r.get_transcript()
+    );
+    assert_eq!(r.get_ai(), "Available in Teams");
+
+    // A recording alone: no transcript, and no AI recap.
+    a.click_last("Design review");
+    assert_eq!(r.get_detail_title(), "Design review");
+    assert_eq!(r.get_transcript(), "");
+    assert_eq!(r.get_transcript_note(), "This meeting has no transcript.");
+    assert_eq!(r.get_ai(), "Not available");
+    a.click_last("Play recording");
+    a.click_last("Meeting notes");
+    let opened = a.h.engine.apps_opened();
+    assert!(
+        opened.iter().any(|u| u.ends_with("/01DEMO2.mp4")),
+        "{opened:?}"
+    );
+    assert!(opened.iter().any(|u| u.ends_with("/notes")), "{opened:?}");
+
+    // A transcript alone: nothing to play or share.
+    a.click_last("Retro");
+    assert!(!r.get_has_recording() && !r.get_can_share());
+    assert!(
+        r.get_transcript()
+            .contains("Sam: Let us start with the release.")
+    );
+
+    // Search narrows the list.
+    a.send("recaps-query", "design");
+    assert_eq!(r.get_meetings().row_count(), 1);
+    a.send("recaps-query", "");
+    assert_eq!(r.get_meetings().row_count(), 3);
+
+    // Share opens the OneDrive share dialog for the recording.
+    a.click_last("Weekly sync");
+    a.click_last("Share");
+    assert_eq!(a.view(), "onedrive");
+    assert_eq!(
+        a.h.app.global::<DriveStore>().get_share_name(),
+        "Weekly sync (recording)"
     );
 }
 
@@ -791,4 +1138,17 @@ fn a_w_apps_tab_opens_in_the_web_host_and_the_plain_link_stays_in_the_browser() 
             .any(|u| u.starts_with("https://teams.microsoft.com/l/entity/demo-shifts/home")),
         "{opened:?}"
     );
+}
+#[test]
+fn the_store_and_an_app_fit_a_narrow_window() {
+    use super::responsive::{WIDTHS, assert_fits, resize};
+    for width in WIDTHS {
+        let a = AppsHarness::open();
+        resize(&a.h.app, width);
+        a.send("store-open", "");
+        assert_fits(&a.h.app, width, "the apps store");
+        a.click_in("Planner", "AppCardView");
+        assert_eq!(a.store().get_store_page(), "app");
+        assert_fits(&a.h.app, width, "an app in the store");
+    }
 }

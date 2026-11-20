@@ -1,16 +1,17 @@
-//! OneNote (read only), through Microsoft Graph: notebooks, sections, pages and a page's HTML.
+//! OneNote through Microsoft Graph: notebooks, sections, pages and a page's HTML, and the request
+//! that creates a page (`create_page_request`).
 //!
 //! Personal notebooks come from `/me/onenote`, team notebooks from `/groups/{id}/onenote`. A
 //! notebook, section and page each carry the Graph URL of their children (`sectionsUrl`,
 //! `pagesUrl`, `contentUrl`), so the same calls work for both kinds.
 //! The `onenote.com` audience (`https://www.onenote.com/api/v1.0/me/notes/...`) answers the same
-//! data for personal notebooks, but Graph covers both, so kelma uses Graph only. Editing is
-//! left to the web host.
+//! data for personal notebooks, but Graph covers both, so kelma uses Graph only. Editing a page
+//! is left to the web host; kelma only adds a new page.
 
 use crate::broker::Audience;
 use crate::client::Client;
 use crate::error::{Error, Result};
-use crate::graph::{graph_url, ms_of, str_of, values};
+use crate::graph::{Write, WriteBody, graph_url, ms_of, str_of, values};
 use reqwest::Method;
 use serde_json::Value;
 
@@ -179,6 +180,30 @@ pub fn page_text(html: &str) -> String {
         .join("\n")
 }
 
+fn encode(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// A new page in a section: `POST <the section's pagesUrl>` (`/me/onenote/sections/{id}/pages`
+/// or the group's path) with an HTML document as the body. The `<title>` becomes the page title;
+/// `text` becomes the first paragraph.
+pub fn create_page_request(pages_url: &str, title: &str, text: &str) -> Write {
+    let body = if text.trim().is_empty() {
+        String::new()
+    } else {
+        format!("<p>{}</p>", encode(text.trim()))
+    };
+    let mut w = Write::graph(Method::POST, pages_url.to_owned(), None);
+    w.body = WriteBody::Html(format!(
+        "<!DOCTYPE html><html><head><title>{}</title></head><body>{body}</body></html>",
+        encode(title.trim())
+    ));
+    w
+}
+
 fn decode(s: &str) -> String {
     s.replace("&nbsp;", " ")
         .replace("&lt;", "<")
@@ -305,6 +330,32 @@ mod tests {
         assert_eq!(pages[0].title, "Plan");
         assert_eq!(pages[0].web_url, None);
         assert!(pages[0].content_url.is_some());
+    }
+
+    #[test]
+    fn a_new_page_posts_an_html_document_with_escaped_text() {
+        let w = create_page_request(
+            "https://graph.microsoft.com/v1.0/me/onenote/sections/s1/pages",
+            " Q&A <draft> ",
+            "Line \"one\"",
+        );
+        assert_eq!(w.method, Method::POST);
+        assert_eq!(w.audience, Audience::Graph);
+        assert_eq!(
+            w.body,
+            WriteBody::Html(
+                "<!DOCTYPE html><html><head><title>Q&amp;A &lt;draft&gt;</title></head>\
+                 <body><p>Line &quot;one&quot;</p></body></html>"
+                    .into()
+            )
+        );
+        let bare = create_page_request("https://graph.microsoft.com/v1.0/x/pages", "T", "  ");
+        assert_eq!(
+            bare.body,
+            WriteBody::Html(
+                "<!DOCTYPE html><html><head><title>T</title></head><body></body></html>".into()
+            )
+        );
     }
 
     #[test]

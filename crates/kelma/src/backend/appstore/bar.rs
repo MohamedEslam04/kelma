@@ -1,5 +1,7 @@
 //! The app bar on the rail and the "View more apps" flyout. Pinning, unpinning and reordering
-//! change the bar on this computer only; the request Teams would get is built and shown.
+//! change the bar here at once and are sent to Teams (`POST beta/users/apps/pinned`, the request
+//! the web client sends, UNVERIFIED live). When Teams refuses, the bar keeps the change on this
+//! computer and the banner says so.
 
 use super::Apps;
 use super::view::{Card, RailData, RailItem, letter, tile_color};
@@ -34,6 +36,7 @@ pub(super) fn app_view(def: &AppDefinition) -> &'static str {
         "workflows" => "workflows",
         "onenote" => "onenote",
         "lists" | "microsoft lists" => "lists",
+        "meeting recaps" | "recap" => "recaps",
         _ => "app",
     }
 }
@@ -231,7 +234,7 @@ impl Engine {
         self.apps_fetch_images();
     }
 
-    /// Applies a pin change to the local bar and shows the request Teams would get.
+    /// Applies a pin change to the bar here and sends it to Teams.
     async fn apps_pin_change(self: &Arc<Self>, change: PinChange) {
         let base = self.apps_base().await;
         let outcome = {
@@ -265,13 +268,15 @@ impl Engine {
             }
         };
         match outcome {
-            Ok((req, what)) => {
-                tracing::info!(request = %req.dry_run().replace('\n', " "), "app bar change kept locally, not sent");
-                self.ui.banner(format!(
-                    "{what}. Kept on this computer only; not sent to Teams ({}).",
-                    req.dry_run().lines().next().unwrap_or_default()
-                ));
-            }
+            Ok((req, what)) => match self.src_send("app bar", req).await {
+                Ok(()) => self.ui.banner(format!("{what}.")),
+                Err(err) => {
+                    tracing::warn!(%err, "app bar change not accepted");
+                    self.ui.banner(format!(
+                        "{what} on this computer only. Teams did not accept the change: {err}"
+                    ));
+                }
+            },
             Err(msg) => self.ui.banner(msg),
         }
         self.apps_push_rail();
@@ -348,9 +353,7 @@ impl Engine {
         open: bool,
         query: Option<String>,
     ) -> anyhow::Result<()> {
-        if open {
-            self.apps_ensure_installed().await;
-        }
+        // The flyout's state changes first, so a Close sent while the apps load stays closed.
         {
             let mut a = self.apps.lock().unwrap();
             a.flyout = open;
@@ -361,16 +364,33 @@ impl Engine {
             }
         }
         self.apps_push_rail();
+        if open && self.apps.lock().unwrap().installed.is_none() {
+            self.apps_ensure_installed().await;
+            self.apps_push_rail();
+        }
         Ok(())
     }
 
     /// Opens an installed app in the main area.
     pub(super) async fn apps_open(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
-        self.apps_ensure_installed().await;
-        let (key, view) = {
+        // The flyout closes at once; the app opens once the installed apps are known, unless
+        // another app was opened meanwhile.
+        let turn = {
             let mut a = self.apps.lock().unwrap();
             a.flyout = false;
             a.flyout_query.clear();
+            a.open_seq += 1;
+            a.open_seq
+        };
+        if self.apps.lock().unwrap().installed.is_none() {
+            self.apps_push_rail();
+            self.apps_ensure_installed().await;
+        }
+        let (key, view) = {
+            let mut a = self.apps.lock().unwrap();
+            if a.open_seq != turn {
+                return Ok(());
+            }
             let Some(def) = a.def(id) else {
                 drop(a);
                 self.apps_push_rail();
@@ -393,6 +413,7 @@ impl Engine {
             "workflows" => self.flows_enter().await?,
             "onenote" => self.notes_enter().await?,
             "lists" => self.lists_enter().await?,
+            "recaps" => self.recaps_enter().await?,
             _ => self.shop_push(),
         }
         Ok(())

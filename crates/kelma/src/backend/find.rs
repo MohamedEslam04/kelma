@@ -5,17 +5,18 @@
 use super::Engine;
 use super::util::chat_time;
 use crate::data::{color_for, initials};
-use crate::find_data::{HitData, PickData, highlight_md, matches_all, terms_of};
+use crate::find_data::{HitData, PickData, highlight_md, marked_md, matches_all, terms_of};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use store::{ConvFilter, ConvKind, ConversationRow, MessageRow};
+use store::{ConvFilter, ConvKind, ConversationRow, LocalFilters, LocalHit, MessageRow};
 use teams_proto::global_search::Paging;
 use teams_proto::search::{MessageHit, SearchFilters, mentions_query};
 use teams_proto::time::now_ms;
 use teams_proto::views::FollowedThread;
 
 mod global;
+mod goto;
 
 /// Messages asked from the server per page.
 const PAGE: u32 = 25;
@@ -53,16 +54,41 @@ pub enum FindCmd {
     FindPrev,
     FindNext,
     Tab(String),
+    /// A channel tab beyond Posts and Files: opens its address.
+    ChannelTabOpen(String),
+    /// "Add a tab": a website, as `name` U+001F `url`.
+    ChannelTabAdd(String),
+    /// "Add a tab" with an installed app, as `app id` U+001F `name`.
+    ChannelTabAddApp(String),
+    /// Rename a tab, as `tab id` U+001F `name`.
+    ChannelTabRename(String),
+    ChannelTabRemove(String),
+    /// The "Add a tab" dialog opened: list the installed apps that have a tab.
+    ChannelTabApps,
     SharedFilter(String),
     SharedKeyword(String),
     SharedOpen(String),
     SharedUpload,
+    /// The row menu, each with the row's address (Rename adds `name` after U+001F).
+    SharedDownload(String),
+    SharedCopyLink(String),
+    SharedShare(String),
+    SharedRename(String),
+    SharedDelete(String),
+    /// New folder, with its name.
+    SharedNewFolder(String),
+    /// New document: `word`, `excel` or `powerpoint`.
+    SharedNewDoc(String),
     /// Upload from OneDrive: the cloud-file picker, answered like Attach cloud files.
     SharedOneDrive,
     Details(bool),
     Follow(String),
     UnfollowMsg(String),
     MenuFollow(String),
+    /// The top search box: suggestions for the text typed so far.
+    Suggest(String),
+    /// `/goto`, `/chat` and `/call`: the command's name, U+001F and the name typed after it.
+    Go(String),
 }
 
 impl FindCmd {
@@ -88,15 +114,30 @@ impl FindCmd {
             "find-prev" => FindCmd::FindPrev,
             "find-next" => FindCmd::FindNext,
             "tab" => FindCmd::Tab(a),
+            "channel-tab-open" => FindCmd::ChannelTabOpen(a),
+            "channel-tab-add" => FindCmd::ChannelTabAdd(a),
+            "channel-tab-add-app" => FindCmd::ChannelTabAddApp(a),
+            "channel-tab-rename" => FindCmd::ChannelTabRename(a),
+            "channel-tab-remove" => FindCmd::ChannelTabRemove(a),
+            "channel-tab-apps" => FindCmd::ChannelTabApps,
             "shared-filter" => FindCmd::SharedFilter(a),
             "shared-keyword" => FindCmd::SharedKeyword(a),
             "shared-open" => FindCmd::SharedOpen(a),
             "shared-upload" => FindCmd::SharedUpload,
+            "shared-download" => FindCmd::SharedDownload(a),
+            "shared-copy-link" => FindCmd::SharedCopyLink(a),
+            "shared-share" => FindCmd::SharedShare(a),
+            "shared-rename" => FindCmd::SharedRename(a),
+            "shared-delete" => FindCmd::SharedDelete(a),
+            "shared-new-folder" => FindCmd::SharedNewFolder(a),
+            "shared-new-doc" => FindCmd::SharedNewDoc(a),
             "shared-onedrive" => FindCmd::SharedOneDrive,
             "details" => FindCmd::Details(arg == "open"),
             "follow" => FindCmd::Follow(a),
             "unfollow-msg" => FindCmd::UnfollowMsg(a),
             "menu-follow" => FindCmd::MenuFollow(a),
+            "suggest" => FindCmd::Suggest(a),
+            "go" => FindCmd::Go(a),
             _ => return None,
         })
     }
@@ -204,6 +245,9 @@ pub(super) struct Hit {
     place: String,
     /// Plain text to show a snippet of.
     text: String,
+    /// A snippet the cache's search index cut and marked (`store::MARK_START`…), shown instead
+    /// of highlighting `text`; empty for the other hits.
+    marked: String,
     url: String,
 }
 
@@ -245,6 +289,8 @@ pub(super) struct State {
     date: Date,
     editor: String,
     picks: Vec<(String, String)>,
+    /// Bumped per editor query, so a slow people search older than the latest one is dropped.
+    pick_seq: u64,
     seq: u64,
     hits: Vec<Hit>,
     msg_from: u32,
@@ -321,6 +367,8 @@ impl Engine {
     pub(super) async fn find_cmd(self: &Arc<Self>, cmd: FindCmd) -> anyhow::Result<()> {
         match cmd {
             FindCmd::Search(q) => self.search_start(q).await,
+            FindCmd::Suggest(q) => self.suggest_start(q),
+            FindCmd::Go(arg) => self.go_to(&arg).await?,
             FindCmd::SearchTab(t) => {
                 self.find.lock().unwrap().tab = Tab::parse(&t);
                 self.push_search(false);
@@ -369,12 +417,29 @@ impl Engine {
             FindCmd::FindPrev => self.chat_find_step(false).await,
             FindCmd::FindNext => self.chat_find_step(true).await,
             FindCmd::Tab(t) => self.shared_tab(&t).await,
+            FindCmd::ChannelTabOpen(url) => {
+                if url.starts_with("https://") {
+                    self.clone().handle(super::Cmd::OpenUrl(url)).await;
+                }
+            }
+            FindCmd::ChannelTabAdd(arg) => self.add_channel_tab(&arg).await?,
+            FindCmd::ChannelTabAddApp(arg) => self.add_channel_app_tab(&arg).await?,
+            FindCmd::ChannelTabRename(arg) => self.rename_channel_tab(&arg).await?,
+            FindCmd::ChannelTabRemove(id) => self.remove_channel_tab(&id).await?,
+            FindCmd::ChannelTabApps => self.load_tab_apps().await,
             FindCmd::SharedFilter(f) => self.shared_filter(&f),
             FindCmd::SharedKeyword(k) => self.shared_keyword(k),
             FindCmd::SharedOpen(url) => {
                 self.clone().handle(super::Cmd::OpenUrl(url)).await;
             }
             FindCmd::SharedUpload => self.shared_upload().await,
+            FindCmd::SharedDownload(url) => self.shared_download(&url).await,
+            FindCmd::SharedCopyLink(url) => self.shared_copy_link(&url),
+            FindCmd::SharedShare(url) => self.shared_share(&url).await,
+            FindCmd::SharedRename(arg) => self.shared_rename(&arg).await,
+            FindCmd::SharedDelete(url) => self.shared_delete(&url).await,
+            FindCmd::SharedNewFolder(name) => self.shared_new_folder(&name).await,
+            FindCmd::SharedNewDoc(kind) => self.shared_new_doc(&kind).await,
             FindCmd::SharedOneDrive => self.shared_onedrive().await,
             FindCmd::Details(open) => self.details(open).await,
             FindCmd::Follow(id) => self.set_follow(&id, true).await?,
@@ -443,6 +508,7 @@ impl Engine {
             name,
             place: self.location_of(&h.conversation_id, &h.topic, &h.team_name),
             text: h.snippet.clone(),
+            marked: String::new(),
             url: String::new(),
         }
     }
@@ -463,6 +529,7 @@ impl Engine {
             name,
             place: self.location_of(&m.conversation_id, "", ""),
             text: plain_of(m),
+            marked: String::new(),
             url: String::new(),
         }
     }
@@ -479,6 +546,7 @@ impl Engine {
             _ => (name.clone(), h.place.clone()),
         };
         let snippet = match h.kind {
+            "message" | "thread" if !h.marked.is_empty() => marked_md(&h.marked),
             "message" | "thread" => highlight_md(&h.text, terms, 160),
             _ => String::new(),
         };
@@ -590,7 +658,7 @@ impl Engine {
         let since = date.since_ms(now_ms());
         let filtered = in_conv.is_some() || person.is_some() || date != Date::Any;
         let mut hits = self.local_message_hits(
-            &terms,
+            &q,
             in_conv.as_ref().map(|(id, _)| id.as_str()),
             person.as_ref().map(|(m, _)| m.as_str()),
             since,
@@ -660,30 +728,49 @@ impl Engine {
         self.push_search(false);
     }
 
-    /// Messages of the cache that contain every term.
+    /// Messages of the cache with a word starting with each word of `q`, from the cache's
+    /// full-text index (`Store::search_messages_local`), newest first. No network: offline
+    /// these are the results.
     fn local_message_hits(
         &self,
-        terms: &[String],
+        q: &str,
         in_conv: Option<&str>,
         person: Option<&str>,
         since: i64,
     ) -> Vec<Hit> {
-        let Some(needle) = longest(terms) else {
-            return vec![];
+        let filters = LocalFilters {
+            conversation: in_conv,
+            sender: person,
+            since_ms: Some(since),
         };
-        let rows = self
+        let found = self
             .store
             .lock()
             .unwrap()
-            .messages_containing(in_conv, needle, CACHE_SCAN)
+            .search_messages_local(q, &filters, TAB_MAX)
             .unwrap_or_default();
-        rows.iter()
-            .filter(|m| !m.message_type.starts_with("Control/"))
-            .filter(|m| person.is_none_or(|p| m.sender_mri == p))
-            .filter(|m| m.compose_ms >= since)
-            .filter(|m| matches_all(&plain_of(m), terms))
-            .map(|m| self.hit_from_row(m))
-            .collect()
+        found.iter().map(|h| self.hit_from_local(h)).collect()
+    }
+
+    fn hit_from_local(&self, h: &LocalHit) -> Hit {
+        let name = if h.sender_name.is_empty() {
+            self.user_name(&h.sender_mri).unwrap_or_default()
+        } else {
+            h.sender_name.clone()
+        };
+        Hit {
+            kind: "message",
+            conv: h.conversation_id.clone(),
+            message: h.message_id.clone(),
+            root: h.parent_id.clone().unwrap_or_default(),
+            time_ms: h.compose_ms,
+            mri: h.sender_mri.clone(),
+            name,
+            place: self.location_of(&h.conversation_id, "", ""),
+            text: h.snippet.replace([store::MARK_START, store::MARK_END], ""),
+            marked: h.snippet.clone(),
+            url: String::new(),
+        }
     }
 
     /// Channels, group chats and meetings whose name (or team) contains every term.
@@ -752,7 +839,8 @@ impl Engine {
             .await;
         {
             let mut f = self.find.lock().unwrap();
-            if f.seq != seq {
+            // A newer search, or a second quick "Show more" that already took this page.
+            if f.seq != seq || f.msg_from != from {
                 return;
             }
             match page {
@@ -788,7 +876,11 @@ impl Engine {
 
     /// Suggestions for the open "In" or "Person" editor.
     async fn pick_query(self: &Arc<Self>, q: String) {
-        let editor = self.find.lock().unwrap().editor.clone();
+        let (editor, seq) = {
+            let mut f = self.find.lock().unwrap();
+            f.pick_seq += 1;
+            (f.editor.clone(), f.pick_seq)
+        };
         let terms = terms_of(&q);
         let picks: Vec<(String, String, String)> = match editor.as_str() {
             "in" => {
@@ -837,7 +929,7 @@ impl Engine {
         };
         // Only the newest answer for the editor that is still open counts.
         let mut f = self.find.lock().unwrap();
-        if f.editor != editor {
+        if f.editor != editor || f.pick_seq != seq {
             return;
         }
         f.picks = picks
@@ -1211,6 +1303,7 @@ impl Engine {
                     name,
                     place: self.location_of(&m.conversation_id, "", ""),
                     text: m.preview.clone(),
+                    marked: String::new(),
                     url: String::new(),
                 }
             })
@@ -1323,7 +1416,8 @@ impl Engine {
             .await;
         {
             let mut f = self.find.lock().unwrap();
-            if f.quick_seq != seq {
+            // A newer view, or a second quick "Show more" that already took this page.
+            if f.quick_seq != seq || f.quick_from != from {
                 return;
             }
             match page {
@@ -1516,13 +1610,24 @@ impl Engine {
             .find(|h| h.id() == id)
             .cloned();
         if let Some(h) = hit {
-            self.apply_follow(&h.conv, &h.root, false).await?;
-            self.find
-                .lock()
-                .unwrap()
-                .quick_hits
-                .retain(|x| x.id() != id);
+            // The row leaves the list at once (a following command sees it gone), and comes back
+            // where it was when the service refuses.
+            let at = {
+                let mut f = self.find.lock().unwrap();
+                let at = f.quick_hits.iter().position(|x| x.id() == id);
+                f.quick_hits.retain(|x| x.id() != id);
+                at
+            };
             self.push_quick(false);
+            if let Err(err) = self.apply_follow(&h.conv, &h.root, false).await {
+                if let Some(at) = at {
+                    let mut f = self.find.lock().unwrap();
+                    let at = at.min(f.quick_hits.len());
+                    f.quick_hits.insert(at, h);
+                }
+                self.push_quick(false);
+                return Err(err);
+            }
         }
         Ok(())
     }
@@ -1551,14 +1656,27 @@ impl Engine {
         root: &str,
         follow: bool,
     ) -> anyhow::Result<()> {
-        if !self.offline.load(Ordering::Relaxed) {
-            self.client.set_thread_follow(conv, root, follow).await?;
-        }
-        self.find
+        // Here first, so a menu or the Followed view opened right after shows the new state; put
+        // back when the service refuses (unless another follow changed it meanwhile).
+        let key = (conv.to_string(), root.to_string());
+        let before = self
+            .find
             .lock()
             .unwrap()
             .follow_override
-            .insert((conv.to_string(), root.to_string()), follow);
+            .insert(key.clone(), follow);
+        if !self.offline.load(Ordering::Relaxed)
+            && let Err(err) = self.client.set_thread_follow(conv, root, follow).await
+        {
+            let mut f = self.find.lock().unwrap();
+            if f.follow_override.get(&key) == Some(&follow) {
+                match before {
+                    Some(b) => f.follow_override.insert(key, b),
+                    None => f.follow_override.remove(&key),
+                };
+            }
+            return Err(err.into());
+        }
         Ok(())
     }
 
@@ -1640,6 +1758,130 @@ mod tests {
             time_ms: ms,
             ..Default::default()
         }
+    }
+
+    /// An offline engine (as in `in_order`'s tests) whose cache holds `msgs` as
+    /// `(id, conversation, sender MRI, age in days, html)`.
+    fn engine_with(msgs: &[(&str, &str, &str, i64, &str)]) -> (Arc<Engine>, crate::AppWindow) {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = crate::AppWindow::new().unwrap();
+        let ui = crate::ui::UiHandle::new(slint::ComponentHandle::as_weak(&window));
+        let store = store::Store::open_in_memory().unwrap();
+        let now = now_ms();
+        for (id, conv, mri, days, html) in msgs {
+            store
+                .upsert_message(&MessageRow {
+                    id: (*id).into(),
+                    conversation_id: (*conv).into(),
+                    parent_id: None,
+                    sender_mri: (*mri).into(),
+                    sender_name: "Test Sender".into(),
+                    compose_ms: now - days * 86_400_000 - id.len() as i64,
+                    edited_ms: None,
+                    deleted: false,
+                    message_type: "RichText/Html".into(),
+                    content_html: (*html).into(),
+                    client_message_id: None,
+                    reactions_json: "[]".into(),
+                })
+                .unwrap();
+        }
+        let e = Engine::new(
+            teams_proto::Client::offline("test").unwrap(),
+            store,
+            session::Config::default(),
+            ui,
+            "8:me".into(),
+            "Me".into(),
+        );
+        e.offline.store(true, Ordering::Relaxed);
+        (e, window)
+    }
+
+    fn message_ids(e: &Engine) -> Vec<String> {
+        let f = e.find.lock().unwrap();
+        f.hits
+            .iter()
+            .filter(|h| h.kind == "message")
+            .map(|h| h.message.clone())
+            .collect()
+    }
+
+    #[test]
+    fn an_offline_search_shows_the_cached_matches_with_the_filters() {
+        let (e, _window) = engine_with(&[
+            (
+                "1",
+                "19:a",
+                "8:orgid:x",
+                0,
+                "<p>The <b>budget</b> is final</p>",
+            ),
+            ("2", "19:b", "8:orgid:y", 3, "<p>budgets for Q3</p>"),
+            ("3", "19:a", "8:orgid:y", 40, "<p>old budget draft</p>"),
+            ("4", "19:a", "8:orgid:x", 0, "<p>ميزانيةُ المشروع</p>"),
+            ("5", "19:a", "8:orgid:x", 0, "<p>lunch</p>"),
+        ]);
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(
+            e.clone()
+                .handle(super::super::Cmd::Find(FindCmd::Search("budg".into()))),
+        );
+        assert_eq!(
+            message_ids(&e),
+            ["1", "2", "3"],
+            "prefix matches, newest first"
+        );
+        {
+            let f = e.find.lock().unwrap();
+            assert!(f.searched, "offline is not an error");
+            let first = f.hits.iter().find(|h| h.message == "1").unwrap();
+            assert_eq!(first.conv, "19:a");
+            assert_eq!(first.text, "The budget is final");
+            assert_eq!(
+                first.marked,
+                format!(
+                    "The {}budget{} is final",
+                    store::MARK_START,
+                    store::MARK_END
+                )
+            );
+        }
+
+        // Arabic without tashkeel and with the plain teh marbuta form.
+        rt.block_on(
+            e.clone()
+                .handle(super::super::Cmd::Find(FindCmd::Search("ميزانيه".into()))),
+        );
+        assert_eq!(message_ids(&e), ["4"]);
+
+        // The In, From and date filters narrow the cached matches.
+        e.find.lock().unwrap().query = "budget".into();
+        e.find.lock().unwrap().in_conv = Some(("19:a".into(), "A".into()));
+        rt.block_on(e.run_search());
+        assert_eq!(message_ids(&e), ["1", "3"]);
+        e.find.lock().unwrap().person = Some(("8:orgid:y".into(), "Y".into()));
+        rt.block_on(e.run_search());
+        assert_eq!(message_ids(&e), ["3"]);
+        e.find.lock().unwrap().in_conv = None;
+        e.find.lock().unwrap().date = Date::Week;
+        rt.block_on(e.run_search());
+        assert_eq!(message_ids(&e), ["2"]);
+
+        // A server answer for the same message does not add a second row.
+        let mut f = e.find.lock().unwrap();
+        let server = Hit {
+            marked: String::new(),
+            ..f.hits[0].clone()
+        };
+        let before = f.hits.len();
+        merge_messages(&mut f.hits, vec![server]);
+        assert_eq!(f.hits.len(), before);
+        assert!(!f.hits[0].marked.is_empty(), "the cache's marked row stays");
     }
 
     #[test]

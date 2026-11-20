@@ -334,3 +334,64 @@ fn notification_settings_entry_is_in_the_menu() {
     by_id(&app, "ActivityView::settings-entry")[0].mock_single_click(PointerEventButton::Left);
     assert_eq!(*log.borrow(), ["settings"]);
 }
+
+#[test]
+fn long_titles_previews_and_locations_stay_inside_the_feed_rows() {
+    use super::overflow::{LONG, LONG_AR, LONG_WORD, assert_texts_inside};
+    let (app, _state, _log) = feed();
+    let item = |id: &str, text: &str, rtl: bool| ActivityRow {
+        id: id.into(),
+        title: text.into(),
+        initials: "QP".into(),
+        badge: "@".into(),
+        unread: true,
+        preview: text.into(),
+        time: "Wednesday 12:30 PM".into(),
+        location: format!("{text} › {text}").into(),
+        rtl_preview: rtl,
+        ..Default::default()
+    };
+    app.set_activity_items(ModelRc::new(VecModel::from(vec![
+        item("a", LONG, false),
+        item("b", LONG_AR, true),
+        item("c", LONG_WORD, false),
+    ])));
+    let rows: Vec<_> = ElementHandle::find_by_element_type_name(&app, "ActivityItem").collect();
+    assert_eq!(rows.len(), 3);
+    for row in &rows {
+        assert_texts_inside(row, "activity row");
+    }
+}
+
+#[test]
+fn preview_rows_take_reactions_and_open_the_message_menu() {
+    let (app, _state, _log) = feed();
+    let log = record_actions(&app);
+    item_el(&app, 0).mock_single_click(PointerEventButton::Left);
+    let pane = &by_id(&app, "PreviewList::pv")[0];
+    let top = pane.absolute_position().y;
+    let mut preview: Vec<ElementHandle> = rows(&app)
+        .into_iter()
+        .filter(|r| r.absolute_position().y >= top)
+        .collect();
+    preview.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    let row = &preview[0];
+
+    hover(&app, row);
+    let reacts = quick_reactions(&app);
+    assert_eq!(reacts.len(), 4, "the hover bar shows in the preview");
+    click(&reacts[0]);
+    assert_eq!(log.borrow().last().unwrap(), "react m0 like");
+
+    open_menu(&app, row);
+    assert!(app.get_menu_preview());
+    let labels = menu_labels(&app);
+    for gone in ["Reply with quote", "Mark as unread", "Edit", "Delete"] {
+        assert!(
+            !labels.contains(&gone.to_string()),
+            "{gone:?} in {labels:?}"
+        );
+    }
+    click(&menu_item(&app, "Copy message link"));
+    assert_eq!(log.borrow().last().unwrap(), "copy-link m0");
+}

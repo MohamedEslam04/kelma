@@ -5,8 +5,8 @@ use super::outbox::{PENDING_PREFIX, row_from_outbox};
 use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
-    ChatData, FileData, HeaderData, MsgData, Pixels, ReactData, Scroll, TeamData, color_for,
-    initials,
+    ChatData, FileData, HeaderData, LoopData, MsgData, Pixels, ReactData, Scroll, TeamData,
+    color_for, initials,
 };
 use crate::markdown::{reaction_emoji, render_blocks};
 use serde_json::{Value, json};
@@ -68,6 +68,9 @@ impl Engine {
         if d.activity || d.chats || d.messages {
             self.render_activity(d.activity || d.chats, d.activity || d.messages);
         }
+        if d.messages {
+            self.render_popout();
+        }
     }
 
     pub(super) fn avatar(self: &Arc<Self>, mri: &str) -> Option<Pixels> {
@@ -123,6 +126,12 @@ impl Engine {
             }
         });
         None
+    }
+
+    /// Puts a decoded photo in the avatar cache, as a finished lookup would.
+    #[cfg(test)]
+    pub(crate) fn test_set_avatar(&self, mri: &str, px: Pixels) {
+        self.avatars.lock().unwrap().insert(mri.into(), Some(px));
     }
 
     pub(super) fn inline_image(self: &Arc<Self>, url: &str) -> Option<Pixels> {
@@ -191,6 +200,8 @@ impl Engine {
             .map(|d| (d.conversation_id, d.text))
             .collect();
         let ov = self.lists_overlay();
+        let snoozed = self.remind_snoozed();
+        let now = teams_proto::time::now_ms();
         let mut rows = {
             let st = self.store.lock().unwrap();
             if search.trim().is_empty() {
@@ -212,6 +223,7 @@ impl Engine {
         if filter == "meetings" {
             rows.retain(|r| r.kind == ConvKind::Meeting);
         }
+        let rows = super::remind::filter_snoozed(rows, |r| r.id.as_str(), &snoozed, now);
         let mut fav = vec![];
         let mut main = vec![];
         let mut chans = vec![];
@@ -229,17 +241,32 @@ impl Engine {
                 ConvKind::Notes => Some(self.me.clone()),
                 _ => None,
             };
-            let title = match (&r.kind, &r.team_name) {
-                (ConvKind::Channel, Some(t)) => format!("{} › {}", t, r.title),
-                _ => r.title.clone(),
-            };
+            // A channel shows its own name; its team goes on the second line, as in Teams.
+            let title = r.title.clone();
             let draft = drafts.get(&r.id);
-            let preview_text = draft.unwrap_or(&r.last_preview);
+            let channel_line = match (&r.kind, &r.team_name, draft) {
+                (ConvKind::Channel, Some(t), None) => Some(channel_preview(t, &r.last_preview)),
+                _ => None,
+            };
+            let preview_text = channel_line.as_ref().or(draft).unwrap_or(&r.last_preview);
             let unread = r.unread
                 && (current.as_deref() != Some(r.id.as_str())
                     || keep_unread.as_deref() == Some(r.id.as_str()));
             let mention = unread && self.has_unread_mention(&r.id, r.read_horizon_ms);
+            let presence = match r.kind {
+                ConvKind::OneOnOne => avatar_mri
+                    .as_deref()
+                    .map(super::people_presence::want)
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+            let person = match r.kind {
+                ConvKind::OneOnOne => avatar_mri.clone().unwrap_or_default(),
+                _ => String::new(),
+            };
             let data = ChatData {
+                person,
+                presence,
                 mention,
                 group: r.kind == ConvKind::Group,
                 draft: draft.is_some(),
@@ -361,6 +388,7 @@ impl Engine {
             avatar: avatar_mri.and_then(|m| self.avatar(&m)),
             is_channel: kind == ConvKind::Channel,
             thread_root: thread.unwrap_or_default(),
+            muted: self.is_muted(&id),
             id,
             title,
         });
@@ -482,8 +510,14 @@ impl Engine {
         let jump = self.take_jump(&mut out);
         let mode = {
             let mut v = self.view.lock().unwrap();
+            let anchor = v
+                .older_anchor
+                .take()
+                .and_then(|id| out.iter().position(|m| m.id == id));
             let mode = if let Some(i) = jump {
                 Scroll::Divider(i)
+            } else if let Some(i) = anchor {
+                Scroll::Anchor(i)
             } else if !scroll {
                 Scroll::Keep
             } else if let Some(i) =
@@ -530,6 +564,8 @@ impl Engine {
             .collect();
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
+        // Where a file card opens (Settings > Files and links), read once and only when needed.
+        let open_in = std::cell::OnceCell::new();
         for (i, r) in visible.iter().copied().enumerate() {
             let system = system_text(r);
             let props: Value =
@@ -537,7 +573,17 @@ impl Engine {
             let mine = r.sender_mri == self.me;
             let shown = self.translated_html(&r.id);
             let html = shown.as_deref().unwrap_or(&r.content_html);
-            let mut parsed = render_blocks(&render::parse_teams_html(html));
+            let rich = render::parse_teams_html(html);
+            let urls = render::links(&rich);
+            let loops: Vec<LoopData> = urls
+                .iter()
+                .filter(|u| render::is_loop_link(u))
+                .map(|u| LoopData {
+                    url: u.clone(),
+                    title: render::loop_title(u),
+                })
+                .collect();
+            let mut parsed = render_blocks(&rich);
             // Headings, tables and colors (the plan's 5.4): the richer model draws the body.
             crate::markdown::upgrade_rich(&mut parsed, html);
             let headline = props
@@ -587,10 +633,17 @@ impl Engine {
                                 .and_then(Value::as_str)
                                 .unwrap_or_default()
                                 .to_uppercase();
+                            let url = f.get("url")?.as_str()?.to_string();
+                            let ext = if ext.is_empty() { "FILE".into() } else { ext };
+                            let pref = *open_in
+                                .get_or_init(|| super::settings::files_prefs().open_office_in);
+                            let (place, detail) = super::drive::file_card_labels(&url, &ext, pref);
                             Some(FileData {
-                                url: f.get("url")?.as_str()?.to_string(),
-                                ext: if ext.is_empty() { "FILE".into() } else { ext },
+                                url,
+                                ext,
                                 name,
+                                place,
+                                detail,
                             })
                         })
                         .collect()
@@ -604,7 +657,9 @@ impl Engine {
                 mine,
                 has_text,
             );
-            let links = self.link_cards(&props);
+            let mut links = self.link_cards(&props);
+            // A Loop component gets its own card instead of a link preview.
+            links.retain(|l| !loops.iter().any(|x| x.url == l.url));
             let sender = if r.sender_name.is_empty() {
                 self.store
                     .lock()
@@ -686,9 +741,21 @@ impl Engine {
                 translate: tr.state,
                 translate_from: tr.from,
                 links,
+                pinned: self.is_pinned(&r.conversation_id, &r.id),
+                urls,
+                loops,
             });
             prev = Some(r);
         }
         out
+    }
+}
+
+/// The second line of a channel in the chat list: the team, then the last message.
+fn channel_preview(team: &str, last: &str) -> String {
+    if last.trim().is_empty() {
+        team.to_string()
+    } else {
+        format!("{team} · {last}")
     }
 }

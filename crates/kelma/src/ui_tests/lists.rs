@@ -324,7 +324,10 @@ fn the_item_menu_of_a_chat_has_the_teams_entries() {
         menu_rows(&h.app),
         vec![
             "Mark as unread",
+            "Favorite",
+            "Pop out chat",
             "Move to section",
+            "Snooze",
             "Mute",
             "Copy link",
             "Hide"
@@ -339,7 +342,7 @@ fn a_group_chat_can_also_be_left_and_a_channel_has_the_channel_entries() {
     open_item_menu(&h.app, "Morning Standup");
     assert!(menu_rows(&h.app).contains(&"Leave".to_string()));
     // Another right click elsewhere replaces the menu; a channel row has the channel items.
-    open_item_menu(&h.app, "Contoso Ltd. › tech only");
+    open_item_menu(&h.app, "tech only");
     let rows = menu_rows(&h.app);
     for want in [
         "Mark as unread",
@@ -550,6 +553,7 @@ fn the_channel_menu_hides_a_channel_and_shows_it_again_in_the_teams_view() {
         vec![
             "Manage notifications",
             "Hide channel",
+            "Pin",
             "Copy link",
             "Go to team"
         ]
@@ -611,7 +615,7 @@ fn go_to_team_opens_the_teams_view_and_a_private_channel_can_be_left_after_confi
     h.engine.test_set_teams(&[teams_json()]);
     // From the chat list: Go to team switches the rail to Teams.
     assert_eq!(h.app.get_view(), "chat");
-    open_item_menu(&h.app, "Contoso Ltd. › tech only");
+    open_item_menu(&h.app, "tech only");
     click(&menu_row(&h.app, "Go to team"));
     assert_eq!(h.app.get_view(), "teams");
     // A private channel's menu has Leave channel, which asks first.
@@ -630,4 +634,112 @@ fn go_to_team_opens_the_teams_view_and_a_private_channel_can_be_left_after_confi
             .any(|l| l == "channel-leave 19:private@thread.tacv2")
     );
     assert_eq!(ls(&h.app).get_dialog(), "");
+}
+
+// ---- "…" buttons, Pin and the team menu in the sidebar -----------------------------------
+
+/// Records the `TeamsStore` and `MediaStore` commands as `"<name> <argument>"` (the unit
+/// separator shown as `|`).
+fn wire_other_stores(h: &Harness) -> Log {
+    let log = Log::default();
+    let l = log.clone();
+    h.app.global::<crate::TeamsStore>().on_command(move |n, a| {
+        l.borrow_mut()
+            .push(format!("{n} {}", a.replace('\u{1f}', "|")))
+    });
+    let l = log.clone();
+    h.app
+        .global::<crate::MediaStore>()
+        .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    log
+}
+
+#[test]
+fn hovering_a_chat_shows_a_more_button_that_opens_its_menu() {
+    let h = harness();
+    wire(&h);
+    let other = wire_other_stores(&h);
+    let row = find_label(&h.app, "Ahmed Ali").remove(0);
+    hover(&h.app, &row);
+    let more = find_label(&h.app, "More options");
+    assert_eq!(more.len(), 1, "one \"…\" on the hovered row");
+    click(&more[0]);
+    let rows = menu_rows(&h.app);
+    assert!(rows.contains(&"Favorite".to_string()), "{rows:?}");
+    click(&menu_row(&h.app, "Pop out chat"));
+    assert_eq!(other.borrow().len(), 1);
+    assert!(
+        other.borrow()[0].starts_with("popout 19:"),
+        "{:?}",
+        other.borrow()
+    );
+}
+
+#[test]
+fn favorite_in_the_item_menu_toggles_the_favorite() {
+    let h = harness();
+    wire(&h);
+    let toggled = Log::default();
+    let t = toggled.clone();
+    h.app
+        .on_toggle_favorite(move |id| t.borrow_mut().push(id.to_string()));
+    open_item_menu(&h.app, "Ahmed Ali");
+    click(&menu_row(&h.app, "Favorite"));
+    assert_eq!(toggled.borrow().len(), 1);
+}
+
+#[test]
+fn a_channel_in_the_teams_view_has_a_more_button_and_can_be_pinned() {
+    let h = harness();
+    wire(&h);
+    let other = wire_other_stores(&h);
+    h.engine.test_set_teams(&[teams_json()]);
+    teams_view(&h);
+    h.runner()(Cmd::SetFilter("all".into()));
+    let row = find_label(&h.app, "tech only").remove(0);
+    hover(&h.app, &row);
+    click(&find_label(&h.app, "More options for tech only")[0]);
+    click(&menu_row(&h.app, "Pin"));
+    assert_eq!(
+        other.borrow().last().unwrap(),
+        &format!("chan-pin {TECH}|1")
+    );
+}
+
+#[test]
+fn a_team_in_the_teams_view_has_the_team_menu_on_its_more_button_and_right_click() {
+    let h = harness();
+    wire(&h);
+    let other = wire_other_stores(&h);
+    h.engine.test_set_teams(&[teams_json()]);
+    h.engine.manage_set_entries(vec![teams_json()]);
+    teams_view(&h);
+    h.runner()(Cmd::SetFilter("all".into()));
+    let team = find_label(&h.app, "Contoso Ltd.").remove(0);
+    right_click(&h.app, &team);
+    for want in [
+        "Go to team",
+        "New channel",
+        "Manage team",
+        "Get link to team",
+        "Leave the team",
+    ] {
+        assert!(
+            !find_label(&h.app, want).is_empty(),
+            "{want:?} in the team menu"
+        );
+    }
+    click(&find_label(&h.app, "Get link to team")[0]);
+    assert_eq!(
+        other.borrow().last().unwrap(),
+        "team-link 19:team1@thread.tacv2"
+    );
+
+    hover(&h.app, &find_label(&h.app, "Contoso Ltd.").remove(0));
+    click(&find_label(&h.app, "More options for Contoso Ltd.")[0]);
+    click(&find_label(&h.app, "Hide team")[0]);
+    assert_eq!(
+        other.borrow().last().unwrap(),
+        "team-show 19:team1@thread.tacv2|0"
+    );
 }

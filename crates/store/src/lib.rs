@@ -4,6 +4,7 @@
 //! else lives here. Rows are plain structs so this crate does not depend on
 //! the protocol crates; the app maps protocol types to rows.
 
+mod fts;
 mod migrations;
 mod model;
 
@@ -11,9 +12,10 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
+pub use fts::{MARK_END, MARK_START};
 pub use model::{
-    ConvFilter, ConvKind, ConversationRow, Draft, MessageRow, OutboxItem, OutboxKind, OutboxState,
-    SavedMessage, TeamRow, UserRow,
+    ConvFilter, ConvKind, ConversationRow, Draft, LocalFilters, LocalHit, MessageRow, OutboxItem,
+    OutboxKind, OutboxState, SavedMessage, TeamRow, UserRow,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -156,6 +158,7 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Store> {
         conn.pragma_update(None, "foreign_keys", true)?;
+        fts::register(&conn)?;
         let mut store = Store { conn };
         migrations::run(&mut store.conn)?;
         // A row still `sending` means the app died mid-send; send it again.
@@ -427,6 +430,59 @@ impl Store {
             .query_map(
                 params![pattern, conversation_id, limit_i64(limit)],
                 msg_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(out)
+    }
+
+    /// Offline full-text search of the cached messages (deleted and `Control/` ones excluded):
+    /// every word of `query` must start a word of the message's text or of its sender's name,
+    /// matched without case, Latin accents, tashkeel or Arabic letter variants (see `fts`). The
+    /// query is never read as FTS syntax. Newest first, like the server results it is merged
+    /// with and like Teams lists them; among messages of the same millisecond the better bm25
+    /// rank comes first. A query without a word finds nothing.
+    pub fn search_messages_local(
+        &self,
+        query: &str,
+        filters: &LocalFilters<'_>,
+        limit: usize,
+    ) -> Result<Vec<LocalHit>> {
+        let Some(fts_query) = fts::match_query(query) else {
+            return Ok(vec![]);
+        };
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT m.id, m.conversation_id, m.parent_id, m.sender_mri, m.sender_name, \
+                 m.compose_ms, m.content_html, \
+                 snippet(messages_fts, 0, char(2), char(3), '', 16) \
+             FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid \
+             WHERE messages_fts MATCH ?1 AND m.deleted = 0 \
+               AND (?2 IS NULL OR m.conversation_id = ?2) \
+               AND (?3 IS NULL OR m.sender_mri = ?3) \
+               AND m.compose_ms >= ?4 \
+             ORDER BY m.compose_ms DESC, bm25(messages_fts), m.id DESC LIMIT ?5",
+        )?;
+        let out = stmt
+            .query_map(
+                params![
+                    fts_query,
+                    filters.conversation,
+                    filters.sender,
+                    filters.since_ms.unwrap_or(i64::MIN),
+                    limit_i64(limit)
+                ],
+                |r| {
+                    let html: String = r.get(6)?;
+                    let snippet: String = r.get(7)?;
+                    Ok(LocalHit {
+                        message_id: r.get(0)?,
+                        conversation_id: r.get(1)?,
+                        parent_id: r.get(2)?,
+                        sender_mri: r.get(3)?,
+                        sender_name: r.get(4)?,
+                        compose_ms: r.get(5)?,
+                        snippet: fts::restore_snippet(&snippet, &html),
+                    })
+                },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(out)

@@ -203,6 +203,9 @@ fn peek_row(p: PeekData) -> CalPeek {
         can_cancel: p.can_cancel,
         can_delete: p.can_delete,
         has_attendees: p.has_attendees,
+        notes_url: p.notes_url.into(),
+        recap_url: p.recap_url.into(),
+        options_url: p.options_url.into(),
     }
 }
 
@@ -846,7 +849,11 @@ mod tests {
             .filter(|p| (48.0..100.0).contains(&p.absolute_position().y))
             .collect();
         pills.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
-        assert_eq!(pills.len(), 5, "Today, Day, Work week, Week, Month");
+        assert_eq!(
+            pills.len(),
+            6,
+            "Today, Day, Work week, Week, Month, Split view"
+        );
         for p in &pills {
             p.mock_single_click(PointerEventButton::Left);
         }
@@ -862,7 +869,8 @@ mod tests {
                 "view day",
                 "view workweek",
                 "view week",
-                "view month"
+                "view month",
+                "view split"
             ]
         );
     }
@@ -886,6 +894,94 @@ mod tests {
             *log.borrow(),
             [("join".to_string(), "https://teams.example/j".to_string())]
         );
+    }
+
+    #[test]
+    fn split_view_shows_a_column_per_calendar_headed_by_its_name() {
+        let a = ev("Alpha", 0, 9.0, 10.0, json!({}));
+        let b = ev("Beta", 0, 9.0, 10.0, json!({}));
+        let app = app(View::Day(1), &[]);
+        let day = Date::new(2026, 11, 18);
+        let data = crate::backend::build_split(
+            &[
+                ("My calendar".to_string(), vec![&a]),
+                ("Design team".to_string(), vec![&b]),
+            ],
+            &Ctx {
+                date: day,
+                view: View::Day(1),
+                scale: 30,
+                now_ms: day.midnight_ms() + 10 * H,
+                first_day: Weekday::Monday,
+                mini_anchor: day,
+                off: &|_| 0,
+                prefs: &DEFAULT_PREFS,
+            },
+        );
+        set(&app, data);
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        assert_eq!(app.global::<CalStore>().get_view_kind(), "split");
+        let head = |t: &str| label(&app, t).absolute_position();
+        assert!(head("Design team").x > head("My calendar").x);
+        // Same hour, one column each: side by side rather than sharing a column.
+        let (pa, pb) = (label(&app, "Alpha"), label(&app, "Beta"));
+        assert!(pb.absolute_position().x > pa.absolute_position().x + pa.size().width - 1.);
+        assert!((pb.absolute_position().y - pa.absolute_position().y).abs() < 1.);
+        // The toolbar offers the view.
+        let log = commands(&app);
+        ElementHandle::find_by_accessible_label(&app, "Split view")
+            .next()
+            .expect("the Split view button")
+            .mock_single_click(PointerEventButton::Left);
+        assert_eq!(*log.borrow(), [("view".to_string(), "split".to_string())]);
+    }
+
+    #[test]
+    fn the_more_menu_lists_notes_recap_and_options_only_when_there_are_pages() {
+        let app = app(View::WorkWeek, &[]);
+        let store = app.global::<CalStore>();
+        let log = commands(&app);
+        let mut p = crate::backend::PeekData {
+            id: "E1".into(),
+            title: "Planning".into(),
+            when: "Wed".into(),
+            ..Default::default()
+        };
+        store.set_peek(peek_row(p.clone()));
+        store.set_peek_x(500.0);
+        store.set_peek_y(150.0);
+        store.set_peek_open(true);
+        store.set_peek_menu("more".into());
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        for none in ["Meeting notes", "Recap", "Meeting options"] {
+            assert!(
+                ElementHandle::find_by_accessible_label(&app, none)
+                    .next()
+                    .is_none(),
+                "{none} needs a page"
+            );
+        }
+        p.notes_url = "https://example.invalid/notes".into();
+        p.recap_url = "https://example.invalid/recap".into();
+        p.options_url = "https://example.invalid/options".into();
+        store.set_peek(peek_row(p));
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        for (item, arg) in [
+            ("Meeting notes", "notes"),
+            ("Recap", "recap"),
+            ("Meeting options", "options"),
+        ] {
+            store.set_peek_menu("more".into());
+            testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+            ElementHandle::find_by_accessible_label(&app, item)
+                .next()
+                .unwrap_or_else(|| panic!("no {item}"))
+                .invoke_accessible_default_action();
+            assert_eq!(
+                log.borrow().last().unwrap(),
+                &("meeting-link".to_string(), arg.to_string())
+            );
+        }
     }
 
     /// Puts one panel on top of the demo week for the screenshot: `KELMA_SHOT_SCENE` is `peek`,
@@ -2227,5 +2323,78 @@ mod tests {
             6,
             "Oct 26 to Dec 6 is six rows"
         );
+    }
+
+    #[test]
+    fn a_narrow_window_fits_the_work_week_around_today_and_folds_the_view_pills() {
+        use crate::ui_tests::responsive::{WIDTHS, assert_fits, assert_shown, on_screen, resize};
+        for width in WIDTHS {
+            let app = app(View::WorkWeek, &[ev("Standup", 0, 9.0, 9.5, json!({}))]);
+            resize(&app, width);
+            testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+            assert_fits(&app, width, "calendar work week");
+            // Today (Wednesday) is on screen; a day that does not fit is left out, not cut.
+            let head = |iso: &str| {
+                ElementHandle::find_by_accessible_label(&app, &format!("Work location for {iso}"))
+                    .next()
+                    .unwrap_or_else(|| panic!("a header for {iso}"))
+            };
+            assert!(on_screen(&head("2026-11-18"), width), "today at {width}px");
+            for d in 16..=20 {
+                let h = head(&format!("2026-11-{d}"));
+                assert!(
+                    on_screen(&h, width) || h.size().width == 0.,
+                    "{width}px: the 2026-11-{d} column is cut at {:?} {:?}",
+                    h.absolute_position(),
+                    h.size()
+                );
+            }
+            assert_shown(&app, "Standup", None, width, "the event of today");
+            // The month label keeps its room.
+            let title = app.global::<CalStore>().get_title().to_string();
+            let t = ElementHandle::find_by_element_type_name(&app, "Text")
+                .find(|t| t.accessible_label().is_some_and(|l| l.starts_with(&title)))
+                .expect("the toolbar title");
+            assert!(
+                t.size().width >= 120.,
+                "{width}px: the title is {}px",
+                t.size().width
+            );
+            // The view pills fold into one View menu.
+            let log = commands(&app);
+            click(&button(&app, "View: Work week"));
+            click(&button(&app, "Day"));
+            assert_eq!(*log.borrow(), [("view".to_string(), "day".to_string())]);
+        }
+    }
+
+    #[test]
+    fn long_event_titles_stay_inside_their_blocks_and_the_toolbar_inside_the_page() {
+        use crate::ui_tests::overflow::{
+            LONG, LONG_AR, LONG_WORD, assert_texts_inside, assert_texts_inside_where,
+        };
+        let long_organizer =
+            json!({"organizer": {"emailAddress": {"name": LONG, "address": "a@b.c"}}});
+        let app = app(
+            View::Week,
+            &[
+                ev(LONG, 0, 9.0, 10.0, long_organizer.clone()),
+                ev(LONG_AR, 1, 9.0, 9.5, long_organizer.clone()),
+                ev(LONG_WORD, 2, 9.0, 11.0, long_organizer),
+                ev(LONG, 2, 9.5, 10.5, json!({})),
+            ],
+        );
+        app.window().set_size(LogicalSize::new(900., 700.));
+        let blocks: Vec<_> = ElementHandle::find_by_element_type_name(&app, "CalBox").collect();
+        assert_eq!(blocks.len(), 4);
+        for b in &blocks {
+            assert_texts_inside(b, "calendar event block");
+        }
+        let view = ElementHandle::find_by_element_type_name(&app, "CalendarView")
+            .next()
+            .expect("the calendar");
+        assert_texts_inside_where(&view, "calendar toolbar, window 900px wide", |t| {
+            t.absolute_position().y < 56.
+        });
     }
 }

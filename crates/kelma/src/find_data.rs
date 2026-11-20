@@ -40,6 +40,10 @@ pub struct SharedData {
     pub shared_by: String,
     pub date: String,
     pub url: String,
+    /// A SharePoint drive item: Download, Share, Rename and Delete apply.
+    pub editable: bool,
+    /// The address is on SharePoint: "Open in SharePoint" applies.
+    pub sharepoint: bool,
 }
 
 /// The words of a query, lowercased. Quotes are dropped.
@@ -125,9 +129,36 @@ pub fn highlight_md(text: &str, terms: &[String], max: usize) -> String {
     out
 }
 
+/// A snippet the cache's search index already cut and marked (matches between
+/// [`store::MARK_START`] and [`store::MARK_END`]) as Markdown with the matches in bold, like
+/// [`highlight_md`]. Newlines become spaces.
+pub fn marked_md(snippet: &str) -> String {
+    let mut out = String::with_capacity(snippet.len() + 8);
+    for c in snippet.trim().chars() {
+        match c {
+            store::MARK_START | store::MARK_END => out.push_str("**"),
+            c if c.is_whitespace() => out.push(' '),
+            c => md_escape(c, &mut out),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_marked_snippet_becomes_bold_markdown() {
+        let s = format!(
+            "…the {}quarterly{} *report*\n{}ready{}",
+            store::MARK_START,
+            store::MARK_END,
+            store::MARK_START,
+            store::MARK_END
+        );
+        assert_eq!(marked_md(&s), "…the **quarterly** \\*report\\* **ready**");
+    }
 
     fn t(q: &str) -> Vec<String> {
         terms_of(q)
