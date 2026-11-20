@@ -90,11 +90,24 @@ pub enum AppsCmd {
     RecapsEnter,
     RecapsRefresh,
     RecapsQuery(String),
+    /// Opens a meeting's recap (the calendar event id).
     RecapsOpen(String),
-    RecapsPlay,
-    RecapsNotes,
+    /// Back to the list of meetings.
+    RecapsHome,
+    /// Picks a recording part (0 is Part 1).
+    RecapsPart(usize),
+    /// `notes` or `transcript`.
+    RecapsTab(String),
+    /// Opens the recording in the browser.
+    RecapsWatch,
+    /// Copies the recording's link.
     RecapsShare,
-    RecapsAi,
+    RecapsNotes,
+    RecapsTranscriptWeb,
+    /// Opens a file shared in the meeting chat (its address).
+    RecapsFile(String),
+    /// The Recap tab of a meeting chat (its thread id).
+    RecapsChat(String),
 }
 
 impl AppsCmd {
@@ -166,10 +179,15 @@ impl AppsCmd {
             "recaps-refresh" => AppsCmd::RecapsRefresh,
             "recaps-query" => AppsCmd::RecapsQuery(s()),
             "recaps-open" => AppsCmd::RecapsOpen(s()),
-            "recaps-play" => AppsCmd::RecapsPlay,
-            "recaps-notes" => AppsCmd::RecapsNotes,
+            "recaps-home" => AppsCmd::RecapsHome,
+            "recaps-part" => AppsCmd::RecapsPart(arg.parse().ok()?),
+            "recaps-tab" => AppsCmd::RecapsTab(s()),
+            "recaps-watch" => AppsCmd::RecapsWatch,
             "recaps-share" => AppsCmd::RecapsShare,
-            "recaps-ai" => AppsCmd::RecapsAi,
+            "recaps-notes" => AppsCmd::RecapsNotes,
+            "recaps-transcript-web" => AppsCmd::RecapsTranscriptWeb,
+            "recaps-file" => AppsCmd::RecapsFile(s()),
+            "recaps-chat" => AppsCmd::RecapsChat(s()),
             _ => return None,
         })
     }
@@ -202,7 +220,15 @@ mod tests {
             AppsCmd::parse("task-toggle", "t1"),
             Some(AppsCmd::TaskToggle("t1".into()))
         );
-        assert_eq!(AppsCmd::parse("recaps-play", ""), Some(AppsCmd::RecapsPlay));
+        assert_eq!(
+            AppsCmd::parse("recaps-watch", ""),
+            Some(AppsCmd::RecapsWatch)
+        );
+        assert_eq!(
+            AppsCmd::parse("recaps-part", "1"),
+            Some(AppsCmd::RecapsPart(1))
+        );
+        assert_eq!(AppsCmd::parse("recaps-part", "x"), None);
         assert_eq!(AppsCmd::parse("shortcut", "x"), None);
         assert_eq!(AppsCmd::parse("nope", ""), None);
     }

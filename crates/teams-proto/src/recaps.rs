@@ -1,6 +1,10 @@
 //! Meeting Recaps (plans/meeting-recaps.md R1): past meetings that have a recording or a
 //! transcript, and what the user can read of them without an AI license.
 //!
+//! kelma's screen lists meetings from the calendar and reads each meeting's chat: the recording
+//! and transcript messages it carries are parsed by [`parse_recording_message`] and
+//! [`parse_transcript_message`]. The sources below only complete that.
+//!
 //! Sources, in the order kelma tries them:
 //! 1. The meeting content service (MCPS), `GET <mcps>/user/meetings/contents?top=&startDateTime=
 //!    &endDateTime=&includeTypes=Recording,TranscriptV2`, documented by the mautrix OpenAPI from a
@@ -364,6 +368,178 @@ pub fn notes_link(tabs: &[ChannelTab]) -> Option<String> {
         .map(|t| t.open_url.clone())
 }
 
+/// The chat message type of a finished (or started) meeting recording.
+pub const RECORDING_MESSAGE: &str = "RichText/Media_CallRecording";
+/// The chat message type that announces a meeting transcript.
+pub const TRANSCRIPT_MESSAGE: &str = "RichText/Media_CallTranscript";
+
+/// A recording a meeting chat announces (`RichText/Media_CallRecording`). The recording lives in
+/// the OneDrive of whoever recorded it (usually the organizer), which is why the user's own
+/// `Recordings` folder often has none. The content is XML, as the chat service sends it:
+///
+/// ```text
+/// <URIObject type="Video.2/CallRecording.1"><RecordingStatus status="Success" code="200"/>
+///   <a href="https://…sharepoint.com/:v:/…">…</a><OriginalName v="<name>.mp4"/>
+///   <RecordingContent contentTypes="Recording+Transcript" duration="0:30:32.00">
+///     <item type="onedriveForBusinessVideo" uri="https://…" driveId="…" driveItemId="…"/>
+///   </RecordingContent><Identifiers><Id type="callId" value="…"/></Identifiers></URIObject>
+/// ```
+///
+/// The shape comes from the reference clients (rusty-teams `graph_events.rs`, which maps it to
+/// Graph's `callRecordingEventMessageDetail`); only a `Success` status is a finished recording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatRecording {
+    pub name: String,
+    /// The SharePoint or Stream page of the recording (https only).
+    pub web_url: Option<String>,
+    pub drive_id: Option<String>,
+    pub item_id: Option<String>,
+    pub duration_ms: Option<i64>,
+    /// The recording says a transcript was made with it (`contentTypes` names one).
+    pub with_transcript: bool,
+    pub call_id: Option<String>,
+}
+
+/// Each `<element …>` start tag of `content`, without its `<` and `>`.
+fn start_tags<'a>(content: &'a str, element: &str) -> Vec<&'a str> {
+    let open = format!("<{element} ");
+    let mut out = Vec::new();
+    let mut rest = content;
+    while let Some(i) = rest.find(&open) {
+        let tag = &rest[i + 1..];
+        let end = tag.find('>').unwrap_or(tag.len());
+        out.push(&tag[..end]);
+        rest = &tag[end..];
+    }
+    out
+}
+
+/// The value of `name="…"` in a start tag, entities decoded.
+fn tag_attr(tag: &str, name: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(i) = tag[from..].find(name) {
+        let at = from + i;
+        let before = tag[..at].chars().last();
+        if before.is_some_and(char::is_whitespace)
+            && let Some(v) = tag[at + name.len()..].strip_prefix("=\"")
+        {
+            return v.find('"').map(|end| unescape_xml(&v[..end]));
+        }
+        from = at + name.len();
+    }
+    None
+}
+
+fn first_attr(content: &str, element: &str, name: &str) -> Option<String> {
+    start_tags(content, element)
+        .into_iter()
+        .find_map(|t| tag_attr(t, name))
+}
+
+fn unescape_xml(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
+/// `0:30:32.00` (or ISO `PT30M32S`) as milliseconds.
+fn recording_length_ms(s: &str) -> Option<i64> {
+    if let Some(iso) = s.strip_prefix("PT") {
+        let (mut total, mut num) = (0.0, String::new());
+        for c in iso.chars() {
+            let unit = match c {
+                'H' => 3_600_000.0,
+                'M' => 60_000.0,
+                'S' => 1_000.0,
+                _ => {
+                    num.push(c);
+                    continue;
+                }
+            };
+            total += num.parse::<f64>().ok()? * unit;
+            num.clear();
+        }
+        return num.is_empty().then_some(total as i64);
+    }
+    let parts: Vec<f64> = s.split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    let secs = match parts[..] {
+        [h, m, s] => h * 3600.0 + m * 60.0 + s,
+        [m, s] => m * 60.0 + s,
+        _ => return None,
+    };
+    Some((secs * 1000.0) as i64)
+}
+
+/// A call id named by `<Id type="callId" value="…"/>`.
+fn call_id_of(content: &str) -> Option<String> {
+    start_tags(content, "Id")
+        .into_iter()
+        .find(|t| tag_attr(t, "type").as_deref() == Some("callId"))
+        .and_then(|t| tag_attr(t, "value"))
+        .filter(|v| !v.is_empty())
+}
+
+/// The finished recording a chat message announces; `None` for other messages and for a
+/// recording that started, is still being processed or failed.
+pub fn parse_recording_message(message_type: &str, content: &str) -> Option<ChatRecording> {
+    if message_type != RECORDING_MESSAGE {
+        return None;
+    }
+    let status = first_attr(content, "RecordingStatus", "status")?;
+    if !status.eq_ignore_ascii_case("success") {
+        return None;
+    }
+    let https = |u: String| u.starts_with("https://").then_some(u);
+    // The OneDrive item of the recording, else any item with a web address.
+    let items = start_tags(content, "item");
+    let item = items
+        .iter()
+        .find(|t| tag_attr(t, "type").as_deref() == Some("onedriveForBusinessVideo"))
+        .or_else(|| {
+            items
+                .iter()
+                .find(|t| tag_attr(t, "uri").is_some_and(|u| u.starts_with("https://")))
+        });
+    let web_url = item
+        .and_then(|t| tag_attr(t, "uri"))
+        .and_then(https)
+        .or_else(|| first_attr(content, "a", "href").and_then(https));
+    let content_types = first_attr(content, "RecordingContent", "contentTypes").unwrap_or_default();
+    Some(ChatRecording {
+        name: first_attr(content, "OriginalName", "v").unwrap_or_default(),
+        web_url,
+        drive_id: item.and_then(|t| tag_attr(t, "driveId")).filter(|s| !s.is_empty()),
+        item_id: item
+            .and_then(|t| tag_attr(t, "driveItemId"))
+            .filter(|s| !s.is_empty()),
+        duration_ms: first_attr(content, "RecordingContent", "duration")
+            .as_deref()
+            .and_then(recording_length_ms),
+        with_transcript: content_types.to_ascii_lowercase().contains("transcript"),
+        call_id: call_id_of(content),
+    })
+}
+
+/// The call whose transcript a `RichText/Media_CallTranscript` message announces: `Some("")`
+/// when the message names no call. Its content is JSON with escaped quotes
+/// (`{\"callId\":\"…\",\"isExportedToOdsp\":true}`, mautrix `transcripts.go`) or the XML
+/// `<Id type="callId">` of a recording message. `None` for other messages.
+pub fn parse_transcript_message(message_type: &str, content: &str) -> Option<String> {
+    if message_type != TRANSCRIPT_MESSAGE {
+        return None;
+    }
+    let json: Option<Value> = serde_json::from_str(&content.replace("\\\"", "\"")).ok();
+    let id = json
+        .as_ref()
+        .and_then(|v| str_of(v, "callId"))
+        .or_else(|| call_id_of(content))
+        .unwrap_or_default();
+    Some(id)
+}
+
 impl Client {
     /// Meetings that ended in the last `days` days and have a recording or transcript (MCPS,
     /// UNVERIFIED audience). The host is [`Client::mcp_service`].
@@ -568,6 +744,91 @@ mod tests {
             "[0:00:01] Ada Lovelace: Hello & welcome\n[0:01:05] Sam: Two lines in a cue\n[0:00:09] No speaker here"
         );
         assert!(parse_vtt("not a transcript").is_empty());
+    }
+
+    /// A recording message as the chat service sends it (the shape of the rusty-teams fixture).
+    fn recording(status: &str, extra: &str) -> String {
+        format!(
+            r#"<URIObject type="Video.2/CallRecording.1"><RecordingStatus status="{status}" code="200"></RecordingStatus><OriginalName v="Weekly sync-20261110_100000-Meeting Recording.mp4" /><RecordingContent contentTypes="Recording+Transcript" duration="0:30:32.00"><item type="video" uri="" videoContent="CurtainOnly" /><item type="onedriveForBusinessVideo" uri="https://contoso-my.sharepoint.com/personal/x/rec.mp4?a=1&amp;b=2" driveId="b!d" driveItemId="01A" /></RecordingContent>{extra}</URIObject>"#
+        )
+    }
+
+    #[test]
+    fn a_finished_recording_message_names_its_file_link_and_length() {
+        let r = parse_recording_message(
+            RECORDING_MESSAGE,
+            &recording(
+                "Success",
+                r#"<Identifiers><Id type="callId" value="call-1" /></Identifiers>"#,
+            ),
+        )
+        .unwrap();
+        assert_eq!(r.name, "Weekly sync-20261110_100000-Meeting Recording.mp4");
+        assert_eq!(
+            r.web_url.as_deref(),
+            Some("https://contoso-my.sharepoint.com/personal/x/rec.mp4?a=1&b=2")
+        );
+        assert_eq!(
+            (r.drive_id.as_deref(), r.item_id.as_deref()),
+            (Some("b!d"), Some("01A"))
+        );
+        assert_eq!(r.duration_ms, Some(1_832_000));
+        assert!(r.with_transcript);
+        assert_eq!(r.call_id.as_deref(), Some("call-1"));
+        // Started, processing or failed recordings, and other messages, are not parts.
+        for status in ["Started", "ChunkFinished", "Failure"] {
+            assert_eq!(
+                parse_recording_message(RECORDING_MESSAGE, &recording(status, "")),
+                None
+            );
+        }
+        assert_eq!(
+            parse_recording_message("RichText/Html", &recording("Success", "")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_recording_without_a_drive_item_keeps_its_play_link() {
+        let content = r#"<URIObject type="Video.2/CallRecording.1"><RecordingStatus status="Success" code="200"></RecordingStatus><a href="https://contoso.sharepoint.com/:v:/rec">Play</a><OriginalName v="Daily.mp4" /><RecordingContent duration="PT13M34.1S"><item type="video" uri="" /></RecordingContent></URIObject>"#;
+        let r = parse_recording_message(RECORDING_MESSAGE, content).unwrap();
+        assert_eq!(
+            r.web_url.as_deref(),
+            Some("https://contoso.sharepoint.com/:v:/rec")
+        );
+        assert_eq!((r.drive_id, r.item_id), (None, None));
+        assert_eq!(r.duration_ms, Some(814_100));
+        assert!(!r.with_transcript);
+        // A link that is not https is never kept.
+        let plain = content.replace("https://contoso", "http://contoso");
+        assert_eq!(
+            parse_recording_message(RECORDING_MESSAGE, &plain)
+                .unwrap()
+                .web_url,
+            None
+        );
+    }
+
+    #[test]
+    fn a_transcript_message_names_its_call() {
+        let escaped = r#"{\"scopeId\":\"s\",\"callId\":\"call-1\",\"isExportedToOdsp\":true}"#;
+        assert_eq!(
+            parse_transcript_message(TRANSCRIPT_MESSAGE, escaped).as_deref(),
+            Some("call-1")
+        );
+        assert_eq!(
+            parse_transcript_message(
+                TRANSCRIPT_MESSAGE,
+                r#"<URIObject><Id type="callId" value="call-2" /></URIObject>"#
+            )
+            .as_deref(),
+            Some("call-2")
+        );
+        assert_eq!(
+            parse_transcript_message(TRANSCRIPT_MESSAGE, "").as_deref(),
+            Some("")
+        );
+        assert_eq!(parse_transcript_message(RECORDING_MESSAGE, escaped), None);
     }
 
     #[test]

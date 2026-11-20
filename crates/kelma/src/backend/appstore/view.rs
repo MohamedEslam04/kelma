@@ -237,34 +237,65 @@ pub struct FormData {
     pub error: String,
 }
 
-/// One meeting of the Meeting Recaps list.
+/// One line of the Meeting Recaps home: a meeting, or the heading of a week (`header`).
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct RecapRow {
+    pub id: String,
+    pub title: String,
+    /// `Tue, Nov 18 · 10:00 – 10:30`.
+    pub when: String,
+    pub organizer: String,
+    /// The date tile: `Nov` and `18`.
+    pub month: String,
+    pub day: String,
+    pub header: bool,
+    pub canceled: bool,
+}
+
+/// The Meeting Recaps screen: the home list or one meeting's recap.
 #[derive(Clone, Default)]
 pub struct RecapsData {
-    pub meetings: Vec<Row>,
+    /// `home` or `detail`.
+    pub page: &'static str,
+    pub meetings: Vec<RecapRow>,
     pub query: String,
-    /// Where the list came from, or what went wrong.
+    /// Why the list is empty, or that the calendar is still loading.
     pub note: String,
+    /// `Loaded all meetings in the last 30 days.` once the list is complete.
+    pub footer: String,
     pub loading: bool,
     pub detail: RecapDetail,
 }
 
-/// The detail of the selected meeting.
+/// The recap of one meeting: its recordings (parts), the files shared in its chat, its notes
+/// and its transcript.
 #[derive(Clone, Default)]
 pub struct RecapDetail {
     pub open: bool,
+    /// Shown as a meeting chat's Recap tab (no way back to the home list).
+    pub in_chat: bool,
     pub title: String,
     pub when: String,
     pub organizer: String,
+    /// `Part 1`, `Part 2`, … when the meeting was recorded more than once.
+    pub parts: Vec<Nav>,
+    pub part: i32,
+    /// The selected part has a web address: Watch in browser and Share work.
     pub has_recording: bool,
-    pub has_transcript: bool,
-    pub transcript: String,
-    pub transcript_note: String,
+    /// What the play card says about the selected part (`Recording · 18 min`).
+    pub part_label: String,
+    pub loading: bool,
+    /// An honest line when the meeting chat could not be read or has no chat.
+    pub note: String,
+    pub files: Vec<Row>,
+    pub files_note: String,
+    /// `notes` or `transcript`.
+    pub tab: String,
     pub has_notes: bool,
     pub notes_note: String,
-    /// "Not available" or what the AI recap offers.
-    pub ai: String,
-    pub has_ai_link: bool,
-    pub can_share: bool,
+    pub transcript: String,
+    pub transcript_note: String,
+    pub has_transcript_link: bool,
 }
 
 // -- helpers -------------------------------------------------------------------------------

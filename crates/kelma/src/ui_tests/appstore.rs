@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::backend::AppsCmd;
-use crate::{AppsStore, DriveStore, FlowsStore, ListsStore, NotesStore, RecapsStore, TasksStore};
+use crate::{AppsStore, FlowsStore, ListsStore, NotesStore, RecapsStore, TasksStore};
 use i_slint_backend_testing::AccessibleRole;
 
 struct AppsHarness {
@@ -409,12 +409,12 @@ fn the_store_home_shows_popular_apps_with_their_facts() {
     assert!(a.has_label("Search the Store"));
     // Devices links out; the gear and Manage open their pages.
     a.click("Devices");
-    assert!(
-        a.h.engine
-            .apps_opened()
-            .iter()
-            .any(|u| u.contains("microsoft.com"))
-    );
+    assert!(a
+        .h
+        .engine
+        .apps_opened()
+        .iter()
+        .any(|u| u.contains("microsoft.com")));
 }
 
 #[test]
@@ -523,12 +523,12 @@ fn an_app_page_shows_the_listing_facts() {
         |u| u == "copied:https://teams.microsoft.com/l/app/com.microsoft.teamspace.tab.planner"
     ));
     a.click("Privacy policy");
-    assert!(
-        a.h.engine
-            .apps_opened()
-            .iter()
-            .any(|u| u.ends_with("/privacy"))
-    );
+    assert!(a
+        .h
+        .engine
+        .apps_opened()
+        .iter()
+        .any(|u| u.ends_with("/privacy")));
 }
 
 #[test]
@@ -570,12 +570,12 @@ fn add_asks_first_and_then_sends_the_install() {
 
     // The link button opens the app in Teams on the web and leaves the dialog open.
     a.click("Open in Teams on the web");
-    assert!(
-        a.h.engine
-            .apps_opened()
-            .iter()
-            .any(|u| u.ends_with("/l/app/demo-polls"))
-    );
+    assert!(a
+        .h
+        .engine
+        .apps_opened()
+        .iter()
+        .any(|u| u.ends_with("/l/app/demo-polls")));
     assert_eq!(s.get_form_title(), "Add Contoso Polls to a team");
 
     a.click_last(&teams[0]);
@@ -1007,76 +1007,247 @@ fn lists_add_and_edit_items_with_typed_columns() {
     assert!(!l.get_can_edit());
 }
 
-#[test]
-fn meeting_recaps_list_meetings_with_a_recording_or_transcript_and_open_their_parts() {
+/// The Meeting Recaps app opened from the More apps flyout.
+fn recaps_open() -> AppsHarness {
     let a = AppsHarness::open();
     a.click("More apps");
     a.click("Meeting Recaps");
     assert_eq!(a.view(), "recaps");
-    assert!(a.has_label("Search for meetings"));
-    let r = a.h.app.global::<RecapsStore>();
-    let titles: Vec<String> = r
-        .get_meetings()
-        .iter()
-        .map(|m| m.title.to_string())
-        .collect();
-    assert_eq!(titles, ["Weekly sync", "Design review", "Retro"]);
-    let meta: Vec<String> = r
-        .get_meetings()
-        .iter()
-        .map(|m| m.meta.to_string())
-        .collect();
-    assert_eq!(meta, ["Recording · Transcript", "Recording", "Transcript"]);
+    a
+}
 
-    // The newest meeting is open: transcript, notes and the AI recap.
-    assert!(r.get_detail_open());
+/// The home's lines as `(heading?, title)`.
+fn recap_lines(r: &RecapsStore<'_>) -> Vec<(bool, String)> {
+    r.get_meetings()
+        .iter()
+        .map(|m| (m.header, m.title.to_string()))
+        .collect()
+}
+
+#[test]
+fn meeting_recaps_home_lists_the_calendars_online_meetings_with_recap_buttons() {
+    let a = recaps_open();
+    let r = a.h.app.global::<RecapsStore>();
+    assert_eq!(r.get_page(), "home");
+    assert!(a.has_label("Search for meetings"));
+    assert!(a.has_label("All"), "only All: Followed has no source");
+    assert!(!a.has_label("Followed"));
+    // From the calendar: online meetings of the last 30 days, the canceled one marked, the
+    // in-person, older and coming meetings left out. Nothing here asked a meeting service.
+    let titles: Vec<String> = recap_lines(&r)
+        .into_iter()
+        .filter(|(header, _)| !header)
+        .map(|(_, t)| t)
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "Weekly sync",
+            "Canceled: Budget review",
+            "Design review",
+            "Retro"
+        ]
+    );
+    assert!(r.get_meetings().iter().any(|m| m.header), "week headings");
+    for t in &titles {
+        assert!(
+            a.has_label(&format!("Recap: {t}")),
+            "a Recap button for {t}"
+        );
+    }
+    assert_eq!(r.get_footer(), "Loaded all meetings in the last 30 days.");
+    assert!(a.has_label("Loaded all meetings in the last 30 days."));
+    assert_eq!(r.get_note(), "");
+
+    // Search by title or organizer.
+    a.send("recaps-query", "sam");
+    let found: Vec<String> = recap_lines(&r)
+        .into_iter()
+        .filter(|(h, _)| !h)
+        .map(|(_, t)| t)
+        .collect();
+    assert_eq!(found, ["Design review"]);
+    a.send("recaps-query", "no such meeting");
+    assert_eq!(r.get_note(), "No meeting matches your search.");
+    a.send("recaps-query", "");
+    assert_eq!(r.get_note(), "");
+}
+
+#[test]
+fn a_meeting_recap_shows_its_parts_shared_files_notes_and_transcript() {
+    let a = recaps_open();
+    let r = a.h.app.global::<RecapsStore>();
+    a.click("Recap: Weekly sync");
+    assert_eq!(r.get_page(), "detail");
     assert_eq!(r.get_detail_title(), "Weekly sync");
-    assert!(r.get_has_recording() && r.get_has_notes() && r.get_can_share());
+    assert!(!r.get_in_chat());
+    assert!(a.has_label("Back to Meeting Recaps"));
+    // Two recordings in the meeting chat: two parts; the agenda sent there is a shared file.
+    let parts: Vec<String> = r.get_parts().iter().map(|p| p.label.to_string()).collect();
+    assert_eq!(parts, ["Part 1", "Part 2"]);
+    assert_eq!(r.get_part(), 0);
+    assert!(r.get_has_recording());
+    assert_eq!(r.get_part_label(), "Recording · 18 min");
+    assert!(a.has_label("Agenda.docx"));
+    assert_eq!(r.get_files_note(), "");
+    assert_eq!(r.get_detail_note(), "", "no error line");
+    // Notes: the meeting chat's Notes tab opens in the browser.
+    assert_eq!(r.get_tab(), "notes");
+    assert!(r.get_has_notes());
+    a.click_last("Open meeting notes");
+
+    // Watch in browser opens the part's recording; Share copies its link.
+    a.click_last("Watch in browser");
+    a.click_last("Play the recording in your browser");
+    a.click("Agenda.docx");
+    let opened = a.h.engine.apps_opened();
+    assert!(opened.iter().any(|u| u.ends_with("/notes")), "{opened:?}");
+    assert_eq!(
+        opened
+            .iter()
+            .filter(|u| u.ends_with("/01DEMO1.mp4"))
+            .count(),
+        2,
+        "{opened:?}"
+    );
     assert!(
-        r.get_transcript()
-            .contains("[0:00:02] Ada: Welcome everyone."),
+        opened.iter().any(|u| u.ends_with("/Agenda.docx")),
+        "{opened:?}"
+    );
+    a.click_last("Share");
+    assert_eq!(a.banner(), "Link to the recording copied.");
+
+    // Part 1 has no transcript; Part 2 has one, read as text.
+    a.click_any("Transcript");
+    assert_eq!(r.get_tab(), "transcript");
+    assert_eq!(r.get_transcript_note(), "This recording has no transcript.");
+    a.click("Part 2");
+    assert_eq!(r.get_part(), 1);
+    assert_eq!(r.get_part_label(), "Recording · 10 min");
+    assert!(
+        r.get_transcript().contains("Ada: Welcome everyone."),
         "{}",
         r.get_transcript()
     );
-    assert_eq!(r.get_ai(), "Available in Teams");
+    assert!(a.has_label("Transcript text"));
 
-    // A recording alone: no transcript, and no AI recap.
-    a.click_last("Design review");
-    assert_eq!(r.get_detail_title(), "Design review");
-    assert_eq!(r.get_transcript(), "");
-    assert_eq!(r.get_transcript_note(), "This meeting has no transcript.");
-    assert_eq!(r.get_ai(), "Not available");
-    a.click_last("Play recording");
-    a.click_last("Meeting notes");
-    let opened = a.h.engine.apps_opened();
-    assert!(
-        opened.iter().any(|u| u.ends_with("/01DEMO2.mp4")),
-        "{opened:?}"
-    );
-    assert!(opened.iter().any(|u| u.ends_with("/notes")), "{opened:?}");
-
-    // A transcript alone: nothing to play or share.
-    a.click_last("Retro");
-    assert!(!r.get_has_recording() && !r.get_can_share());
-    assert!(
-        r.get_transcript()
-            .contains("Sam: Let us start with the release.")
-    );
-
-    // Search narrows the list.
-    a.send("recaps-query", "design");
-    assert_eq!(r.get_meetings().row_count(), 1);
-    a.send("recaps-query", "");
-    assert_eq!(r.get_meetings().row_count(), 3);
-
-    // Share opens the OneDrive share dialog for the recording.
-    a.click_last("Weekly sync");
-    a.click_last("Share");
-    assert_eq!(a.view(), "onedrive");
+    // A canceled meeting with nothing in its chat says so plainly.
+    a.click("Back to Meeting Recaps");
+    assert_eq!(r.get_page(), "home");
+    a.click("Recap: Canceled: Budget review");
+    assert_eq!(r.get_detail_title(), "Canceled: Budget review");
+    assert!(!r.get_has_recording());
+    assert_eq!(r.get_parts().row_count(), 0);
     assert_eq!(
-        a.h.app.global::<DriveStore>().get_share_name(),
-        "Weekly sync (recording)"
+        r.get_part_label(),
+        "No recording was found in the meeting chat."
     );
+    assert_eq!(r.get_files_note(), "No files were shared.");
+    // No AI summary and no Speakers: Copilot features are not offered.
+    assert!(!a.has_label("AI summary") && !a.has_label("Speakers"));
+}
+
+#[test]
+fn a_meeting_chat_has_a_recap_tab_that_shows_the_same_recap() {
+    let a = AppsHarness::open();
+    crate::ui::call::wire(&a.h.app);
+    a.h.app.set_view("chat".into());
+    a.h.app.set_current_id("19:meeting_demo2@thread.v2".into());
+    let tab = a
+        .find("Recap")
+        .into_iter()
+        .find(|e| e.accessible_role() == Some(AccessibleRole::Tab))
+        .expect("a Recap tab in the meeting chat's header");
+    tab.mock_single_click(PointerEventButton::Left);
+    let f = a.h.app.global::<crate::FindStore>();
+    assert_eq!(f.get_chat_tab(), "recap");
+    let r = a.h.app.global::<RecapsStore>();
+    assert!(r.get_detail_open() && r.get_in_chat());
+    assert_eq!(r.get_detail_title(), "Design review");
+    assert!(r.get_has_recording());
+    assert!(a.has_label("Meeting recap"));
+    assert!(
+        !a.has_label("Back to Meeting Recaps"),
+        "the tab has no way back to the home"
+    );
+    // A chat that is not a meeting chat has no Recap tab.
+    a.h.app.set_current_id("19:group@thread.v2".into());
+    assert!(!a
+        .find("Recap")
+        .into_iter()
+        .any(|e| e.accessible_role() == Some(AccessibleRole::Tab)));
+}
+
+#[test]
+fn meeting_recaps_keep_long_text_inside_at_760_px() {
+    use super::overflow::{assert_texts_inside, LONG, LONG_AR, LONG_WORD};
+    let a = recaps_open();
+    a.h.app.window().set_size(LogicalSize::new(760., 700.));
+    let r = a.h.app.global::<RecapsStore>();
+    let long_row = |id: &str, title: &str| crate::RecapRow {
+        id: id.into(),
+        title: title.into(),
+        when: LONG.into(),
+        organizer: LONG_AR.into(),
+        month: "Nov".into(),
+        day: "18".into(),
+        header: false,
+        canceled: false,
+    };
+    r.set_meetings(slint::ModelRc::new(slint::VecModel::from(vec![
+        crate::RecapRow {
+            id: "week".into(),
+            title: LONG.into(),
+            header: true,
+            ..Default::default()
+        },
+        long_row("a", LONG),
+        long_row("b", LONG_AR),
+        long_row("c", LONG_WORD),
+    ])));
+    let rows: Vec<_> = ElementHandle::find_by_element_type_name(&a.h.app, "MeetingRow").collect();
+    assert_eq!(rows.len(), 3);
+    for (i, row) in rows.iter().enumerate() {
+        assert_texts_inside(row, &format!("meeting row {i}"));
+    }
+    for h in ElementHandle::find_by_element_type_name(&a.h.app, "WeekHeading") {
+        assert_texts_inside(&h, "week heading");
+    }
+
+    // The recap page: long title, date line, parts, files and transcript.
+    a.send("recaps-open", "ev-sync");
+    assert_eq!(r.get_page(), "detail");
+    r.set_detail_title(LONG.into());
+    r.set_detail_organizer(LONG_AR.into());
+    r.set_files(slint::ModelRc::new(slint::VecModel::from(vec![
+        crate::AppRow {
+            id: "https://example.invalid/f".into(),
+            title: LONG_WORD.into(),
+            subtitle: LONG.into(),
+            meta: "DOCX".into(),
+            ..Default::default()
+        },
+    ])));
+    r.set_transcript(format!("{LONG}\n{LONG_WORD}\n{LONG_AR}").into());
+    r.set_tab("transcript".into());
+    let page = ElementHandle::find_by_element_type_name(&a.h.app, "RecapDetailPage")
+        .next()
+        .expect("the recap page");
+    assert!(page.size().width <= 760.5, "{:?}", page.size());
+    // Texts that wrap may scroll below the fold, so only the header and the file row are
+    // checked against their own boxes, and the page against the window's width.
+    for f in ElementHandle::find_by_element_type_name(&a.h.app, "FileRow") {
+        assert_texts_inside(&f, "shared file row");
+    }
+    for t in super::overflow::texts(&page) {
+        let (p, s) = (t.absolute_position(), t.size());
+        let pp = page.absolute_position();
+        assert!(
+            p.x >= pp.x - 0.5 && p.x + s.width <= pp.x + page.size().width + 0.5,
+            "text {:?} at {p:?} size {s:?} leaves the page",
+            t.accessible_label()
+        );
+    }
 }
 
 #[test]
@@ -1161,7 +1332,7 @@ fn a_w_apps_tab_opens_in_the_web_host_and_the_plain_link_stays_in_the_browser() 
 }
 #[test]
 fn the_store_and_an_app_fit_a_narrow_window() {
-    use super::responsive::{WIDTHS, assert_fits, resize};
+    use super::responsive::{assert_fits, resize, WIDTHS};
     for width in WIDTHS {
         let a = AppsHarness::open();
         resize(&a.h.app, width);

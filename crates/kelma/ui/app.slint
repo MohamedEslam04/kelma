@@ -37,6 +37,7 @@ import { MediaStore, ImageViewer } from "media.slint";
 import { AppsStore } from "apps_store.slint";
 import { RailApps, AppsOverlays } from "apps_rail.slint";
 import { AppsHost } from "apps_host.slint";
+import { RecapTab, RecapsChatPane } from "apps_recaps.slint";
 import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
 import { EngageView, EngageStore } from "engage.slint";
 import { CallWindow, CallMini, CallStore } from "call_window.slint";
@@ -849,7 +850,7 @@ export component AppWindow inherits Window {
                             }
                             for tab in (root.current-is-channel ? [{k: "posts", l: @tr("Posts")}, {k: "files", l: @tr("Files")}] : [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}]): tab-item := Rectangle {
                                 // The Shared (Files) tab replaces the conversation, see `FindStore`.
-                                property <bool> active: (FindStore.chat-tab == "shared") == (tab.k == "shared" || tab.k == "files");
+                                property <bool> active: FindStore.chat-tab == ((tab.k == "shared" || tab.k == "files") ? "shared" : "chat");
                                 width: min(tab-label.preferred-width, 200px);
                                 accessible-role: AccessibleRole.tab;
                                 accessible-label: tab.l;
@@ -868,6 +869,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                             // The channel's other tabs (empty for chats), then "+" Add a tab.
+                            if root.thread-root == "" && CallStore.is-meeting-chat(root.current-id): RecapTab { chat-id: root.current-id; tab <=> FindStore.chat-tab; }
                             for ct in FindStore.channel-tabs: ChannelTabButton { tab: ct; }
                             if root.thread-root == "" && root.current-is-channel: IconButton {
                                 icon: @image-url("icons/plus.svg");
@@ -1249,6 +1251,13 @@ export component AppWindow inherits Window {
                 }
                 // The Shared (Files) tab and the details pane sit below the 60px header.
                 if root.current-id != "" && FindStore.chat-tab == "shared" && root.view != "activity": SharedView {
+                    z: 8;
+                    y: 60px;
+                    width: parent.width;
+                    height: parent.height - 60px;
+                }
+                // A meeting chat's Recap tab (the Meeting Recaps recap page).
+                if root.current-id != "" && FindStore.chat-tab == "recap" && root.view != "activity": RecapsChatPane {
                     z: 8;
                     y: 60px;
                     width: parent.width;

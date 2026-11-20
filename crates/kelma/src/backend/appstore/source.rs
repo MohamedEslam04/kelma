@@ -12,53 +12,12 @@ use teams_proto::graph::Write;
 use teams_proto::lists::{Column, ListItem, Site, SpList};
 use teams_proto::onenote::{Notebook, Page, Section};
 use teams_proto::planner::{Bucket, Plan, PlannerTask, TodoList, TodoTask};
-use teams_proto::recaps::{RecapMeeting, RecapResource, RecordingFile};
+use store::MessageRow;
+use teams_proto::recaps::{RecapMeeting, RecapResource};
 use teams_proto::time::now_ms;
 use teams_proto::workflows::{Flow, FlowEnvironment, FlowRun};
 
 type Res<T> = anyhow::Result<T>;
-
-pub(super) const RECAPS_FROM_MCPS: &str = "From the meeting content service.";
-pub(super) const RECAPS_FROM_ONEDRIVE: &str = "From the recordings in your OneDrive.";
-
-/// The longest wait for the OneDrive recordings, which read the library of every channel: the
-/// Recaps list must end loading even when Graph is slow.
-const RECORDINGS_LIMIT: std::time::Duration = std::time::Duration::from_secs(45);
-
-/// The Recaps list: the meeting content service's when it has meetings, else the meetings
-/// grouped from the OneDrive recordings of the last 30 days (`fallback`, only awaited then).
-/// An MCPS failure (a 401 among them) never stops the fallback; when both fail, the error names
-/// both.
-pub(super) async fn recaps_from(
-    mcps: teams_proto::Result<Vec<RecapMeeting>>,
-    fallback: impl std::future::Future<Output = Res<Vec<RecordingFile>>>,
-) -> Res<(Vec<RecapMeeting>, &'static str)> {
-    let mcps_err = match mcps {
-        Ok(m) if !m.is_empty() => return Ok((m, RECAPS_FROM_MCPS)),
-        Ok(_) => None,
-        Err(e) => {
-            tracing::info!(err = %e, "meeting content service failed, using OneDrive recordings");
-            Some(e)
-        }
-    };
-    match fallback.await {
-        Ok(files) => {
-            let cutoff = now_ms() - 30 * 86_400_000;
-            let mut meetings = teams_proto::recaps::meetings_from_files(&files);
-            meetings.retain(|m| m.start_ms.is_none_or(|s| s >= cutoff));
-            Ok((meetings, RECAPS_FROM_ONEDRIVE))
-        }
-        Err(e) => {
-            tracing::warn!(err = %e, "OneDrive recordings failed");
-            Err(match mcps_err {
-                Some(m) => anyhow::anyhow!(
-                    "the meeting content service ({m}) and the OneDrive recordings ({e:#}) both failed"
-                ),
-                None => e.context("the OneDrive recordings failed"),
-            })
-        }
-    }
-}
 
 impl Engine {
     pub(super) fn apps_offline(&self) -> bool {
@@ -328,36 +287,70 @@ impl Engine {
 
     // -- Meeting Recaps --
 
-    /// The meetings of the last 30 days that have a recording or transcript, and where the list
-    /// came from. The meeting content service first; when it fails or has nothing, the
-    /// recordings in the user's OneDrive (see [`recaps_from`]).
-    pub(super) async fn src_recaps(&self) -> Res<(Vec<RecapMeeting>, &'static str)> {
+    /// The calendar events of the last 30 days (Meeting Recaps lists the online meetings among
+    /// them), and whether the calendar finished its first sync. Nothing here asks a server: the
+    /// calendar keeps its own events in step.
+    pub(super) fn src_recap_events(&self) -> (Vec<::calendar::Event>, bool) {
+        let now = now_ms();
         if self.apps_offline() {
-            let v = fx::recap_meetings(now_ms());
-            return Ok((teams_proto::recaps::parse_meetings(&v), RECAPS_FROM_MCPS));
+            return (::calendar::parse_events(&fx::recap_events(now)), true);
         }
-        let mcps = self.client.recap_meetings(30).await;
-        recaps_from(mcps, async {
-            let found = tokio::time::timeout(
-                RECORDINGS_LIMIT,
-                onedrive::around::meeting_recordings(&self.client),
-            )
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!("no answer within {} seconds", RECORDINGS_LIMIT.as_secs())
-            })??;
-            Ok(found
+        self.calendar_events_between(now - 30 * 86_400_000, now + 1)
+    }
+
+    /// The messages of a meeting chat, oldest first: the local store's, and when it holds no
+    /// recording yet, a page of history from the chat service (stored for next time). A failed
+    /// fetch only counts when the store has nothing either.
+    pub(super) async fn src_meeting_chat(&self, thread: &str) -> Res<Vec<MessageRow>> {
+        use teams_proto::recaps::RECORDING_MESSAGE;
+        if self.apps_offline() {
+            let v = fx::meeting_chat(thread, now_ms());
+            return Ok(v["messages"]
+                .as_array()
                 .into_iter()
-                .map(|r| RecordingFile {
-                    id: r.item.id,
-                    drive_id: r.item.drive_id,
-                    name: r.item.name,
-                    web_url: r.item.web_url,
-                    modified_ms: r.item.modified_ms,
-                })
-                .collect())
-        })
-        .await
+                .flatten()
+                .filter_map(|m| teams_proto::model::message_from_json(m, thread))
+                .map(|m| crate::backend::util::row_from_message(&m, None))
+                .collect());
+        }
+        let read = || {
+            self.store
+                .lock()
+                .unwrap()
+                .messages_before(thread, None, 1000)
+                .unwrap_or_default()
+        };
+        let rows = read();
+        if rows.iter().any(|r| r.message_type == RECORDING_MESSAGE) {
+            return Ok(rows);
+        }
+        match self.client.messages(thread, None, 200).await {
+            Ok(page) => {
+                self.store_messages(&page.messages, None);
+                Ok(read())
+            }
+            Err(e) if rows.is_empty() => Err(e.into()),
+            Err(e) => {
+                tracing::debug!(err = %e, "meeting chat history failed, using the stored messages");
+                Ok(rows)
+            }
+        }
+    }
+
+    /// The meeting content service's meetings, used only to add what the chat does not show.
+    /// UNVERIFIED audience (a live tenant answered 401): any failure is logged at debug level and
+    /// gives nothing, never an error on screen.
+    pub(super) async fn src_mcps_recaps(&self) -> Vec<RecapMeeting> {
+        if self.apps_offline() {
+            return Vec::new();
+        }
+        match self.client.recap_meetings(30).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!(err = %e, "meeting content service unavailable, ignored");
+                Vec::new()
+            }
+        }
     }
 
     /// The transcript of a meeting as text: a `.vtt` file of the Recordings folder, else the

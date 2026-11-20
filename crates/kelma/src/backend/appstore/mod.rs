@@ -176,10 +176,15 @@ impl Engine {
             RecapsRefresh => self.recaps_refresh().await,
             RecapsQuery(q) => self.recaps_query(&q),
             RecapsOpen(key) => self.recaps_open(&key).await,
-            RecapsPlay => self.recaps_play(),
+            RecapsHome => self.recaps_home(),
+            RecapsPart(i) => self.recaps_part(i).await,
+            RecapsTab(t) => self.recaps_tab(&t).await,
+            RecapsWatch => self.recaps_watch(),
+            RecapsShare => self.recaps_share(),
             RecapsNotes => self.recaps_notes(),
-            RecapsShare => self.recaps_share().await,
-            RecapsAi => self.recaps_ai(),
+            RecapsTranscriptWeb => self.recaps_transcript_web(),
+            RecapsFile(url) => self.recaps_file(&url),
+            RecapsChat(thread) => self.recaps_chat(&thread).await,
         }
     }
 

@@ -2,7 +2,7 @@
 //! mode and the tests run the same parsers and view builders as the live client. Nothing here
 //! comes from a real tenant.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const MS_DAY: i64 = 24 * 3600 * 1000;
 
@@ -651,7 +651,9 @@ pub fn list_items() -> Value {
 // -- Meeting Recaps ------------------------------------------------------------------------
 
 /// The meeting content service's list: a recorded and transcribed meeting with an AI summary, a
-/// meeting with only a recording, and one with only a transcript.
+/// meeting with only a recording, and one with only a transcript. (Only the tests read it: the
+/// service is an optional source the demo does not need.)
+#[cfg(test)]
 pub fn recap_meetings(now_ms: i64) -> Value {
     let rec = |item: &str| {
         json!({"type": "Recording", "metadata": {"driveId": "b!demo", "driveItemId": item,
@@ -691,4 +693,96 @@ pub fn meeting_tabs() -> Value {
         {"displayName": "Notes", "webUrl": "https://example.invalid/notes",
          "teamsApp": {"id": "notes", "displayName": "Meeting notes"}},
     ]})
+}
+
+/// The calendar the Recaps home is built from (Graph `calendarView` events): online meetings of
+/// the last month, one of them canceled, plus what must stay out of the list (an in-person
+/// event, one older than 30 days, one still to come).
+pub fn recap_events(now_ms: i64) -> Value {
+    let at = |ms: i64| json!({"dateTime": iso(ms), "timeZone": "UTC"});
+    let ev = |id: &str, subject: &str, start: i64, mins: i64, thread: Option<&str>, who: &str| {
+        let mut v = json!({"id": id, "subject": subject, "start": at(start),
+            "end": at(start + mins * 60_000), "type": "singleInstance",
+            "organizer": {"emailAddress": {"name": who, "address": "organizer@example.invalid"}}});
+        if let Some(t) = thread {
+            v["isOnlineMeeting"] = json!(true);
+            v["onlineMeeting"] = json!({"joinUrl": format!(
+                "https://teams.microsoft.com/l/meetup-join/19%3ameeting_{t}%40thread.v2/0"
+            )});
+        }
+        v
+    };
+    let mut canceled = ev(
+        "ev-canceled",
+        "Budget review",
+        now_ms - 4 * MS_DAY,
+        30,
+        Some("demo4"),
+        "Grace Example",
+    );
+    canceled["isCancelled"] = json!(true);
+    json!({"value": [
+        ev("ev-sync", "Weekly sync", now_ms - 2 * MS_DAY, 30, Some("demo1"), "Ada Example"),
+        canceled,
+        ev("ev-lunch", "Team lunch", now_ms - 3 * MS_DAY, 60, None, "Ada Example"),
+        ev("ev-design", "Design review", now_ms - 9 * MS_DAY, 60, Some("demo2"), "Sam Example"),
+        ev("ev-retro", "Retro", now_ms - 16 * MS_DAY, 45, Some("demo3"), "Ada Example"),
+        ev("ev-old", "Old planning", now_ms - 40 * MS_DAY, 60, Some("demo5"), "Ada Example"),
+        ev("ev-next", "Next sync", now_ms + MS_DAY, 30, Some("demo6"), "Ada Example"),
+    ]})
+}
+
+/// A finished recording message of a meeting chat, as the chat service sends it.
+fn recording_message(id: i64, item: &str, length: &str, with_transcript: bool) -> Value {
+    let types = if with_transcript {
+        "Recording+Transcript"
+    } else {
+        "Recording"
+    };
+    json!({"id": id.to_string(), "messagetype": "RichText/Media_CallRecording",
+    "composetime": iso(id), "from": "8:orgid:demo-organizer",
+    "content": format!(
+        "<URIObject type=\"Video.2/CallRecording.1\"><RecordingStatus status=\"Success\" \
+         code=\"200\"></RecordingStatus><OriginalName v=\"{item}.mp4\" />\
+         <RecordingContent contentTypes=\"{types}\" duration=\"{length}\">\
+         <item type=\"onedriveForBusinessVideo\" \
+         uri=\"https://contoso-my.sharepoint.com.invalid/{item}.mp4\" driveId=\"b!demo\" \
+         driveItemId=\"{item}\" /></RecordingContent></URIObject>"
+    )})
+}
+
+/// The messages of a meeting chat (chat service history): the weekly sync was recorded in two
+/// parts, the second with a transcript, and an agenda was shared; the design review has one
+/// recording; the others have nothing.
+pub fn meeting_chat(thread: &str, now_ms: i64) -> Value {
+    let messages = if thread.contains("demo1") {
+        let start = now_ms - 2 * MS_DAY;
+        vec![
+            json!({"id": (start - 60_000).to_string(), "messagetype": "RichText/Html",
+                "composetime": iso(start - 60_000), "imdisplayname": "Ada Example",
+                "content": "<p>Agenda attached</p>",
+                "properties": {"files": "[{\"fileName\":\"Agenda.docx\",\"fileType\":\"docx\",\
+                    \"objectUrl\":\"https://contoso.sharepoint.com.invalid/Agenda.docx\"}]"}}),
+            json!({"id": (start + 60_000).to_string(),
+                "messagetype": "RichText/Media_CallRecording", "composetime": iso(start + 60_000),
+                "content": "<URIObject type=\"Video.2/CallRecording.1\"><RecordingStatus \
+                    status=\"Started\" code=\"200\"></RecordingStatus></URIObject>"}),
+            recording_message(start + 20 * 60_000, "01DEMO1", "0:18:00.00", false),
+            recording_message(start + 31 * 60_000, "01DEMO1B", "0:10:05.00", true),
+            json!({"id": (start + 32 * 60_000).to_string(),
+                "messagetype": "RichText/Media_CallTranscript",
+                "composetime": iso(start + 32 * 60_000),
+                "content": "{\\\"callId\\\":\\\"call-demo\\\",\\\"isExportedToOdsp\\\":true}"}),
+        ]
+    } else if thread.contains("demo2") {
+        vec![recording_message(
+            now_ms - 9 * MS_DAY + 61 * 60_000,
+            "01DEMO2",
+            "0:58:00.00",
+            false,
+        )]
+    } else {
+        vec![]
+    };
+    json!({"messages": messages})
 }

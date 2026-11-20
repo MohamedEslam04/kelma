@@ -421,16 +421,23 @@ came.
 
 ### Meeting Recaps (`teams_proto::recaps`, plans/meeting-recaps.md R1)
 
-All reads. Sources, in the order kelma tries them:
+All reads. Rebuilt 2026-11-20 after the live test (MCPS answered 401 and the user's own
+OneDrive `Recordings` folder had nothing, because recordings sit in the organizer's OneDrive).
+It now follows what the Teams web client shows: the home is the calendar, a recap is the
+meeting chat.
 
 | What | Request | Status |
 |---|---|---|
-| Meetings with a recording or transcript | MCPS `GET https://teams.microsoft.com/api/mcps/<geo>/user/meetings/contents?top=&startDateTime=&endDateTime=&includeTypes=Recording,TranscriptV2`; each entry is `threadInfo` (`threadId`, `iCalUid`, `subject`, `start`, `end`, `organizer`) with `resources` (`Recording`, `TranscriptV2`, `AISummary`; `metadata` `driveId`, `driveItemId`, `webUrl`, `transcriptId`) | shape from the mautrix OpenAPI (captured web client). **UNVERIFIED**: the capture strips the bearer, so kelma sends the Teams host credentials (a live EMEA tenant answered 401: the audience is still unknown). The host is `regionGtms.mcpService` from the skypetoken answer; only when that is absent is `<geo>` guessed from the middle tier (`emea` to `eu`, `amer` to `us`, `apac` to `ap`; the middle tier's partition is not the data geo: the capture pairs `mt/part/amer-03` with `mcps/eu`). Any MCPS failure falls back to the OneDrive and channel `Recordings` folders (read side by side, capped at 45 s) |
-| Fallback list | the recordings of the user's OneDrive `Recordings` folder and channel libraries (`onedrive::meeting_recordings`, Graph), grouped by the name `<subject>-<yyyymmdd_hhmmss>UTC-Meeting Recording.mp4` | known, used when MCPS fails or is empty |
-| Transcript text | SharePoint `GET <tenant>.sharepoint.com/_api/v2.1/drives/<d>/items/<i>/media/transcripts` (named by the plan) then `…/transcripts/<id>/streamContent?format=vtt` | list: plan; **streamContent path UNVERIFIED**. A `.vtt` file of the Recordings folder is read with Graph `GET /drives/{d}/items/{i}/content` (known). A `.docx` transcript is not read |
-| Meeting notes link | Graph `GET /chats/{thread}/tabs?$expand=teamsApp`, the tab named "Notes" | Graph docs; the tab name is **UNVERIFIED** |
-| Play, Share | Play opens the recording's `webUrl` in the browser (no native player). Share opens the OneDrive share dialog for the recording's drive item | known |
-| AI notes, tasks, chapters | not read: they need Teams Premium or Copilot, and the screen says "Not available" (or "Available in Teams" when the service lists an `AISummary`) | by design |
+| Home list | no request: the online meetings (`isOnlineMeeting` or a join link) of the last 30 days from the calendar kelma already syncs (`/me/calendarView/delta`, see Calendar), canceled ones as `Canceled: …`, grouped by week. "All" only: "Followed" has no known source | known (the calendar's own requests) |
+| Meeting chat | the chat thread from the event's join link (`/l/meetup-join/19%3ameeting_…%40thread.v2/…`); its messages from the local store, and when none of them is a recording, one page of `GET <chatsvc>/users/ME/conversations/<thread>/messages?pageSize=200` (the existing history call), stored | known |
+| Recording parts | chat messages `RichText/Media_CallRecording`: XML `<URIObject type="Video.2/CallRecording.1">` with `<RecordingStatus status="Success">`, `<OriginalName v>`, `<RecordingContent contentTypes duration>` and `<item type="onedriveForBusinessVideo" uri driveId driveItemId>` (or `<a href>`). Only `Success` is a part | shape from the reference clients (rusty-teams `graph_events.rs` and its fixtures); **UNVERIFIED** against a live chat |
+| Transcript marker | `RichText/Media_CallTranscript`, content `{\"callId\":…}` (escaped JSON, mautrix `transcripts.go`); or `contentTypes` naming `Transcript` on the recording | reference clients; **UNVERIFIED** |
+| Shared files | the `properties.files` of the meeting chat's messages (as the Shared tab reads them) | known |
+| Transcript text | SharePoint `GET <tenant>.sharepoint.com/_api/v2.1/drives/<d>/items/<i>/media/transcripts` then `…/transcripts/<id>/streamContent?format=vtt`, for the part's drive item | the reference clients use the same paths; **UNVERIFIED** here. On any failure the tab says so and offers "Open transcript in browser" (the recording's page) |
+| Meeting notes link | Graph `GET /chats/{thread}/tabs?$expand=teamsApp`, the tab named "Notes"; otherwise "No notes" | Graph docs; the tab name is **UNVERIFIED** |
+| Watch in browser, Share | Watch opens the part's SharePoint/Stream link with the system opener (no native player). Share copies that link | known |
+| MCPS (optional) | `GET https://teams.microsoft.com/api/mcps/<geo>/user/meetings/contents?…&includeTypes=Recording,TranscriptV2` (host from `mcp_service()`), shape from the mautrix OpenAPI | **UNVERIFIED** audience (a live tenant answered 401). Only fills in recordings a chat does not show; any failure is logged at debug level and never shown |
+| AI summary, Speakers | not offered: Copilot features | by design |
 
 ## Teams and channels (`teams_proto::teams`, `tags`, `engage`) 2026-11-19
 

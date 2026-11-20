@@ -238,23 +238,45 @@ export global ListsStore {
 }
 
 // Meeting Recaps: recent meetings with a recording or transcript, and the selected one.
+// A line of the Meeting Recaps home: a meeting, or a week's heading (`header`).
+export struct RecapRow {
+    id: string,
+    title: string,
+    when: string,
+    organizer: string,
+    month: string,
+    day: string,
+    header: bool,
+    canceled: bool,
+}
+
 export global RecapsStore {
-    in property <[AppRow]> meetings;
+    // "home" (the meetings) or "detail" (one meeting's recap).
+    in property <string> page: "home";
+    in property <[RecapRow]> meetings;
     in-out property <string> query;
     in property <string> note;
+    in property <string> footer;
     in property <bool> loading;
     in property <bool> detail-open;
+    // Shown as a meeting chat's Recap tab: no way back to the home.
+    in property <bool> in-chat;
     in property <string> detail-title;
     in property <string> detail-when;
     in property <string> detail-organizer;
+    in property <[AppNav]> parts;
+    in property <int> part;
     in property <bool> has-recording;
-    in property <bool> has-transcript;
-    in property <string> transcript;
-    in property <string> transcript-note;
+    in property <string> part-label;
+    in property <bool> detail-loading;
+    in property <string> detail-note;
+    in property <[AppRow]> files;
+    in property <string> files-note;
+    in property <string> tab: "notes";
     in property <bool> has-notes;
     in property <string> notes-note;
-    in property <string> ai;
-    in property <bool> has-ai-link;
-    in property <bool> can-share;
+    in property <string> transcript;
+    in property <string> transcript-note;
+    in property <bool> has-transcript-link;
     callback command(string, string);
 }

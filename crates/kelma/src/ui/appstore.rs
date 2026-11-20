@@ -1,15 +1,16 @@
 //! UI-thread side of the app screens: turns the backend's view data into the `AppsStore`,
 //! `TasksStore`, `FlowsStore`, `NotesStore`, `ListsStore` and `RecapsStore` globals.
 
-use super::{UiHandle, img, model, rgb};
+use super::{img, model, rgb, UiHandle};
 use crate::backend::appstore::view::{
     AppPage, Card, FlowsData, FormData, ListsData, Nav, NotesData, PermItem, RailData, RailItem,
-    RecapsData, Row, StoreData, TableRow, TasksData,
+    RecapRow, RecapsData, Row, StoreData, TableRow, TasksData,
 };
 use crate::backend::{AppsCmd, Cmd};
 use crate::{
     AppCard, AppNav, AppRow, AppWindow, AppsStore, BoardColumn, FlowsStore, ListsStore, NotesStore,
-    PermRow, RailApp, RecapsStore, TableRow as SlintTableRow, TasksStore,
+    PermRow, RailApp, RecapRow as SlintRecapRow, RecapsStore, TableRow as SlintTableRow,
+    TasksStore,
 };
 use slint::{ComponentHandle, Image, ModelRc, SharedString};
 use tokio::sync::mpsc::UnboundedSender;
@@ -268,29 +269,50 @@ fn set_form(w: &AppWindow, d: FormData) {
     s.set_form_title(d.title.into());
 }
 
+fn recap_row(r: RecapRow) -> SlintRecapRow {
+    SlintRecapRow {
+        id: r.id.into(),
+        title: r.title.into(),
+        when: r.when.into(),
+        organizer: r.organizer.into(),
+        month: r.month.into(),
+        day: r.day.into(),
+        header: r.header,
+        canceled: r.canceled,
+    }
+}
+
 fn set_recaps(w: &AppWindow, d: RecapsData) {
     let s = w.global::<RecapsStore>();
-    s.set_meetings(rows(d.meetings));
+    s.set_page(d.page.into());
+    s.set_meetings(model(d.meetings.into_iter().map(recap_row).collect()));
     // The search box owns the text while the user types; write it only when it differs.
     if s.get_query() != d.query.as_str() {
         s.set_query(d.query.into());
     }
     s.set_note(d.note.into());
+    s.set_footer(d.footer.into());
     s.set_loading(d.loading);
     let t = d.detail;
     s.set_detail_open(t.open);
+    s.set_in_chat(t.in_chat);
     s.set_detail_title(t.title.into());
     s.set_detail_when(t.when.into());
     s.set_detail_organizer(t.organizer.into());
+    s.set_parts(navs(t.parts));
+    s.set_part(t.part);
     s.set_has_recording(t.has_recording);
-    s.set_has_transcript(t.has_transcript);
-    s.set_transcript(t.transcript.into());
-    s.set_transcript_note(t.transcript_note.into());
+    s.set_part_label(t.part_label.into());
+    s.set_detail_loading(t.loading);
+    s.set_detail_note(t.note.into());
+    s.set_files(rows(t.files));
+    s.set_files_note(t.files_note.into());
+    s.set_tab(t.tab.into());
     s.set_has_notes(t.has_notes);
     s.set_notes_note(t.notes_note.into());
-    s.set_ai(t.ai.into());
-    s.set_has_ai_link(t.has_ai_link);
-    s.set_can_share(t.can_share);
+    s.set_transcript(t.transcript.into());
+    s.set_transcript_note(t.transcript_note.into());
+    s.set_has_transcript_link(t.has_transcript_link);
 }
 
 impl UiHandle {

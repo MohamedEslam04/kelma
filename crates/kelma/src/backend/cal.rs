@@ -897,6 +897,21 @@ impl Engine {
         self.cal.lock().meet_link = Some(link.to_owned());
     }
 
+    /// The cached events that start between two instants, and whether the first delta sync
+    /// finished (before it, an empty answer only means the calendar is still loading). Meeting
+    /// Recaps lists the past month's meetings from these.
+    pub(super) fn calendar_events_between(&self, from_ms: i64, to_ms: i64) -> (Vec<Event>, bool) {
+        let s = self.cal.lock();
+        let events = s
+            .cache
+            .in_range(from_ms, to_ms)
+            .into_iter()
+            .filter(|e| e.start_ms >= from_ms && e.start_ms < to_ms)
+            .cloned()
+            .collect();
+        (events, s.window.is_some())
+    }
+
     pub(super) fn start_calendar(self: &Arc<Self>) {
         let e = self.clone();
         tokio::spawn(async move {
