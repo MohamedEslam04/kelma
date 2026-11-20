@@ -87,7 +87,7 @@ component Chip inherits Rectangle {
     callback clicked();
     callback cleared();
     height: 30px;
-    width: chip-row.preferred-width;
+    width: min(chip-row.preferred-width, 280px);
     border-radius: 15px;
     border-width: 1px;
     border-color: root.value != "" ? Theme.accent : Theme.border;
@@ -99,7 +99,7 @@ component Chip inherits Rectangle {
         padding-left: 12px;
         padding-right: root.value != "" ? 4px : 12px;
         spacing: 6px;
-        Text { text: root.value != "" ? root.label + ": " + root.value : root.label; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+        Text { text: root.value != "" ? root.label + ": " + root.value : root.label; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
         if root.value != "": IconButton {
             icon: @image-url("icons/close.svg");
             tooltip: "Clear " + root.label;

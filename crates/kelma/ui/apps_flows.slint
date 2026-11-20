@@ -107,8 +107,8 @@ export component FlowsView inherits Rectangle {
                             padding-left: 8px;
                             padding-right: 8px;
                             spacing: 12px;
-                            Text { text: r.title; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; width: 150px; }
-                            Text { text: r.subtitle; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 70px; }
+                            Text { text: r.title; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; width: 150px; overflow: elide; }
+                            Text { text: r.subtitle; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 70px; overflow: elide; }
                             Text { text: r.meta; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
                             KitBadge { y: 12px; text: r.badge; tone: r.tone; }
                         }

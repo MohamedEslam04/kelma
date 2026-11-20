@@ -77,7 +77,7 @@ component CalBox inherits Rectangle {
                     background: title-text.color;
                 }
             }
-            if !root.compact && root.height >= 30px: Text {
+            if !root.compact && root.height >= 32px: Text {
                 text: root.organizer;
                 color: root.kind == "free" ? Theme.fg-muted : #ffffffcc;
                 font-size: 11px * Theme.font-scale;
@@ -206,7 +206,7 @@ component TimeGrid inherits Rectangle {
             VerticalLayout {
                 alignment: center;
                 spacing: 2px;
-                Text { text: d.pin == "" ? d.label : d.label + (d.pin == "office" ? " · Office" : " · Remote"); color: d.today ? Theme.accent : Theme.fg-muted; font-size: 11px * Theme.font-scale; horizontal-alignment: center; }
+                Text { text: d.pin == "" ? d.label : d.label + (d.pin == "office" ? " · Office" : " · Remote"); color: d.today ? Theme.accent : Theme.fg-muted; font-size: 11px * Theme.font-scale; horizontal-alignment: center; overflow: elide; }
                 Rectangle {
                     height: 24px;
                     today-marker := Rectangle {
@@ -525,7 +525,7 @@ component CalendarsList inherits VerticalLayout {
     }
     for c in CalStore.calendars: Rectangle {
         height: c.header ? 22px : 26px;
-        if c.header: Text { x: 0px; width: parent.width; text: c.name; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: bottom; horizontal-alignment: left; }
+        if c.header: Text { x: 0px; width: parent.width; text: c.name; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: bottom; horizontal-alignment: left; overflow: elide; }
         if !c.header: CalCheck {
             label: c.name;
             checked: c.checked;
@@ -623,7 +623,7 @@ export component CalendarView inherits Rectangle {
                         }
                         TouchArea { mouse-cursor: pointer; clicked => { CalStore.range-start = ""; CalStore.popup = CalStore.popup == "range" ? "" : "range"; } }
                     }
-                    if CalStore.status != "": Text { text: CalStore.status; color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                    if CalStore.status != "": Text { text: CalStore.status; color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
                     CalButton { label: CalStore.filtered ? "Filter ●" : "Filter"; y: 10px; active: CalStore.popup == "filters" || CalStore.filtered; clicked => { CalStore.popup = CalStore.popup == "filters" ? "" : "filters"; } }
                     for v in [{key: "day", label: "Day"}, {key: "workweek", label: "Work week"}, {key: "week", label: "Week"}, {key: "month", label: "Month"}]: Pill {
                         y: 11px;

@@ -2228,4 +2228,34 @@ mod tests {
             "Oct 26 to Dec 6 is six rows"
         );
     }
+
+    #[test]
+    fn long_event_titles_stay_inside_their_blocks_and_the_toolbar_inside_the_page() {
+        use crate::ui_tests::overflow::{
+            LONG, LONG_AR, LONG_WORD, assert_texts_inside, assert_texts_inside_where,
+        };
+        let long_organizer =
+            json!({"organizer": {"emailAddress": {"name": LONG, "address": "a@b.c"}}});
+        let app = app(
+            View::Week,
+            &[
+                ev(LONG, 0, 9.0, 10.0, long_organizer.clone()),
+                ev(LONG_AR, 1, 9.0, 9.5, long_organizer.clone()),
+                ev(LONG_WORD, 2, 9.0, 11.0, long_organizer),
+                ev(LONG, 2, 9.5, 10.5, json!({})),
+            ],
+        );
+        app.window().set_size(LogicalSize::new(900., 700.));
+        let blocks: Vec<_> = ElementHandle::find_by_element_type_name(&app, "CalBox").collect();
+        assert_eq!(blocks.len(), 4);
+        for b in &blocks {
+            assert_texts_inside(b, "calendar event block");
+        }
+        let view = ElementHandle::find_by_element_type_name(&app, "CalendarView")
+            .next()
+            .expect("the calendar");
+        assert_texts_inside_where(&view, "calendar toolbar, window 900px wide", |t| {
+            t.absolute_position().y < 56.
+        });
+    }
 }

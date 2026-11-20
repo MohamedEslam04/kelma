@@ -120,6 +120,7 @@ export component CallIncoming inherits Rectangle {
                         : DirectCallStore.incoming-video ? "Incoming video call" : "Incoming call";
                     color: Theme.fg-muted;
                     font-size: 13px * Theme.font-scale;
+                    wrap: word-wrap;
                     accessible-role: text;
                     accessible-label: self.text;
                 }

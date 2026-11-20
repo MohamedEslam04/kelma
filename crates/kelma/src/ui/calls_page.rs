@@ -265,4 +265,94 @@ mod tests {
             [("call".to_string(), "8:orgid:s".to_string())]
         );
     }
+
+    #[test]
+    fn long_names_and_transcripts_stay_inside_the_rows_of_the_calls_page() {
+        use crate::ui_tests::overflow::{LONG, LONG_AR, assert_texts_inside};
+        for width in [900., 1400.] {
+            let app = app();
+            app.window().set_size(LogicalSize::new(width, 700.));
+            app.set_view("calls".into());
+            let history = |id: &str, name: &str| HistoryRow {
+                name: name.into(),
+                outcome: "missed".into(),
+                missed: true,
+                when: "Wednesday, 12:30 PM".into(),
+                duration: "1h 5m 20s".into(),
+                ..row(id, "8:orgid:a", true)
+            };
+            let person = |name: &str| PersonRow {
+                mri: "8:orgid:p".into(),
+                name: name.into(),
+                detail: LONG.into(),
+                initials: "S".into(),
+                color: 0x654321,
+                avatar: None,
+                speed: true,
+            };
+            let voicemail = |id: &str, name: &str| VoicemailRow {
+                id: id.into(),
+                mri: String::new(),
+                name: name.into(),
+                initials: "C".into(),
+                color: 0x123456,
+                when: "Wednesday, 12:30 PM".into(),
+                duration: "12s".into(),
+                transcript: LONG_AR.into(),
+                unread: true,
+            };
+            set(
+                &app,
+                CallsData {
+                    filter: "all".into(),
+                    history: vec![history("a", LONG), history("b", LONG_AR)],
+                    speed: vec![person(LONG), person(LONG_AR)],
+                    results: vec![person(LONG)],
+                    voicemails: vec![voicemail("v", LONG), voicemail("w", LONG_AR)],
+                    ..Default::default()
+                },
+            );
+            for kind in ["HistoryLine", "PersonLine"] {
+                let rows: Vec<_> = ElementHandle::find_by_element_type_name(&app, kind).collect();
+                assert!(!rows.is_empty(), "{kind} rows");
+                for r in &rows {
+                    assert_texts_inside(r, &format!("{kind}, window {width}px wide"));
+                }
+            }
+            set(
+                &app,
+                CallsData {
+                    filter: "voicemail".into(),
+                    voicemails: vec![voicemail("v", LONG), voicemail("w", LONG_AR)],
+                    ..Default::default()
+                },
+            );
+            let rows: Vec<_> =
+                ElementHandle::find_by_element_type_name(&app, "VoicemailLine").collect();
+            assert_eq!(rows.len(), 2);
+            for r in &rows {
+                assert_texts_inside(r, &format!("VoicemailLine, window {width}px wide"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_calls_error_stays_inside_the_page() {
+        use crate::ui_tests::overflow::{LONG, assert_texts_inside};
+        let app = app();
+        app.window().set_size(LogicalSize::new(900., 700.));
+        app.set_view("calls".into());
+        set(
+            &app,
+            CallsData {
+                filter: "all".into(),
+                error: format!("Could not load your call history: {LONG} {LONG}"),
+                ..Default::default()
+            },
+        );
+        let page = ElementHandle::find_by_element_type_name(&app, "CallsPage")
+            .next()
+            .expect("the calls page");
+        assert_texts_inside(&page, "calls page error");
+    }
 }

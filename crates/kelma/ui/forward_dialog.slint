@@ -68,10 +68,10 @@ export component ForwardDialog inherits Rectangle {
             alignment: start;
             for p in root.picked: Rectangle {
                 height: 24px;
-                width: chip-text.preferred-width + 26px;
+                width: min(chip-text.preferred-width, 160px) + 26px;
                 border-radius: 12px;
                 background: #34365c;
-                chip-text := Text { x: 10px; text: p.title; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                chip-text := Text { x: 10px; width: parent.width - 26px; text: p.title; color: Theme.fg; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
                 Text { x: parent.width - 16px; text: "×"; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; vertical-alignment: center; }
                 TouchArea { mouse-cursor: pointer; clicked => { root.toggle(p.id); } }
             }
@@ -116,6 +116,7 @@ export component ForwardDialog inherits Rectangle {
                         color: Theme.fg-muted;
                         font-size: 11px * Theme.font-scale;
                         font-weight: 600;
+                        overflow: elide;
                     }
                     if root.count <= 1: Text { text: root.preview-text; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
                 }

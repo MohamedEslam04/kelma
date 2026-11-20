@@ -171,14 +171,15 @@ component HistoryLine inherits Rectangle {
                     text: CallsPageStore.outcome-label(root.item.outcome, root.item.direction);
                     color: root.item.missed ? Theme.danger : Theme.fg-subtle;
                     font-size: 12px * Theme.font-scale;
+                    overflow: elide;
                 }
             }
         }
         VerticalLayout {
             alignment: center;
             width: 96px;
-            Text { text: root.item.when; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; horizontal-alignment: right; }
-            Text { text: root.item.duration; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-alignment: right; }
+            Text { text: root.item.when; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; horizontal-alignment: right; overflow: elide; }
+            Text { text: root.item.duration; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-alignment: right; overflow: elide; }
         }
         if root.item.mri != "": HorizontalLayout {
             spacing: 2px;
@@ -237,8 +238,8 @@ component VoicemailLine inherits Rectangle {
         VerticalLayout {
             alignment: center;
             width: 96px;
-            Text { text: root.item.when; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; horizontal-alignment: right; }
-            Text { text: root.item.duration; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-alignment: right; }
+            Text { text: root.item.when; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; horizontal-alignment: right; overflow: elide; }
+            Text { text: root.item.duration; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-alignment: right; overflow: elide; }
         }
         if root.item.unread: Pill { y: 23px; label: @tr("Mark as read"); clicked => { root.mark-read(); } }
         play-button := Pill { y: 23px; label: @tr("Play"); clicked => { root.play(); } }
@@ -343,8 +344,8 @@ export component CallsPage inherits Rectangle {
             }
             Rectangle { height: 1px; background: Theme.border; }
             if CallsPageStore.loading: Text { text: @tr("Loading…"); color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; height: 40px; vertical-alignment: center; }
-            if CallsPageStore.filter != "voicemail" && CallsPageStore.error != "": Text { text: CallsPageStore.error; color: Theme.danger; font-size: 13px * Theme.font-scale; horizontal-alignment: center; height: 40px; vertical-alignment: center; }
-            if CallsPageStore.filter == "voicemail" && CallsPageStore.voicemail-error != "": Text { text: CallsPageStore.voicemail-error; color: Theme.danger; font-size: 13px * Theme.font-scale; horizontal-alignment: center; height: 40px; vertical-alignment: center; }
+            if CallsPageStore.filter != "voicemail" && CallsPageStore.error != "": Text { text: CallsPageStore.error; color: Theme.danger; font-size: 13px * Theme.font-scale; horizontal-alignment: center; height: 40px; vertical-alignment: center; wrap: word-wrap; overflow: elide; }
+            if CallsPageStore.filter == "voicemail" && CallsPageStore.voicemail-error != "": Text { text: CallsPageStore.voicemail-error; color: Theme.danger; font-size: 13px * Theme.font-scale; horizontal-alignment: center; height: 40px; vertical-alignment: center; wrap: word-wrap; overflow: elide; }
             if !CallsPageStore.loading && CallsPageStore.filter != "voicemail" && CallsPageStore.error == "" && CallsPageStore.history.length == 0: Text {
                 text: @tr("No calls to show");
                 color: Theme.fg-muted;

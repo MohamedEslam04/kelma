@@ -545,12 +545,14 @@ component Stage inherits Rectangle {
             color: Theme.fg;
             font-size: 16px * Theme.font-scale;
             horizontal-alignment: center;
+            wrap: word-wrap;
         }
         if CallStore.phase == "lobby": Text {
             text: "You're in the lobby of " + CallStore.title;
             color: Theme.fg-subtle;
             font-size: 13px * Theme.font-scale;
             horizontal-alignment: center;
+            wrap: word-wrap;
         }
     }
     if CallStore.phase == "connected" || CallStore.phase == "reconnecting": Rectangle {
@@ -558,6 +560,8 @@ component Stage inherits Rectangle {
             text: CallStore.kind == "direct" ? CallStore.title : "You're the only one here";
             color: Theme.fg-muted;
             font-size: 15px * Theme.font-scale;
+            width: parent.width;
+            overflow: elide;
         }
         if root.content: ContentStage {
             width: root.width;
@@ -828,12 +832,14 @@ component Ended inherits Rectangle {
             font-size: 20px * Theme.font-scale;
             font-weight: 600;
             horizontal-alignment: center;
+            wrap: word-wrap;
         }
         Text {
             text: CallStore.ended;
             color: Theme.fg;
             font-size: 15px * Theme.font-scale;
             horizontal-alignment: center;
+            wrap: word-wrap;
         }
         if CallStore.timer != "00:00": Text {
             text: "Call duration " + CallStore.timer;

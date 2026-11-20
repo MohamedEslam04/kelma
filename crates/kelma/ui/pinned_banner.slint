@@ -30,7 +30,7 @@ export component PinnedBanner inherits Rectangle {
             accessible-label: @tr("Go to pinned message");
             HorizontalLayout {
                 spacing: 6px;
-                if root.current.sender != "": Text { text: root.current.sender; color: Theme.fg; font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-stretch: 0; }
+                if root.current.sender != "": Text { text: root.current.sender; color: Theme.fg; font-size: 12px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-stretch: 0; overflow: elide; max-width: 160px; }
                 pin-text := Text { text: root.current.preview; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
             }
             TouchArea {
