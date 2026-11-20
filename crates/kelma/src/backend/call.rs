@@ -14,6 +14,7 @@
 //! [`CallCmd::parse`] reads.
 
 use super::Engine;
+use super::call_feedback::{self, Feedback};
 use crate::data::Pixels;
 use crate::ui::UiHandle;
 #[cfg(any(test, feature = "calls"))]
@@ -507,6 +508,9 @@ pub struct CallData {
     pub notice: String,
     pub error: String,
     pub ended: String,
+    /// The call lasted long enough to ask how its quality was (the survey itself is sampled by
+    /// the UI, `call_feedback::wanted`). Only on the call-ended screen.
+    pub feedback_eligible: bool,
     pub chat_id: String,
     pub can_rejoin: bool,
     /// The call on the "On hold" bar (call waiting): the other call while this one is shown, or
@@ -1008,6 +1012,8 @@ impl CallModel {
             notice: self.notice.clone(),
             error: self.error.clone(),
             ended: self.ended.clone(),
+            feedback_eligible: self.phase == Phase::Ended
+                && self.duration.is_some_and(call_feedback::long_enough),
             chat_id: self.chat_id.clone(),
             can_rejoin: self.target.is_some(),
             held_name: if self.held
@@ -1122,6 +1128,8 @@ pub enum CallCmd {
     Leave,
     /// Close the call-ended screen.
     Close,
+    /// Send feedback on the call-ended screen's quality survey.
+    Feedback(Feedback),
     Rejoin,
     DismissError,
     /// More › Language and speech › Show live captions.
@@ -1160,6 +1168,7 @@ impl CallCmd {
             "prejoin-camera" => CallCmd::PrejoinCamera(arg == "on"),
             "leave" => CallCmd::Leave,
             "close" => CallCmd::Close,
+            "feedback" => CallCmd::Feedback(Feedback::parse(arg)?),
             "rejoin" => CallCmd::Rejoin,
             "dismiss-error" => CallCmd::DismissError,
             "captions" => CallCmd::Captions(arg == "on"),
@@ -1252,6 +1261,8 @@ struct Shared {
     ticking: AtomicBool,
     ui: UiHandle,
     photos: Mutex<Option<PhotoLookup>>,
+    /// Where the call-quality ratings go; none: kelma's data dir (and nowhere in tests).
+    feedback_file: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl Shared {
@@ -1531,6 +1542,7 @@ impl CallManager {
                 ticking: AtomicBool::new(false),
                 ui,
                 photos: Mutex::new(None),
+                feedback_file: Mutex::new(None),
             }),
             #[cfg(feature = "calls")]
             hub,
@@ -1550,6 +1562,42 @@ impl CallManager {
     /// while connected, so a photo still downloading shows up on a later push.
     pub fn set_photos(&self, lookup: impl Fn(&str) -> Option<Pixels> + Send + Sync + 'static) {
         *self.shared.photos.lock().unwrap() = Some(Arc::new(lookup));
+    }
+
+    /// Makes the running call look `by` older, so a test need not wait for it to last.
+    #[cfg(test)]
+    pub fn backdate_connected(&self, by: Duration) {
+        let mut m = self.shared.model.lock().unwrap();
+        m.connected_at = m.connected_at.map(|t| t - by);
+    }
+
+    /// Keeps the call-quality ratings in `path` instead of kelma's data dir.
+    #[cfg(test)]
+    pub fn set_feedback_file(&self, path: std::path::PathBuf) {
+        *self.shared.feedback_file.lock().unwrap() = Some(path);
+    }
+
+    /// Keeps a call-quality rating (the survey's Send): one JSON line in the data dir, and the log.
+    /// Nothing is posted to Microsoft (its feedback endpoint is not known).
+    fn save_feedback(&self, f: &Feedback, kind: &str, call: Duration) {
+        let line = f.line(chrono::Utc::now(), kind, call);
+        tracing::info!(feedback = %line, "call quality feedback (kept locally, not sent)");
+        let path = self.shared.feedback_file.lock().unwrap().clone();
+        #[cfg(not(test))]
+        let path = path.or_else(|| {
+            Some(
+                session::Paths::new()
+                    .ok()?
+                    .data_dir
+                    .join(call_feedback::FILE),
+            )
+        });
+        if let Some(path) = path
+            && let Err(e) = call_feedback::append(&path, &line)
+        {
+            tracing::warn!(error = %e, "could not keep the call quality feedback");
+        }
+        self.shared.ui.info("Thanks for your feedback".into());
     }
 
     /// Replaces the driver (tests and the demo use [`FakeDriver`]).
@@ -1652,6 +1700,15 @@ impl CallManager {
                 CallCmd::Close => {
                     m.close();
                     None
+                }
+                CallCmd::Feedback(f) => {
+                    let ended = m.phase == Phase::Ended;
+                    let (kind, call) = (m.kind.name(), m.duration.unwrap_or_default());
+                    drop(m);
+                    if ended {
+                        self.save_feedback(&f, kind, call);
+                    }
+                    return;
                 }
                 CallCmd::Rejoin => {
                     drop(m);

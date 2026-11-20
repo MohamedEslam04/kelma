@@ -11,6 +11,7 @@
 //!   run (`dry_run_*` below); nothing here sends one.
 
 use super::Engine;
+use super::call_feedback;
 use app_store::{DevicePermission, Grants};
 use appearance::{
     AccessibilityPrefs, AppearancePrefs, AutoSwitch, DateFormat, GeneralPrefs, PortalSettings,
@@ -30,6 +31,7 @@ use teams_proto::user_settings::{
 
 pub const DEVICES_FILE: &str = "devices.json";
 pub const FILES_FILE: &str = "files.json";
+pub const CALLS_FILE: &str = "calls.json";
 /// The per-app grants. The same file the Store settings write and the web host reads
 /// (`appstore/webhost_open.rs`), in the `app_store::Grants::to_json` shape.
 pub const PERMISSIONS_FILE: &str = "app-grants.json";
@@ -82,6 +84,14 @@ pub fn files_prefs() -> FilesPrefs {
         .unwrap_or_default()
 }
 
+/// Calls preferences, in `calls.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CallsPrefs {
+    /// "Ask about call quality after calls".
+    pub ask_feedback: call_feedback::Ask,
+}
+
 fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
     std::fs::read(path)
         .ok()
@@ -112,6 +122,7 @@ pub struct Local {
     pub a11y: AccessibilityPrefs,
     pub devices: DevicePrefs,
     pub files: FilesPrefs,
+    pub calls: CallsPrefs,
     pub grants: Grants,
 }
 
@@ -131,6 +142,7 @@ impl Local {
             a11y: AccessibilityPrefs::load_from(&dir.join(appearance::accessibility::FILE_NAME)),
             devices: read_json(&dir.join(DEVICES_FILE)),
             files: read_json(&dir.join(FILES_FILE)),
+            calls: read_json(&dir.join(CALLS_FILE)),
             grants: Grants::from_json(&perms),
         }
     }
@@ -164,6 +176,13 @@ impl Local {
         Ok(write_json(
             &self.dir.join(FILES_FILE),
             &serde_json::to_value(self.files)?,
+        )?)
+    }
+
+    pub fn save_calls(&self) -> anyhow::Result<()> {
+        Ok(write_json(
+            &self.dir.join(CALLS_FILE),
+            &serde_json::to_value(self.calls)?,
         )?)
     }
 
@@ -838,6 +857,11 @@ const INDEX: &[(&str, &str, &str)] = &[
     ("devices", "Camera", "video webcam"),
     ("devices", "Play test sound", "audio"),
     (
+        "devices",
+        "Ask about call quality after calls",
+        "calls survey feedback rating",
+    ),
+    (
         "files",
         "Open Word, Excel and PowerPoint files in",
         "office documents desktop browser",
@@ -1394,12 +1418,14 @@ mod tests {
         l.a11y.larger_text = true;
         l.devices.microphone = Some("alsa:pipewire".into());
         l.files.open_office_in = OpenFilesIn::Desktop;
+        l.calls.ask_feedback = call_feedback::Ask::Never;
         l.grants.set("app-1", DevicePermission::Media, true);
         l.save_appearance().unwrap();
         l.save_general().unwrap();
         l.save_a11y().unwrap();
         l.save_devices().unwrap();
         l.save_files().unwrap();
+        l.save_calls().unwrap();
         l.save_grants().unwrap();
         assert_eq!(Local::load(&dir), l);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1753,6 +1779,18 @@ mod tests {
         );
         assert_eq!(banner_body(true, "hello".into()), "hello");
         assert_eq!(banner_body(false, "hello".into()), "New message");
+    }
+
+    #[test]
+    fn call_quality_questions_are_asked_sometimes_until_another_choice_is_saved() {
+        assert_eq!(
+            CallsPrefs::default().ask_feedback,
+            call_feedback::Ask::Sometimes
+        );
+        let p: CallsPrefs = serde_json::from_str("{}").unwrap();
+        assert_eq!(p.ask_feedback, call_feedback::Ask::Sometimes);
+        let p: CallsPrefs = serde_json::from_str(r#"{"ask_feedback":"always"}"#).unwrap();
+        assert_eq!(p.ask_feedback, call_feedback::Ask::Always);
     }
 
     // ---- files and app grants (X1.6, X1.7) ----
