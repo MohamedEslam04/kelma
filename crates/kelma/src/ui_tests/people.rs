@@ -796,6 +796,12 @@ fn resting_on_a_photo_opens_a_hover_card_whose_quick_message_goes_to_their_chat(
     let h = harness_with_sara_email();
     let _log = wire(&h);
     h.select(BACKEND);
+    // The list lays out lazily: on the first frame rows only have an estimated height, and the
+    // measured heights (which depend on how the installed fonts wrap the messages) shift every
+    // row under a pointer that was already placed. Let it settle before looking for the photo.
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
     // A photo that is on screen (rows above the view are laid out but clipped).
     let height = h
         .app
@@ -811,6 +817,9 @@ fn resting_on_a_photo_opens_a_hover_card_whose_quick_message_goes_to_their_chat(
         })
         .expect("Sara's photo on screen");
     let (p, s) = (avatar.absolute_position(), avatar.size());
+    // Resting means the photo does not move under the pointer.
+    testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    assert_eq!(avatar.absolute_position(), p, "the list has settled");
     h.app.window().dispatch_event(WindowEvent::PointerMoved {
         position: LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.),
     });
