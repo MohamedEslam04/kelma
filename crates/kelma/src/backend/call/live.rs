@@ -925,8 +925,7 @@ impl Call {
                 }
             }
             // Share and Camera are handled by the run loop, which owns their channels.
-            Control::Share(_) | Control::Camera(_) | Control::Remote(_) | Control::Leave => {
-            }
+            Control::Share(_) | Control::Camera(_) | Control::Remote(_) | Control::Leave => {}
             Control::Captions(_) | Control::Recording(_) | Control::Transcription(_) => {
                 self.bots.ask(&c);
                 self.step_bots(sink).await;
