@@ -327,6 +327,7 @@ fn the_item_menu_of_a_chat_has_the_teams_entries() {
             "Favorite",
             "Pop out chat",
             "Move to section",
+            "Snooze",
             "Mute",
             "Copy link",
             "Hide"
