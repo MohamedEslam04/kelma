@@ -2,8 +2,9 @@
 
 use super::{UiHandle, model};
 use crate::backend::call::{CallData, Found, Person, is_meeting_chat};
+use crate::backend::call_feedback::{self, Ask};
 use crate::data::{Pixels, initials};
-use crate::{AppWindow, CallCaption, CallFound, CallPerson, CallStore};
+use crate::{AppWindow, CallCaption, CallFound, CallPerson, CallStore, SettingsStore};
 use slint::{ComponentHandle, Image, SharedString};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -53,6 +54,17 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     if !d.error.is_empty() {
         // Why a join was refused shows on the full window.
         s.set_minimized(false);
+    }
+    // The quality survey is decided once, when the call ends; it goes with the ended screen.
+    if d.phase != "ended" {
+        s.set_feedback_open(false);
+    } else if s.get_phase() != "ended" {
+        let ask = Ask::from_slug(&w.global::<SettingsStore>().get_call_feedback());
+        let demo = crate::external::suppressed();
+        s.set_feedback_open(
+            d.feedback_eligible
+                && call_feedback::sampled(ask.unwrap_or_default(), call_feedback::roll(), demo),
+        );
     }
     s.set_phase(d.phase.into());
     s.set_kind(d.kind.into());

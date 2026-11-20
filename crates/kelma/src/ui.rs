@@ -267,10 +267,19 @@ impl UiHandle {
 
     /// Shows a transient message for 8 seconds.
     pub fn banner(&self, text: String) {
+        self.transient(text, false);
+    }
+
+    /// Shows a transient notice (not an error) for 8 seconds.
+    pub fn info(&self, text: String) {
+        self.transient(text, true);
+    }
+
+    fn transient(&self, text: String, info: bool) {
         self.run(move |w| {
             let shown: SharedString = text.into();
             w.set_banner_action(SharedString::new());
-            w.set_banner_info(false);
+            w.set_banner_info(info);
             w.set_banner(shown.clone());
             let weak = w.as_weak();
             slint::Timer::single_shot(std::time::Duration::from_secs(8), move || {

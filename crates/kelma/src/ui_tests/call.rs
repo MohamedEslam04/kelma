@@ -55,6 +55,26 @@ impl CallHarness {
         assert_eq!(self.phase(), "connected");
     }
 
+    /// A call that lasted 95 s and was left: the call-ended screen, with the quality survey when
+    /// the Settings choice asks. The ratings go to the returned file.
+    fn long_call_ended(&self) -> std::path::PathBuf {
+        let file = std::env::temp_dir().join(format!(
+            "kelma-call-feedback-{}-{:?}.jsonl",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&file);
+        self.h.engine.calls.set_feedback_file(file.clone());
+        self.connected();
+        self.h
+            .engine
+            .calls
+            .backdate_connected(std::time::Duration::from_secs(95));
+        click(&self.button("Leave"));
+        assert_eq!(self.phase(), "ended");
+        file
+    }
+
     fn phase(&self) -> String {
         cs(&self.h.app).get_phase().to_string()
     }
@@ -896,4 +916,154 @@ fn a_meeting_has_no_hold_transfer_or_invite_box() {
     click(&c.button("People"));
     assert!(c.all("Invite someone or dial a number").is_empty());
     assert!(c.shows("In this meeting (0)"));
+}
+
+const SURVEY: &str = "How was the call quality?";
+
+#[test]
+fn the_survey_shows_after_a_call_that_lasted_and_not_after_a_short_one() {
+    let c = CallHarness::new();
+    c.connected();
+    click(&c.button("Leave"));
+    assert_eq!(c.phase(), "ended");
+    assert!(!c.shows(SURVEY), "a call under 30 s is not asked about");
+    assert!(c.shows("You left the meeting."));
+
+    let c = CallHarness::new();
+    c.long_call_ended();
+    assert!(cs(&c.h.app).get_feedback_open());
+    assert!(c.shows(SURVEY));
+    assert!(c.shows("Had issues") && c.shows("Good"));
+    assert!(c.shows(
+        "By pressing Send feedback, your feedback will be used to improve Microsoft products and services."
+    ));
+    assert!(
+        c.all("Audio").is_empty(),
+        "the categories wait for Had issues"
+    );
+}
+
+#[test]
+fn picking_had_issues_shows_the_categories_and_their_issues() {
+    let c = CallHarness::new();
+    c.long_call_ended();
+    click(&c.button("Had issues"));
+    for tab in ["Audio", "Video", "Screenshare"] {
+        c.button(tab);
+    }
+    assert!(c.shows("I couldn't hear any sound"));
+    assert!(c.all("Video was blurry").is_empty());
+
+    click(&c.button("Video"));
+    assert!(c.shows("Video was blurry"));
+    assert!(c.all("I couldn't hear any sound").is_empty());
+
+    click(&c.button("Screenshare"));
+    for issue in [
+        "I couldn't see any presented content",
+        "The presentation stopped unexpectedly",
+        "The image quality of the presented content was poor",
+        "There was a long delay in the presented content",
+        "The presenter's content kept freezing",
+    ] {
+        c.with_role(issue, AccessibleRole::Checkbox);
+    }
+
+    // Good has no issues to list.
+    click(&c.button("Good"));
+    assert!(c.all("Screenshare").is_empty());
+}
+
+#[test]
+fn send_feedback_waits_for_a_rating() {
+    let c = CallHarness::new();
+    let file = c.long_call_ended();
+    let send = c.button("Send feedback");
+    assert_eq!(send.accessible_enabled(), Some(false));
+    click(&send);
+    assert!(c.shows(SURVEY), "nothing happened");
+    assert!(!c.sent().iter().any(|s| s.starts_with("feedback")));
+    assert!(!file.exists());
+
+    click(&c.button("Good"));
+    assert_eq!(c.button("Send feedback").accessible_enabled(), Some(true));
+}
+
+#[test]
+fn send_keeps_the_rating_thanks_the_user_and_closes_the_screen() {
+    let c = CallHarness::new();
+    let file = c.long_call_ended();
+    click(&c.button("Had issues"));
+    click(&c.with_role("The sound kept cutting out", AccessibleRole::Checkbox));
+    click(&c.button("Video"));
+    click(&c.with_role("Video kept freezing", AccessibleRole::Checkbox));
+    // A box ticked and ticked again is off.
+    click(&c.with_role("Video was blurry", AccessibleRole::Checkbox));
+    click(&c.with_role("Video was blurry", AccessibleRole::Checkbox));
+    click(&c.button("Send feedback"));
+
+    assert_eq!(c.phase(), "", "the ended screen closes as Close does");
+    assert!(!cs(&c.h.app).get_feedback_open());
+    let sent = c.sent();
+    assert!(
+        sent.iter().any(|s| s.starts_with("feedback issues\n")),
+        "{sent:?}"
+    );
+    assert_eq!(sent.last().unwrap(), "close");
+
+    let kept = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(kept.lines().count(), 1);
+    let v: serde_json::Value = serde_json::from_str(kept.trim()).unwrap();
+    assert_eq!(v["rating"], "issues");
+    assert_eq!(v["kind"], "meeting");
+    assert!(v["seconds"].as_u64().unwrap() >= 95);
+    assert_eq!(v["categories"], serde_json::json!(["audio", "video"]));
+    assert_eq!(
+        v["issues"],
+        serde_json::json!(["The sound kept cutting out", "Video kept freezing"])
+    );
+    assert_eq!(c.h.app.get_banner(), "Thanks for your feedback");
+    assert!(c.h.app.get_banner_info());
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn a_good_rating_is_kept_without_issues() {
+    let c = CallHarness::new();
+    let file = c.long_call_ended();
+    click(&c.button("Good"));
+    click(&c.button("Send feedback"));
+    let kept = std::fs::read_to_string(&file).unwrap();
+    let v: serde_json::Value = serde_json::from_str(kept.trim()).unwrap();
+    assert_eq!(v["rating"], "good");
+    assert_eq!(v["issues"], serde_json::json!([]));
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn dismiss_closes_the_screen_and_keeps_nothing() {
+    let c = CallHarness::new();
+    let file = c.long_call_ended();
+    click(&c.button("Dismiss"));
+    assert_eq!(c.phase(), "");
+    assert_eq!(c.sent().last().unwrap(), "close");
+    assert!(!c.sent().iter().any(|s| s.starts_with("feedback")));
+    assert!(!file.exists());
+    assert_eq!(c.h.app.get_banner(), "");
+}
+
+#[test]
+fn never_in_settings_hides_the_survey() {
+    use crate::SettingsStore;
+    let c = CallHarness::new();
+    c.h.app
+        .global::<SettingsStore>()
+        .set_call_feedback("never".into());
+    c.long_call_ended();
+    assert!(!cs(&c.h.app).get_feedback_open());
+    assert!(!c.shows(SURVEY));
+    assert!(
+        c.shows("You left the meeting."),
+        "the ended screen as before"
+    );
 }

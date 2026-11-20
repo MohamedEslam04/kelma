@@ -379,6 +379,15 @@ export component DevicesPage inherits VerticalLayout {
         SRadio { group: @tr("Camera"); label: @tr("System default"); checked: SettingsStore.camera == ""; picked => { SettingsStore.command("camera", ""); } }
         for d in SettingsStore.cameras: SRadio { group: @tr("Camera"); label: d.name; detail: d.id; checked: SettingsStore.camera == d.id; picked => { SettingsStore.command("camera", d.id); } }
     }
+    SSection {
+        title: @tr("Calls");
+        SChoiceRow {
+            label: @tr("Ask about call quality after calls");
+            options: [{v: "always", l: @tr("Always")}, {v: "sometimes", l: @tr("Sometimes")}, {v: "never", l: @tr("Never")}];
+            value: SettingsStore.call-feedback;
+            picked(v) => { SettingsStore.call-feedback = v; SettingsStore.command("call-feedback", v); }
+        }
+    }
     SSwitch {
         label: @tr("Show all devices");
         hint: @tr("Also list the raw sound card entries.");

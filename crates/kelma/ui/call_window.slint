@@ -13,6 +13,7 @@ import { PreJoin } from "call_prejoin.slint";
 import { PeoplePanel, MorePanel, PeopleSearch } from "call_people.slint";
 import { CaptionStrip } from "call_captions.slint";
 import { HeldBar } from "call_held.slint";
+import { CallFeedback } from "call_feedback.slint";
 
 export { CallStore, CallPerson, CallCaption, CallFound, CallVideo }
 
@@ -860,6 +861,16 @@ component Ended inherits Rectangle {
                 clicked => { CallStore.command("close", ""); }
             }
         }
+    }
+    // The quality survey; Send and Dismiss both close the screen, as Close does.
+    if CallStore.feedback-open: CallFeedback {
+        width: root.width;
+        height: root.height;
+        sent(answer) => {
+            CallStore.command("feedback", answer);
+            CallStore.command("close", "");
+        }
+        dismissed => { CallStore.command("close", ""); }
     }
 }
 

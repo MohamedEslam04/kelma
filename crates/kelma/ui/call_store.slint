@@ -96,6 +96,10 @@ export global CallStore {
     in property <string> error;
     // Why the call ended (the call-ended screen).
     in property <string> ended;
+    // The call-ended screen asks how the call quality was (CallFeedback): the call lasted long
+    // enough and the Settings choice picked it. Set when the call ends, cleared when the screen
+    // closes.
+    in-out property <bool> feedback-open;
     // The meeting chat's conversation id, when known.
     in property <string> chat-id;
     in property <bool> can-rejoin;
@@ -137,7 +141,8 @@ export global CallStore {
     // Where the user dragged the minimized call to: its offset from the bottom-right corner.
     in-out property <length> mini-dx;
     in-out property <length> mini-dy;
-    // (name, argument): join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
+    // (name, argument): feedback (good | issues, then one `category=issue` line per box ticked),
+    // join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
     // hold, transfer-open, find (query), invite (MRI), transfer (MRI), share, camera,
     // prejoin-camera, leave, close, rejoin, dismiss-error, captions (on|off), recording
     // (start|stop), transcription (start|stop), dismiss-notice, resume, end-held,

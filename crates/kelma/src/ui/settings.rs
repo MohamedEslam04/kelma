@@ -9,12 +9,13 @@
 //! open, close, page, query, profile, theme, accent, density, font-step, font-scale, skin-tone,
 //! language, date-format, time-format, time-zone, startup, high-contrast, reduced-motion,
 //! larger-text, a11y, notify, pause, test-notification, privacy, unblock, priority-remove,
-//! speaker, mic, camera, all-devices, test-sound, mic-test, open-files, perm, switch-account,
+//! speaker, mic, camera, all-devices, test-sound, mic-test, call-feedback, open-files, perm, switch-account,
 //! switch-org, add-account, remove-account, refresh-license, restart, sign-out, view-account,
 //! report-problem, check-updates, check-now, release-notes.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
+use crate::backend::call_feedback::Ask;
 use crate::backend::settings::{
     self as st, DeviceLists, Local, Look, OpenFilesIn, ServerData, SettingsCmd,
 };
@@ -455,6 +456,7 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_speaker(s(l.devices.speaker.clone().unwrap_or_default()));
     g.set_camera(s(l.devices.camera.clone().unwrap_or_default()));
     g.set_open_files(s(l.files.open_office_in.slug()));
+    g.set_call_feedback(s(l.calls.ask_feedback.slug()));
     push_devices(w, c);
     push_perms(w, c);
 }
@@ -1064,6 +1066,13 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
             } else {
                 stop_mic(w, &mut c);
             }
+        }
+        "call-feedback" => {
+            let mut c = shared.borrow_mut();
+            c.local.calls.ask_feedback = Ask::from_slug(arg).unwrap_or_default();
+            let r = c.local.save_calls();
+            push_local(w, &c);
+            saved(w, r);
         }
         // --- Files and app permissions (local) ---
         "open-files" => {
