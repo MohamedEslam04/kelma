@@ -33,6 +33,7 @@ pub(crate) mod composer_apps;
 mod drafts;
 pub(crate) mod drive;
 pub(crate) mod engage;
+pub(crate) mod expiry;
 mod find;
 mod gifs;
 mod lists;
@@ -46,6 +47,7 @@ mod people;
 #[cfg(test)]
 mod people_live;
 mod people_presence;
+mod photo;
 mod render;
 mod send;
 pub(crate) mod settings;
@@ -390,6 +392,7 @@ impl Engine {
         #[cfg(feature = "calls")]
         self.start_calls();
         self.start_notify_prefs();
+        self.start_my_photo();
         self.start_my_presence();
         self.start_people_presence();
         let e = self.clone();

@@ -1,0 +1,566 @@
+//! The top bar driven through the real window: the search box's dropdown (suggestions, recent
+//! searches, slash commands), Back and Forward, Ctrl+E and Ctrl+/, and the "…" menu. The engine
+//! side of suggestions and of `/goto`, `/chat` and `/call` runs against the demo cache.
+
+use super::*;
+use crate::backend::FindCmd;
+use crate::suggest::SuggestData;
+use crate::{FindStore, SettingsStore, TopBarStore};
+use std::path::PathBuf;
+
+const SARA: &str =
+    "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000003@unq.gbl.spaces";
+const GENERAL: &str = "19:team1@thread.tacv2";
+
+fn tb(app: &AppWindow) -> TopBarStore<'_> {
+    app.global::<TopBarStore>()
+}
+
+fn search_box(app: &AppWindow) -> ElementHandle {
+    ElementHandle::find_by_element_id(app, "TopSearch::input")
+        .next()
+        .expect("the search box")
+}
+
+/// Lets the `changed` handlers of the window run (a page that changed reports itself).
+fn settle() {
+    for _ in 0..3 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
+fn ready_window(dir: Option<PathBuf>) -> AppWindow {
+    let app = app_with_messages(vec![]);
+    app.set_current_id("a".into());
+    crate::ui::topbar::install(&app, dir);
+    // Keys go to the window through the item that has the focus, as the user's do.
+    composer(&app).mock_single_click(PointerEventButton::Left);
+    settle();
+    app
+}
+
+fn focus_box(app: &AppWindow) {
+    search_box(app).mock_single_click(PointerEventButton::Left);
+}
+
+fn row_kinds(app: &AppWindow) -> Vec<String> {
+    tb(app)
+        .get_rows()
+        .iter()
+        .map(|r| r.kind.to_string())
+        .collect()
+}
+
+fn row_titles(app: &AppWindow) -> Vec<String> {
+    tb(app)
+        .get_rows()
+        .iter()
+        .map(|r| r.title.to_string())
+        .collect()
+}
+
+fn press(app: &AppWindow, k: Key) {
+    key(app, k, true);
+    key(app, k, false);
+}
+
+fn chord(app: &AppWindow, mods: &[Key], k: impl Into<SharedString> + Clone) {
+    for m in mods {
+        key(app, *m, true);
+    }
+    key(app, k.clone(), true);
+    key(app, k, false);
+    for m in mods.iter().rev() {
+        key(app, *m, false);
+    }
+}
+
+/// Records what a callback of the window or a store was asked.
+fn record_find(app: &AppWindow) -> Log {
+    let log = Log::default();
+    let l = log.clone();
+    app.global::<FindStore>()
+        .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    log
+}
+
+fn record_settings(app: &AppWindow) -> Log {
+    let log = Log::default();
+    let l = log.clone();
+    app.global::<SettingsStore>()
+        .on_command(move |n, a| l.borrow_mut().push(format!("{n} {a}")));
+    log
+}
+
+fn temp_dir(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!(
+        "kelma-ui-topbar-{tag}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&d);
+    d
+}
+
+#[test]
+fn a_slash_opens_the_command_list_and_typing_narrows_it() {
+    let app = ready_window(None);
+    focus_box(&app);
+    type_text(&app, "/");
+    assert!(tb(&app).get_search_open());
+    assert_eq!(
+        tb(&app).get_rows().row_count(),
+        crate::topbar::COMMANDS.len()
+    );
+    assert!(row_titles(&app).contains(&"/goto <team or channel>".to_string()));
+    type_text(&app, "b");
+    assert_eq!(row_titles(&app), ["/busy", "/brb"]);
+    // The chat list is not filtered by a command.
+    let filtered = Log::default();
+    let f = filtered.clone();
+    app.on_search(move |q| f.borrow_mut().push(q.to_string()));
+    type_text(&app, "u");
+    assert_eq!(*filtered.borrow(), [""]);
+}
+
+#[test]
+fn enter_runs_a_status_command_and_empties_the_box() {
+    let app = ready_window(None);
+    let log = record_settings(&app);
+    app.global::<SettingsStore>()
+        .set_status_duration("2h".into());
+    focus_box(&app);
+    type_text(&app, "/busy");
+    enter(&app);
+    assert_eq!(*log.borrow(), ["status Busy"]);
+    assert_eq!(
+        app.global::<SettingsStore>().get_status_duration(),
+        "never",
+        "a command sets the status until it is changed"
+    );
+    assert_eq!(tb(&app).get_input(), "");
+    assert!(!tb(&app).get_search_open());
+    assert!(app.get_banner().contains("Busy"));
+}
+
+#[test]
+fn every_status_command_sends_its_status() {
+    for (cmd, want) in [
+        ("/available", "Available"),
+        ("/dnd", "DoNotDisturb"),
+        ("/brb", "BeRightBack"),
+        ("/away", "Away"),
+        ("/offline", "Offline"),
+    ] {
+        let app = ready_window(None);
+        let log = record_settings(&app);
+        focus_box(&app);
+        type_text(&app, cmd);
+        enter(&app);
+        assert_eq!(*log.borrow(), [format!("status {want}")], "{cmd}");
+    }
+}
+
+#[test]
+fn the_view_commands_open_what_their_names_say() {
+    let app = ready_window(None);
+    let find = record_find(&app);
+    let opened = Log::default();
+    let o = opened.clone();
+    app.on_open_url(move |u| o.borrow_mut().push(u.to_string()));
+    let filters = Log::default();
+    let f = filters.clone();
+    app.on_set_filter(move |x| f.borrow_mut().push(x.to_string()));
+
+    let run = |text: &str| {
+        focus_box(&app);
+        type_text(&app, text);
+        enter(&app);
+    };
+    run("/unread");
+    assert_eq!(app.get_filter(), "unread");
+    assert_eq!(*filters.borrow(), ["unread"]);
+
+    run("/saved");
+    run("/mentions");
+    assert_eq!(*find.borrow(), ["quick saved", "quick mentions"]);
+
+    run("/activity");
+    assert_eq!(app.get_view(), "activity");
+    run("/files");
+    assert_eq!(app.get_view(), "onedrive");
+
+    run("/keys");
+    assert!(app.get_shortcuts_open());
+    run("/help");
+    assert_eq!(*opened.borrow(), [crate::topbar::HELP_URL]);
+}
+
+#[test]
+fn goto_chat_and_call_pass_the_name_to_the_engine_and_a_missing_name_asks_for_one() {
+    let app = ready_window(None);
+    let find = record_find(&app);
+    focus_box(&app);
+    type_text(&app, "/goto Platform");
+    enter(&app);
+    type_text(&app, "/chat Sara");
+    enter(&app);
+    type_text(&app, "/call Sara Hassan");
+    enter(&app);
+    assert_eq!(
+        *find.borrow(),
+        [
+            "go goto\u{1f}Platform",
+            "go chat\u{1f}Sara",
+            "go call\u{1f}Sara Hassan"
+        ]
+    );
+    // No name: nothing is sent and the box keeps what was typed.
+    find.borrow_mut().clear();
+    type_text(&app, "/call");
+    enter(&app);
+    assert!(find.borrow().is_empty());
+    assert!(app.get_banner().contains("/call"));
+    assert_eq!(tb(&app).get_input(), "/call");
+    // An unknown command says so.
+    press(&app, Key::Backspace);
+    type_text(&app, "x");
+    enter(&app);
+    assert!(app.get_banner().contains("no command"));
+}
+
+#[test]
+fn typing_asks_for_suggestions_and_arrow_keys_choose_one() {
+    let app = ready_window(None);
+    let find = record_find(&app);
+    let opened = Log::default();
+    let o = opened.clone();
+    app.on_select_chat(move |id| o.borrow_mut().push(id.to_string()));
+    focus_box(&app);
+    type_text(&app, "sa");
+    assert_eq!(find.borrow().last().unwrap(), "suggest sa");
+    // Before the engine answers there is only the message search.
+    assert_eq!(row_kinds(&app), ["search"]);
+    assert_eq!(row_titles(&app), ["Search messages for \"sa\""]);
+
+    let ui = UiHandle::new(app.as_weak());
+    // An answer for text that was already replaced is dropped.
+    ui.topbar_suggestions("zz".into(), vec![]);
+    assert_eq!(row_kinds(&app), ["search"]);
+    ui.topbar_suggestions(
+        "sa".into(),
+        vec![SuggestData {
+            kind: "person",
+            id: "p1".into(),
+            title: "Sara Hassan".into(),
+            subtitle: "Person".into(),
+            initials: "SH".into(),
+            color: 0x5b5fc7,
+        }],
+    );
+    assert_eq!(row_kinds(&app), ["person", "search"]);
+    assert_eq!(tb(&app).get_selected(), -1);
+
+    press(&app, Key::DownArrow);
+    assert_eq!(tb(&app).get_selected(), 0);
+    enter(&app);
+    assert_eq!(*opened.borrow(), ["p1"]);
+    assert_eq!(app.get_view(), "chat");
+    assert_eq!(tb(&app).get_input(), "");
+    assert!(!tb(&app).get_search_open());
+}
+
+#[test]
+fn a_channel_suggestion_opens_the_channel_in_the_teams_view() {
+    let app = ready_window(None);
+    let opened = Log::default();
+    let o = opened.clone();
+    app.on_select_channel(move |id, title| o.borrow_mut().push(format!("{id} {title}")));
+    focus_box(&app);
+    type_text(&app, "gen");
+    UiHandle::new(app.as_weak()).topbar_suggestions(
+        "gen".into(),
+        vec![SuggestData {
+            kind: "channel",
+            id: "c1".into(),
+            title: "Platform › General".into(),
+            subtitle: "Channel".into(),
+            initials: "G".into(),
+            color: 1,
+        }],
+    );
+    press(&app, Key::DownArrow);
+    enter(&app);
+    assert_eq!(*opened.borrow(), ["c1 Platform › General"]);
+    assert_eq!(app.get_view(), "teams");
+}
+
+#[test]
+fn enter_searches_remembers_the_search_and_recent_searches_come_back_and_clear() {
+    let dir = temp_dir("recents");
+    let app = ready_window(Some(dir.clone()));
+    let find = record_find(&app);
+    focus_box(&app);
+    type_text(&app, "budget");
+    enter(&app);
+    assert_eq!(app.get_view(), "search");
+    assert_eq!(app.global::<FindStore>().get_query(), "budget");
+    assert!(find.borrow().contains(&"search budget".to_string()));
+    assert!(dir.join(crate::topbar::RECENT_FILE).exists());
+    drop(app);
+
+    // A later start lists it when the empty box gets the focus.
+    let app = ready_window(Some(dir.clone()));
+    focus_box(&app);
+    assert!(tb(&app).get_search_open());
+    assert_eq!(row_kinds(&app), ["recent", "clear"]);
+    assert_eq!(row_titles(&app)[0], "budget");
+    // Choosing it searches again.
+    let find = record_find(&app);
+    tb(&app).invoke_command("activate".into(), "0".into());
+    assert_eq!(*find.borrow(), ["search budget"]);
+
+    tb(&app).invoke_command("focus".into(), "".into());
+    tb(&app).set_input("".into());
+    tb(&app).invoke_command("focus".into(), "".into());
+    tb(&app).invoke_command("activate".into(), "1".into());
+    assert!(tb(&app).get_rows().row_count() == 0);
+    assert_eq!(
+        std::fs::read_to_string(dir.join(crate::topbar::RECENT_FILE)).unwrap(),
+        "[]"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn back_and_forward_follow_the_pages_and_chats_and_alt_arrows_do_the_same() {
+    let app = ready_window(None);
+    let selected = Log::default();
+    let s = selected.clone();
+    app.on_select_chat(move |id| s.borrow_mut().push(id.to_string()));
+    assert!(!tb(&app).get_can_back());
+
+    app.set_view("calendar".into());
+    settle();
+    app.set_view("activity".into());
+    settle();
+    assert!(tb(&app).get_can_back());
+    assert!(!tb(&app).get_can_forward());
+
+    press_back_button(&app);
+    assert_eq!(app.get_view(), "calendar");
+    settle();
+    assert!(tb(&app).get_can_forward());
+    assert!(tb(&app).get_can_back());
+
+    // Alt+Left goes back again, Alt+Right forward.
+    chord(&app, &[Key::Alt], Key::LeftArrow);
+    assert_eq!(app.get_view(), "chat");
+    settle();
+    assert!(!tb(&app).get_can_back());
+    chord(&app, &[Key::Alt], Key::RightArrow);
+    assert_eq!(app.get_view(), "calendar");
+    settle();
+
+    // A chat that opens is a place too, and Back reopens the earlier one.
+    app.set_view("chat".into());
+    settle();
+    app.set_current_id("b".into());
+    settle();
+    chord(&app, &[Key::Alt], Key::LeftArrow);
+    assert_eq!(*selected.borrow(), ["a"]);
+}
+
+fn press_back_button(app: &AppWindow) {
+    ElementHandle::find_by_accessible_label(app, "Go back")
+        .next()
+        .expect("the Go back button")
+        .invoke_accessible_default_action();
+}
+
+#[test]
+fn ctrl_e_focuses_the_search_box_and_ctrl_slash_lists_the_commands() {
+    let app = ready_window(None);
+    chord(&app, &[Key::Control], "e");
+    settle();
+    assert!(tb(&app).get_search_open(), "the box has the focus");
+    type_text(&app, "x");
+    assert_eq!(tb(&app).get_input(), "x");
+
+    tb(&app).set_input("".into());
+    chord(&app, &[Key::Control], "/");
+    settle();
+    assert_eq!(tb(&app).get_input(), "/");
+    assert_eq!(
+        tb(&app).get_rows().row_count(),
+        crate::topbar::COMMANDS.len()
+    );
+}
+
+#[test]
+fn escape_closes_the_dropdown_and_the_box_keeps_its_text() {
+    let app = ready_window(None);
+    focus_box(&app);
+    type_text(&app, "abc");
+    assert!(tb(&app).get_search_open());
+    press(&app, Key::Escape);
+    assert!(!tb(&app).get_search_open());
+    assert_eq!(tb(&app).get_input(), "abc");
+}
+
+fn control(app: &AppWindow, label: &str) -> ElementHandle {
+    settle();
+    let v: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
+        .filter(|e| e.accessible_role() != Some(i_slint_backend_testing::AccessibleRole::Text))
+        .collect();
+    assert_eq!(
+        v.len(),
+        1,
+        "one control labelled {label:?}, found {}",
+        v.len()
+    );
+    v.into_iter().next().unwrap()
+}
+
+#[test]
+fn the_more_menu_has_settings_zoom_shortcuts_updates_about_and_help() {
+    let app = ready_window(None);
+    let settings = record_settings(&app);
+    let opened = Log::default();
+    let o = opened.clone();
+    app.on_open_url(move |u| o.borrow_mut().push(u.to_string()));
+
+    control(&app, "Settings and more").invoke_accessible_default_action();
+    assert!(tb(&app).get_more_open());
+    for label in [
+        "Settings",
+        "Zoom out",
+        "Zoom in",
+        "Keyboard shortcuts",
+        "Check for updates",
+        "About",
+        "Help",
+    ] {
+        control(&app, label);
+    }
+    // The zoom is the font size setting.
+    control(&app, "Zoom in").invoke_accessible_default_action();
+    control(&app, "Zoom out").invoke_accessible_default_action();
+    assert_eq!(*settings.borrow(), ["font-step 1", "font-step -1"]);
+    assert_eq!(
+        ElementHandle::find_by_accessible_label(&app, "Zoom level")
+            .next()
+            .expect("the zoom level")
+            .accessible_value()
+            .unwrap(),
+        "100%"
+    );
+
+    control(&app, "Keyboard shortcuts").invoke_accessible_default_action();
+    assert!(app.get_shortcuts_open());
+    assert!(
+        !tb(&app).get_more_open(),
+        "choosing an item closes the menu"
+    );
+
+    tb(&app).set_more_open(true);
+    control(&app, "Check for updates").invoke_accessible_default_action();
+    assert!(
+        settings
+            .borrow()
+            .contains(&"check-updates-menu ".to_string())
+    );
+
+    tb(&app).set_more_open(true);
+    control(&app, "Help").invoke_accessible_default_action();
+    assert_eq!(*opened.borrow(), [crate::topbar::HELP_URL]);
+
+    tb(&app).set_more_open(true);
+    control(&app, "About").invoke_accessible_default_action();
+    assert!(app.global::<SettingsStore>().get_open());
+    assert_eq!(app.global::<SettingsStore>().get_page(), "about");
+}
+
+#[test]
+fn the_list_of_shortcuts_has_a_navigation_section_with_working_chords() {
+    let app = ready_window(None);
+    app.set_shortcuts_open(true);
+    settle();
+    for text in [
+        "Navigation",
+        "Alt+Left / Alt+Right",
+        "Ctrl+E",
+        "Ctrl+/",
+        "Ctrl+Shift+1 to 9",
+    ] {
+        assert!(!find_label(&app, text).is_empty(), "{text}");
+    }
+}
+
+// ---- the engine's side, against the demo cache --------------------------------------------------
+
+fn engine_window() -> (Harness, Log) {
+    let h = Harness::new();
+    crate::ui::topbar::install(&h.app, None);
+    let run = h.runner();
+    let log = Log::default();
+    let l = log.clone();
+    h.app.global::<FindStore>().on_command(move |name, arg| {
+        l.borrow_mut().push(format!("{name} {arg}"));
+        if let Some(c) = FindCmd::parse(&name, &arg) {
+            run(Cmd::Find(c));
+        }
+    });
+    h.app.on_select_chat({
+        let run = h.runner();
+        move |id| run(Cmd::SelectChat(id.into()))
+    });
+    h.app.on_select_channel({
+        let run = h.runner();
+        move |id, title| run(Cmd::SelectChannel(id.into(), title.into()))
+    });
+    (h, log)
+}
+
+#[test]
+fn typing_a_name_lists_the_people_chats_and_channels_of_the_cache() {
+    let (h, _log) = engine_window();
+    focus_box(&h.app);
+    type_text(&h.app, "sara");
+    assert_eq!(row_kinds(&h.app), ["person", "search"]);
+    assert_eq!(row_titles(&h.app)[0], "Sara Hassan");
+    // A group chat and a channel too.
+    tb(&h.app).set_input("".into());
+    type_text(&h.app, "team");
+    assert_eq!(
+        row_kinds(&h.app),
+        ["chat", "search"],
+        "{:?}",
+        row_titles(&h.app)
+    );
+    tb(&h.app).set_input("".into());
+    type_text(&h.app, "general");
+    assert_eq!(row_kinds(&h.app), ["channel", "search"]);
+    assert!(row_titles(&h.app)[0].ends_with("› General"));
+}
+
+#[test]
+fn chat_and_goto_open_the_conversation_the_name_means() {
+    let (h, _log) = engine_window();
+    focus_box(&h.app);
+    type_text(&h.app, "/chat sara");
+    enter(&h.app);
+    assert_eq!(h.app.get_current_id(), SARA);
+    assert_eq!(h.app.get_view(), "chat");
+
+    type_text(&h.app, "/goto general");
+    enter(&h.app);
+    assert_eq!(h.app.get_current_id(), GENERAL);
+    assert_eq!(h.app.get_view(), "teams");
+
+    // A name nobody has says so and changes nothing.
+    type_text(&h.app, "/chat nobody-by-this-name");
+    enter(&h.app);
+    assert!(h.app.get_banner().contains("nobody-by-this-name"));
+    assert_eq!(h.app.get_current_id(), GENERAL);
+}

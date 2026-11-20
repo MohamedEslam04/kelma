@@ -16,6 +16,7 @@ use teams_proto::time::now_ms;
 use teams_proto::views::FollowedThread;
 
 mod global;
+mod goto;
 
 /// Messages asked from the server per page.
 const PAGE: u32 = 25;
@@ -67,6 +68,10 @@ pub enum FindCmd {
     Follow(String),
     UnfollowMsg(String),
     MenuFollow(String),
+    /// The top search box: suggestions for the text typed so far.
+    Suggest(String),
+    /// `/goto`, `/chat` and `/call`: the command's name, U+001F and the name typed after it.
+    Go(String),
 }
 
 impl FindCmd {
@@ -103,6 +108,8 @@ impl FindCmd {
             "follow" => FindCmd::Follow(a),
             "unfollow-msg" => FindCmd::UnfollowMsg(a),
             "menu-follow" => FindCmd::MenuFollow(a),
+            "suggest" => FindCmd::Suggest(a),
+            "go" => FindCmd::Go(a),
             _ => return None,
         })
     }
@@ -327,6 +334,8 @@ impl Engine {
     pub(super) async fn find_cmd(self: &Arc<Self>, cmd: FindCmd) -> anyhow::Result<()> {
         match cmd {
             FindCmd::Search(q) => self.search_start(q).await,
+            FindCmd::Suggest(q) => self.suggest_start(q),
+            FindCmd::Go(arg) => self.go_to(&arg).await?,
             FindCmd::SearchTab(t) => {
                 self.find.lock().unwrap().tab = Tab::parse(&t);
                 self.push_search(false);

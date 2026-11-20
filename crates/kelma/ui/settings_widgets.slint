@@ -42,6 +42,45 @@ export component SButton inherits Rectangle {
     }
 }
 
+// A round +/- button of the zoom row.
+component ZoomButton inherits Rectangle {
+    in property <string> label;
+    in property <string> hint;
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: zt.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.hint;
+    accessible-action-default => { root.clicked(); }
+    Text { text: root.label; color: Theme.fg; font-size: SFont.heading; horizontal-alignment: center; vertical-alignment: center; }
+    zt := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// "Zoom  -  100%  +": the same size setting as Appearance › Font size, in the "…" menu and the
+// profile menu.
+export component ZoomRow inherits Rectangle {
+    height: 36px;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 6px;
+        spacing: 6px;
+        Text { text: @tr("Zoom"); color: Theme.fg; font-size: SFont.body; vertical-alignment: center; horizontal-stretch: 1; }
+        ZoomButton { y: 4px; label: "−"; hint: @tr("Zoom out"); clicked => { SettingsStore.command("font-step", "-1"); } }
+        Rectangle {
+            width: 48px;
+            accessible-role: text;
+            accessible-label: @tr("Zoom level");
+            accessible-value: Math.round(SettingsStore.font-scale * 100) + "%";
+            Text { text: Math.round(SettingsStore.font-scale * 100) + "%"; color: Theme.fg; font-size: SFont.body; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        ZoomButton { y: 4px; label: "+"; hint: @tr("Zoom in"); clicked => { SettingsStore.command("font-step", "1"); } }
+    }
+}
+
 // A titled group of settings.
 export component SSection inherits VerticalLayout {
     in property <string> title;
@@ -218,6 +257,8 @@ export component SField inherits VerticalLayout {
     in property <string> initial;
     out property <string> text <=> input.text;
     callback committed(string);
+    // Every keystroke.
+    callback edited(string);
     spacing: 4px;
     Text { horizontal-alignment: Theme.start-align; text: root.label; color: Theme.fg; font-size: SFont.body; }
     Rectangle {
@@ -237,6 +278,7 @@ export component SField inherits VerticalLayout {
             vertical-alignment: center;
             accessible-role: text-input;
             accessible-label: root.label;
+            edited => { root.edited(self.text); }
             accepted => { root.committed(self.text); }
             changed has-focus => { if !self.has-focus { root.committed(self.text); } }
         }

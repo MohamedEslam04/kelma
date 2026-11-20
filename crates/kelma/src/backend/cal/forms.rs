@@ -484,9 +484,13 @@ pub fn slot_for_pick(f: &FormFields, pick_min: u32) -> (String, String, String) 
     (hm(pick_min), end_date.to_string(), hm(end % 1440))
 }
 
-/// The IANA name of the machine's time zone, `UTC` when it cannot be read.
+/// The IANA name of the time zone chosen in Settings, else the machine's; `UTC` when it cannot
+/// be read.
 pub fn local_tz() -> String {
-    iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into())
+    appearance::formats::time_zone()
+        .map(|z| z.name().to_string())
+        .or_else(|| iana_time_zone::get_timezone().ok())
+        .unwrap_or_else(|| "UTC".into())
 }
 
 #[cfg(test)]

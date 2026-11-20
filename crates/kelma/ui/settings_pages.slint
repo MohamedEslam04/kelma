@@ -3,6 +3,7 @@
 // (dry run) the changes that belong to Teams.
 import { Theme } from "theme.slint";
 import { SettingsStore, SOption } from "settings_store.slint";
+import { PeopleStore } from "people.slint";
 import { SButton, SChoice, SChoiceRow, SField, SFont, SPersonRow, SRadio, SSection, SSwitch } from "settings_widgets.slint";
 
 component Para inherits Text {
@@ -68,7 +69,7 @@ export component GeneralPage inherits VerticalLayout {
             initial: SettingsStore.time-zone;
             committed(t) => { SettingsStore.command("time-zone", t); }
         }
-        Para { text: @tr("An IANA name such as Africa/Cairo. Leave it empty to follow the system. Times are shown in the system zone for now: kelma does not use this choice yet."); }
+        Para { text: @tr("An IANA name such as Africa/Cairo. Leave it empty to follow the system. Chat times, the calendar, OneDrive and Store dates use it. A name that is not a time zone is ignored and the system zone is used."); }
     }
     SSection {
         title: @tr("Translation");
@@ -82,6 +83,47 @@ export component GeneralPage inherits VerticalLayout {
             on: t.on;
             enabled: t.enabled;
             toggled(on) => { SettingsStore.command("startup", SettingsStore.j2(t.key, on ? "1" : "0")); }
+        }
+    }
+}
+
+export component ChatsPage inherits VerticalLayout {
+    alignment: start;
+    // The composer's own setting (it is also in the composer's "more" menu).
+    in property <bool> enter-sends: true;
+    callback set-enter-sends(bool);
+    SSection {
+        title: @tr("Opening a chat");
+        SChoiceRow {
+            label: @tr("When I open a chat take me to");
+            hint: @tr("Last read opens at the first message you have not read, with the New messages line.");
+            options: [{v: "newest", l: @tr("Newest message")}, {v: "last-read", l: @tr("Last read")}];
+            value: SettingsStore.open-chat-at;
+            picked(v) => { SettingsStore.open-chat-at = v; SettingsStore.command("open-chat-at", v); }
+        }
+    }
+    SSection {
+        title: @tr("Writing");
+        SSwitch {
+            label: @tr("Press Enter to send");
+            hint: @tr("Off: Enter starts a new line and Ctrl+Enter sends.");
+            on: root.enter-sends;
+            toggled(on) => { root.set-enter-sends(on); }
+        }
+    }
+    SSection {
+        title: @tr("Privacy and previews");
+        SSwitch {
+            label: @tr("Read receipts");
+            hint: @tr("People see when you have read their message. This is the same setting as in Privacy.");
+            on: PeopleStore.receipts-on;
+            toggled(on) => { PeopleStore.command("receipts", on ? "on" : "off"); }
+        }
+        SSwitch {
+            label: @tr("Link previews");
+            hint: @tr("Show a card with the title and picture under messages that contain a link.");
+            on: SettingsStore.link-previews;
+            toggled(on) => { SettingsStore.command("link-previews", on ? "1" : "0"); }
         }
     }
 }
@@ -201,11 +243,27 @@ export component NotificationsPage inherits VerticalLayout {
     alignment: start;
     SSection {
         title: @tr("Notifications and activity");
-        SSwitch {
+        SChoiceRow {
             label: @tr("Pause notifications");
-            hint: @tr("No banners until you turn this off.");
-            on: SettingsStore.paused;
-            toggled(on) => { SettingsStore.command("pause", on ? "1" : "0"); }
+            hint: SettingsStore.paused ? (SettingsStore.pause-until != "" ? SettingsStore.pause-until : @tr("Paused")) : @tr("No banners for as long as you choose. Until tomorrow means 8:00 the next morning.");
+            options: [{v: "off", l: @tr("Off")}, {v: "1h", l: @tr("1 hour")}, {v: "2h", l: @tr("2 hours")}, {v: "tomorrow", l: @tr("Until tomorrow")}, {v: "custom", l: @tr("Custom")}];
+            value: SettingsStore.pause-custom-open ? "custom" : (SettingsStore.paused ? "" : "off");
+            picked(v) => {
+                if v == "custom" {
+                    SettingsStore.pause-custom-open = true;
+                } else {
+                    SettingsStore.pause-custom-open = false;
+                    SettingsStore.command("pause", v);
+                }
+            }
+        }
+        if SettingsStore.pause-custom-open: VerticalLayout {
+            spacing: 6px;
+            pause-at := SField { label: @tr("Pause until"); placeholder: "2026-12-31 17:30"; }
+            SButton {
+                label: @tr("Pause notifications until then");
+                clicked => { SettingsStore.command("pause", SettingsStore.j2("custom", pause-at.text)); }
+            }
         }
         SSwitch {
             label: @tr("Show the sender's photo");

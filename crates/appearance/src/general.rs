@@ -204,6 +204,9 @@ pub struct GeneralPrefs {
     /// Message notifications have Reply and Like buttons (where the desktop supports buttons).
     #[serde(deserialize_with = "lenient")]
     pub banner_actions: bool,
+    /// Messages show a card for the links in them (title, description, picture).
+    #[serde(deserialize_with = "lenient")]
+    pub link_previews: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -219,6 +222,7 @@ impl Default for GeneralPrefs {
             check_updates: false,
             banner_photo: true,
             banner_actions: true,
+            link_previews: true,
         }
     }
 }
@@ -264,6 +268,19 @@ mod tests {
         assert!(p.check_updates);
         let p: GeneralPrefs = serde_json::from_str(r#"{"check_updates":"yes"}"#).unwrap();
         assert!(!p.check_updates, "a bad value means off");
+    }
+
+    #[test]
+    fn link_previews_are_on_unless_turned_off_and_old_files_still_load() {
+        assert!(GeneralPrefs::default().link_previews);
+        let old = r#"{"language":"ar","auto_start":true}"#;
+        assert!(
+            serde_json::from_str::<GeneralPrefs>(old)
+                .unwrap()
+                .link_previews
+        );
+        let off: GeneralPrefs = serde_json::from_str(r#"{"link_previews":false}"#).unwrap();
+        assert!(!off.link_previews);
     }
 
     #[test]
@@ -423,6 +440,7 @@ mod tests {
             check_updates: true,
             banner_photo: false,
             banner_actions: true,
+            link_previews: false,
         };
         p.save_to(&path).unwrap();
         assert_eq!(GeneralPrefs::load_from(&path), p);

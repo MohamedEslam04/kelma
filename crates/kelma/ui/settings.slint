@@ -6,13 +6,16 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { SettingsStore, SFind } from "settings_store.slint";
-import { SButton, SField, SFont, SNavItem } from "settings_widgets.slint";
-import { AboutPage, AccessibilityPage, AccountsPage, AppearancePage, DevicesPage, FilesPage, GeneralPage, NotificationsPage, PermissionsPage, PrivacyPage } from "settings_pages.slint";
+import { SButton, SField, SFont, SNavItem, SRadio, SSwitch, ZoomRow } from "settings_widgets.slint";
+import { AboutPage, AccessibilityPage, AccountsPage, AppearancePage, ChatsPage, DevicesPage, FilesPage, GeneralPage, NotificationsPage, PermissionsPage, PrivacyPage } from "settings_pages.slint";
 
 export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings_store.slint";
 
 export component SettingsPage inherits Rectangle {
     background: Theme.main;
+    // Chats › "Press Enter to send": the composer's own setting, kept by the window.
+    in property <bool> enter-sends: true;
+    callback set-enter-sends(bool);
     // A Find result opened a page: the row of that setting reports its place (settings_widgets),
     // and the page scrolls it into view.
     property <length> want-y: SettingsStore.target-y;
@@ -90,6 +93,7 @@ export component SettingsPage inherits Rectangle {
                     Rectangle { height: 6px; }
                     for p in [
                         {key: "general", label: @tr("General"), icon: @image-url("icons/home.svg")},
+                        {key: "chats", label: @tr("Chats"), icon: @image-url("icons/chat.svg")},
                         {key: "accounts", label: @tr("Accounts and orgs"), icon: @image-url("icons/users.svg")},
                         {key: "privacy", label: @tr("Privacy"), icon: @image-url("icons/lock.svg")},
                         {key: "notifications", label: @tr("Notifications and activity"), icon: @image-url("icons/activity.svg")},
@@ -147,7 +151,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         if SettingsStore.query == "": Text {
                             horizontal-alignment: Theme.start-align;
-                            text: SettingsStore.page == "general" ? @tr("General") : SettingsStore.page == "accounts" ? @tr("Accounts and orgs") : SettingsStore.page == "privacy" ? @tr("Privacy") : SettingsStore.page == "notifications" ? @tr("Notifications and activity") : SettingsStore.page == "appearance" ? @tr("Appearance") : SettingsStore.page == "accessibility" ? @tr("Accessibility") : SettingsStore.page == "devices" ? @tr("Devices") : SettingsStore.page == "files" ? @tr("Files and links") : SettingsStore.page == "permissions" ? @tr("App permissions") : @tr("About");
+                            text: SettingsStore.page == "general" ? @tr("General") : SettingsStore.page == "chats" ? @tr("Chats") : SettingsStore.page == "accounts" ? @tr("Accounts and orgs") : SettingsStore.page == "privacy" ? @tr("Privacy") : SettingsStore.page == "notifications" ? @tr("Notifications and activity") : SettingsStore.page == "appearance" ? @tr("Appearance") : SettingsStore.page == "accessibility" ? @tr("Accessibility") : SettingsStore.page == "devices" ? @tr("Devices") : SettingsStore.page == "files" ? @tr("Files and links") : SettingsStore.page == "permissions" ? @tr("App permissions") : @tr("About");
                             color: Theme.fg;
                             font-size: SFont.title;
                             font-weight: 700;
@@ -156,6 +160,10 @@ export component SettingsPage inherits Rectangle {
                             accessible-value: self.text;
                         }
                         if SettingsStore.query == "" && SettingsStore.page == "general": GeneralPage { }
+                        if SettingsStore.query == "" && SettingsStore.page == "chats": ChatsPage {
+                            enter-sends: root.enter-sends;
+                            set-enter-sends(on) => { root.set-enter-sends(on); }
+                        }
                         if SettingsStore.query == "" && SettingsStore.page == "accounts": AccountsPage { }
                         if SettingsStore.query == "" && SettingsStore.page == "privacy": PrivacyPage { }
                         if SettingsStore.query == "" && SettingsStore.page == "notifications": NotificationsPage { }
@@ -191,9 +199,12 @@ export component SettingsPage inherits Rectangle {
     init => { keys.focus(); }
 }
 
-// The profile menu under the avatar: who is signed in, the status message (read-only here), and
+// The profile menu under the avatar: who is signed in (with the photo), Set status (when it ends,
+// the status message and when that clears), Change profile photo, Saved, Zoom, Keyboard shortcuts,
 // Settings, View account and Sign out.
 export component ProfileMenu inherits Rectangle {
+    callback open-saved();
+    callback open-shortcuts();
     // Clicking outside closes it.
     TouchArea { clicked => { SettingsStore.profile-open = false; SettingsStore.confirm-sign-out = false; } }
     menu-keys := FocusScope {
@@ -207,7 +218,7 @@ export component ProfileMenu inherits Rectangle {
         x: root.width - self.width - 8px;
         y: 46px;
         width: 300px;
-        height: col.preferred-height;
+        height: min(col.preferred-height, root.height - 56px);
         border-radius: 8px;
         background: Theme.surface;
         border-width: 1px;
@@ -217,83 +228,132 @@ export component ProfileMenu inherits Rectangle {
         accessible-role: groupbox;
         accessible-label: @tr("Your profile");
         TouchArea { }
-        col := VerticalLayout {
-            padding: 14px;
-            spacing: 8px;
-            HorizontalLayout {
-                spacing: 12px;
-                Avatar { initials: SettingsStore.me-initials; size: 48px; presence: SettingsStore.me-presence; }
-                VerticalLayout {
-                    alignment: center;
-                    Text { text: SettingsStore.me-name; color: Theme.fg; font-size: SFont.heading; font-weight: 600; overflow: elide; accessible-role: text; accessible-label: @tr("Name"); accessible-value: self.text; }
-                    Text { text: SettingsStore.me-email; color: Theme.fg-muted; font-size: SFont.small; overflow: elide; accessible-role: text; accessible-label: @tr("Email"); accessible-value: self.text; }
-                    if SettingsStore.me-presence != "": Text { text: SettingsStore.me-presence; color: Theme.fg-muted; font-size: SFont.small; accessible-role: text; accessible-label: @tr("Status"); accessible-value: self.text; }
-                    if SettingsStore.me-work-location != "": Text {
-                        text: SettingsStore.me-work-location == "office" ? @tr("In the office today") : @tr("Working remotely today");
-                        color: Theme.fg-muted;
-                        font-size: SFont.small;
-                        accessible-role: text;
-                        accessible-label: @tr("Work location");
-                        accessible-value: self.text;
+        ScrollView {
+            col := VerticalLayout {
+                padding: 14px;
+                padding-right: 18px;
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    Avatar {
+                        initials: SettingsStore.me-initials;
+                        img: SettingsStore.me-photo;
+                        has-img: SettingsStore.me-has-photo;
+                        size: 48px;
+                        presence: SettingsStore.me-presence;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Text { text: SettingsStore.me-name; color: Theme.fg; font-size: SFont.heading; font-weight: 600; overflow: elide; accessible-role: text; accessible-label: @tr("Name"); accessible-value: self.text; }
+                        Text { text: SettingsStore.me-email; color: Theme.fg-muted; font-size: SFont.small; overflow: elide; accessible-role: text; accessible-label: @tr("Email"); accessible-value: self.text; }
+                        if SettingsStore.me-presence != "": Text { text: SettingsStore.me-presence; color: Theme.fg-muted; font-size: SFont.small; accessible-role: text; accessible-label: @tr("Status"); accessible-value: self.text; }
+                        if SettingsStore.me-work-location != "": Text {
+                            text: SettingsStore.me-work-location == "office" ? @tr("In the office today") : @tr("Working remotely today");
+                            color: Theme.fg-muted;
+                            font-size: SFont.small;
+                            accessible-role: text;
+                            accessible-label: @tr("Work location");
+                            accessible-value: self.text;
+                        }
                     }
                 }
-            }
-            Rectangle {
-                height: max(34px, sm.preferred-height + 12px);
-                border-radius: 4px;
-                background: Theme.main;
-                accessible-role: text;
-                accessible-label: @tr("Status message");
-                accessible-value: SettingsStore.me-status;
-                sm := Text {
-                    x: 10px;
-                    width: parent.width - 20px;
-                    text: SettingsStore.me-status != "" ? SettingsStore.me-status : @tr("No status message");
-                    color: SettingsStore.me-status != "" ? Theme.fg : Theme.fg-subtle;
-                    font-size: SFont.body;
+                Rectangle {
+                    height: max(34px, sm.preferred-height + 12px);
+                    border-radius: 4px;
+                    background: Theme.main;
+                    accessible-role: text;
+                    accessible-label: @tr("Status message");
+                    accessible-value: SettingsStore.me-status;
+                    sm := Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        text: SettingsStore.me-status != "" ? SettingsStore.me-status : @tr("No status message");
+                        color: SettingsStore.me-status != "" ? Theme.fg : Theme.fg-subtle;
+                        font-size: SFont.body;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                    }
+                }
+                SButton {
+                    label: SettingsStore.status-open ? @tr("Hide status options") : @tr("Set status");
+                    clicked => { SettingsStore.status-open = !SettingsStore.status-open; }
+                }
+                if SettingsStore.status-open: VerticalLayout {
+                    spacing: 4px;
+                    Text { text: @tr("Reset status after"); color: Theme.fg-muted; font-size: SFont.small; }
+                    Text { text: @tr("Choose this first: the status you pick lasts that long."); color: Theme.fg-subtle; font-size: SFont.small; wrap: word-wrap; }
+                    for d in [{v: "never", l: @tr("Never")}, {v: "30m", l: @tr("30 minutes")}, {v: "1h", l: @tr("1 hour")}, {v: "2h", l: @tr("2 hours")}, {v: "today", l: @tr("Today")}, {v: "week", l: @tr("This week")}, {v: "custom", l: @tr("Custom")}]: SRadio {
+                        group: @tr("Reset status after");
+                        label: d.l;
+                        checked: SettingsStore.status-duration == d.v;
+                        picked => { SettingsStore.status-duration = d.v; }
+                    }
+                    if SettingsStore.status-duration == "custom": SField {
+                        label: @tr("Reset at");
+                        placeholder: "2026-12-31 17:30";
+                        initial: SettingsStore.status-custom;
+                        edited(t) => { SettingsStore.status-custom = t; }
+                    }
+                    SButton { label: @tr("Available"); clicked => { SettingsStore.command("status", "Available"); } }
+                    SButton { label: @tr("Busy"); clicked => { SettingsStore.command("status", "Busy"); } }
+                    SButton { label: @tr("Do not disturb"); clicked => { SettingsStore.command("status", "DoNotDisturb"); } }
+                    SButton { label: @tr("Be right back"); clicked => { SettingsStore.command("status", "BeRightBack"); } }
+                    SButton { label: @tr("Appear away"); clicked => { SettingsStore.command("status", "Away"); } }
+                    SButton { label: @tr("Appear offline"); clicked => { SettingsStore.command("status", "Offline"); } }
+                    SButton { label: @tr("Reset status"); clicked => { SettingsStore.command("status", ""); } }
+                    note := SField { label: @tr("New status message"); initial: SettingsStore.me-status; }
+                    Text { text: @tr("Clear message after"); color: Theme.fg-muted; font-size: SFont.small; }
+                    for d in [{v: "never", l: @tr("Never")}, {v: "today", l: @tr("Today")}, {v: "1h", l: @tr("1 hour")}, {v: "4h", l: @tr("4 hours")}, {v: "week", l: @tr("This week")}]: SRadio {
+                        group: @tr("Clear message after");
+                        label: d.l;
+                        checked: SettingsStore.note-clear-after == d.v;
+                        picked => { SettingsStore.note-clear-after = d.v; }
+                    }
+                    SSwitch {
+                        label: @tr("Show when people message me");
+                        on: SettingsStore.note-show-when-messaged;
+                        toggled(on) => { SettingsStore.note-show-when-messaged = on; }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        SButton { label: @tr("Save message"); clicked => { SettingsStore.command("status-note", note.text); } }
+                        SButton { label: @tr("Clear message"); clicked => { SettingsStore.command("status-note", ""); } }
+                    }
+                    Text { text: @tr("Work location today"); color: Theme.fg-muted; font-size: SFont.small; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        SButton { label: @tr("In the office"); clicked => { SettingsStore.command("work-location", "office"); } }
+                        SButton { label: @tr("Remote"); clicked => { SettingsStore.command("work-location", "remote"); } }
+                        SButton { label: @tr("Clear location"); clicked => { SettingsStore.command("work-location", "clear"); } }
+                    }
+                }
+                SButton { label: @tr("Change profile photo"); clicked => { SettingsStore.command("photo-change", ""); } }
+                if SettingsStore.me-has-photo: SButton { label: @tr("Remove photo"); clicked => { SettingsStore.command("photo-remove", ""); } }
+                SButton { label: @tr("Saved"); clicked => { root.open-saved(); } }
+                ZoomRow { }
+                SButton { label: @tr("Keyboard shortcuts"); clicked => { root.open-shortcuts(); } }
+                SButton { label: @tr("Settings"); clicked => { SettingsStore.show("general"); } }
+                SButton { label: @tr("View account"); clicked => { SettingsStore.command("view-account", ""); } }
+                if !SettingsStore.confirm-sign-out: SButton { label: @tr("Sign out"); clicked => { SettingsStore.confirm-sign-out = true; } }
+                if SettingsStore.confirm-sign-out: VerticalLayout {
+                    spacing: 6px;
+                    Text { text: @tr("Sign out of kelma on this computer? kelma closes; open it again to sign in."); color: Theme.fg; font-size: SFont.small; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        SButton { label: @tr("Cancel"); clicked => { SettingsStore.confirm-sign-out = false; } }
+                        SButton { label: @tr("Yes, sign out"); danger: true; clicked => { SettingsStore.confirm-sign-out = false; SettingsStore.command("sign-out", ""); } }
+                    }
+                }
+                // What the photo, the status or a refused change answered.
+                if SettingsStore.notice != "": Text {
+                    text: SettingsStore.notice;
+                    color: Theme.fg-muted;
+                    font-size: SFont.small;
                     wrap: word-wrap;
-                    vertical-alignment: center;
-                }
-            }
-            SButton {
-                label: SettingsStore.status-open ? @tr("Hide status options") : @tr("Set status");
-                clicked => { SettingsStore.status-open = !SettingsStore.status-open; }
-            }
-            if SettingsStore.status-open: VerticalLayout {
-                spacing: 4px;
-                SButton { label: @tr("Available"); clicked => { SettingsStore.command("status", "Available"); } }
-                SButton { label: @tr("Busy"); clicked => { SettingsStore.command("status", "Busy"); } }
-                SButton { label: @tr("Do not disturb"); clicked => { SettingsStore.command("status", "DoNotDisturb"); } }
-                SButton { label: @tr("Be right back"); clicked => { SettingsStore.command("status", "BeRightBack"); } }
-                SButton { label: @tr("Appear away"); clicked => { SettingsStore.command("status", "Away"); } }
-                SButton { label: @tr("Appear offline"); clicked => { SettingsStore.command("status", "Offline"); } }
-                SButton { label: @tr("Reset status"); clicked => { SettingsStore.command("status", ""); } }
-                note := SField { label: @tr("New status message"); initial: SettingsStore.me-status; }
-                HorizontalLayout {
-                    spacing: 6px;
-                    SButton { label: @tr("Save message"); clicked => { SettingsStore.command("status-note", note.text); } }
-                    SButton { label: @tr("Clear message"); clicked => { SettingsStore.command("status-note", ""); } }
-                }
-                Text { text: @tr("Work location today"); color: Theme.fg-muted; font-size: SFont.small; }
-                HorizontalLayout {
-                    spacing: 6px;
-                    SButton { label: @tr("In the office"); clicked => { SettingsStore.command("work-location", "office"); } }
-                    SButton { label: @tr("Remote"); clicked => { SettingsStore.command("work-location", "remote"); } }
-                    SButton { label: @tr("Clear location"); clicked => { SettingsStore.command("work-location", "clear"); } }
-                }
-            }
-            SButton { label: @tr("Change profile photo (not available yet)"); enabled: false; }
-            SButton { label: @tr("Settings"); clicked => { SettingsStore.show("general"); } }
-            SButton { label: @tr("View account"); clicked => { SettingsStore.command("view-account", ""); } }
-            if !SettingsStore.confirm-sign-out: SButton { label: @tr("Sign out"); clicked => { SettingsStore.confirm-sign-out = true; } }
-            if SettingsStore.confirm-sign-out: VerticalLayout {
-                spacing: 6px;
-                Text { text: @tr("Sign out of kelma on this computer? kelma closes; open it again to sign in."); color: Theme.fg; font-size: SFont.small; wrap: word-wrap; }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-                    SButton { label: @tr("Cancel"); clicked => { SettingsStore.confirm-sign-out = false; } }
-                    SButton { label: @tr("Yes, sign out"); danger: true; clicked => { SettingsStore.confirm-sign-out = false; SettingsStore.command("sign-out", ""); } }
+                    accessible-role: text;
+                    accessible-label: @tr("Profile notice");
+                    accessible-value: self.text;
                 }
             }
         }

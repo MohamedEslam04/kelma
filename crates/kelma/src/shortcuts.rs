@@ -11,6 +11,8 @@ pub fn action(key: &str, ctrl: bool, alt: bool, shift: bool) -> &'static str {
     let k = key.to_lowercase();
     match (ctrl, alt, shift, k.as_str()) {
         (true, false, false, ".") => "shortcuts",
+        (true, false, false, "e") => "search-box",
+        (true, false, false, "/") => "commands",
         (true, true, false, "g") => "goto",
         (true, false, true, "f") => "filter-box",
         (true, true, false, "u") => "filter-unread",
@@ -49,6 +51,8 @@ mod tests {
     #[test]
     fn every_chord_of_the_plan_has_an_action() {
         assert_eq!(action(".", true, false, false), "shortcuts");
+        assert_eq!(action("e", true, false, false), "search-box");
+        assert_eq!(action("/", true, false, false), "commands");
         assert_eq!(action("g", true, true, false), "goto");
         assert_eq!(action("F", true, false, true), "filter-box");
         assert_eq!(action("u", true, true, false), "filter-unread");

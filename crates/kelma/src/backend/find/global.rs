@@ -4,7 +4,7 @@
 
 use super::{Hit, PAGE, State, Tab};
 use crate::backend::Engine;
-use chrono::{Datelike, Local, TimeZone};
+use chrono::Datelike;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use teams_proto::error::Result;
@@ -255,11 +255,7 @@ impl Engine {
     /// An event row was opened: the calendar on the day of the event.
     pub(super) async fn open_event(self: &Arc<Self>, start_ms: i64) {
         self.ui.show_view("calendar");
-        if let Some(t) = Local
-            .timestamp_millis_opt(start_ms)
-            .single()
-            .filter(|_| start_ms > 0)
-        {
+        if let Some(t) = appearance::formats::local(start_ms).filter(|_| start_ms > 0) {
             let date = calendar::Date {
                 year: t.year(),
                 month: t.month(),

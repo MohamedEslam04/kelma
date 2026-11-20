@@ -40,6 +40,7 @@ mod saved;
 mod settings;
 mod shortcuts;
 mod teams;
+mod topbar;
 mod window_state;
 
 type Log = Rc<RefCell<Vec<String>>>;

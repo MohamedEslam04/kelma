@@ -571,4 +571,14 @@ browser, every other action is drawn disabled. The raw attachments are stored wi
 `c` of the stored extras), so cards are drawn from the structure and the flattened text stays the
 preview.
 
+## Top bar gaps: status duration, profile photo, pause durations (feat/gaps-global) 2026-11-20
+| Call | Notes | Live |
+|---|---|---|
+| Status ends after a duration | `PUT <presence>/v1/me/forceavailability/` with `desiredExpirationTime` (UTC `…T…Z`) next to `availability`. "Reset status after" in the profile menu is 30 minutes, 1 hour, 2 hours, today (midnight), this week (midnight before next Monday) or a typed time, counted in the zone chosen in Settings. Documented by the reference clients (`docs/research/open-source.md`), body built by `presence::force_availability_body` | ⚠️ unverified live: kelma never sent the expiry field to a real account |
+| Status message ends | `PUT <presence>/v1/me/publishnote` `{"message":"<escaped text>[<pinnednote></pinnednote>]","expiry":"<UTC>"}`; the suffix is "Show when people message me", `expiry` is the "Clear after" choice (never = `9999-12-31T23:59:59.999Z`). `presence::status_note_body` | ⚠️ unverified live for a real expiry and for the suffix |
+| Pause notifications for a time | the same `toastSettings.temporarilyPauseUntil` write as before (plans/chat.md 9.1); the value is now now+1 h, now+2 h, 08:00 the next day or a typed time instead of always +1 day | ✅ the property; ⚠️ the new durations were not sent live |
+| Change profile photo | `PUT https://graph.microsoft.com/v1.0/me/photo/$value`, body = the JPEG or PNG bytes, `Content-Type` image/jpeg or image/png, at most 4 MB (`teams_proto::photo`). Needs the Graph `User.ReadWrite` scope; the `.default` Graph token of the app (plans/README.md) may not carry it, in which case the answer is a 403 that the profile menu shows as it is | **UNVERIFIED**: not sent to any account |
+| Remove profile photo | `DELETE https://graph.microsoft.com/beta/me/photo` (Graph documents the removal on beta only) | **UNVERIFIED**: not sent to any account |
+| My photo read | the same `profilepicturev2` read as every avatar (`mt::avatar`), for my own MRI, once at start and after a change | ✅ (the read path of all avatars) |
+
 Docs synced to commit 09fe5c2 ("feat(kelma): chat list sections and menus, channel post cards, cloud attach and adaptive cards (chat 8.1 to 8.8)", 2026-11-19)

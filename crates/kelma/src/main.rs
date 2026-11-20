@@ -14,6 +14,8 @@ mod media_data;
 mod mention;
 mod reactions;
 mod shortcuts;
+mod suggest;
+mod topbar;
 mod tray_wiring;
 mod ui;
 #[cfg(test)]
@@ -372,6 +374,7 @@ fn main() -> anyhow::Result<()> {
     ui::install_calendar(&window, tx.clone());
     ui::install_apps(&window, tx.clone());
     ui::settings::install_system(&window, tx.clone());
+    ui::topbar::install(&window, session::Paths::new().ok().map(|p| p.config_dir));
     #[cfg(feature = "calls")]
     ui::call_direct::install(&window, tx.clone());
     #[cfg(feature = "calls")]

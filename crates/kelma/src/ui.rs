@@ -39,6 +39,7 @@ mod media;
 mod people;
 pub(crate) mod settings;
 mod teams;
+pub(crate) mod topbar;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
