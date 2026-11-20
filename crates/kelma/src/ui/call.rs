@@ -54,6 +54,11 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
         // Why a join was refused shows on the full window.
         s.set_minimized(false);
     }
+    if d.phase == "ended" && s.get_phase() != "ended" {
+        // The call just ended: its floating card has nothing left to show, so the ended screen
+        // takes its place (Rejoin, Close). Only on the change, so it can be shrunk again.
+        s.set_minimized(false);
+    }
     s.set_phase(d.phase.into());
     s.set_kind(d.kind.into());
     s.set_title(d.title.into());
@@ -100,6 +105,7 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_held_name(d.held_name.into());
     s.set_in_call(int(d.in_call));
     s.set_in_lobby(int(d.in_lobby));
+    s.set_can_admit(d.can_admit);
     let images = photo_images(&photos);
     let (mini, more) = mini_people(&d.people);
     let mini_owner = video_owner(&mini);
