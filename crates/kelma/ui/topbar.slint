@@ -83,8 +83,7 @@ export component NavButtons inherits Rectangle {
     NavButton {
         x: 32px;
         y: 10px;
-        icon: @image-url("icons/back.svg");
-        turn: 180deg;
+        icon: @image-url("icons/chevron-right.svg");
         label: @tr("Go forward");
         enabled: TopBarStore.can-forward;
         clicked => { TopBarStore.command("forward", ""); }

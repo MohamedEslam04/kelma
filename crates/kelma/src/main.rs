@@ -533,6 +533,22 @@ fn main() -> anyhow::Result<()> {
             {
                 right_click_released(&w);
             }
+            // The mouse's own Back and Forward buttons move through the history like the arrows.
+            if let WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: button @ (MouseButton::Back | MouseButton::Forward),
+                ..
+            } = event
+                && let Some(w) = weak.upgrade()
+            {
+                let name = if *button == MouseButton::Back {
+                    "back"
+                } else {
+                    "forward"
+                };
+                w.global::<TopBarStore>()
+                    .invoke_command(name.into(), "".into());
+            }
             if let WindowEvent::DroppedFile(path) = event {
                 // On the OneDrive view a drop uploads; elsewhere it attaches to the message.
                 let on_drive = weak.upgrade().is_some_and(|w| w.get_view() == "onedrive");
