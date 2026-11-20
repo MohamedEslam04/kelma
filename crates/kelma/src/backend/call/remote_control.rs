@@ -1,9 +1,9 @@
 //! Remote control of a shared screen in a live call: "Give control" / "Request control" (see
 //! `docs/protocol-calls.md`, Remote control). Only with `KELMA_REMOTE_CONTROL=1`.
 //!
-//! - We share: the share starts in a combined RemoteDesktop+ScreenCast portal session
-//!   ([`super::share::Picked::injector`]), so one consent covers the screen and the input. A
-//!   viewer's request shows "<name> wants control of your screen" (Allow / Deny); "Give control ›
+//! - We share: sharing itself never asks for control (the plain ScreenCast picker). Input consent
+//!   is asked when control is granted, once per share ([`Machine::needs_input_consent`], then
+//!   [`calling::video::remote_input::request_control`]). A viewer's request shows "<name> wants control of your screen" (Allow / Deny); "Give control ›
 //!   <person>" grants it directly. While controlled, their input is injected and any key pressed
 //!   in our window (not one we just injected), or Escape twice, takes control back.
 //! - Someone else shares: "Request control" on the stage; once granted, our pointer and keys
@@ -24,7 +24,6 @@ use calling::video::control_overlay::{ControlOverlay, Photo, ShareArea};
 use calling::video::remote_input::InputInjector;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 
 /// Whether calls offer remote control (`KELMA_REMOTE_CONTROL` set to anything but `0`).
 pub fn wanted() -> bool {
@@ -67,8 +66,10 @@ impl Mode {
 /// What the call is doing, as the machine needs it.
 #[derive(Debug, Clone, Default)]
 pub struct Ctx {
-    /// We share a screen whose input we can drive.
+    /// We share a screen, so control of it can be given.
     pub can_give: bool,
+    /// The desktop already allowed driving our input for this share.
+    pub input_allowed: bool,
     /// Someone else presents: (MRI, name).
     pub presenter: Option<(String, String)>,
 }
@@ -99,6 +100,21 @@ pub struct Machine {
 }
 
 impl Machine {
+    /// Whether `a` grants control while the desktop's input consent is still missing: the moment
+    /// to ask for it (Teams asks nothing at share time). The action runs once consent is given.
+    pub fn needs_input_consent(&self, a: &ControlAction, ctx: &Ctx) -> bool {
+        if !ctx.can_give || ctx.input_allowed {
+            return false;
+        }
+        matches!(
+            (a, &self.mode),
+            (
+                ControlAction::Give { .. },
+                Mode::Off | Mode::Incoming { .. }
+            ) | (ControlAction::Answer(true), Mode::Incoming { .. })
+        )
+    }
+
     /// A local action. `me` is our MRI.
     pub fn local(&mut self, a: &ControlAction, me: &str, ctx: &Ctx, now: Instant) -> Step {
         let off = |m: &mut Mode, msg| {
@@ -295,11 +311,12 @@ pub fn photo(px: crate::data::Pixels) -> Photo {
 pub struct RemoteControl {
     pub machine: Machine,
     inject: Option<mpsc::UnboundedSender<InputEvent>>,
-    injector_task: Option<JoinHandle<()>>,
+    /// The grant waiting for the desktop's input consent.
+    pub asking: Option<ControlAction>,
     shown: Option<(&'static str, String)>,
     /// The `sequenceNumber` of the last message sent.
     sequence: u64,
-    /// What our share covers (from its injector).
+    /// What our share covers (from its capture).
     area: Option<ShareArea>,
     /// What of the controller's input reaches our real pointer.
     policy: PointerPolicy,
@@ -308,27 +325,39 @@ pub struct RemoteControl {
 }
 
 impl RemoteControl {
-    /// Our share's injector (`None` when the share stopped or has none). Injection runs on its
-    /// own task so D-Bus round trips never hold the call loop.
-    pub fn set_injector(&mut self, injector: Option<InputInjector>) {
-        if let Some(t) = self.injector_task.take() {
-            t.abort();
+    /// What our share covers, once it runs (`None` when it stopped).
+    pub fn set_share(&mut self, area: Option<ShareArea>) {
+        self.area = area;
+        if area.is_none() {
+            self.asking = None;
+            self.set_injector(None);
         }
+    }
+
+    /// The injector the desktop's input consent gave (`None` when the share stopped). Injection
+    /// runs on its own task so D-Bus round trips never hold the call loop; the task ends the
+    /// portal session when the injector is replaced or dropped.
+    pub fn set_injector(&mut self, injector: Option<InputInjector>) {
         self.inject = None;
         self.overlay = None;
         self.policy = PointerPolicy::default();
-        self.area = injector.as_ref().map(InputInjector::area);
         if let Some(inj) = injector {
             let (tx, mut rx) = mpsc::unbounded_channel::<InputEvent>();
             self.inject = Some(tx);
-            self.injector_task = Some(tokio::spawn(async move {
+            tokio::spawn(async move {
                 while let Some(ev) = rx.recv().await {
                     if let Err(e) = inj.inject(&ev).await {
                         tracing::warn!(%e, "remote control input not injected");
                     }
                 }
-            }));
+                inj.close().await;
+            });
         }
+    }
+
+    /// What our running share covers.
+    pub fn share_area(&self) -> Option<ShareArea> {
+        self.area
     }
 
     pub fn can_inject(&self) -> bool {
@@ -403,7 +432,7 @@ impl RemoteControl {
     }
 
     pub fn stop(&mut self) {
-        self.set_injector(None);
+        self.set_share(None);
         self.machine.mode = Mode::Off;
     }
 }
@@ -418,6 +447,7 @@ mod tests {
     fn sharing() -> Ctx {
         Ctx {
             can_give: true,
+            input_allowed: true,
             presenter: None,
         }
     }
@@ -425,12 +455,52 @@ mod tests {
     fn viewing() -> Ctx {
         Ctx {
             can_give: false,
+            input_allowed: false,
             presenter: Some((ADA.into(), "Ada".into())),
         }
     }
 
     fn name(_: &str) -> String {
         "Ada".into()
+    }
+
+    fn give() -> ControlAction {
+        ControlAction::Give {
+            mri: ADA.into(),
+            name: "Ada".into(),
+        }
+    }
+
+    #[test]
+    fn granting_control_is_when_input_consent_is_asked() {
+        let m = Machine::default();
+        let ctx = Ctx {
+            input_allowed: false,
+            ..sharing()
+        };
+        // The sharer gives control, or allows a viewer's request: ask the desktop first.
+        assert!(m.needs_input_consent(&give(), &ctx));
+        let mut asked = Machine::default();
+        asked.remote(
+            ControlMessage::Request { from: ADA.into() },
+            ME,
+            &ctx,
+            name,
+            Instant::now(),
+        );
+        assert!(asked.needs_input_consent(&ControlAction::Answer(true), &ctx));
+        // Denying, taking back and everything else never asks.
+        assert!(!asked.needs_input_consent(&ControlAction::Answer(false), &ctx));
+        assert!(!m.needs_input_consent(&ControlAction::TakeBack, &ctx));
+        assert!(!m.needs_input_consent(&ControlAction::Release, &ctx));
+        // Already allowed for this share: no second dialog.
+        assert!(!m.needs_input_consent(&give(), &sharing()));
+        // Not sharing: nothing to give, so nothing to ask (the machine shows its own error).
+        let idle = Ctx {
+            can_give: false,
+            ..ctx
+        };
+        assert!(!m.needs_input_consent(&give(), &idle));
     }
 
     #[test]
