@@ -12,7 +12,6 @@
 //! line only with `KELMA_SCREEN_SHARE=1`. Everything here is UNVERIFIED live.
 
 use super::{EventSink, VideoSlot};
-use calling::Links;
 use calling::media::sdp::source_stream_ids;
 use calling::media::{MediaSession, VideoLayout};
 use calling::signaling::roster::Roster;
@@ -20,6 +19,7 @@ use calling::signaling::video::{SCREEN_LIMITS, SourceRequest, TILE_LIMITS, plan_
 use calling::signaling::{CallSession, NgcClient};
 use calling::video::receive::{VideoPacket, spawn_decoder};
 use calling::video::{RgbFrame, VideoRole};
+use calling::{Links, Modality};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -60,6 +60,22 @@ fn layout_by(v: Option<&std::ffi::OsStr>) -> VideoLayout {
     match v.and_then(|v| v.to_str()) {
         Some("sharing-second") => VideoLayout::SharingSecond,
         _ => VideoLayout::WebClient,
+    }
+}
+
+/// A meeting join's `callModalities`: `Audio`, plus `ScreenViewer` with
+/// `KELMA_MEETING_VIDEO_DESCRIBE=1`, which also makes the join declare its send-capable video
+/// lines (`mediaDescriptions`, UNVERIFIED). Off by default: the join declaring every video line
+/// was ended with 410 "InvalidFinalAnswerMediaDescriptions" (live 2026-11-20).
+pub fn join_modalities() -> &'static [Modality] {
+    modalities_by(std::env::var_os("KELMA_MEETING_VIDEO_DESCRIBE").as_deref())
+}
+
+fn modalities_by(v: Option<&std::ffi::OsStr>) -> &'static [Modality] {
+    if v.is_some_and(|v| !v.is_empty() && v != "0") {
+        &[Modality::Audio, Modality::ScreenViewer]
+    } else {
+        &[Modality::Audio]
     }
 }
 
@@ -382,6 +398,17 @@ mod tests {
         assert_eq!(
             layout_by(Some("sharing-second".as_ref())),
             VideoLayout::SharingSecond
+        );
+    }
+
+    #[test]
+    fn a_meeting_join_declares_its_video_lines_only_when_asked_to() {
+        assert_eq!(modalities_by(None), [Modality::Audio]);
+        assert_eq!(modalities_by(Some("".as_ref())), [Modality::Audio]);
+        assert_eq!(modalities_by(Some("0".as_ref())), [Modality::Audio]);
+        assert_eq!(
+            modalities_by(Some("1".as_ref())),
+            [Modality::Audio, Modality::ScreenViewer]
         );
     }
     use serde_json::json;

@@ -107,31 +107,32 @@ fn call_invitation(
     })
 }
 
-/// A meeting join's invitation with the video lines of `offer` declared, as the web client and
-/// mautrix-teams (`calls.go` `videoMedia`) join: the media controller is told each line
-/// (`mediaDescriptions`, every one receive-only until the camera or a share switches it with
-/// `UpdateMediaDescriptions`), the send bandwidth is seeded (`applyChannelParameters`), and
-/// `ScreenViewer` joins the modalities. A join that declared only `Audio` had every video line
-/// refused (port 0, live 2026-11-20), and a later `UpdateMediaDescriptions` was then "Invalid
-/// MediaDescriptions" (400, 1047). An audio-only offer is left as it is.
+/// A meeting join's invitation. Only when `modalities` name `ScreenViewer` (the caller's opt-in,
+/// `KELMA_MEETING_VIDEO_DESCRIBE=1` in kelma) are the video lines of `offer` declared, as the web
+/// client and mautrix-teams (`calls.go` `videoMedia`) join: the media controller is told each
+/// send-capable line (`mediaDescriptions`, receive-only until the camera or a share switches it
+/// with `UpdateMediaDescriptions`) and the send bandwidth is seeded (`applyChannelParameters`).
+/// Otherwise the join is the one that kept audio up live: a join declaring every video mid
+/// `recvonly` (1-11, the receive-only gallery included) was ended within 1.5 s with 410, 301999
+/// "InvalidFinalAnswerMediaDescriptions" (live 2026-11-20). An offer without video lines joins
+/// with the other modalities alone.
 fn meeting_invitation(s: &CallSession, offer: &SdpBlob, modalities: &[Modality]) -> Value {
-    let mids = offer
-        .decode()
-        .map(|sdp| crate::media::sdp::video_mids(&sdp))
-        .unwrap_or_default();
-    if mids.is_empty() {
-        return call_invitation(s, offer, modalities, false);
+    let sdp = offer.decode().unwrap_or_default();
+    let describe = modalities.contains(&Modality::ScreenViewer);
+    if !describe || crate::media::sdp::video_mids(&sdp).is_empty() {
+        let plain: Vec<_> = modalities
+            .iter()
+            .copied()
+            .filter(|m| *m != Modality::ScreenViewer)
+            .collect();
+        return call_invitation(s, offer, &plain, false);
     }
-    let mut modalities = modalities.to_vec();
-    if !modalities.contains(&Modality::ScreenViewer) {
-        modalities.push(Modality::ScreenViewer);
-    }
-    let mut inv = call_invitation(s, offer, &modalities, false);
+    let mut inv = call_invitation(s, offer, modalities, false);
     let media = &mut inv["mediaContent"];
     media["mediaDescriptions"] = json!({
-        "descriptions": mids
-            .iter()
-            .map(|mid| MediaDescription::receive_only(mid.clone()).wire())
+        "descriptions": crate::media::sdp::send_capable_video_mids(&sdp)
+            .into_iter()
+            .map(|mid| MediaDescription::receive_only(mid).wire())
             .collect::<Vec<_>>(),
         "requestId": JOIN_REQUEST_ID,
     });

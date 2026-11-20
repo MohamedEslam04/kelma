@@ -561,12 +561,28 @@ What kelma does (`calling::signaling::{roster, video}`, `calling::media`,
 - A join that offers video lines is laid out as the web client's (camera mid 1, gallery 2-10,
   sharing mid 11; `KELMA_MEETING_VIDEO_LAYOUT=sharing-second` puts the sharing line at mid 2,
   kelma's first layout), every video line states `a=x-signaling-fb:* x-message app send:src
-  recv:src,vc` and an `a=x-ssrc-range` (`1-1` when it sends nothing), and the join declares the
-  lines as the web client and mautrix-teams (`calls.go` `videoMedia`) do: `callModalities`
-  gains `ScreenViewer`, `mediaContent` gains `mediaDescriptions` (every video mid `recvonly`,
-  `requestId` 1) and `applyChannelParameters` (`sendSideBWSeed`). A join that declared only
-  `Audio` had every video line answered with port 0 (live 2026-11-20). Every later
-  `UpdateMediaDescriptions` lists all our live video lines with a call-wide `requestId`, and a
+  recv:src,vc` and an `a=x-ssrc-range` (`1-1` when it sends nothing). The join declares
+  `callModalities: ["Audio"]` and no `mediaDescriptions`: a join that declared only `Audio` kept
+  audio up but had every video line answered with port 0, and a join that declared the lines
+  (`ScreenViewer`, `mediaDescriptions` naming every video mid 1-11 `recvonly`, `requestId` 1,
+  `applyChannelParameters` `sendSideBWSeed`) was taken (201) and ended within 1.5 s by a
+  `conversationEnd` and `callEnd` of 410, subCode 301999, "InvalidFinalAnswerMediaDescriptions"
+  (both live 2026-11-20, the second on `b1d38a7`; the offer had 13 lines, data at mid 12).
+- UNVERIFIED, opt-in with `KELMA_MEETING_VIDEO_DESCRIBE=1`: the join names `ScreenViewer` and
+  declares only its send-capable video lines (`sendrecv`/`sendonly` in the offer: camera mid 1,
+  sharing mid 11), each `recvonly`, plus the bandwidth seed; a receive-only gallery line is never
+  named, and with no send-capable line the list is empty. Why: the web client's captured join
+  names mids 1-6 and 11, exactly the lines its SDP offers `sendrecv`, and never its `recvonly`
+  7-10 (mautrix-teams openapi `TeamsSdp`, `MediaDescriptions` "the send-capable m-lines");
+  rusty-teams joins with `descriptions: []`; mautrix-teams names every video mid, but offers
+  every video line `sendrecv`. kelma's refused join named nine `recvonly` gallery lines. Certain:
+  the phrase names the join's media descriptions, the only body change. Guessed: that the
+  receive-only lines are what made them invalid. Not yet run live: the new offer (layout,
+  `x-signaling-fb`, `1-1` ranges, all from the same commit) joined without descriptions; the last
+  good join had kelma's earlier offer.
+- Every later `UpdateMediaDescriptions` lists all our live video lines with a call-wide
+  `requestId` (UNVERIFIED: the web client's updates name only its send-capable mids 1-6 and 11,
+  so naming a live receive-only gallery line may be refused as the join was), and a
   line the media server answered with port 0 is never named: Share and Camera stay disabled
   ("Sharing/Video isn't available in this meeting"), since an update naming a refused line was
   400 (1047) and then ended the call (410).
