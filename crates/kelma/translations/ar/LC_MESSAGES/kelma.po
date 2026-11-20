@@ -14,6 +14,497 @@ msgctxt "text direction"
 msgid "ltr"
 msgstr "rtl"
 
+# Strings added with the UX pack, call settings, Calls page, Files tabs and Settings gaps.
+
+msgid "1 line"
+msgstr "سطر واحد"
+
+msgid "10 seconds"
+msgstr "10 ثوانٍ"
+
+msgid "20 seconds"
+msgstr "20 ثانية"
+
+msgid "30 minutes"
+msgstr "30 دقيقة"
+
+msgid "30 seconds"
+msgstr "30 ثانية"
+
+msgid "4 hours"
+msgstr "4 ساعات"
+
+msgid "45 seconds"
+msgstr "45 ثانية"
+
+msgid "A number"
+msgstr "رقم"
+
+msgid "A person"
+msgstr "شخص"
+
+msgid "Add an app tab"
+msgstr "إضافة تبويب تطبيق"
+
+msgid "Add to dictionary"
+msgstr "إضافة إلى القاموس"
+
+msgid "Always"
+msgstr "دائمًا"
+
+msgid "An IANA name such as Africa/Cairo. Leave it empty to follow the system. Chat times, the calendar, OneDrive and Store dates use it. A name that is not a time zone is ignored and the system zone is used."
+msgstr "اسم IANA مثل Africa/Cairo. اتركه فارغًا لاتباع النظام. تستخدمه أوقات الدردشة والتقويم وتواريخ OneDrive والمتجر. الاسم الذي ليس منطقة زمنية يُتجاهل وتُستخدم منطقة النظام."
+
+msgid "App"
+msgstr "تطبيق"
+
+msgid "Ask about call quality after calls"
+msgstr "السؤال عن جودة المكالمة بعد المكالمات"
+
+msgid "Attach file"
+msgstr "إرفاق ملف"
+
+msgid "Call actions"
+msgstr "إجراءات المكالمة"
+
+msgid "Call forwarding"
+msgstr "تحويل المكالمات"
+
+msgid "Change profile photo"
+msgstr "تغيير صورة الملف الشخصي"
+
+msgid "Check spelling"
+msgstr "التدقيق الإملائي"
+
+msgid "Chime"
+msgstr "جرس"
+
+msgid "Choose this first: the status you pick lasts that long."
+msgstr "اختر هذا أولاً: تستمر الحالة التي تختارها طوال هذه المدة."
+
+msgid "Clear message after"
+msgstr "مسح الرسالة بعد"
+
+msgid "Close Immersive Reader"
+msgstr "إغلاق القارئ الشامل"
+
+msgid "Continue"
+msgstr "متابعة"
+
+msgid "Copy name"
+msgstr "نسخ الاسم"
+
+msgid "Copy number"
+msgstr "نسخ الرقم"
+
+msgid "Custom"
+msgstr "مخصص"
+
+msgid "Delete this file?"
+msgstr "هل تريد حذف هذا الملف؟"
+
+msgid "Delete voicemail from {}"
+msgstr "حذف البريد الصوتي من {}"
+
+msgid "Delivered as usual"
+msgstr "تُسلَّم كالمعتاد"
+
+msgid "Don't forward"
+msgstr "عدم التحويل"
+
+msgid "Don't schedule"
+msgstr "عدم الجدولة"
+
+msgid "Download"
+msgstr "تنزيل"
+
+msgid "Earlier {}"
+msgstr "{} السابق"
+
+msgid "Excel workbook"
+msgstr "مصنف Excel"
+
+msgid "Favorite"
+msgstr "إضافة إلى المفضلة"
+
+msgid "File actions"
+msgstr "إجراءات الملف"
+
+msgid "Forward my calls"
+msgstr "تحويل مكالماتي"
+
+msgid "Go back"
+msgstr "رجوع"
+
+msgid "Go forward"
+msgstr "تقدم"
+
+msgid "Help"
+msgstr "تعليمات"
+
+msgid "If unanswered"
+msgstr "إذا لم يتم الرد"
+
+msgid "Immersive Reader"
+msgstr "القارئ الشامل"
+
+msgid "Important"
+msgstr "مهمة"
+
+msgid "Last read"
+msgstr "آخر قراءة"
+
+msgid "Last read opens at the first message you have not read, with the New messages line."
+msgstr "يفتح «آخر قراءة» على أول رسالة لم تقرأها، مع سطر «رسائل جديدة»."
+
+msgid "Later {}"
+msgstr "{} التالي"
+
+msgid "Line focus: off"
+msgstr "تركيز السطر: إيقاف"
+
+msgid "Link previews"
+msgstr "معاينات الارتباطات"
+
+msgid "Marked IMPORTANT! for the recipients"
+msgstr "تظهر للمستلمين بعلامة «مهم!»"
+
+msgid "Misspelled: {}"
+msgstr "خطأ إملائي: {}"
+
+msgid "More actions for {}"
+msgstr "مزيد من الإجراءات لـ {}"
+
+msgid "More chat options"
+msgstr "مزيد من خيارات الدردشة"
+
+msgid "More options"
+msgstr "مزيد من الخيارات"
+
+msgid "More options for {}"
+msgstr "مزيد من الخيارات لـ {}"
+
+msgid "Never"
+msgstr "أبدًا"
+
+msgid "New document"
+msgstr "مستند جديد"
+
+msgid "New folder"
+msgstr "مجلد جديد"
+
+msgid "Newest message"
+msgstr "أحدث رسالة"
+
+msgid "No banners for as long as you choose. Until tomorrow means 8:00 the next morning."
+msgstr "لا إشعارات منبثقة طوال المدة التي تختارها. «حتى الغد» تعني الساعة 8:00 من صباح اليوم التالي."
+
+msgid "No installed app has a channel tab."
+msgstr "لا يوجد تطبيق مثبّت له تبويب قناة."
+
+msgid "No suggestions"
+msgstr "لا توجد اقتراحات"
+
+msgid "Off: Enter starts a new line and Ctrl+Enter sends."
+msgstr "عند الإيقاف: يبدأ Enter سطرًا جديدًا ويرسل Ctrl+Enter."
+
+msgid "Open"
+msgstr "فتح"
+
+msgid "Open in Loop"
+msgstr "فتح في Loop"
+
+msgid "Open in SharePoint"
+msgstr "فتح في SharePoint"
+
+msgid "Open in {}"
+msgstr "فتح في {}"
+
+msgid "Open link"
+msgstr "فتح الارتباط"
+
+msgid "Open {} in Loop"
+msgstr "فتح {} في Loop"
+
+msgid "Opening a chat"
+msgstr "فتح دردشة"
+
+msgid "Opens in the browser"
+msgstr "يفتح في المتصفح"
+
+msgid "Pause notifications until then"
+msgstr "إيقاف الإشعارات مؤقتًا حتى ذلك الحين"
+
+msgid "Pause until"
+msgstr "إيقاف مؤقت حتى"
+
+msgid "Paused"
+msgstr "متوقفة مؤقتًا"
+
+msgid "People see when you have read their message. This is the same setting as in Privacy."
+msgstr "يرى الأشخاص متى قرأت رسالتهم. هذا هو نفس الإعداد الموجود في «الخصوصية»."
+
+msgid "Pick a time in the future"
+msgstr "اختر وقتًا في المستقبل"
+
+msgid "Pin"
+msgstr "تثبيت"
+
+msgid "Play ringtone"
+msgstr "تشغيل نغمة الرنين"
+
+msgid "Pop out chat"
+msgstr "فتح الدردشة في نافذة منفصلة"
+
+msgid "PowerPoint presentation"
+msgstr "عرض تقديمي PowerPoint"
+
+msgid "Press Enter to send"
+msgstr "اضغط Enter للإرسال"
+
+msgid "Privacy and previews"
+msgstr "الخصوصية والمعاينات"
+
+msgid "Profile notice"
+msgstr "ملاحظة الملف الشخصي"
+
+msgid "Pulse"
+msgstr "نبض"
+
+msgid "Recipients are notified every 2 minutes for 20 minutes"
+msgstr "يتلقى المستلمون إشعارًا كل دقيقتين لمدة 20 دقيقة"
+
+msgid "Record a greeting"
+msgstr "تسجيل تحية"
+
+msgid "Recording or choosing a greeting needs the same Teams service, so it stays in Teams for now."
+msgstr "يحتاج تسجيل التحية أو اختيارها إلى خدمة Teams نفسها، لذا يبقى في Teams حاليًا."
+
+msgid "Remove chat history"
+msgstr "إزالة سجل الدردشة"
+
+msgid "Remove chat history?"
+msgstr "هل تريد إزالة سجل الدردشة؟"
+
+msgid "Remove from view"
+msgstr "إزالة من العرض"
+
+msgid "Remove photo"
+msgstr "إزالة الصورة"
+
+msgid "Remove tab"
+msgstr "إزالة التبويب"
+
+msgid "Remove tab?"
+msgstr "هل تريد إزالة التبويب؟"
+
+msgid "Remove urgent"
+msgstr "إزالة وضع «عاجل»"
+
+msgid "Rename tab"
+msgstr "إعادة تسمية التبويب"
+
+msgid "Report this message"
+msgstr "الإبلاغ عن هذه الرسالة"
+
+msgid "Reset at"
+msgstr "إعادة التعيين في"
+
+msgid "Reset status after"
+msgstr "إعادة تعيين الحالة بعد"
+
+msgid "Ring for"
+msgstr "مدة الرنين"
+
+msgid "Ringtone"
+msgstr "نغمة الرنين"
+
+msgid "Save"
+msgstr "حفظ"
+
+msgid "Schedule message"
+msgstr "جدولة الرسالة"
+
+msgid "Search chats, people and messages. Type / for commands."
+msgstr "ابحث في الدردشات والأشخاص والرسائل. اكتب / للأوامر."
+
+msgid "Search stickers"
+msgstr "البحث عن ملصقات"
+
+msgid "Search stickers (Enter)"
+msgstr "ابحث عن ملصقات (Enter)"
+
+msgid "Search suggestions"
+msgstr "اقتراحات البحث"
+
+msgid "Search, or type / for commands"
+msgstr "ابحث، أو اكتب / للأوامر"
+
+msgid "Select Send to deliver on {}"
+msgstr "حدد «إرسال» للتسليم في {}"
+
+msgid "Send options"
+msgstr "خيارات الإرسال"
+
+msgid "Send this message on"
+msgstr "إرسال هذه الرسالة في"
+
+msgid "Set delivery options"
+msgstr "تعيين خيارات التسليم"
+
+msgid "Settings and more"
+msgstr "الإعدادات والمزيد"
+
+msgid "Share"
+msgstr "مشاركة"
+
+msgid "Share screen"
+msgstr "مشاركة الشاشة"
+
+msgid "Share to Outlook"
+msgstr "مشاركة إلى Outlook"
+
+msgid "Show a card with the title and picture under messages that contain a link."
+msgstr "إظهار بطاقة بالعنوان والصورة أسفل الرسائل التي تحتوي على ارتباط."
+
+msgid "Show when people message me"
+msgstr "إظهارها عندما يراسلني الأشخاص"
+
+msgid "Soft"
+msgstr "هادئة"
+
+msgid "Sometimes"
+msgstr "أحيانًا"
+
+msgid "Spelling"
+msgstr "الإملاء"
+
+msgid "Standard"
+msgstr "عادية"
+
+msgid "Status"
+msgstr "الحالة"
+
+msgid "Stickers"
+msgstr "الملصقات"
+
+msgid "Tab actions"
+msgstr "إجراءات التبويب"
+
+msgid "Tab options for {}"
+msgstr "خيارات التبويب لـ {}"
+
+msgid "The messages so far will be removed for you only. The other people in the chat keep them."
+msgstr "ستُزال الرسائل حتى الآن لديك فقط. يحتفظ بها الأشخاص الآخرون في الدردشة."
+
+msgid "The sound kelma plays for an incoming call. It is kept on this computer."
+msgstr "الصوت الذي يشغّله kelma للمكالمة الواردة. يُحفظ على هذا الكمبيوتر."
+
+msgid "This week"
+msgstr "هذا الأسبوع"
+
+msgid "To voicemail"
+msgstr "إلى البريد الصوتي"
+
+msgid "Today"
+msgstr "اليوم"
+
+msgid "Underline misspelled words in the message box. Right-click a word for suggestions. Uses the English and Arabic Hunspell dictionaries installed on this computer."
+msgstr "وضع خط تحت الكلمات الخاطئة إملائيًا في مربع الرسالة. انقر بزر الماوس الأيمن على كلمة لعرض الاقتراحات. يستخدم قاموسَي Hunspell الإنجليزي والعربي المثبّتين على هذا الكمبيوتر."
+
+msgid "Unfavorite"
+msgstr "إزالة من المفضلة"
+
+msgid "Until tomorrow"
+msgstr "حتى الغد"
+
+msgid "Upload from this device"
+msgstr "تحميل من هذا الجهاز"
+
+msgid "Urgent"
+msgstr "عاجلة"
+
+msgid "Urgent message"
+msgstr "رسالة عاجلة"
+
+msgid "View and add participants"
+msgstr "عرض المشاركين وإضافتهم"
+
+msgid "Voicemail greeting"
+msgstr "تحية البريد الصوتي"
+
+msgid "Website"
+msgstr "موقع ويب"
+
+msgid "When I open a chat take me to"
+msgstr "عندما أفتح دردشة، انتقل بي إلى"
+
+msgid "Word document"
+msgstr "مستند Word"
+
+msgid "Writing"
+msgstr "الكتابة"
+
+msgid "You asked {} for control"
+msgstr "طلبت من {} التحكم"
+
+msgid "You're controlling {}'s screen"
+msgstr "أنت تتحكم في شاشة {}"
+
+msgid "Zoom"
+msgstr "التكبير"
+
+msgid "Zoom in"
+msgstr "تكبير"
+
+msgid "Zoom level"
+msgstr "مستوى التكبير"
+
+msgid "Zoom out"
+msgstr "تصغير"
+
+msgid "day"
+msgstr "اليوم"
+
+msgid "kelma can't call phone numbers yet."
+msgstr "لا يستطيع kelma الاتصال بأرقام الهواتف بعد."
+
+msgid "kelma can't call phone numbers yet. Use Teams or your phone for this call."
+msgstr "لا يستطيع kelma الاتصال بأرقام الهواتف بعد. استخدم Teams أو هاتفك لهذه المكالمة."
+
+msgid "kelma can't read or change these yet: the Teams service that keeps them is not documented for it. Change them in Teams."
+msgstr "لا يستطيع kelma قراءة هذه الإعدادات أو تغييرها بعد: خدمة Teams التي تحفظها غير موثّقة له. غيّرها في Teams."
+
+msgid "time"
+msgstr "الوقت"
+
+msgid "{} goes to the site's recycle bin."
+msgstr "سينتقل {} إلى سلة محذوفات الموقع."
+
+msgid "{} is controlling your screen"
+msgstr "{} يتحكم في شاشتك"
+
+msgid "{} is presenting"
+msgstr "{} يقدّم العرض"
+
+msgid "{} is removed for everyone in the channel. Its content stays where it is."
+msgstr "ستتم إزالة {} لكل من في القناة. يبقى محتواه في مكانه."
+
+msgid "{} lines"
+msgstr "{} أسطر"
+
+msgid "{} more in the call"
+msgstr "{} آخرون في المكالمة"
+
+msgid "{} wants control of your screen"
+msgstr "{} يريد التحكم في شاشتك"
+
+msgid "{}'s shared screen"
+msgstr "الشاشة المشتركة لـ {}"
+
+msgid "‹ Set delivery options"
+msgstr "› تعيين خيارات التسليم"
+
 msgid "Search chats"
 msgstr "البحث في الدردشات"
 
@@ -1294,7 +1785,7 @@ msgid "Snooze"
 msgstr "تأجيل"
 
 msgid "‹ Snooze"
-msgstr "‹ تأجيل"
+msgstr "› تأجيل"
 
 msgid "For 1 hour"
 msgstr "لمدة ساعة"
