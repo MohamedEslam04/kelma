@@ -1,7 +1,8 @@
 // Keyboard shortcuts like Teams (plan chat 5.9): the Ctrl+. dialog and the Rust helpers behind the
 // window-level chords (src/shortcuts.rs). The chords themselves are routed in app.slint.
 import { Theme } from "theme.slint";
-import { Msg } from "types.slint";
+import { ChatRow, Msg } from "types.slint";
+import { SectionRow } from "lists.slint";
 import { IconButton } from "widgets.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -10,6 +11,13 @@ export global ShortcutApi {
     pure callback action(string, bool, bool, bool) -> string;
     // the messages of the open chat -> the id of my newest editable one, or ""
     pure callback last-own([Msg]) -> string;
+    // Catch-up (src/catch_up.rs). Both take the chat list as drawn: Favorites, sections, Chats, channels.
+    // open chat, 0 = the chip / 1 = next / -1 = previous, the lists -> the unread chat to open, or ""
+    pure callback catch-up-target(string, int, [ChatRow], [SectionRow], [ChatRow], [ChatRow]) -> string;
+    // the lists -> [unread chats, of which mentions me]
+    pure callback catch-up-counts([ChatRow], [SectionRow], [ChatRow], [ChatRow]) -> [int];
+    // Shows a transient info notice.
+    callback notify(string);
 }
 
 component Row inherits Rectangle {
@@ -86,6 +94,8 @@ export component ShortcutsDialog inherits Rectangle {
                     Row { keys: "Ctrl+Alt+Z"; what: "Clear filters"; }
                     Row { keys: "Shift+Esc"; what: "Mark all as read"; }
                     Row { keys: "Alt+Q"; what: "Collapse all sections"; }
+                    Row { keys: "Alt+Down"; what: "Next unread chat or channel"; }
+                    Row { keys: "Alt+Up"; what: "Previous unread chat or channel"; }
                     Heading { text: "Messages"; height: 28px; vertical-alignment: bottom; }
                     Row { keys: "Alt+Shift+R"; what: "Focus the compose box"; }
                     Row { keys: "Alt+Shift+M"; what: "Focus the message pane"; }

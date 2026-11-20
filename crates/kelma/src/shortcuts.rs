@@ -42,6 +42,7 @@ pub fn wire(window: &AppWindow) {
     let api = window.global::<ShortcutApi>();
     api.on_action(|key: SharedString, ctrl, alt, shift| action(&key, ctrl, alt, shift).into());
     api.on_last_own(|msgs| last_own(&msgs).into());
+    crate::catch_up::attach(window);
 }
 
 #[cfg(test)]

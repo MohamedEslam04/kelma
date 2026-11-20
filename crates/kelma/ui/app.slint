@@ -176,6 +176,24 @@ export component AppWindow inherits Window {
     in-out property <bool> shortcuts-open: false;
     in-out property <bool> composer-expanded: false;
     in-out property <int> msg-focus-tick: 0;
+    // The first sync after start-up has finished; "While you were away" waits for it and shows once.
+    in property <bool> synced: false;
+    in-out property <bool> away-dismissed: false;
+    // Unread chats and the ones that mention me, from the chat list as drawn (src/catch_up.rs).
+    property <[int]> catch-counts: ShortcutApi.catch-up-counts(root.chats-favorites, ListStore.sections, root.chats-main, root.chats-channels);
+    property <int> catch-chats: root.catch-counts.length > 0 ? root.catch-counts[0] : 0;
+    // Catching up everything ends the card, so it does not come back with the next message.
+    changed catch-chats => { if root.synced && root.catch-chats == 0 { root.away-dismissed = true; } }
+    // Alt+Down / Alt+Up (1 / -1) and the chip (0) open an unread chat, or say there is none.
+    function catch-up(step: int) {
+        if ShortcutApi.catch-up-target(root.current-id, step, root.chats-favorites, ListStore.sections, root.chats-main, root.chats-channels) != "" {
+            root.view = "chat";
+            FindStore.quick-open = false;
+            root.select-chat(ShortcutApi.catch-up-target(root.current-id, step, root.chats-favorites, ListStore.sections, root.chats-main, root.chats-channels));
+        } else {
+            ShortcutApi.notify(@tr("You're all caught up"));
+        }
+    }
     // The composer's "Mark as important"; main.rs reads it when the message is sent.
     in-out property <bool> important: false;
     // "Set delivery options" › Urgent (the send button's menu); read the same way.
@@ -348,6 +366,11 @@ export component AppWindow inherits Window {
         capture-key-pressed(event) => {
             if (event.text == Key.Escape && event.modifiers.shift && root.view != "activity") {
                 root.mark-all-read();
+                return accept;
+            }
+            // Alt+Down / Alt+Up: the next / previous unread chat or channel in the list.
+            if (event.text == Key.DownArrow || event.text == Key.UpArrow) && event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift {
+                root.catch-up(event.text == Key.DownArrow ? 1 : -1);
                 return accept;
             }
             // Alt+Q: collapse every section of the chat list.
@@ -540,6 +563,11 @@ export component AppWindow inherits Window {
                 chats-channels: root.chats-channels;
                 teams: root.teams;
                 current-id: root.current-id;
+                catch-chats: root.catch-chats;
+                catch-mentions: root.catch-counts.length > 1 ? root.catch-counts[1] : 0;
+                away-visible: root.synced && !root.away-dismissed && root.catch-chats > 0;
+                catch-up => { root.catch-up(0); }
+                dismiss-away => { root.away-dismissed = true; }
                 mark-unread(id) => { root.mark-chat-unread(id); }
                 mark-all-read => { root.mark-all-read(); }
                 leave-chat(id) => { PeopleStore.leave-confirm = id; }

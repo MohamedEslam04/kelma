@@ -130,6 +130,35 @@ component ChatItem inherits Rectangle {
     }
 }
 
+// "While you were away": shown once after start-up when chats are unread (dismissed for the session).
+// The message counts are not known cheaply, so it counts chats.
+component AwayCard inherits Rectangle {
+    in property <string> summary;
+    callback begin();
+    callback dismiss();
+    height: lay.preferred-height;
+    border-radius: 6px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    accessible-role: groupbox;
+    accessible-label: @tr("While you were away");
+    lay := VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: @tr("While you were away"); color: Theme.fg; font-size: 12px * Theme.font-scale; font-weight: 700; vertical-alignment: center; horizontal-alignment: Theme.start-align; overflow: elide; horizontal-stretch: 1; }
+            IconButton { icon: @image-url("icons/close.svg"); size: 24px; tooltip: @tr("Dismiss"); clicked => { root.dismiss(); } }
+        }
+        Text { text: root.summary; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; wrap: word-wrap; horizontal-alignment: Theme.start-align; }
+        HorizontalLayout {
+            alignment: start;
+            Pill { label: @tr("Start catching up"); active: true; clicked => { root.begin(); } }
+        }
+    }
+}
+
 export component Sidebar inherits Rectangle {
     in property <string> view;
     in-out property <string> filter: "all";
@@ -138,6 +167,10 @@ export component Sidebar inherits Rectangle {
     in property <[ChatRow]> chats-channels;
     in property <[TeamRow]> teams;
     in property <string> current-id;
+    // Unread chats and how many of them mention me (the "Catch up" chip and the away card).
+    in property <int> catch-chats;
+    in property <int> catch-mentions;
+    in property <bool> away-visible;
 
     callback select-chat(string);
     callback select-channel(string, string);
@@ -152,8 +185,13 @@ export component Sidebar inherits Rectangle {
     callback quick-view(string);
     callback manage-teams();
     callback open-community(string);
+    // Opens the first unread chat (the chip and the away card's button).
+    callback catch-up();
+    callback dismiss-away();
 
     property <bool> communities-open: true;
+    property <string> away-summary: (root.catch-chats == 1 ? @tr("1 chat with new messages") : @tr("{} chats with new messages", root.catch-chats))
+        + (root.catch-mentions == 0 ? "" : ", " + (root.catch-mentions == 1 ? @tr("1 mention") : @tr("{} mentions", root.catch-mentions)));
 
     width: 320px;
     background: Theme.sidebar;
@@ -166,6 +204,12 @@ export component Sidebar inherits Rectangle {
             padding-right: 12px;
             Text { text: root.view == "chat" ? @tr("Chat") : @tr("Teams"); color: Theme.fg; font-size: 20px * Theme.font-scale; font-weight: 700; vertical-alignment: center; overflow: elide; }
             Rectangle { horizontal-stretch: 1; }
+            if root.view == "chat" && root.catch-chats > 0: Pill {
+                label: @tr("Catch up · {}", root.catch-chats);
+                active: root.catch-mentions > 0;
+                y: 15px;
+                clicked => { root.catch-up(); }
+            }
             if root.view == "teams": Pill {
                 label: @tr("Your teams and channels");
                 y: 15px;
@@ -202,6 +246,14 @@ export component Sidebar inherits Rectangle {
             }
         }
         Rectangle { height: 1px; background: Theme.border; }
+        if root.view == "chat" && root.away-visible: HorizontalLayout {
+            padding: 8px;
+            AwayCard {
+                summary: root.away-summary;
+                begin => { root.catch-up(); }
+                dismiss => { root.dismiss-away(); }
+            }
+        }
 
         if root.view == "chat": ScrollView {
             VerticalLayout {

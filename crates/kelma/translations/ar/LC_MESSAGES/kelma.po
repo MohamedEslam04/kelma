@@ -1404,3 +1404,29 @@ msgstr "لا توجد أوامر أو دردشات مطابقة"
 
 msgid "Command palette"
 msgstr "لوحة الأوامر"
+msgid "Catch up · {}"
+msgstr "اللحاق · {}"
+
+msgid "You're all caught up"
+msgstr "لا توجد رسائل غير مقروءة"
+
+msgid "While you were away"
+msgstr "أثناء غيابك"
+
+msgid "Start catching up"
+msgstr "ابدأ اللحاق"
+
+msgid "Dismiss"
+msgstr "تجاهل"
+
+msgid "1 chat with new messages"
+msgstr "محادثة واحدة بها رسائل جديدة"
+
+msgid "{} chats with new messages"
+msgstr "{} محادثات بها رسائل جديدة"
+
+msgid "1 mention"
+msgstr "إشارة واحدة"
+
+msgid "{} mentions"
+msgstr "{} إشارات"

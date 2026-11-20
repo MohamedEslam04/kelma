@@ -24,6 +24,7 @@ mod call;
 mod call_direct;
 #[cfg(feature = "calls")]
 mod call_waiting;
+mod catch_up;
 mod channels;
 mod chat_header;
 mod composer_apps;
