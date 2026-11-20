@@ -385,9 +385,10 @@ export component AppWindow inherits Window {
         changed palette-restore => { if root.view != "chat" { self.focus(); } }
         // The page's own input (the composer, the search box) is gone on the pages that have
         // none, which would leave the keyboard shortcuts, Alt+Left among them, without a focus.
+        // An open command palette keeps its own input (it hands the keys back when it closes).
         property <string> page: root.view;
         changed page => {
-            if self.page != "chat" && self.page != "teams" && self.page != "search" { self.focus(); }
+            if !PaletteStore.open && self.page != "chat" && self.page != "teams" && self.page != "search" { self.focus(); }
         }
         // Shift+Esc marks every chat read, wherever the focus is. The Activity view handles it
         // itself (marks every Activity item read).
