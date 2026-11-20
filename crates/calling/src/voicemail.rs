@@ -67,15 +67,13 @@ fn encode(s: &str) -> String {
     out
 }
 
-/// The `/me/messages` URL that lists voicemails, newest first after sorting, at most `top`.
-pub fn list_url(top: usize) -> String {
-    let classes = CLASSES
-        .iter()
-        .map(|c| format!("ep/value eq '{c}'"))
-        .collect::<Vec<_>>()
-        .join(" or ");
-    let filter =
-        format!("singleValueExtendedProperties/any(ep:ep/id eq 'String 0x001A' and ({classes}))");
+/// The `/me/messages` URL that lists the voicemails of one message `class`, at most `top`.
+/// Graph allows only `and` and `eq` inside an extended-property filter (`or` is refused with
+/// `ErrorInvalidUrlQueryFilter`, seen live), so each class is its own request.
+pub fn list_url(class: &str, top: usize) -> String {
+    let filter = format!(
+        "singleValueExtendedProperties/any(ep:ep/id eq 'String 0x001A' and ep/value eq '{class}')"
+    );
     let expand = format!("singleValueExtendedProperties($filter=id eq '{DURATION_PROP}')");
     format!(
         "{GRAPH}/me/messages?$filter={}&$expand={}&$select={}&$top={top}",
@@ -198,12 +196,27 @@ pub fn read_body(read: bool) -> Value {
     json!({ "isRead": read })
 }
 
-/// The newest `top` voicemails.
+/// The newest `top` voicemails, of every voicemail message class.
 pub async fn voicemails(client: &Client, top: usize) -> Result<Vec<Voicemail>> {
-    let body = client
-        .json("voicemail", reqwest::Method::GET, &list_url(top), None)
-        .await?;
-    Ok(parse_list(&body))
+    let mut all = Vec::new();
+    for class in CLASSES {
+        let body = client
+            .json(
+                "voicemail",
+                reqwest::Method::GET,
+                &list_url(class, top),
+                None,
+            )
+            .await?;
+        if let Some(v) = body.get("value").and_then(Value::as_array) {
+            all.extend(v.iter().cloned());
+        }
+    }
+    let mut list = parse_list(&json!({ "value": all }));
+    let mut seen = std::collections::HashSet::new();
+    list.retain(|v| seen.insert(v.id.clone()));
+    list.truncate(top);
+    Ok(list)
 }
 
 /// Downloads the recording of voicemail `id`: its file name and bytes.
@@ -247,12 +260,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_list_url_filters_on_both_voicemail_classes_and_expands_the_duration() {
-        let u = list_url(50);
+    fn the_list_url_filters_on_one_voicemail_class_and_expands_the_duration() {
+        let u = list_url("IPM.Note.Microsoft.Voicemail.UM", 50);
         assert!(u.starts_with("https://graph.microsoft.com/v1.0/me/messages?$filter="));
         assert!(!u.contains(' '), "spaces are encoded: {u}");
-        assert!(u.contains("IPM.Note.Microsoft.Voicemail.UM.CA"));
         assert!(u.contains("%27IPM.Note.Microsoft.Voicemail.UM%27"));
+        assert!(
+            !u.contains("%20or%20"),
+            "Graph refuses `or` in this filter: {u}"
+        );
         assert!(u.contains("String%200x001A"));
         assert!(u.contains("Integer%200x6801"));
         assert!(u.ends_with("&$top=50"));

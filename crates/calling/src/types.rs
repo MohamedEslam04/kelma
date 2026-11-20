@@ -10,6 +10,8 @@ pub enum Modality {
     Audio,
     Video,
     ScreenSharing,
+    /// Watching a shared screen (`ScreenViewer`), which a meeting join with video lines declares.
+    ScreenViewer,
 }
 
 /// A participant as the NGC service names one (`8:orgid:<oid>`, `8:live:.cid.<hex>`, `28:<bot>`).

@@ -15,9 +15,7 @@
 use super::share;
 use super::{EventSink, VideoSlot};
 use calling::media::MediaSession;
-use calling::signaling::video::{
-    MediaDescription, negotiation_tag, parse_sender_controls, video_modalities,
-};
+use calling::signaling::video::{negotiation_tag, parse_sender_controls, video_modalities};
 use calling::signaling::{CallSession, NgcClient};
 use calling::video::camera::{CameraCapture, CameraSettings, open};
 use calling::video::h264::{EncoderSettings, H264Encoder};
@@ -92,8 +90,6 @@ pub struct Camera {
     capture: Option<CameraCapture>,
     encoder: Option<JoinHandle<()>>,
     keyframes: Option<mpsc::UnboundedSender<()>>,
-    /// `requestId` of the last `UpdateMediaDescriptions`.
-    request_id: u64,
     /// What the UI was last told: (available, on).
     shown: Option<(bool, bool)>,
 }
@@ -190,11 +186,6 @@ impl Camera {
         }
     }
 
-    pub fn next_request_id(&mut self) -> u64 {
-        self.request_id += 1;
-        self.request_id
-    }
-
     /// The state to show, when it changed since last shown.
     pub fn changed(&mut self, available: bool) -> Option<(bool, bool)> {
         let now = (available, self.on());
@@ -202,39 +193,10 @@ impl Camera {
     }
 }
 
-/// Whether `media` has a main-video line and the call has the link to switch it with.
-pub fn available(media: &MediaSession, links: &Links, meeting: bool) -> bool {
-    media.video_sender(ROLE).is_some()
-        && if meeting {
-            share::update_link(links).is_some()
-        } else {
-            links.get("mediaRenegotiation").is_some()
-        }
-}
-
-/// Tells a meeting's media server that our camera sends (or stopped). The line stays `recvonly`
-/// when off, so the meeting's video can still come in on it (UNVERIFIED).
-pub async fn tell_meeting(
-    ngc: &NgcClient,
-    s: &CallSession,
-    links: &Links,
-    media: &MediaSession,
-    camera: &mut Camera,
-    on: bool,
-) -> anyhow::Result<()> {
-    let mid = media
-        .video_mid(ROLE)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("the video line has no mid"))?;
-    let url =
-        share::update_link(links).ok_or_else(|| anyhow::anyhow!("no updateMediaDescriptions"))?;
-    let mut with = links.clone();
-    with.0.insert("updateMediaDescriptions".into(), url);
-    let tag = negotiation_tag(s, ROLE, on);
-    let lines = [MediaDescription::line(mid, ROLE, on)];
-    ngc.update_media_descriptions(s, &with, &lines, &tag, camera.next_request_id())
-        .await?;
-    Ok(())
+/// Whether `media` has a main-video line and the call has the link to switch it with (in a
+/// meeting, a line the media server did not refuse; see [`share::available`]).
+pub async fn available(media: &MediaSession, links: &Links, meeting: bool) -> bool {
+    share::line_available(media, links, meeting, ROLE).await
 }
 
 /// The direction of our main-video line in a 1:1 re-offer: `sendrecv` while the camera is on,

@@ -14,6 +14,7 @@
 //! [`CallCmd::parse`] reads.
 
 use super::Engine;
+use super::call_feedback::{self, Feedback};
 use crate::data::Pixels;
 use crate::ui::UiHandle;
 #[cfg(any(test, feature = "calls"))]
@@ -29,6 +30,8 @@ mod bots;
 pub(crate) mod camera;
 #[cfg(feature = "calls")]
 pub(crate) mod live;
+#[cfg(feature = "calls")]
+pub(crate) mod remote_control;
 #[cfg(feature = "calls")]
 pub(crate) mod remote_video;
 #[cfg(feature = "calls")]
@@ -165,6 +168,17 @@ pub struct Person {
     pub video_slot: Option<usize>,
 }
 
+/// A bot's MRI prefix: the recorder and caption bots are `28:` participants.
+const BOT_PREFIX: &str = "28:";
+
+impl Person {
+    /// A bot (the Teams recorder or caption bot). Teams hides them, and so do the tiles, the
+    /// floating call, the speaker order and the counts.
+    pub fn is_bot(&self) -> bool {
+        self.mri.starts_with(BOT_PREFIX)
+    }
+}
+
 /// The profile photos `lookup` knows for these people, by MRI. A lookup may start a download, so
 /// each MRI is asked once.
 fn photos(people: &[Person], lookup: impl Fn(&str) -> Option<Pixels>) -> HashMap<String, Pixels> {
@@ -238,6 +252,13 @@ pub enum Event {
     /// Who else shares a screen now (their name), or nobody (empty).
     #[cfg(any(test, feature = "calls"))]
     Presenter(String),
+    /// Remote control of a shared screen: `mode` is "" | requested | incoming | controlling |
+    /// controlled, `name` the other person.
+    #[cfg(any(test, feature = "calls"))]
+    Control {
+        mode: &'static str,
+        name: String,
+    },
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.
@@ -275,9 +296,98 @@ pub enum Control {
         mri: String,
         name: String,
     },
+    /// Let a person in from the lobby (an MRI and their name).
+    Admit {
+        mri: String,
+        name: String,
+    },
+    /// Let everyone in the lobby in.
+    AdmitAll,
     /// Turn the camera on (the Camera portal may ask) or off.
     Camera(bool),
+    /// Remote control of a shared screen (`KELMA_REMOTE_CONTROL=1`).
+    Remote(ControlAction),
     Leave,
+}
+
+/// What the call window asks of remote control.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlAction {
+    /// "Request control" of the screen someone else shares.
+    Request,
+    /// Give control back, or withdraw our request.
+    Release,
+    /// "Give control › <person>" of the screen we share.
+    Give { mri: String, name: String },
+    /// Allow (`true`) or deny a viewer's request.
+    Answer(bool),
+    /// "Take back control".
+    TakeBack,
+    /// A key pressed in our window while someone controls our screen (Slint's key text).
+    LocalKey(String),
+    /// Our input on the presenter's picture while we control it.
+    Input(ControlInput),
+}
+
+/// The controller's input on the shared picture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlInput {
+    /// The pointer at a point of the picture, in ten-thousandths of its width and height.
+    Move { x: u16, y: u16 },
+    /// A button (Slint's numbering: 1 left, 2 right, 3 middle) pressed or released.
+    Button { button: u8, pressed: bool },
+    /// Scrolling, in pixels (positive: right, down).
+    Scroll { dx: i32, dy: i32 },
+    /// A key as Slint names it.
+    Key { text: String, pressed: bool },
+}
+
+impl ControlInput {
+    /// `CallStore.command("control-input", ...)`: `move <x> <y>` (0..1), `down <button>`,
+    /// `up <button>`, `scroll <dx> <dy>`, `key-down <text>`, `key-up <text>`.
+    pub fn parse(arg: &str) -> Option<ControlInput> {
+        let (kind, rest) = arg.split_once(' ').unwrap_or((arg, ""));
+        let two = || {
+            let (a, b) = rest.split_once(' ')?;
+            Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?))
+        };
+        let unit = |v: f32| (v.clamp(0.0, 1.0) * 10_000.0).round() as u16;
+        Some(match kind {
+            "move" => {
+                let (x, y) = two().filter(|(x, y)| x.is_finite() && y.is_finite())?;
+                ControlInput::Move {
+                    x: unit(x),
+                    y: unit(y),
+                }
+            }
+            "down" | "up" => ControlInput::Button {
+                button: rest.trim().parse().ok()?,
+                pressed: kind == "down",
+            },
+            "scroll" => {
+                let (dx, dy) = two().filter(|(x, y)| x.is_finite() && y.is_finite())?;
+                ControlInput::Scroll {
+                    dx: dx.round() as i32,
+                    dy: dy.round() as i32,
+                }
+            }
+            "key-down" | "key-up" if !rest.is_empty() => ControlInput::Key {
+                text: rest.to_owned(),
+                pressed: kind == "key-down",
+            },
+            _ => return None,
+        })
+    }
+}
+
+/// Whether calls offer remote control (`KELMA_REMOTE_CONTROL` set to anything but `0`). The
+/// wire format is a guess (`docs/protocol-calls.md`, Remote control), so it is opt-in.
+pub fn remote_control_wanted() -> bool {
+    remote_control_wanted_by(std::env::var_os("KELMA_REMOTE_CONTROL").as_deref())
+}
+
+fn remote_control_wanted_by(v: Option<&std::ffi::OsStr>) -> bool {
+    v.is_some_and(|v| !v.is_empty() && v != "0")
 }
 
 /// A person the call window's people search found (the invite box, the transfer dialog).
@@ -401,6 +511,11 @@ pub struct CallData {
     pub camera: bool,
     /// Who else shares a screen (their name), or empty.
     pub presenter: String,
+    /// Remote control is offered (`KELMA_REMOTE_CONTROL=1`).
+    pub remote_control: bool,
+    /// "" | requested | incoming | controlling | controlled, and the other person's name.
+    pub control_mode: String,
+    pub control_name: String,
     pub prejoin_mic: bool,
     pub prejoin_camera: bool,
     pub recording: bool,
@@ -411,6 +526,9 @@ pub struct CallData {
     pub notice: String,
     pub error: String,
     pub ended: String,
+    /// The call lasted long enough to ask how its quality was (the survey itself is sampled by
+    /// the UI, `call_feedback::wanted`). Only on the call-ended screen.
+    pub feedback_eligible: bool,
     pub chat_id: String,
     pub can_rejoin: bool,
     /// The call on the "On hold" bar (call waiting): the other call while this one is shown, or
@@ -419,6 +537,8 @@ pub struct CallData {
     pub people: Vec<Person>,
     pub in_call: usize,
     pub in_lobby: usize,
+    /// We may let people in from the lobby (we are not a plain attendee).
+    pub can_admit: bool,
     pub mics: Vec<String>,
     pub mic: usize,
     pub speakers: Vec<String>,
@@ -461,6 +581,10 @@ pub struct CallModel {
     pub prejoin_camera: bool,
     /// Who else shares a screen now, or empty.
     pub presenter: String,
+    /// Remote control: "" | requested | incoming | controlling | controlled.
+    pub control_mode: String,
+    /// The other person of remote control.
+    pub control_name: String,
     pub recording: bool,
     pub transcribing: bool,
     /// Live captions are on (asked for, and not refused).
@@ -629,6 +753,11 @@ impl CallModel {
             }
             #[cfg(any(test, feature = "calls"))]
             Event::Presenter(name) => return replace(&mut self.presenter, name),
+            #[cfg(any(test, feature = "calls"))]
+            Event::Control { mode, name } => {
+                let m = replace(&mut self.control_mode, mode.to_owned());
+                return replace(&mut self.control_name, name) || m;
+            }
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
                 self.end(reason, now);
@@ -648,6 +777,8 @@ impl CallModel {
         self.can_camera = false;
         self.camera = false;
         self.presenter.clear();
+        self.control_mode.clear();
+        self.control_name.clear();
         self.recording = false;
         self.transcribing = false;
         self.notice.clear();
@@ -756,6 +887,25 @@ impl CallModel {
             .then_some(Control::Camera(!self.camera))
     }
 
+    /// A remote-control command while a call runs. "Give control" takes the person's name from
+    /// the roster.
+    pub fn remote_control(&self, a: ControlAction) -> Option<Control> {
+        if !self.phase.active() {
+            return None;
+        }
+        let a = match a {
+            ControlAction::Give { mri, .. } => {
+                let p = self.roster.iter().find(|p| p.mri == mri && !p.me)?;
+                ControlAction::Give {
+                    name: p.name.clone(),
+                    mri,
+                }
+            }
+            a => a,
+        };
+        Some(Control::Remote(a))
+    }
+
     /// The hand toggle. Returns the new state while a call runs.
     pub fn toggle_hand(&mut self) -> Option<bool> {
         self.phase.active().then(|| {
@@ -816,6 +966,24 @@ impl CallModel {
         Some(c)
     }
 
+    /// The People panel's Admit: let one person in from the lobby. `None` unless a call runs and
+    /// the roster has them waiting.
+    pub fn admit(&mut self, mri: &str) -> Option<Control> {
+        if !self.phase.active() {
+            return None;
+        }
+        let p = self.roster.iter().find(|p| p.lobby && p.mri == mri)?;
+        Some(Control::Admit {
+            mri: p.mri.clone(),
+            name: p.name.clone(),
+        })
+    }
+
+    /// "Admit all": `None` unless a call runs and somebody waits in the lobby.
+    pub fn admit_all(&mut self) -> Option<Control> {
+        (self.phase.active() && self.roster.iter().any(|p| p.lobby)).then_some(Control::AdmitAll)
+    }
+
     /// The transfer dialog's "Transfer now".
     pub fn transfer(&mut self, mri: &str) -> Option<Control> {
         self.pick(mri, |mri, name| Control::Transfer { mri, name })
@@ -845,7 +1013,12 @@ impl CallModel {
             (p, Some(t), _) if p.active() => now.saturating_duration_since(t),
             _ => Duration::ZERO,
         };
-        let mut people = self.roster.clone();
+        let mut people: Vec<Person> = self
+            .roster
+            .iter()
+            .filter(|p| !p.is_bot())
+            .cloned()
+            .collect();
         for p in people.iter_mut().filter(|p| p.me) {
             p.muted = self.muted;
             p.hand = self.hand;
@@ -853,6 +1026,7 @@ impl CallModel {
         // In the call first, the lobby after; each in roster order.
         people.sort_by_key(|p| p.lobby);
         let in_lobby = people.iter().filter(|p| p.lobby).count();
+        let can_admit = self.phase.active() && people.iter().any(|p| p.me && p.role != "attendee");
         CallData {
             phase: self.phase.name(),
             kind: self.kind.name(),
@@ -870,6 +1044,9 @@ impl CallModel {
             } else {
                 String::new()
             },
+            remote_control: remote_control_wanted(),
+            control_mode: self.control_mode.clone(),
+            control_name: self.control_name.clone(),
             prejoin_mic: self.mic_on,
             prejoin_camera: self.prejoin_camera,
             recording: self.recording,
@@ -879,6 +1056,8 @@ impl CallModel {
             notice: self.notice.clone(),
             error: self.error.clone(),
             ended: self.ended.clone(),
+            feedback_eligible: self.phase == Phase::Ended
+                && self.duration.is_some_and(call_feedback::long_enough),
             chat_id: self.chat_id.clone(),
             can_rejoin: self.target.is_some(),
             held_name: if self.held
@@ -891,6 +1070,7 @@ impl CallModel {
             },
             in_call: people.len() - in_lobby,
             in_lobby,
+            can_admit,
             people,
             mics: self.devices.mics.iter().map(|d| d.name.clone()).collect(),
             mic: self.devices.mic,
@@ -993,6 +1173,8 @@ pub enum CallCmd {
     Leave,
     /// Close the call-ended screen.
     Close,
+    /// Send feedback on the call-ended screen's quality survey.
+    Feedback(Feedback),
     Rejoin,
     DismissError,
     /// More › Language and speech › Show live captions.
@@ -1006,6 +1188,12 @@ pub enum CallCmd {
     Resume,
     /// The "On hold" bar's End: ends the call on hold.
     EndHeld,
+    /// Remote control of a shared screen.
+    Control(ControlAction),
+    /// The People panel's Admit on a lobby row (an MRI).
+    Admit(String),
+    /// The People panel's "Admit all".
+    AdmitAll,
 }
 
 impl CallCmd {
@@ -1029,6 +1217,7 @@ impl CallCmd {
             "prejoin-camera" => CallCmd::PrejoinCamera(arg == "on"),
             "leave" => CallCmd::Leave,
             "close" => CallCmd::Close,
+            "feedback" => CallCmd::Feedback(Feedback::parse(arg)?),
             "rejoin" => CallCmd::Rejoin,
             "dismiss-error" => CallCmd::DismissError,
             "captions" => CallCmd::Captions(arg == "on"),
@@ -1037,6 +1226,21 @@ impl CallCmd {
             "dismiss-notice" => CallCmd::DismissNotice,
             "resume" => CallCmd::Resume,
             "end-held" => CallCmd::EndHeld,
+            "admit" if !arg.is_empty() => CallCmd::Admit(arg.into()),
+            "admit-all" => CallCmd::AdmitAll,
+            "control-request" => CallCmd::Control(ControlAction::Request),
+            "control-release" => CallCmd::Control(ControlAction::Release),
+            "control-give" if !arg.is_empty() => CallCmd::Control(ControlAction::Give {
+                mri: arg.into(),
+                name: String::new(),
+            }),
+            "control-allow" => CallCmd::Control(ControlAction::Answer(true)),
+            "control-deny" => CallCmd::Control(ControlAction::Answer(false)),
+            "control-take-back" => CallCmd::Control(ControlAction::TakeBack),
+            "control-key" if !arg.is_empty() => {
+                CallCmd::Control(ControlAction::LocalKey(arg.into()))
+            }
+            "control-input" => CallCmd::Control(ControlAction::Input(ControlInput::parse(arg)?)),
             _ => return None,
         })
     }
@@ -1065,6 +1269,13 @@ impl EventSink {
         {
             s.ui.call_video(slot, frame);
         }
+    }
+
+    /// A person's profile photo, when one is known ([`CallManager::set_photos`]).
+    #[cfg(feature = "calls")]
+    pub fn photo(&self, mri: &str) -> Option<Pixels> {
+        let lookup = self.shared.upgrade()?.photos.lock().unwrap().clone()?;
+        lookup(mri)
     }
 
     /// A sink attached to nothing (tests of a driver alone).
@@ -1101,6 +1312,8 @@ struct Shared {
     ticking: AtomicBool,
     ui: UiHandle,
     photos: Mutex<Option<PhotoLookup>>,
+    /// Where the call-quality ratings go; none: kelma's data dir (and nowhere in tests).
+    feedback_file: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl Shared {
@@ -1395,6 +1608,7 @@ impl CallManager {
                 ticking: AtomicBool::new(false),
                 ui,
                 photos: Mutex::new(None),
+                feedback_file: Mutex::new(None),
             }),
             #[cfg(feature = "calls")]
             hub,
@@ -1414,6 +1628,42 @@ impl CallManager {
     /// while connected, so a photo still downloading shows up on a later push.
     pub fn set_photos(&self, lookup: impl Fn(&str) -> Option<Pixels> + Send + Sync + 'static) {
         *self.shared.photos.lock().unwrap() = Some(Arc::new(lookup));
+    }
+
+    /// Makes the running call look `by` older, so a test need not wait for it to last.
+    #[cfg(test)]
+    pub fn backdate_connected(&self, by: Duration) {
+        let mut m = self.shared.model.lock().unwrap();
+        m.connected_at = m.connected_at.map(|t| t - by);
+    }
+
+    /// Keeps the call-quality ratings in `path` instead of kelma's data dir.
+    #[cfg(test)]
+    pub fn set_feedback_file(&self, path: std::path::PathBuf) {
+        *self.shared.feedback_file.lock().unwrap() = Some(path);
+    }
+
+    /// Keeps a call-quality rating (the survey's Send): one JSON line in the data dir, and the log.
+    /// Nothing is posted to Microsoft (its feedback endpoint is not known).
+    fn save_feedback(&self, f: &Feedback, kind: &str, call: Duration) {
+        let line = f.line(chrono::Utc::now(), kind, call);
+        tracing::info!(feedback = %line, "call quality feedback (kept locally, not sent)");
+        let path = self.shared.feedback_file.lock().unwrap().clone();
+        #[cfg(not(test))]
+        let path = path.or_else(|| {
+            Some(
+                session::Paths::new()
+                    .ok()?
+                    .data_dir
+                    .join(call_feedback::FILE),
+            )
+        });
+        if let Some(path) = path
+            && let Err(e) = call_feedback::append(&path, &line)
+        {
+            tracing::warn!(error = %e, "could not keep the call quality feedback");
+        }
+        self.shared.ui.info("Thanks for your feedback".into());
     }
 
     /// Replaces the driver (tests and the demo use [`FakeDriver`]).
@@ -1517,6 +1767,15 @@ impl CallManager {
                     m.close();
                     None
                 }
+                CallCmd::Feedback(f) => {
+                    let ended = m.phase == Phase::Ended;
+                    let (kind, call) = (m.kind.name(), m.duration.unwrap_or_default());
+                    drop(m);
+                    if ended {
+                        self.save_feedback(&f, kind, call);
+                    }
+                    return;
+                }
                 CallCmd::Rejoin => {
                     drop(m);
                     let devices = self.driver().devices();
@@ -1548,6 +1807,9 @@ impl CallManager {
                     }
                     return;
                 }
+                CallCmd::Control(a) => m.remote_control(a),
+                CallCmd::Admit(mri) => m.admit(&mri),
+                CallCmd::AdmitAll => m.admit_all(),
                 CallCmd::EndHeld => {
                     let shown_on_hold = m.held;
                     drop(m);
@@ -1961,6 +2223,9 @@ impl CallHandle for FakeHandle {
             Control::Hold(h) => format!("hold {}", if *h { "on" } else { "off" }),
             Control::AddPerson { mri, .. } => format!("add {mri}"),
             Control::Transfer { mri, .. } => format!("transfer {mri}"),
+            Control::Admit { mri, .. } => format!("admit {mri}"),
+            Control::AdmitAll => "admit all".into(),
+            Control::Remote(a) => format!("control {a:?}"),
             Control::Leave => "leave".into(),
         };
         self.log.lock().unwrap().push(line);
@@ -2229,6 +2494,98 @@ mod tests {
     }
 
     #[test]
+    fn remote_control_is_opt_in_and_its_commands_parse() {
+        assert!(!remote_control_wanted_by(None));
+        assert!(!remote_control_wanted_by(Some("0".as_ref())));
+        assert!(remote_control_wanted_by(Some("1".as_ref())));
+        assert_eq!(
+            CallCmd::parse("control-request", ""),
+            Some(CallCmd::Control(ControlAction::Request))
+        );
+        assert_eq!(
+            CallCmd::parse("control-allow", ""),
+            Some(CallCmd::Control(ControlAction::Answer(true)))
+        );
+        assert_eq!(CallCmd::parse("control-give", ""), None);
+        assert_eq!(
+            CallCmd::parse("control-input", "move 0.5 1.7"),
+            Some(CallCmd::Control(ControlAction::Input(ControlInput::Move {
+                x: 5000,
+                y: 10000
+            })))
+        );
+        assert_eq!(
+            ControlInput::parse("down 1"),
+            Some(ControlInput::Button {
+                button: 1,
+                pressed: true
+            })
+        );
+        assert_eq!(
+            ControlInput::parse("scroll 0 -40.4"),
+            Some(ControlInput::Scroll { dx: 0, dy: -40 })
+        );
+        assert_eq!(
+            ControlInput::parse("key-up  "),
+            Some(ControlInput::Key {
+                text: " ".into(),
+                pressed: false
+            }),
+            "the space key"
+        );
+        assert_eq!(ControlInput::parse("key-down"), None);
+        assert_eq!(ControlInput::parse("move 0.5"), None);
+        assert_eq!(ControlInput::parse("move NaN 0"), None);
+        assert_eq!(ControlInput::parse("jump"), None);
+    }
+
+    #[test]
+    fn give_control_names_the_person_and_the_banner_follows_the_driver() {
+        let now = Instant::now();
+        let mut m = CallModel::default();
+        assert_eq!(m.remote_control(ControlAction::TakeBack), None, "no call");
+        m.adopted(
+            CallKind::Direct {
+                peer_name: "Ada".into(),
+                chat_id: String::new(),
+            },
+            Devices::default(),
+            now,
+        );
+        m.apply(
+            Event::Roster(vec![Person {
+                mri: "8:a".into(),
+                name: "Ada".into(),
+                ..Default::default()
+            }]),
+            now,
+        );
+        let give = |mri: &str| ControlAction::Give {
+            mri: mri.into(),
+            name: String::new(),
+        };
+        assert_eq!(
+            m.remote_control(give("8:a")),
+            Some(Control::Remote(ControlAction::Give {
+                mri: "8:a".into(),
+                name: "Ada".into()
+            }))
+        );
+        assert_eq!(m.remote_control(give("8:nobody")), None);
+        assert!(m.apply(
+            Event::Control {
+                mode: "controlled",
+                name: "Ada".into()
+            },
+            now
+        ));
+        assert_eq!(m.data(now).control_mode, "controlled");
+        assert_eq!(m.data(now).control_name, "Ada");
+        m.leave(now);
+        assert_eq!(m.data(now).control_mode, "");
+    }
+
+    #[test]
     fn the_presenter_follows_the_driver_and_clears_when_the_call_ends() {
         let mut m = ready();
         m.joining().unwrap();
@@ -2340,6 +2697,119 @@ mod tests {
         assert!(!m.apply(Event::Recording(false), t0));
         assert!(m.apply(Event::Recording(true), t0));
         assert!(m.data(t0).recording);
+    }
+
+    /// A connected meeting with a roster of us (`role`), a guest in the lobby, Ada, and the
+    /// recorder bot.
+    fn lobby_meeting(role: &str, t0: Instant) -> CallModel {
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Connected, t0);
+        let p = |mri: &str, name: &str, lobby, me, role: &str| Person {
+            mri: mri.into(),
+            name: name.into(),
+            lobby,
+            me,
+            role: role.into(),
+            ..Default::default()
+        };
+        m.apply(
+            Event::Roster(vec![
+                p("8:orgid:me", "Me", false, true, role),
+                p("8:orgid:guest", "Guest", true, false, ""),
+                p("28:bot-1", "Unknown", false, false, ""),
+                p("8:orgid:ada", "Ada", false, false, "attendee"),
+            ]),
+            t0,
+        );
+        m
+    }
+
+    #[test]
+    fn admitting_names_a_person_waiting_in_the_lobby() {
+        let t0 = Instant::now();
+        let mut m = lobby_meeting("organizer", t0);
+        assert_eq!(
+            m.admit("8:orgid:guest"),
+            Some(Control::Admit {
+                mri: "8:orgid:guest".into(),
+                name: "Guest".into()
+            })
+        );
+        assert_eq!(m.admit("8:orgid:ada"), None, "Ada is already in the call");
+        assert_eq!(m.admit("8:orgid:nobody"), None);
+        assert_eq!(m.admit_all(), Some(Control::AdmitAll));
+        assert_eq!(
+            CallCmd::parse("admit", "8:orgid:guest"),
+            Some(CallCmd::Admit("8:orgid:guest".into()))
+        );
+        assert_eq!(CallCmd::parse("admit", ""), None);
+        assert_eq!(CallCmd::parse("admit-all", ""), Some(CallCmd::AdmitAll));
+        // Nobody waits any more, and a call that ended admits nobody.
+        m.apply(
+            Event::Roster(vec![Person {
+                me: true,
+                ..Default::default()
+            }]),
+            t0,
+        );
+        assert_eq!(m.admit_all(), None);
+        let mut m = lobby_meeting("organizer", t0);
+        m.leave(t0);
+        assert_eq!(m.admit("8:orgid:guest"), None);
+        assert_eq!(m.admit_all(), None);
+    }
+
+    #[test]
+    fn only_those_who_are_not_plain_attendees_may_admit() {
+        let t0 = Instant::now();
+        for (role, can) in [
+            ("organizer", true),
+            ("presenter", true),
+            ("", true),
+            ("attendee", false),
+        ] {
+            assert_eq!(lobby_meeting(role, t0).data(t0).can_admit, can, "{role:?}");
+        }
+    }
+
+    #[test]
+    fn bots_are_left_out_of_the_people_and_the_counts() {
+        let t0 = Instant::now();
+        let d = lobby_meeting("organizer", t0).data(t0);
+        let names: Vec<&str> = d.people.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Me", "Ada", "Guest"], "no recorder bot");
+        assert_eq!((d.in_call, d.in_lobby), (2, 1));
+        let bot = |mri: &str| Person {
+            mri: mri.into(),
+            ..Default::default()
+        };
+        assert!(bot("28:00000000-0000-0000-0000-0000000000d1").is_bot());
+        assert!(!bot("8:orgid:00000000-0000-0000-0000-0000000000d1").is_bot());
+        assert!(!bot("").is_bot(), "an unknown MRI is a person");
+    }
+
+    #[test]
+    fn a_new_prejoin_replaces_a_call_that_only_ended() {
+        let t0 = Instant::now();
+        let mut m = lobby_meeting("organizer", t0);
+        assert!(m.leave(t0));
+        assert_eq!(m.phase, Phase::Ended);
+        assert!(!m.ended.is_empty());
+        assert!(
+            m.prejoin(
+                meeting(),
+                JoinTarget::Link("next".into()),
+                "19:next".into(),
+                devices()
+            )
+            .is_ok(),
+            "an ended call does not block the next one"
+        );
+        assert_eq!(m.phase, Phase::PreJoin);
+        assert_eq!(m.target, Some(JoinTarget::Link("next".into())));
+        assert!(m.ended.is_empty() && m.error.is_empty() && m.roster.is_empty());
+        assert_eq!(m.my_name, "Me", "our name carries over");
     }
 
     #[test]

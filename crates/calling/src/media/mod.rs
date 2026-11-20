@@ -21,7 +21,7 @@
 pub mod sdp;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -89,6 +89,20 @@ pub struct MediaOptions {
     /// participant's camera each once subscribed (`applyChannelParameters`). 0 (the default):
     /// none. Only for our own offer (a meeting join); UNVERIFIED live.
     pub receive_slots: usize,
+    /// Where the sharing line goes among the receive slots (only with [`Self::receive_slots`]).
+    pub layout: VideoLayout,
+}
+
+/// The order of a meeting join's video lines, which fixes their mids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VideoLayout {
+    /// The web client's: the camera (mid 1), the gallery (2-10), the sharing line (11), as its
+    /// join and mautrix-teams' openapi (`TeamsSdp`, mid 11 before a renegotiation) show.
+    #[default]
+    WebClient,
+    /// The camera, the sharing line, then the gallery: kelma's first join layout (refused live
+    /// 2026-11-20 with the join that declared no video), kept to try against the other.
+    SharingSecond,
 }
 
 impl Default for MediaOptions {
@@ -99,6 +113,7 @@ impl Default for MediaOptions {
             video: Vec::new(),
             data_channel: false,
             receive_slots: 0,
+            layout: VideoLayout::default(),
         }
     }
 }
@@ -143,6 +158,27 @@ pub struct MediaSession {
     state: Arc<StateTx>,
     /// Whether the session has the data channel (and answers the `x-data` line with it).
     data: bool,
+    /// The data channel, for sending (remote control input, UNVERIFIED).
+    data_channel: Option<Arc<dyn DataChannel>>,
+    /// The Teams SDP that last settled the session (our answer, or the answer to our offer):
+    /// the m-lines a re-offer keeps ([`sdp::to_teams_reoffer`]).
+    negotiated: Mutex<Option<String>>,
+}
+
+/// Sends whole messages on the session's data channel. Cheap to clone.
+#[derive(Clone)]
+pub struct DataSender {
+    channel: Arc<dyn DataChannel>,
+}
+
+impl DataSender {
+    /// Queues one message; it does not wait for the peer.
+    pub async fn send(&self, message: &[u8]) -> Result<()> {
+        self.channel
+            .send(bytes::BytesMut::from(message))
+            .await
+            .map_err(media_err("data channel send"))
+    }
 }
 
 /// Sends our Opus packets, one 20 ms frame each. Cheap to clone into the audio task.
@@ -302,10 +338,16 @@ impl MediaSession {
             ssrc,
             payload_type: Arc::new(OnceCell::new()),
         };
+        // The web client's join puts the sharing line after the gallery (see `VideoLayout`).
+        let sharing_last = options.receive_slots > 0 && options.layout == VideoLayout::WebClient;
+        let after_slots = |role: VideoRole| sharing_last && role == VideoRole::ApplicationSharing;
         let mut video = Vec::new();
         for role in options.video.iter().copied() {
-            video.push(VideoSender::add_to(&pc, role).await?);
+            if !after_slots(role) {
+                video.push(VideoSender::add_to(&pc, role).await?);
+            }
         }
+        let mut data_channel = None;
         if options.data_channel {
             let channel = pc
                 .create_data_channel(
@@ -314,6 +356,7 @@ impl MediaSession {
                 )
                 .await
                 .map_err(media_err("data channel"))?;
+            data_channel = Some(Arc::clone(&channel));
             tokio::spawn(read_data_channel(channel, data_tx));
         }
         let mut slots = Vec::new();
@@ -328,6 +371,11 @@ impl MediaSession {
                     .map_err(media_err("add receive slot"))?,
             );
         }
+        for role in options.video.iter().copied() {
+            if after_slots(role) {
+                video.push(VideoSender::add_after_slots(&pc, role).await?);
+            }
+        }
         Ok((
             Self {
                 pc,
@@ -337,6 +385,8 @@ impl MediaSession {
                 gathered,
                 state,
                 data: options.data_channel,
+                data_channel,
+                negotiated: Mutex::new(None),
             },
             MediaEvents {
                 state: state_rx,
@@ -348,7 +398,8 @@ impl MediaSession {
         ))
     }
 
-    /// Our offer (for an outgoing call or a meeting join), with every candidate in it.
+    /// Our offer (for an outgoing call or a meeting join), with every candidate in it. Once the
+    /// session is negotiated it is a re-offer (hold, camera, share) with the negotiated m-lines.
     pub async fn create_offer(&self) -> Result<String> {
         let offer = self
             .pc
@@ -356,7 +407,34 @@ impl MediaSession {
             .await
             .map_err(media_err("create offer"))?;
         let local = self.set_local(offer).await?;
-        Ok(sdp::to_teams_offer(&local))
+        Ok(match self.negotiated() {
+            Some(negotiated) => sdp::to_teams_reoffer(&local, &negotiated),
+            None => sdp::to_teams_offer(&local),
+        })
+    }
+
+    /// Withdraws our offer when the other side refused it (`call/rejection` to a re-offer): the
+    /// session is back as the last negotiation left it, and can answer the other side's offer.
+    /// Nothing to do when no offer of ours is pending.
+    pub async fn rollback_offer(&self) -> Result<()> {
+        if self.pc.pending_local_description().await.is_none() {
+            return Ok(());
+        }
+        let rollback = RTCSessionDescription::rollback(None).map_err(media_err("rollback"))?;
+        self.pc
+            .set_local_description(rollback)
+            .await
+            .map_err(media_err("roll back offer"))
+    }
+
+    fn negotiated(&self) -> Option<String> {
+        self.negotiated.lock().ok()?.clone()
+    }
+
+    fn set_negotiated(&self, sdp: &str) {
+        if let Ok(mut n) = self.negotiated.lock() {
+            *n = Some(sdp.to_owned());
+        }
     }
 
     /// The video roles this session has lines for.
@@ -394,7 +472,9 @@ impl MediaSession {
         self.pc
             .set_remote_description(desc)
             .await
-            .map_err(media_err("set answer"))
+            .map_err(media_err("set answer"))?;
+        self.set_negotiated(answer);
+        Ok(())
     }
 
     /// Whether `offer` starts a new media session rather than renegotiating this one: its audio
@@ -440,9 +520,16 @@ impl MediaSession {
             .await
             .map_err(media_err("create answer"))?;
         let local = self.set_local(answer).await?;
-        Ok(sdp::to_teams_answer_with_data(
-            &local, offer, &roles, self.data,
-        ))
+        let answer = sdp::to_teams_answer_with_data(&local, offer, &roles, self.data);
+        self.set_negotiated(&answer);
+        Ok(answer)
+    }
+
+    /// A handle for sending on the data channel, when the session has one.
+    pub fn data_sender(&self) -> Option<DataSender> {
+        self.data_channel
+            .clone()
+            .map(|channel| DataSender { channel })
     }
 
     /// A handle for sending our Opus packets from another task.
@@ -462,6 +549,21 @@ impl MediaSession {
             }
         }
         None
+    }
+
+    /// [`Self::video_mid`] when the line is live in the negotiation in force: an answer that
+    /// refused it (port 0, as the media servers answer a line they will not carry) leaves `None`,
+    /// and so does a session not negotiated yet. Nothing may be switched on such a line.
+    pub async fn live_video_mid(&self, role: VideoRole) -> Option<String> {
+        let mid = self.video_mid(role).await?;
+        self.live_video_mids().contains(&mid).then_some(mid)
+    }
+
+    /// The mids of every video line the negotiation in force carries (port not 0), in order.
+    pub fn live_video_mids(&self) -> Vec<String> {
+        self.negotiated()
+            .map(|sdp| sdp::video_mids(&sdp))
+            .unwrap_or_default()
     }
 
     /// The sender for `role`'s video line, if the session has one.
@@ -540,6 +642,45 @@ impl VideoSender {
     /// A sendrecv video line for `role` on `pc`. The track's stream id is the role's label, which
     /// is how [`sdp::to_teams_offer`] labels the line.
     async fn add_to(pc: &Arc<dyn PeerConnection>, role: VideoRole) -> Result<Self> {
+        let (track, ssrc) = Self::track(role)?;
+        let rtp_sender = pc
+            .add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
+            .await
+            .map_err(media_err("add video track"))?;
+        Ok(VideoSender {
+            role,
+            track,
+            rtp_sender,
+            ssrc,
+        })
+    }
+
+    /// [`Self::add_to`] on a line of its own after the receive slots: `add_track` would take the
+    /// first slot (a video transceiver with no sender) instead.
+    async fn add_after_slots(pc: &Arc<dyn PeerConnection>, role: VideoRole) -> Result<Self> {
+        let (track, ssrc) = Self::track(role)?;
+        let init = RTCRtpTransceiverInit {
+            direction: RTCRtpTransceiverDirection::Sendrecv,
+            ..Default::default()
+        };
+        let transceiver = pc
+            .add_transceiver_from_track(Arc::clone(&track) as Arc<dyn TrackLocal>, Some(init))
+            .await
+            .map_err(media_err("add video line"))?;
+        let rtp_sender = transceiver
+            .sender()
+            .await
+            .map_err(media_err("video line sender"))?
+            .ok_or_else(|| Error::Media("video line has no sender".into()))?;
+        Ok(VideoSender {
+            role,
+            track,
+            rtp_sender,
+            ssrc,
+        })
+    }
+
+    fn track(role: VideoRole) -> Result<(Arc<TrackLocalStaticSample>, u32)> {
         let ssrc = rand::random::<u32>();
         let track = Arc::new(
             TrackLocalStaticSample::new(
@@ -561,16 +702,7 @@ impl VideoSender {
             )
             .map_err(media_err("video track"))?,
         );
-        let rtp_sender = pc
-            .add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
-            .await
-            .map_err(media_err("add video track"))?;
-        Ok(VideoSender {
-            role,
-            track,
-            rtp_sender,
-            ssrc,
-        })
+        Ok((track, ssrc))
     }
 
     pub fn role(&self) -> VideoRole {

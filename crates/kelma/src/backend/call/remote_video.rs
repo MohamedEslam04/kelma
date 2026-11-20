@@ -13,8 +13,8 @@
 
 use super::{EventSink, VideoSlot};
 use calling::Links;
-use calling::media::MediaSession;
 use calling::media::sdp::source_stream_ids;
+use calling::media::{MediaSession, VideoLayout};
 use calling::signaling::roster::Roster;
 use calling::signaling::video::{SCREEN_LIMITS, SourceRequest, TILE_LIMITS, plan_receive};
 use calling::signaling::{CallSession, NgcClient};
@@ -46,6 +46,20 @@ pub fn wanted_slots() -> usize {
         RECEIVE_SLOTS
     } else {
         0
+    }
+}
+
+/// The order of a meeting join's video lines: the web client's (camera, gallery, then the
+/// sharing line at mid 11), or kelma's first (the sharing line right after the camera) with
+/// `KELMA_MEETING_VIDEO_LAYOUT=sharing-second`, to try both against the live service.
+pub fn wanted_layout() -> VideoLayout {
+    layout_by(std::env::var_os("KELMA_MEETING_VIDEO_LAYOUT").as_deref())
+}
+
+fn layout_by(v: Option<&std::ffi::OsStr>) -> VideoLayout {
+    match v.and_then(|v| v.to_str()) {
+        Some("sharing-second") => VideoLayout::SharingSecond,
+        _ => VideoLayout::WebClient,
     }
 }
 
@@ -293,11 +307,11 @@ impl RemoteVideo {
     }
 
     /// The presenter's name when it changed since last told: someone else in the roster shares
-    /// a screen (empty: nobody).
+    /// a screen, or the roster names them the content-sharing session's presenter
+    /// (`contentSharing`, UNVERIFIED) before their stream sends (empty: nobody).
     pub fn presenter_changed(&mut self, roster: &Roster, me: &str) -> Option<String> {
-        let name = roster
-            .screen_sharer(me)
-            .and_then(|(mri, _)| roster.get(&mri).map(|p| p.display_name.clone()))
+        let name = presenter_mri(roster, me)
+            .and_then(|mri| roster.get(&mri).map(|p| p.display_name.clone()))
             .map(|n| {
                 if n.is_empty() {
                     "Someone".to_owned()
@@ -311,6 +325,14 @@ impl RemoteVideo {
             name
         })
     }
+}
+
+/// Who else presents: the one whose share sends, else the content-sharing presenter.
+pub fn presenter_mri(roster: &Roster, me: &str) -> Option<String> {
+    roster
+        .screen_sharer(me)
+        .map(|(mri, _)| mri)
+        .or_else(|| roster.content_presenter(me))
 }
 
 fn lock(routes: &Mutex<Routes>) -> std::sync::MutexGuard<'_, Routes> {
@@ -352,6 +374,16 @@ async fn forward_frames(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_web_client_layout_is_the_default_and_the_other_is_one_switch_away() {
+        assert_eq!(layout_by(None), VideoLayout::WebClient);
+        assert_eq!(layout_by(Some("web".as_ref())), VideoLayout::WebClient);
+        assert_eq!(
+            layout_by(Some("sharing-second".as_ref())),
+            VideoLayout::SharingSecond
+        );
+    }
     use serde_json::json;
 
     fn roster(people: serde_json::Value) -> Roster {
@@ -451,6 +483,18 @@ mod tests {
         assert_eq!(v.presenter_changed(&r, "8:me"), None);
         let nobody = roster(json!({"8:me": person("Me", None, None)}));
         assert_eq!(v.presenter_changed(&nobody, "8:me").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn the_content_sharing_presenter_is_named_before_their_stream_sends() {
+        let mut v = with_lines(0, true);
+        let r = roster(json!({
+            "8:me": person("Me", None, None),
+            "8:a": {"version": 1, "state": "active", "details": {"displayName": "Ada"},
+                    "contentSharing": {}, "endpoints": {"ep": {"call": {}}}},
+        }));
+        assert_eq!(presenter_mri(&r, "8:me").as_deref(), Some("8:a"));
+        assert_eq!(v.presenter_changed(&r, "8:me").as_deref(), Some("Ada"));
     }
 
     #[test]

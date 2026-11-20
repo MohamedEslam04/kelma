@@ -904,6 +904,7 @@ dependencies = [
 name = "calling"
 version = "0.0.0"
 dependencies = [
+ "ab_glyph",
  "ashpd",
  "async-trait",
  "base64 0.23.1",
@@ -920,6 +921,7 @@ dependencies = [
  "rtc",
  "serde",
  "serde_json",
+ "smithay-client-toolkit 0.20.0",
  "sonora",
  "teams-proto",
  "thiserror 2.0.21",

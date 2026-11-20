@@ -160,6 +160,12 @@ async fn device_code(ui: &UiHandle, cfg: &session::Config) -> anyhow::Result<Cli
 
 /// Twemoji (COLRv0) — Slint's renderer draws COLRv0/CBDT color glyphs but not COLRv1, which is
 /// what most distributions ship as their emoji font. CC-BY 4.0, see ui/fonts/README.md.
+/// kelma's desktop-file id for the desktop portal (the Flatpak's app id): the ScreenCast and
+/// RemoteDesktop dialogs show its name instead of the terminal's. The portal takes reverse-DNS
+/// ids only, so the plain `kelma` window class cannot be it.
+#[cfg(feature = "calls")]
+const PORTAL_APP_ID: &str = "io.github.mohamedeslam04.kelma";
+
 const EMOJI_FONT: &[u8] = include_bytes!("../ui/fonts/TwemojiMozilla.ttf");
 
 /// Finds a system font file for a fontconfig pattern.
@@ -251,6 +257,9 @@ fn main() -> anyhow::Result<()> {
         .select()?;
     // Inside Flatpak the desktop file is named after the app id, so the window must use it.
     let _ = slint::set_xdg_app_id(std::env::var("FLATPAK_ID").unwrap_or_else(|_| "kelma".into()));
+    // The ScreenCast, RemoteDesktop and Camera dialogs name kelma, not the terminal it ran from.
+    #[cfg(feature = "calls")]
+    calling::video::portal::set_host_app_id(PORTAL_APP_ID);
 
     let window = AppWindow::new()?;
     composer::wire(&window);
@@ -535,4 +544,20 @@ fn main() -> anyhow::Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(300));
     rt.shutdown_timeout(std::time::Duration::from_millis(500));
     Ok(())
+}
+
+#[cfg(all(test, feature = "calls"))]
+mod portal_id_tests {
+    use super::PORTAL_APP_ID;
+
+    #[test]
+    fn the_portal_id_is_the_flatpaks_reverse_dns_app_id() {
+        let manifest =
+            include_str!("../../../packaging/flatpak/io.github.mohamedeslam04.kelma.yml");
+        assert!(manifest.contains(&format!("app-id: {PORTAL_APP_ID}\n")));
+        assert!(
+            PORTAL_APP_ID.split('.').count() >= 2,
+            "the portal refuses `kelma`"
+        );
+    }
 }

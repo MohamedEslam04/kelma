@@ -10,9 +10,14 @@
 
 use std::process::Stdio;
 
+use std::sync::Arc;
+
 use ashpd::desktop::PersistMode;
 use ashpd::desktop::Session;
-use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
+use ashpd::desktop::remote_desktop::RemoteDesktop;
+use ashpd::desktop::screencast::{
+    CursorMode, IsScreencastSession, Screencast, SelectSourcesOptions, SourceType, Stream,
+};
 use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -59,7 +64,23 @@ pub struct ScreenCapture {
     pub size: (u32, u32),
     child: Child,
     reader: JoinHandle<()>,
-    session: Option<Session<Screencast>>,
+    session: Option<PortalSession>,
+}
+
+/// The portal session a capture runs in: ScreenCast alone, or a RemoteDesktop session that
+/// also lets [`super::remote_input::InputInjector`] drive the screen.
+pub(crate) enum PortalSession {
+    Cast(Session<Screencast>),
+    Remote(Arc<Session<RemoteDesktop>>),
+}
+
+impl PortalSession {
+    async fn close(&self) {
+        let _ = match self {
+            PortalSession::Cast(s) => s.close().await,
+            PortalSession::Remote(s) => s.close().await,
+        };
+    }
 }
 
 impl ScreenCapture {
@@ -74,7 +95,7 @@ impl ScreenCapture {
         self.reader.abort();
         let _ = self.child.kill().await;
         if let Some(session) = self.session.take() {
-            let _ = session.close().await;
+            session.close().await;
         }
     }
 }
@@ -86,34 +107,20 @@ impl Drop for ScreenCapture {
     }
 }
 
-fn portal_err(e: ashpd::Error) -> Error {
+pub(crate) fn portal_err(e: ashpd::Error) -> Error {
     Error::Media(format!("ScreenCast portal: {e}"))
 }
 
 /// Shows the desktop's picker and starts capturing what the user chose. `Ok(None)` when the user
 /// cancelled the dialog.
 pub async fn pick(kind: ShareKind, settings: CaptureSettings) -> Result<Option<ScreenCapture>> {
+    super::portal::ensure_registered().await;
     let proxy = Screencast::new().await.map_err(portal_err)?;
     let session = proxy
         .create_session(Default::default())
         .await
         .map_err(portal_err)?;
-    let sources = match kind {
-        ShareKind::Screen => SourceType::MONITOR,
-        ShareKind::Window => SourceType::WINDOW,
-        ShareKind::Any => SourceType::MONITOR | SourceType::WINDOW,
-    };
-    proxy
-        .select_sources(
-            &session,
-            SelectSourcesOptions::default()
-                .set_cursor_mode(CursorMode::EMBEDDED)
-                .set_sources(sources)
-                .set_multiple(false)
-                .set_persist_mode(PersistMode::DoNot),
-        )
-        .await
-        .map_err(portal_err)?;
+    select_sources(&proxy, &session, kind).await?;
     let streams = match proxy
         .start(&session, None, Default::default())
         .await
@@ -134,21 +141,74 @@ pub async fn pick(kind: ShareKind, settings: CaptureSettings) -> Result<Option<S
         let _ = session.close().await;
         return Err(Error::Media("the portal started no stream".into()));
     };
-    let node = stream.pipe_wire_node_id();
-    let source = stream
+    let mut capture = match capture_stream(&proxy, &session, stream, settings).await {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = session.close().await;
+            return Err(e);
+        }
+    };
+    capture.session = Some(PortalSession::Cast(session));
+    Ok(Some(capture))
+}
+
+/// Asks the portal for one screen or window (`kind`), the cursor drawn into the picture.
+pub(crate) async fn select_sources(
+    proxy: &Screencast,
+    session: &Session<impl IsScreencastSession>,
+    kind: ShareKind,
+) -> Result<()> {
+    let sources = match kind {
+        ShareKind::Screen => SourceType::MONITOR,
+        ShareKind::Window => SourceType::WINDOW,
+        ShareKind::Any => SourceType::MONITOR | SourceType::WINDOW,
+    };
+    proxy
+        .select_sources(
+            session,
+            SelectSourcesOptions::default()
+                .set_cursor_mode(CursorMode::EMBEDDED)
+                .set_sources(sources)
+                .set_multiple(false)
+                .set_persist_mode(PersistMode::DoNot),
+        )
+        .await
+        .map_err(portal_err)?;
+    Ok(())
+}
+
+/// The size the portal gave `stream`, or [`FALLBACK_SIZE`].
+pub(crate) fn stream_size(stream: &Stream) -> (u32, u32) {
+    stream
         .size()
         .and_then(|(w, h)| Some((u32::try_from(w).ok()?, u32::try_from(h).ok()?)))
         .filter(|(w, h)| *w > 0 && *h > 0)
-        .unwrap_or(FALLBACK_SIZE);
+        .unwrap_or(FALLBACK_SIZE)
+}
+
+/// Starts GStreamer on a stream the portal started; the caller attaches the session.
+pub(crate) async fn capture_stream(
+    proxy: &Screencast,
+    session: &Session<impl IsScreencastSession>,
+    stream: &Stream,
+    settings: CaptureSettings,
+) -> Result<ScreenCapture> {
+    let node = stream.pipe_wire_node_id();
+    let source = stream_size(stream);
     let fd = proxy
-        .open_pipe_wire_remote(&session, Default::default())
+        .open_pipe_wire_remote(session, Default::default())
         .await
         .map_err(portal_err)?;
     let size = fit_within(source, settings.max_size);
-    let mut capture = spawn_gstreamer(Stdio::from(fd), node, size, settings.fps)?;
-    capture.session = Some(session);
+    let capture = spawn_gstreamer(Stdio::from(fd), node, size, settings.fps)?;
     tracing::info!(node, ?source, ?size, "screen capture started");
-    Ok(Some(capture))
+    Ok(capture)
+}
+
+impl ScreenCapture {
+    pub(crate) fn attach(&mut self, session: PortalSession) {
+        self.session = Some(session);
+    }
 }
 
 /// The `gst-launch-1.0` arguments reading PipeWire node `node` through fd 0 as I420 frames of

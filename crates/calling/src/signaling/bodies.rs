@@ -6,6 +6,7 @@
 //! There is no `payload` envelope on the wire: each body below is the whole HTTP body.
 
 use super::CallSession;
+use super::video::{JOIN_REQUEST_ID, MediaDescription};
 use crate::error::{Error, Result};
 use crate::types::{Links, Modality, Participant, SdpBlob};
 use reqwest::Method;
@@ -20,6 +21,10 @@ pub const DIRECT_CLIENT_CAPABILITIES: u64 = 47150826;
 pub const CLIENT_CAPABILITIES: u64 = 9336554;
 /// `clientEndpointCapabilities` the web client names when it joins a meeting (work account).
 pub const MEETING_CLIENT_CAPABILITIES: u64 = 63928042;
+
+/// The send bandwidth a meeting join seeds, in bits a second (the web client seeds what it
+/// measured; mautrix-teams `calls.go` seeds 1.5 Mbit/s).
+const SEND_BANDWIDTH_SEED: u64 = 1_500_000;
 
 const CONVERSATION_LINK_NAMES: [&str; 9] = [
     "conversationEnd",
@@ -59,6 +64,7 @@ pub fn modality_name(m: Modality) -> &'static str {
         Modality::Audio => "Audio",
         Modality::Video => "Video",
         Modality::ScreenSharing => "ScreenSharer",
+        Modality::ScreenViewer => "ScreenViewer",
     }
 }
 
@@ -99,6 +105,41 @@ fn call_invitation(
         "pstnContent": {"emergencyCallCountry": "", "platformName": "kelma", "publicApiCall": false},
         "mediaContent": media_content(s, offer, direct),
     })
+}
+
+/// A meeting join's invitation with the video lines of `offer` declared, as the web client and
+/// mautrix-teams (`calls.go` `videoMedia`) join: the media controller is told each line
+/// (`mediaDescriptions`, every one receive-only until the camera or a share switches it with
+/// `UpdateMediaDescriptions`), the send bandwidth is seeded (`applyChannelParameters`), and
+/// `ScreenViewer` joins the modalities. A join that declared only `Audio` had every video line
+/// refused (port 0, live 2026-11-20), and a later `UpdateMediaDescriptions` was then "Invalid
+/// MediaDescriptions" (400, 1047). An audio-only offer is left as it is.
+fn meeting_invitation(s: &CallSession, offer: &SdpBlob, modalities: &[Modality]) -> Value {
+    let mids = offer
+        .decode()
+        .map(|sdp| crate::media::sdp::video_mids(&sdp))
+        .unwrap_or_default();
+    if mids.is_empty() {
+        return call_invitation(s, offer, modalities, false);
+    }
+    let mut modalities = modalities.to_vec();
+    if !modalities.contains(&Modality::ScreenViewer) {
+        modalities.push(Modality::ScreenViewer);
+    }
+    let mut inv = call_invitation(s, offer, &modalities, false);
+    let media = &mut inv["mediaContent"];
+    media["mediaDescriptions"] = json!({
+        "descriptions": mids
+            .iter()
+            .map(|mid| MediaDescription::receive_only(mid.clone()).wire())
+            .collect::<Vec<_>>(),
+        "requestId": JOIN_REQUEST_ID,
+    });
+    media["applyChannelParameters"] = json!({"multiChannelParameter": {
+        "mids": ["*"],
+        "mediaParameter": format!(r#"{{"sendSideBWSeed":{{"seedValueBitsPerSec":{SEND_BANDWIDTH_SEED}}}}}"#),
+    }});
+    inv
 }
 
 fn roster_request(s: &CallSession) -> Value {
@@ -183,7 +224,7 @@ pub fn join_meeting_body(
     b["clientEndpointCapabilities"] = json!(MEETING_CLIENT_CAPABILITIES);
     b["groupChat"] = json!({"threadId": meeting.thread_id, "messageId": "0"});
     b["meetingInfo"] = json!({"tenantId": meeting.tenant_id, "organizerId": meeting.organizer_id});
-    b["callInvitation"] = call_invitation(s, offer, modalities, false);
+    b["callInvitation"] = meeting_invitation(s, offer, modalities);
     b
 }
 
@@ -202,7 +243,7 @@ pub fn code_join_body(
     b["meetingData"] = meeting_data.clone();
     b["meetingPreferences"] = json!({"shouldResurrect": "resurrect"});
     if let Some((sdp, modalities)) = offer {
-        b["callInvitation"] = call_invitation(s, sdp, modalities, false);
+        b["callInvitation"] = meeting_invitation(s, sdp, modalities);
     }
     b
 }

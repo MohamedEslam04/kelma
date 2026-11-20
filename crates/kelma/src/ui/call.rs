@@ -2,8 +2,9 @@
 
 use super::{UiHandle, model};
 use crate::backend::call::{CallData, Found, Person, is_meeting_chat};
+use crate::backend::call_feedback::{self, Ask};
 use crate::data::{Pixels, initials};
-use crate::{AppWindow, CallCaption, CallFound, CallPerson, CallStore};
+use crate::{AppWindow, CallCaption, CallFound, CallPerson, CallStore, SettingsStore};
 use slint::{ComponentHandle, Image, SharedString};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -54,6 +55,22 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
         // Why a join was refused shows on the full window.
         s.set_minimized(false);
     }
+    // The quality survey is decided once, when the call ends; it goes with the ended screen.
+    if d.phase != "ended" {
+        s.set_feedback_open(false);
+    } else if s.get_phase() != "ended" {
+        let ask = Ask::from_slug(&w.global::<SettingsStore>().get_call_feedback());
+        let demo = crate::external::suppressed();
+        s.set_feedback_open(
+            d.feedback_eligible
+                && call_feedback::sampled(ask.unwrap_or_default(), call_feedback::roll(), demo),
+        );
+    }
+    if d.phase == "ended" && s.get_phase() != "ended" {
+        // The call just ended: its floating card has nothing left to show, so the ended screen
+        // takes its place (Rejoin, Close). Only on the change, so it can be shrunk again.
+        s.set_minimized(false);
+    }
     s.set_phase(d.phase.into());
     s.set_kind(d.kind.into());
     s.set_title(d.title.into());
@@ -75,6 +92,9 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     }
     s.set_presenter(d.presenter.into());
     follow_share(&s, was_shared);
+    s.set_remote_control(d.remote_control);
+    s.set_control_mode(d.control_mode.into());
+    s.set_control_name(d.control_name.into());
     s.set_prejoin_mic(d.prejoin_mic);
     s.set_prejoin_camera(d.prejoin_camera);
     s.set_recording(d.recording);
@@ -97,6 +117,7 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_held_name(d.held_name.into());
     s.set_in_call(int(d.in_call));
     s.set_in_lobby(int(d.in_lobby));
+    s.set_can_admit(d.can_admit);
     let images = photo_images(&photos);
     let (mini, more) = mini_people(&d.people);
     let mini_owner = video_owner(&mini);
@@ -169,6 +190,7 @@ fn photo_images(photos: &HashMap<String, Pixels>) -> HashMap<String, Image> {
 fn call_person(p: Person, images: &HashMap<String, Image>, video: bool) -> CallPerson {
     let photo = images.get(&p.mri);
     CallPerson {
+        id: p.mri.clone().into(),
         has_photo: photo.is_some(),
         photo: photo.cloned().unwrap_or_default(),
         video,

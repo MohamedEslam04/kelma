@@ -6,6 +6,33 @@ import { Avatar, Icon, IconButton } from "widgets.slint";
 import { CallStore, CallPerson, CallFound } from "call_store.slint";
 import { CallAction, DeviceSettings } from "call_widgets.slint";
 
+// A small text button of a People row (Admit, Admit all).
+component RowButton inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+    height: 26px;
+    width: txt.preferred-width + 20px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: touch.has-hover ? Theme.surface-hover : Theme.surface;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    txt := Text {
+        text: root.label;
+        color: Theme.fg;
+        font-size: 12px * Theme.font-scale;
+        font-weight: 600;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 component PersonRow inherits Rectangle {
     in property <CallPerson> p;
     height: 44px;
@@ -42,6 +69,13 @@ component PersonRow inherits Rectangle {
             source: @image-url("icons/hand.svg");
             tint: Theme.accent;
             y: 12px;
+        }
+        if root.p.lobby && CallStore.can-admit: VerticalLayout {
+            alignment: center;
+            RowButton {
+                label: "Admit " + root.p.name;
+                clicked => { CallStore.command("admit", root.p.id); }
+            }
         }
         if !root.p.lobby: Icon {
             source: root.p.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
@@ -158,13 +192,24 @@ export component PeoplePanel inherits Rectangle {
                     font-weight: 600;
                 }
                 for p[i] in CallStore.people: VerticalLayout {
-                    if p.lobby && i == CallStore.in-call: Text {
-                        text: "Waiting in lobby (" + CallStore.in-lobby + ")";
-                        color: Theme.fg-muted;
-                        font-size: 12px * Theme.font-scale;
-                        font-weight: 600;
+                    if p.lobby && i == CallStore.in-call: HorizontalLayout {
                         height: 32px;
-                        vertical-alignment: bottom;
+                        spacing: 8px;
+                        Text {
+                            text: "Waiting in lobby (" + CallStore.in-lobby + ")";
+                            color: Theme.fg-muted;
+                            font-size: 12px * Theme.font-scale;
+                            font-weight: 600;
+                            vertical-alignment: bottom;
+                            horizontal-stretch: 1;
+                        }
+                        if CallStore.can-admit: VerticalLayout {
+                            alignment: end;
+                            RowButton {
+                                label: "Admit all";
+                                clicked => { CallStore.command("admit-all", ""); }
+                            }
+                        }
                     }
                     PersonRow { p: p; }
                 }

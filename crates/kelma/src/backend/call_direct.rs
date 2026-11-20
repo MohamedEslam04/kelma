@@ -317,6 +317,14 @@ pub struct Calls {
     inner: Mutex<Inner>,
 }
 
+/// The banner's words for a failed answer: plain text for what the service refused (the raw
+/// answer stays in the log), else the error as it reads.
+fn answer_failure_text(err: &anyhow::Error) -> String {
+    err.chain()
+        .find_map(|e| e.downcast_ref::<calling::Error>())
+        .map_or_else(|| err.to_string(), calling::incoming::answer_error_text)
+}
+
 /// Runs `f` in the background, except in tests (they drive every step themselves) and outside a
 /// runtime.
 fn later(f: impl Future<Output = ()> + Send + 'static) {
@@ -694,7 +702,7 @@ impl Engine {
             let r = e.accept_live(id, &inv, name, current).await;
             if let Err(err) = r {
                 tracing::warn!(%err, "answering a call failed");
-                e.incoming_event(id, IncomingEvent::Failed(err.to_string()));
+                e.incoming_event(id, IncomingEvent::Failed(answer_failure_text(&err)));
             }
         });
         Ok(())
@@ -1263,6 +1271,30 @@ mod tests {
     use super::*;
     use calling::invitation::EndReason;
     use serde_json::json;
+
+    #[test]
+    fn a_late_answer_reads_as_the_call_having_ended_even_under_context() {
+        let late = calling::Error::Status {
+            op: "attach",
+            status: 412,
+            body: r#"{"operationFailure":{"code":487,"subCode":10021}}"#.into(),
+        };
+        let plain: anyhow::Error = late.into();
+        assert_eq!(
+            answer_failure_text(&plain),
+            "The call ended before you answered."
+        );
+        let wrapped = plain.context("answering the call");
+        assert_eq!(
+            answer_failure_text(&wrapped),
+            "The call ended before you answered.",
+            "found through the context chain"
+        );
+        assert_eq!(
+            answer_failure_text(&anyhow::anyhow!("the calling connection is down")),
+            "the calling connection is down"
+        );
+    }
 
     #[test]
     fn incoming_accept_then_connect() {

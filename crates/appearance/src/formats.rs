@@ -116,6 +116,14 @@ pub fn date_pattern(with_year: bool) -> &'static str {
 mod tests {
     use super::*;
 
+    /// The tests that write the shared choice or zone run one at a time: one resets what another
+    /// just set, and the test harness runs tests on several threads.
+    static SHARED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn shared() -> std::sync::MutexGuard<'static, ()> {
+        SHARED.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn auto_keeps_the_24_hour_clock_and_month_first_dates() {
         assert_eq!(time_pattern_for(TimeFormat::Auto), "%H:%M");
@@ -135,6 +143,7 @@ mod tests {
 
     #[test]
     fn the_shared_setting_follows_the_preferences() {
+        let _one_at_a_time = shared();
         let prefs = GeneralPrefs {
             date_format: DateFormat::Dmy,
             time_format: TimeFormat::H12,
@@ -198,6 +207,7 @@ mod tests {
 
     #[test]
     fn the_chosen_zone_comes_from_the_preferences() {
+        let _one_at_a_time = shared();
         let prefs = GeneralPrefs {
             time_zone: Some("Africa/Cairo".into()),
             ..GeneralPrefs::default()

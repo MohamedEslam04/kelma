@@ -8,6 +8,7 @@
 //! `docs/openapi/teams-webclient.yaml` `RosterUpdate` (AGPL, facts only), teams-lite
 //! `NATIVE-CALLING.md` (measured frame, facts only).
 
+use crate::types::Links;
 use serde_json::Value;
 
 const ACTIVE: &str = "active";
@@ -100,6 +101,13 @@ pub struct RosterParticipant {
     pub hand: Option<RaisedHand>,
     pub endpoints: Vec<RosterEndpoint>,
     pub version: u64,
+    /// The roster names them as the presenter of the meeting's content-sharing session: a
+    /// `contentSharing` object on the participant or one of its endpoints (the web client's
+    /// shape; UNVERIFIED, teams-lite's tenant never sent one).
+    pub content_sharing: bool,
+    /// The `links` of that `contentSharing` object, if it has any (a viewer's way to ask the
+    /// presenter for control, UNVERIFIED).
+    pub sharing_links: Links,
 }
 
 impl RosterParticipant {
@@ -176,6 +184,14 @@ impl Roster {
     pub fn screen_sharer(&self, own_mri: &str) -> Option<(String, u32)> {
         self.others(own_mri)
             .find_map(|p| Some((p.mri.clone(), p.screen_source()?)))
+    }
+
+    /// Who else the roster names as the content-sharing presenter ([`RosterParticipant::
+    /// content_sharing`]), whether or not their stream says it sends yet.
+    pub fn content_presenter(&self, own_mri: &str) -> Option<String> {
+        self.others(own_mri)
+            .find(|p| p.content_sharing)
+            .map(|p| p.mri.clone())
     }
 
     /// Applies a delta. An older `version` than the one known is ignored; a participant whose
@@ -309,6 +325,7 @@ fn participant_from(
     } else {
         Presence::Connected
     };
+    let sharing = content_sharing_of(p, raw_endpoints.iter().map(|(_, e)| *e));
     let all = |f: fn(&RosterEndpoint) -> bool| !in_call.is_empty() && in_call.iter().all(|e| f(e));
     RosterParticipant {
         mri: mri.to_owned(),
@@ -321,9 +338,25 @@ fn participant_from(
         self_muted: all(|e| e.self_muted),
         server_muted: all(|e| e.server_muted),
         hand: raised_hand(p, raw_endpoints.iter().map(|(_, e)| *e)),
+        content_sharing: sharing.is_some(),
+        sharing_links: sharing
+            .map(|c| super::bodies::parse_links(&c["links"]))
+            .unwrap_or_default(),
         endpoints,
         version,
     }
+}
+
+/// The participant's `contentSharing` object: on the participant, on an endpoint, or on an
+/// endpoint's call.
+fn content_sharing_of<'a>(
+    p: &'a Value,
+    endpoints: impl Iterator<Item = &'a Value>,
+) -> Option<&'a Value> {
+    std::iter::once(p)
+        .chain(endpoints.flat_map(|e| [e, &e["call"]]))
+        .filter_map(|holder| holder.get("contentSharing"))
+        .find(|c| c.is_object())
 }
 
 fn present(v: &Value, key: &str) -> bool {
@@ -398,4 +431,39 @@ fn raised_hand<'a>(p: &'a Value, endpoints: impl Iterator<Item = &'a Value>) -> 
                 rank: s["typeRank"].as_u64(),
             })
         })
+}
+
+#[cfg(test)]
+mod content_sharing_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_contentsharing_object_names_the_presenter() {
+        let mut r = Roster::default();
+        r.apply(&json!({"participants": {
+            "8:orgid:me": {"state": "active", "version": 1, "details": {"displayName": "Me"},
+                "endpoints": {"e0": {"call": {}}}},
+            "8:orgid:ada": {"state": "active", "version": 1, "details": {"displayName": "Ada"},
+                "endpoints": {"e1": {"call": {"contentSharing": {
+                    "sessionInformation": {"contentSharingSessionId": "cs"},
+                    "links": {"takeControl": "https://x/tc"}
+                }}}}}
+        }}));
+        assert_eq!(
+            r.content_presenter("8:orgid:me").as_deref(),
+            Some("8:orgid:ada")
+        );
+        let ada = r.get("8:orgid:ada").unwrap();
+        assert!(ada.content_sharing);
+        assert_eq!(ada.sharing_links.get("takeControl"), Some("https://x/tc"));
+        // Our own session is not someone else's presentation.
+        assert_eq!(r.content_presenter("8:orgid:ada"), None);
+        // A null field is no presenter.
+        r.apply(&json!({"participants": {
+            "8:orgid:ada": {"state": "active", "version": 2, "contentSharing": null,
+                "endpoints": {"e1": {"call": {}}}}
+        }}));
+        assert_eq!(r.content_presenter("8:orgid:me"), None);
+    }
 }

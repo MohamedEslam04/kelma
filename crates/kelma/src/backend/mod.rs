@@ -23,6 +23,7 @@ mod cal;
 pub(crate) mod call;
 #[cfg(feature = "calls")]
 pub(crate) mod call_direct;
+pub(crate) mod call_feedback;
 pub(crate) mod call_presence;
 #[cfg(feature = "calls")]
 pub(crate) mod calls_page;
