@@ -6,7 +6,9 @@
 //!
 //! The open chat's waiting messages show at the bottom of the conversation as "Sending on <day>
 //! at <time>" with Edit (back into the composer with the same time, the waiting copy cancelled)
-//! and Delete.
+//! and Delete. A bubble shows only once the account took the message (the POST answered); the
+//! list read afterwards keeps it until the account lists it too. Every outcome is logged (never
+//! the text) and every failure shows the red banner.
 
 use super::Engine;
 use super::mentions;
@@ -70,10 +72,38 @@ pub(super) fn bubbles(list: &[ScheduledMessage], conv: &str, now: i64) -> Vec<Sc
 
 impl Engine {
     pub(super) async fn scheduled_cmd(self: &Arc<Self>, c: ScheduledCmd) -> anyhow::Result<()> {
-        match c {
+        let action = match &c {
+            ScheduledCmd::Schedule { .. } => "schedule",
+            ScheduledCmd::Edit(_) => "edit",
+            ScheduledCmd::Delete(_) => "delete",
+        };
+        let done = match c {
             ScheduledCmd::Schedule { at_ms, text } => self.schedule(at_ms, text).await,
             ScheduledCmd::Edit(id) => self.edit_scheduled(&id).await,
             ScheduledCmd::Delete(id) => self.delete_scheduled(&id).await,
+        };
+        if let Err(err) = &done {
+            // The error carries the HTTP status and the service's answer.
+            tracing::warn!(action, %err, "scheduled message failed");
+        }
+        done
+    }
+
+    /// A failed read of the list: an account without the drafts thread answers 404 (nothing is
+    /// scheduled there); anything else is logged and shown.
+    fn scheduled_list_failed(&self, err: &anyhow::Error) {
+        let none = matches!(
+            err.downcast_ref::<teams_proto::Error>(),
+            Some(teams_proto::Error::Status { status: 404, .. })
+        );
+        if none {
+            tracing::debug!(%err, "scheduled messages: no drafts thread");
+            return;
+        }
+        tracing::warn!(%err, "scheduled messages list failed");
+        if !self.offline_now() {
+            self.ui
+                .banner(format!("Couldn't load the scheduled messages: {err}"));
         }
     }
 
@@ -93,16 +123,35 @@ impl Engine {
             let e = self.clone();
             tokio::spawn(async move {
                 if let Err(err) = e.reload_scheduled().await {
-                    // Not every account has the drafts thread (404 LocationLookupFailed).
-                    tracing::debug!(%err, "scheduled messages");
+                    e.scheduled_list_failed(&err);
                 }
             });
         }
     }
 
+    /// Reads the account's list. Messages scheduled here that it does not list yet (the service
+    /// lists a new draft a moment after the POST) are kept.
     async fn reload_scheduled(self: &Arc<Self>) -> anyhow::Result<()> {
-        let list = self.client.scheduled_messages().await?;
-        self.view.lock().unwrap().scheduled = list;
+        let mut list = self.client.scheduled_messages().await?;
+        let count = list.len();
+        {
+            let mut v = self.view.lock().unwrap();
+            let now = now_ms();
+            let unlisted: Vec<ScheduledMessage> = v
+                .scheduled
+                .iter()
+                .filter(|m| m.id.is_empty() && m.send_at_ms > now)
+                .filter(|m| {
+                    !list
+                        .iter()
+                        .any(|x| x.client_message_id == m.client_message_id)
+                })
+                .cloned()
+                .collect();
+            list.extend(unlisted);
+            v.scheduled = list;
+        }
+        tracing::info!(count, "scheduled messages listed");
         self.push_scheduled();
         Ok(())
     }
@@ -165,10 +214,13 @@ impl Engine {
             {
                 Ok(cmid) => cmid,
                 Err(err) => {
+                    // The time stays chosen too, so Send tries again.
+                    self.ui.schedule_choice(Some(at_ms));
                     return Err(refuse(&format!("Couldn't schedule the message: {err}")));
                 }
             }
         };
+        tracing::info!(at_ms, "message scheduled");
         self.clear_draft(&conv);
         // The answer has no id: it is filled in by the next read of the list.
         self.view.lock().unwrap().scheduled.push(ScheduledMessage {
@@ -182,7 +234,7 @@ impl Engine {
         if !self.offline_now()
             && let Err(err) = self.reload_scheduled().await
         {
-            tracing::debug!(%err, "scheduled messages after scheduling");
+            self.scheduled_list_failed(&err);
         }
         Ok(())
     }
@@ -207,6 +259,9 @@ impl Engine {
                 self.reload_scheduled().await?;
                 m = self.find_scheduled(cmid)?;
             }
+            if m.id.is_empty() {
+                anyhow::bail!("the account doesn't list it yet, try again in a moment");
+            }
             self.client.cancel_scheduled(&m.id).await?;
         }
         self.view
@@ -219,13 +274,21 @@ impl Engine {
     }
 
     async fn delete_scheduled(self: &Arc<Self>, cmid: &str) -> anyhow::Result<()> {
-        self.take_scheduled(cmid).await.map(|_| ())
+        self.take_scheduled(cmid)
+            .await
+            .map_err(|e| anyhow::anyhow!("Couldn't delete the scheduled message: {e}"))?;
+        tracing::info!("scheduled message cancelled");
+        Ok(())
     }
 
     /// Edit: the waiting copy is cancelled and its text goes back to the composer with its time
     /// chosen again, so Send schedules it anew. The text stays as the chat's draft meanwhile.
     async fn edit_scheduled(self: &Arc<Self>, cmid: &str) -> anyhow::Result<()> {
-        let m = self.take_scheduled(cmid).await?;
+        let m = self
+            .take_scheduled(cmid)
+            .await
+            .map_err(|e| anyhow::anyhow!("Couldn't edit the scheduled message: {e}"))?;
+        tracing::info!("scheduled message back in the composer");
         let text = ::render::plain_text(&::render::parse_teams_html(&m.html));
         self.ui.set_draft(text.clone());
         self.view.lock().unwrap().draft_text = text;
@@ -238,6 +301,13 @@ impl Engine {
     #[cfg(test)]
     pub(crate) fn test_scheduled(&self) -> Vec<ScheduledMessage> {
         self.view.lock().unwrap().scheduled.clone()
+    }
+
+    /// As if the account's list had just been read.
+    #[cfg(test)]
+    pub(crate) fn test_set_scheduled(&self, list: Vec<ScheduledMessage>) {
+        self.view.lock().unwrap().scheduled = list;
+        self.push_scheduled();
     }
 }
 

@@ -47,7 +47,11 @@ fn num(v: Option<&Value>) -> Option<i64> {
     }
 }
 
-/// The scheduled messages in a drafts list (other draft kinds are left out).
+/// The scheduled messages in a drafts list (other draft kinds and cancelled ones are left out).
+///
+/// The list (`view=msnp24Equivalent`) gives the message fields at the top level of each draft
+/// (`content`, `clientmessageid`, as rusty-teams reads them); the nested `message` object of the
+/// create body is read as a fallback.
 pub fn parse_scheduled(v: &Value) -> Vec<ScheduledMessage> {
     let list = v
         .get("drafts")
@@ -57,14 +61,26 @@ pub fn parse_scheduled(v: &Value) -> Vec<ScheduledMessage> {
         .unwrap_or_default();
     list.iter()
         .filter(|d| d.get("draftType").and_then(Value::as_str) == Some("ScheduledDraft"))
+        .filter(|d| {
+            d.pointer("/properties/deletetime")
+                .is_none_or(Value::is_null)
+        })
         .filter_map(|d| {
-            let s = |p: &str| d.pointer(p).and_then(Value::as_str).map(str::to_string);
+            let s = |p: &str| {
+                d.pointer(p)
+                    .and_then(Value::as_str)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+            };
+            let field =
+                |name: &str| s(&format!("/{name}")).or_else(|| s(&format!("/message/{name}")));
             Some(ScheduledMessage {
                 id: s("/id")?,
                 conversation_id: s("/innerThreadId").unwrap_or_default(),
                 send_at_ms: num(d.pointer("/draftDetails/sendAt")).unwrap_or_default(),
-                html: s("/message/content").unwrap_or_default(),
-                client_message_id: s("/message/clientmessageid").unwrap_or_default(),
+                html: field("content").unwrap_or_default(),
+                // The bubbles are addressed by it, so a draft without one goes by its id.
+                client_message_id: field("clientmessageid").or_else(|| s("/id"))?,
             })
         })
         .collect()
@@ -144,5 +160,24 @@ mod tests {
         assert_eq!(s[0].id, "d1");
         assert_eq!(s[0].send_at_ms, 1_800_000_000_000);
         assert_eq!(s[0].html, "<p>later</p>");
+    }
+
+    #[test]
+    fn the_listed_drafts_carry_the_message_fields_at_the_top_level() {
+        // The shape of `GET /v1/users/ME/drafts?view=msnp24Equivalent` (rusty-teams drafts.rs).
+        let v = json!({"drafts": [
+            {"id": "d1", "draftType": "ScheduledDraft", "innerThreadId": "19:a@thread.v2",
+             "draftDetails": {"sendAt": "1800000000000"},
+             "content": "<p>this is a test</p>", "clientmessageid": "c1",
+             "messagetype": "RichText/Html", "properties": {}},
+            {"id": "d2", "draftType": "ScheduledDraft", "innerThreadId": "19:a@thread.v2",
+             "draftDetails": {"sendAt": "1800000000000"},
+             "content": "<p>cancelled</p>", "clientmessageid": "c2",
+             "properties": {"deletetime": "1799999999999"}}
+        ]});
+        let s = parse_scheduled(&v);
+        assert_eq!(s.len(), 1, "the cancelled one is left out");
+        assert_eq!(s[0].html, "<p>this is a test</p>");
+        assert_eq!(s[0].client_message_id, "c1");
     }
 }
