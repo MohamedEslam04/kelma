@@ -122,6 +122,9 @@ export component AppWindow inherits Window {
         // Leaving the call view keeps the call running in the small floating bar.
         if CallStore.phase != "" { CallStore.minimized = true; }
         root.view = v;
+        if v == "teams" && !root.current-is-channel && root.last-channel-id != "" {
+            root.select-channel(root.last-channel-id, root.last-channel-title);
+        }
         if v == "activity" { root.activity-refresh(); }
         if v == "onedrive" { DriveStore.command("enter", ""); }
         if v == "calls" { CallsPageStore.command("open", ""); }
@@ -147,12 +150,20 @@ export component AppWindow inherits Window {
     in property <string> current-person;
     in property <string> current-presence;
     in property <bool> current-is-channel;
+    // The last channel that was open (Rust sets it; it is remembered across starts): the Teams
+    // page opens it again instead of showing the chat that is open.
+    in-out property <string> last-channel-id;
+    in-out property <string> last-channel-title;
+    // The Teams page with no channel open: its right pane asks for one, it never shows a chat.
+    property <bool> teams-no-channel: root.view == "teams" && !root.current-is-channel;
     // The open chat is muted ("More chat options" offers Unmute).
     in property <bool> current-muted;
     in property <string> thread-root;     // non-empty: viewing a channel thread
     in property <[Msg]> messages;
     in property <string> typing;
     in property <bool> loading-older;
+    // The open chat or channel is reading its newest page (what the store had already shows).
+    in property <bool> loading-latest;
     in-out property <string> reply-author;
     in-out property <string> reply-preview;
     in-out property <string> editing-id;
@@ -322,7 +333,7 @@ export component AppWindow inherits Window {
     // conversation keeps 480px.
     property <bool> single-pane: root.width < 800px;
     in-out property <bool> pane-list: false;
-    property <bool> list-only: root.single-pane && (root.current-id == "" || root.pane-list);
+    property <bool> list-only: root.single-pane && (root.current-id == "" || root.pane-list || root.teams-no-channel);
     property <bool> chat-only: root.single-pane && !root.list-only;
     property <length> list-width: min(root.sidebar-width, max(220px, root.width - AppsStore.rail-width - 5px - 480px));
     in property <int> anchor-index: -1;
@@ -725,10 +736,15 @@ export component AppWindow inherits Window {
                         PeopleStore.command("new-chat-close", "");
                     }
                 }
-                if root.current-id == "": VerticalLayout {
+                if root.current-id == "" && !root.teams-no-channel: VerticalLayout {
                     alignment: center;
                     Image { source: @image-url("icons/chat.svg"); colorize: Theme.border; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
                     Text { text: @tr("Select a chat to start messaging"); color: Theme.fg-subtle; horizontal-alignment: center; }
+                }
+                if root.teams-no-channel: VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/teams.svg"); colorize: Theme.border; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
+                    Text { text: @tr("Pick a channel"); color: Theme.fg-subtle; horizontal-alignment: center; }
                 }
                 if root.banner != "": Rectangle {
                     z: 10;
@@ -756,7 +772,7 @@ export component AppWindow inherits Window {
                         IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 6px; clicked => { root.dismiss-banner(); } }
                     }
                 }
-                if root.current-id != "": VerticalLayout {
+                if root.current-id != "" && !root.teams-no-channel: VerticalLayout {
                     // Header. When it is narrow (half a laptop screen), participants, find,
                     // details and Schedule a meeting move into the … menu so the name stays readable.
                     header := Rectangle {
@@ -1170,6 +1186,23 @@ export component AppWindow inherits Window {
                             background: Theme.surface;
                             Text { text: @tr("Loading older messages…"); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
                         }
+                        if root.loading-latest && !root.loading-older: Rectangle {
+                            z: 6;
+                            // Below the Posts tab's "Post in channel" bar.
+                            y: root.posts-mode ? 52px : 8px;
+                            height: 24px;
+                            width: latest-text.preferred-width + 28px;
+                            x: (parent.width - self.width) / 2;
+                            border-radius: 12px;
+                            background: Theme.surface;
+                            latest-text := Text {
+                                text: root.posts-mode ? @tr("Loading new posts…") : @tr("Loading new messages…");
+                                color: Theme.fg-muted;
+                                font-size: 12px * Theme.font-scale;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
 
                     // The chat's scheduled messages ("Sending on …"), below the newest message.
@@ -1248,13 +1281,13 @@ export component AppWindow inherits Window {
                     }
                 }
                 // The Shared (Files) tab and the details pane sit below the 60px header.
-                if root.current-id != "" && FindStore.chat-tab == "shared" && root.view != "activity": SharedView {
+                if root.current-id != "" && !root.teams-no-channel && FindStore.chat-tab == "shared" && root.view != "activity": SharedView {
                     z: 8;
                     y: 60px;
                     width: parent.width;
                     height: parent.height - 60px;
                 }
-                if root.current-id != "" && FindStore.details-open && root.thread-root == "" && root.view != "activity": DetailsPane {
+                if root.current-id != "" && !root.teams-no-channel && FindStore.details-open && root.thread-root == "" && root.view != "activity": DetailsPane {
                     z: 9;
                     x: parent.width - self.width;
                     y: 60px;

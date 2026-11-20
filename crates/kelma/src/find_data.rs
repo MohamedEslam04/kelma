@@ -44,6 +44,12 @@ pub struct SharedData {
     pub editable: bool,
     /// The address is on SharePoint: "Open in SharePoint" applies.
     pub sharepoint: bool,
+    /// `folder`, `link` or a document kind (`word`, `excel`, `pdf`, `image`, `archive`, ...).
+    pub icon: &'static str,
+    /// What is being done to the row while the server answers ("Deleting…"), or "".
+    pub busy: String,
+    /// The row was just created: highlighted for a moment.
+    pub highlight: bool,
 }
 
 /// The words of a query, lowercased. Quotes are dropped.
