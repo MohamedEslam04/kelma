@@ -677,6 +677,19 @@ async fn main() -> Result<()> {
                 Err(e) => println!("error: {e}"),
             }
         }
+        Some("ams-meta") => {
+            // Prints the metadata of AMS objects (structure discovery): type, views, filename.
+            // Usage: ams-meta <host, e.g. us-api.asm.skype.com> <object id>...
+            let host = args.get(1).context("usage: ams-meta <host> <object id>...")?;
+            let (client, _) = connect(&paths).await?;
+            for id in &args[2..] {
+                let url = format!("https://{host}/v1/objects/{id}");
+                match client.download_media(&url, 1 << 20).await {
+                    Ok(b) => println!("{id}: {}", String::from_utf8_lossy(&b)),
+                    Err(e) => println!("{id}: error: {e}"),
+                }
+            }
+        }
         Some("send") => {
             let (Some(conv), Some(text)) = (args.get(1), args.get(2)) else {
                 bail!("usage: send <conversation id> <text>")

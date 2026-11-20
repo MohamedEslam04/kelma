@@ -84,6 +84,22 @@ pub struct LoopData {
     pub title: String,
 }
 
+/// A voice message of a chat row, drawn as a player (`ui/voice_player.slint`).
+#[derive(Clone)]
+pub struct VoiceData {
+    /// The media object id: what the player and the played list know it by.
+    pub key: String,
+    /// The AMS `views/audio` URL.
+    pub url: String,
+    pub duration_ms: i32,
+    /// The waveform, 0..1 per bar.
+    pub peaks: Vec<f32>,
+    /// Someone else's message I have not played yet.
+    pub unplayed: bool,
+    /// Fetching or decoding it failed.
+    pub failed: bool,
+}
+
 #[derive(Clone)]
 pub struct ReactData {
     pub key: String,
@@ -155,6 +171,7 @@ pub struct MsgData {
     /// The links in the text, for the menu's Open link and Copy link.
     pub urls: Vec<String>,
     pub loops: Vec<LoopData>,
+    pub voices: Vec<VoiceData>,
 }
 
 /// A person, or a team, channel or "everyone" entry, in a people list.

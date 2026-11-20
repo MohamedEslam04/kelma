@@ -13,7 +13,7 @@ use crate::data::{
 use crate::reactions;
 use crate::{
     AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard,
-    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow,
+    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow, VoiceItem,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -200,6 +200,19 @@ fn msg(m: MsgData) -> Msg {
                 .map(|l| LoopCard {
                     url: l.url.into(),
                     title: l.title.into(),
+                })
+                .collect(),
+        ),
+        voices: model(
+            m.voices
+                .into_iter()
+                .map(|v| VoiceItem {
+                    key: v.key.into(),
+                    url: v.url.into(),
+                    duration_ms: v.duration_ms,
+                    peaks: model(v.peaks),
+                    unplayed: v.unplayed,
+                    failed: v.failed,
                 })
                 .collect(),
         ),

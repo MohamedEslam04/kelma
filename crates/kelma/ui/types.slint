@@ -63,6 +63,10 @@ export struct ImageItem { url: string, img: image, loaded: bool, x: length, y: l
 // A link preview card under a message (plan chat 9.7).
 export struct LinkCard { url: string, title: string, description: string, domain: string, thumb: image, has-thumb: bool }
 
+// A voice message in a chat row. `key` identifies it for the player (the media object id);
+// `peaks` is its waveform (placeholder bars until the recording has been fetched).
+export struct VoiceItem { key: string, url: string, duration-ms: int, peaks: [float], unplayed: bool, failed: bool }
+
 export struct Msg {
     id: string,
     sender: string,
@@ -109,6 +113,7 @@ export struct Msg {
     pinned: bool,          // pinned for everyone: the menu offers Unpin
     urls: [string],        // the links in the text (menu: Open link, Copy link)
     loops: [LoopCard],     // Loop components, drawn as cards
+    voices: [VoiceItem],   // voice messages, drawn as players
 }
 
 // A person (or, for the @mention picker, a team, channel or "Everyone" entry) in a people list.
