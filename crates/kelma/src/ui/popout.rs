@@ -70,6 +70,26 @@ fn new_window(app: &AppWindow) -> Option<ChatWindow> {
             app.global::<MediaStore>().invoke_command(name, arg);
         }
     });
+    // A right button going up opens the "…" menu of the message under the pointer, as in the main
+    // window: the message text takes the press itself (`MessagePointer` in `message_row.slint`).
+    {
+        use slint::winit_030::winit::event::{ElementState, MouseButton, WindowEvent};
+        use slint::winit_030::{EventResult, WinitWindowAccessor};
+        let me = cw.as_weak();
+        cw.window().on_winit_window_event(move |_, event| {
+            if let WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Right,
+                ..
+            } = event
+                && let Some(cw) = me.upgrade()
+            {
+                let p = cw.global::<crate::MessagePointer>();
+                p.set_right_clicks(p.get_right_clicks().wrapping_add(1));
+            }
+            EventResult::Propagate
+        });
+    }
     let main = app.as_weak();
     cw.window().on_close_requested(move || {
         if let Some(app) = main.upgrade() {
