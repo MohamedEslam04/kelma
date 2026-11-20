@@ -9,11 +9,18 @@
 //! - Someone else shares: "Request control" on the stage; once granted, our pointer and keys
 //!   over the stage go to them as normalized events.
 //!
+//! While someone controls our screen, their pointer is a cursor of its own, drawn with their name
+//! and photo over the share ([`ControlOverlay`]); a move only moves it, and a click or scroll
+//! first moves our real pointer there ([`PointerPolicy`]), as in Teams.
+//!
 //! The state machine ([`Machine`]) is pure and tested. The wire ([`calling::remote_control`]) is
 //! a GUESS: nothing of it has been seen from a Teams client.
 
 use super::{ControlAction, ControlInput, Event};
-use calling::remote_control::{ControlChannel, ControlMessage, InputEvent, MouseButton};
+use calling::remote_control::{
+    ControlChannel, ControlMessage, InputEvent, MouseButton, PointerPolicy,
+};
+use calling::video::control_overlay::{ControlOverlay, Photo, ShareArea};
 use calling::video::remote_input::InputInjector;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -274,6 +281,15 @@ pub fn outgoing(i: &ControlInput) -> Option<InputEvent> {
     })
 }
 
+/// A profile photo as the controller's cursor draws it.
+pub fn photo(px: crate::data::Pixels) -> Photo {
+    Photo {
+        width: px.width(),
+        height: px.height(),
+        rgba: px.as_bytes().to_vec(),
+    }
+}
+
 /// One call's remote control: the machine, the injector task, and what the UI was told.
 #[derive(Default)]
 pub struct RemoteControl {
@@ -283,6 +299,12 @@ pub struct RemoteControl {
     shown: Option<(&'static str, String)>,
     /// The `sequenceNumber` of the last message sent.
     sequence: u64,
+    /// What our share covers (from its injector).
+    area: Option<ShareArea>,
+    /// What of the controller's input reaches our real pointer.
+    policy: PointerPolicy,
+    /// The controller's drawn cursor, and whose it is.
+    overlay: Option<(String, ControlOverlay)>,
 }
 
 impl RemoteControl {
@@ -293,6 +315,9 @@ impl RemoteControl {
             t.abort();
         }
         self.inject = None;
+        self.overlay = None;
+        self.policy = PointerPolicy::default();
+        self.area = injector.as_ref().map(InputInjector::area);
         if let Some(inj) = injector {
             let (tx, mut rx) = mpsc::unbounded_channel::<InputEvent>();
             self.inject = Some(tx);
@@ -319,7 +344,13 @@ impl RemoteControl {
     pub async fn apply(&mut self, step: Step, channel: &dyn ControlChannel) -> Vec<Event> {
         let mut out = Vec::new();
         if let (Some(ev), Some(tx)) = (step.inject, &self.inject) {
-            let _ = tx.send(ev);
+            let routed = self.policy.route(ev);
+            if let (Some(c), Some((_, overlay))) = (routed.cursor, &self.overlay) {
+                overlay.cursor(c);
+            }
+            for ev in routed.inject {
+                let _ = tx.send(ev);
+            }
         }
         if let Some(m) = step.send {
             let quiet = matches!(m, ControlMessage::Input(_));
@@ -348,6 +379,27 @@ impl RemoteControl {
                 name: now.1,
             }
         })
+    }
+
+    /// Shows the controller's cursor while someone controls our share, and removes it when
+    /// control ends (Release, Revoke, Take back, the share or the call stopping). `photo` finds
+    /// the controller's photo by MRI.
+    pub fn sync_overlay(&mut self, photo: impl FnOnce(&str) -> Option<Photo>) {
+        match (&self.machine.mode, self.area) {
+            (Mode::Controlled { mri, name }, Some(area)) => {
+                if self.overlay.as_ref().is_some_and(|(m, _)| m == mri) {
+                    return;
+                }
+                self.policy = PointerPolicy::default();
+                let overlay = ControlOverlay::show(area, name, photo(mri));
+                self.overlay = Some((mri.clone(), overlay));
+            }
+            _ if self.overlay.is_some() => {
+                self.overlay = None;
+                self.policy = PointerPolicy::default();
+            }
+            _ => {}
+        }
     }
 
     pub fn stop(&mut self) {

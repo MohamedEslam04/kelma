@@ -1256,9 +1256,7 @@ impl Call {
                 // Control ends with our share, or with the presenter's.
                 let step = self.control.machine.context(&self.control_ctx());
                 self.apply_control(step, &sink).await;
-                if let Some(ev) = self.control.changed() {
-                    sink.send(ev);
-                }
+                self.control_changed(&sink);
             }
             let can_camera = self.link == Link::Connected
                 && camera::available(&self.media, &self.links, self.meeting);
@@ -1447,9 +1445,7 @@ impl Call {
             .machine
             .local(&a, &self.s.me.mri, &ctx, Instant::now());
         self.apply_control(step, sink).await;
-        if let Some(ev) = self.control.changed() {
-            sink.send(ev);
-        }
+        self.control_changed(sink);
     }
 
     /// A remote-control message from the other side.
@@ -1470,6 +1466,14 @@ impl Call {
                 .remote(m, &me, &ctx, name_of, Instant::now())
         };
         self.apply_control(step, sink).await;
+        self.control_changed(sink);
+    }
+
+    /// Tells the call window what changed in control, and shows or removes the controller's
+    /// cursor.
+    fn control_changed(&mut self, sink: &EventSink) {
+        self.control
+            .sync_overlay(|mri| sink.photo(mri).map(remote_control::photo));
         if let Some(ev) = self.control.changed() {
             sink.send(ev);
         }

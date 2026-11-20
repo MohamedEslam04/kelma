@@ -1211,6 +1211,13 @@ impl EventSink {
         }
     }
 
+    /// A person's profile photo, when one is known ([`CallManager::set_photos`]).
+    #[cfg(feature = "calls")]
+    pub fn photo(&self, mri: &str) -> Option<Pixels> {
+        let lookup = self.shared.upgrade()?.photos.lock().unwrap().clone()?;
+        lookup(mri)
+    }
+
     /// A sink attached to nothing (tests of a driver alone).
     #[cfg(test)]
     pub fn detached() -> Self {
