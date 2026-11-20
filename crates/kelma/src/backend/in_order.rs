@@ -20,8 +20,13 @@
 //!   Answers that come back out of order are each store's business (a search drops an answer
 //!   older than its latest query by its sequence number).
 //!
-//! Commands that are neither keep their own task (the chat commands), and the quick local ones
-//! still run inline in `dispatch`.
+//! - **Chat switches.** Opening a chat or channel changes the view before it waits for the
+//!   messages, and Find, the channel tabs and the composer's apps read that view. So `dispatch`
+//!   runs a switch up to its first wait on the spot ([`start_now`]) and every command sent after
+//!   it, in any lane, already sees the new chat.
+//!
+//! The other chat commands keep their own task, and the quick local ones still run inline in
+//! `dispatch`.
 
 use super::{Cmd, Engine};
 use std::future::Future;
@@ -76,6 +81,15 @@ pub(super) async fn start(mut run: Run) {
     let first = std::future::poll_fn(|cx| Poll::Ready(run.as_mut().poll(cx))).await;
     if first.is_pending() {
         // The spawned task polls it again at once, which moves its wake-ups to that task.
+        tokio::spawn(run);
+    }
+}
+
+/// [`start`] without a lane: runs `run` up to its first wait right here, in the caller, then
+/// hands the rest to its own task (whose first poll takes over the wake-ups).
+pub(super) fn start_now(mut run: Run) {
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    if run.as_mut().poll(&mut cx).is_pending() {
         tokio::spawn(run);
     }
 }
@@ -406,6 +420,23 @@ mod tests {
                 "{cmd:?} must outdate a search still on its way"
             );
         }
+    }
+
+    #[test]
+    fn a_chat_switch_has_taken_effect_when_dispatch_returns() {
+        let rt = runtime();
+        let (e, _window) = engine();
+        let chats = ["19:a@thread.v2", "19:b@thread.v2", "19:c@thread.v2"];
+        let e2 = e.clone();
+        rt.block_on(rt.spawn(async move {
+            for i in 0..30 {
+                let id = chats[i % 3];
+                e2.dispatch(Cmd::SelectChat(id.into()));
+                // A store command sent next reads the chat just picked.
+                assert_eq!(e2.view.lock().unwrap().current.as_deref(), Some(id));
+            }
+        }))
+        .unwrap();
     }
 
     #[test]

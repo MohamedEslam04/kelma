@@ -306,6 +306,10 @@ pub struct Engine {
     /// One lane per store (Find, People, Calendar, ...): each command's ordered part runs in the
     /// order the store's commands were sent (`in_order::store_lane`).
     store_lanes: Mutex<HashMap<&'static str, tokio::sync::mpsc::UnboundedSender<Cmd>>>,
+    /// Teams settings writes, one at a time in the order they were made (tokio's mutex is
+    /// first come, first served), and the number of the latest settings read.
+    settings_writes: tokio::sync::Mutex<()>,
+    settings_reads: std::sync::atomic::AtomicU64,
 }
 
 const PAGE: usize = 60;
@@ -368,6 +372,8 @@ impl Engine {
             last_cmid: AtomicI64::new(0),
             calls_lane: std::sync::OnceLock::new(),
             store_lanes: Mutex::default(),
+            settings_writes: tokio::sync::Mutex::new(()),
+            settings_reads: std::sync::atomic::AtomicU64::new(0),
         });
         // The call window's photos come from the chat avatar cache. A miss downloads in the
         // background, which needs the runtime; without one only the cache is read.
@@ -467,6 +473,11 @@ impl Engine {
             Cmd::SetImportant(on) => self.set_importance(on, Importance::Important),
             Cmd::SetUrgent(on) => self.set_importance(on, Importance::Urgent),
             // The call window, the 1:1 ringing flows and the Calls page share the call state.
+            // A chat switch changes the view before it waits: every command after it sees the
+            // new chat (`in_order::start_now`).
+            cmd @ (Cmd::SelectChat(_) | Cmd::SelectChannel(..)) => {
+                in_order::start_now(Box::pin(self.clone().handle(cmd)));
+            }
             cmd @ Cmd::Call(_) => self.in_order(cmd),
             #[cfg(feature = "calls")]
             cmd @ (Cmd::DirectCall(_) | Cmd::CallsPage(_)) => self.in_order(cmd),
