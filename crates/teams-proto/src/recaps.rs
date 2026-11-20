@@ -129,12 +129,16 @@ pub fn parse_meetings(v: &Value) -> Vec<RecapMeeting> {
     out
 }
 
-/// The MCPS host for a middle tier URL: `https://teams.microsoft.com/api/mt/emea-02` gives
-/// `https://teams.microsoft.com/api/mcps/eu`. The region names are a guess from the one
-/// documented pair (`eu`); UNVERIFIED for the others.
+/// A guess at the MCPS host from a middle tier URL, for a skypetoken answer without
+/// `regionGtms.mcpService` (which [`Client::mcp_service`] prefers):
+/// `https://teams.microsoft.com/api/mt/part/emea-02` gives `https://teams.microsoft.com/api/mcps/eu`.
+/// The middle tier's partition need not be where the meetings live (the reference capture pairs
+/// an `amer` middle tier with an `eu` meeting service), and the region names are a guess from
+/// the one documented pair (`eu`); UNVERIFIED.
 pub fn mcps_base(middle_tier: &str) -> String {
     let mt = middle_tier.trim_end_matches('/');
     let (host, region) = mt.split_once("/api/mt/").unwrap_or((mt, ""));
+    let region = region.strip_prefix("part/").unwrap_or(region);
     let part = region.split(['-', '/']).next().unwrap_or_default();
     let geo = match part {
         "emea" => "eu",
@@ -362,10 +366,10 @@ pub fn notes_link(tabs: &[ChannelTab]) -> Option<String> {
 
 impl Client {
     /// Meetings that ended in the last `days` days and have a recording or transcript (MCPS,
-    /// UNVERIFIED audience). `mcps_base` comes from [`mcps_base`] on the middle tier.
+    /// UNVERIFIED audience). The host is [`Client::mcp_service`].
     pub async fn recap_meetings(&self, days: i64) -> Result<Vec<RecapMeeting>> {
         let now = crate::time::now_ms();
-        let base = mcps_base(&self.middle_tier().await);
+        let base = self.mcp_service().await;
         let url = contents_url(&base, now - days * 86_400_000, now, 50);
         let v = self
             .json("meeting contents", Method::GET, &url, None)
@@ -488,6 +492,11 @@ mod tests {
         assert_eq!(
             mcps_base("https://teams.microsoft.com/api/mt/amer"),
             "https://teams.microsoft.com/api/mcps/us"
+        );
+        // The partition form of the middle tier.
+        assert_eq!(
+            mcps_base("https://teams.microsoft.com/api/mt/part/emea-03"),
+            "https://teams.microsoft.com/api/mcps/eu"
         );
         assert_eq!(
             contents_url("https://h/api/mcps/eu", 0, 86_400_000, 20),

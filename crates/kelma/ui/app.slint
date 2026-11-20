@@ -6,6 +6,7 @@ import { ActivityRow, ChatRow, ComposerEmoji, EmojiItem, Msg, PendingAttachment,
 import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { MessageRow } from "message_row.slint";
+export { MessagePointer } from "message_row.slint";
 import { Composer, EmojiApi } from "composer.slint";
 import { MessageMenu } from "message_menu.slint";
 import { ReactionPicker } from "reaction_picker.slint";
@@ -109,6 +110,9 @@ export component AppWindow inherits Window {
     // Opens a page of the left rail the way a click on it does (also Back and Forward, and the
     // search box's commands).
     public function navigate(v: string) {
+        // Settings covers the page: going to a page leaves it, as in Teams (also for the page
+        // already open under it).
+        root.leave-settings();
         // Leaving the call view keeps the call running in the small floating bar.
         if CallStore.phase != "" { CallStore.minimized = true; }
         root.view = v;
@@ -1002,6 +1006,7 @@ export component AppWindow inherits Window {
                             width: parent.width;
                             height: parent.height;
                             z: 4;
+                            scroll-tick: root.scroll-tick;
                             react(id, k) => { root.react(id, k); }
                             edit(id) => { root.edit(id); }
                             more-reactions(id, x, y) => {

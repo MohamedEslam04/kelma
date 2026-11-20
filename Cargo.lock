@@ -4747,6 +4747,7 @@ dependencies = [
 name = "onedrive"
 version = "0.0.0"
 dependencies = [
+ "futures-util",
  "reqwest",
  "serde_json",
  "teams-proto",

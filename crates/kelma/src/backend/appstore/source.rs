@@ -18,6 +18,48 @@ use teams_proto::workflows::{Flow, FlowEnvironment, FlowRun};
 
 type Res<T> = anyhow::Result<T>;
 
+pub(super) const RECAPS_FROM_MCPS: &str = "From the meeting content service.";
+pub(super) const RECAPS_FROM_ONEDRIVE: &str = "From the recordings in your OneDrive.";
+
+/// The longest wait for the OneDrive recordings, which read the library of every channel: the
+/// Recaps list must end loading even when Graph is slow.
+const RECORDINGS_LIMIT: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// The Recaps list: the meeting content service's when it has meetings, else the meetings
+/// grouped from the OneDrive recordings of the last 30 days (`fallback`, only awaited then).
+/// An MCPS failure (a 401 among them) never stops the fallback; when both fail, the error names
+/// both.
+pub(super) async fn recaps_from(
+    mcps: teams_proto::Result<Vec<RecapMeeting>>,
+    fallback: impl std::future::Future<Output = Res<Vec<RecordingFile>>>,
+) -> Res<(Vec<RecapMeeting>, &'static str)> {
+    let mcps_err = match mcps {
+        Ok(m) if !m.is_empty() => return Ok((m, RECAPS_FROM_MCPS)),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::info!(err = %e, "meeting content service failed, using OneDrive recordings");
+            Some(e)
+        }
+    };
+    match fallback.await {
+        Ok(files) => {
+            let cutoff = now_ms() - 30 * 86_400_000;
+            let mut meetings = teams_proto::recaps::meetings_from_files(&files);
+            meetings.retain(|m| m.start_ms.is_none_or(|s| s >= cutoff));
+            Ok((meetings, RECAPS_FROM_ONEDRIVE))
+        }
+        Err(e) => {
+            tracing::warn!(err = %e, "OneDrive recordings failed");
+            Err(match mcps_err {
+                Some(m) => anyhow::anyhow!(
+                    "the meeting content service ({m}) and the OneDrive recordings ({e:#}) both failed"
+                ),
+                None => e.context("the OneDrive recordings failed"),
+            })
+        }
+    }
+}
+
 impl Engine {
     pub(super) fn apps_offline(&self) -> bool {
         self.offline.load(Ordering::Relaxed)
@@ -272,35 +314,34 @@ impl Engine {
 
     /// The meetings of the last 30 days that have a recording or transcript, and where the list
     /// came from. The meeting content service first; when it fails or has nothing, the
-    /// recordings in the user's OneDrive.
+    /// recordings in the user's OneDrive (see [`recaps_from`]).
     pub(super) async fn src_recaps(&self) -> Res<(Vec<RecapMeeting>, &'static str)> {
-        const MCPS: &str = "From the meeting content service.";
         if self.apps_offline() {
             let v = fx::recap_meetings(now_ms());
-            return Ok((teams_proto::recaps::parse_meetings(&v), MCPS));
+            return Ok((teams_proto::recaps::parse_meetings(&v), RECAPS_FROM_MCPS));
         }
-        match self.client.recap_meetings(30).await {
-            Ok(m) if !m.is_empty() => return Ok((m, MCPS)),
-            Ok(_) => {}
-            Err(e) => {
-                tracing::info!(err = %e, "meeting content service failed, using OneDrive recordings")
-            }
-        }
-        let files: Vec<RecordingFile> = onedrive::around::meeting_recordings(&self.client)
-            .await?
-            .into_iter()
-            .map(|r| RecordingFile {
-                id: r.item.id,
-                drive_id: r.item.drive_id,
-                name: r.item.name,
-                web_url: r.item.web_url,
-                modified_ms: r.item.modified_ms,
-            })
-            .collect();
-        let cutoff = now_ms() - 30 * 86_400_000;
-        let mut meetings = teams_proto::recaps::meetings_from_files(&files);
-        meetings.retain(|m| m.start_ms.is_none_or(|s| s >= cutoff));
-        Ok((meetings, "From the recordings in your OneDrive."))
+        let mcps = self.client.recap_meetings(30).await;
+        recaps_from(mcps, async {
+            let found = tokio::time::timeout(
+                RECORDINGS_LIMIT,
+                onedrive::around::meeting_recordings(&self.client),
+            )
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!("no answer within {} seconds", RECORDINGS_LIMIT.as_secs())
+            })??;
+            Ok(found
+                .into_iter()
+                .map(|r| RecordingFile {
+                    id: r.item.id,
+                    drive_id: r.item.drive_id,
+                    name: r.item.name,
+                    web_url: r.item.web_url,
+                    modified_ms: r.item.modified_ms,
+                })
+                .collect())
+        })
+        .await
     }
 
     /// The transcript of a meeting as text: a `.vtt` file of the Recordings folder, else the

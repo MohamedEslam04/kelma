@@ -49,6 +49,8 @@ struct State {
     chat_service: String,
     middle_tier: String,
     presence: String,
+    /// `regionGtms.mcpService`, when the skypetoken answer has it.
+    mcp_service: Option<String>,
     region: Option<String>,
     /// Tokens for every other audience, minted on first use.
     cache: TokenCache,
@@ -222,6 +224,7 @@ impl Client {
             chat_service: String::new(),
             middle_tier: String::new(),
             presence: String::new(),
+            mcp_service: None,
             region: None,
             cache: TokenCache::default(),
         };
@@ -244,6 +247,7 @@ impl Client {
             chat_service: "https://offline.invalid".into(),
             middle_tier: "https://offline.invalid".into(),
             presence: "https://offline.invalid".into(),
+            mcp_service: None,
             region: None,
             cache: TokenCache::default(),
         };
@@ -324,6 +328,7 @@ impl Client {
         st.chat_service = sky.chat_service;
         st.middle_tier = sky.middle_tier;
         st.presence = sky.presence;
+        st.mcp_service = sky.mcp_service;
         st.region = sky.region;
         tracing::info!(chat_service = %st.chat_service, region = ?st.region, ttl_s = min_s, "tokens refreshed");
         Ok(())
@@ -512,6 +517,16 @@ impl Client {
     /// Middle-tier base URL for this user's region.
     pub async fn middle_tier(&self) -> String {
         self.state.lock().await.middle_tier.clone()
+    }
+
+    /// The meeting content service (`regionGtms.mcpService`), or one guessed from the middle tier
+    /// when the skypetoken answer did not name it (see [`crate::recaps::mcps_base`]).
+    pub async fn mcp_service(&self) -> String {
+        let st = self.state.lock().await;
+        match &st.mcp_service {
+            Some(u) => u.clone(),
+            None => crate::recaps::mcps_base(&st.middle_tier),
+        }
     }
 
     /// Presence service base URL (with `/v1`) for this user's region.

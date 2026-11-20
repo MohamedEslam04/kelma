@@ -58,6 +58,9 @@ pub struct SkypeToken {
     /// Presence service base URL with its version, e.g.
     /// `https://teams.cloud.microsoft/ups/noam/v1` (`regionGtms.presenceUPS`).
     pub presence: String,
+    /// Meeting content service base URL (`regionGtms.mcpService`), e.g.
+    /// `https://teams.microsoft.com/api/mcps/eu`. Absent from some answers.
+    pub mcp_service: Option<String>,
     pub region: Option<String>,
 }
 
@@ -68,6 +71,7 @@ impl std::fmt::Debug for SkypeToken {
             .field("chat_service", &self.chat_service)
             .field("middle_tier", &self.middle_tier)
             .field("presence", &self.presence)
+            .field("mcp_service", &self.mcp_service)
             .field("region", &self.region)
             .finish_non_exhaustive()
     }
@@ -175,12 +179,16 @@ pub fn parse_authz(body: &str) -> Result<SkypeToken> {
     let presence = s(gtms.and_then(|g| g.get("presenceUPS")))
         .map(|u| format!("{}/v1", trim(u)))
         .unwrap_or_else(|| FALLBACK_PRESENCE.into());
+    // The middle tier's partition is not where the meetings live (an EMEA tenant can have an
+    // `amer` middle tier), so the meeting content service comes from its own key.
+    let mcp_service = s(gtms.and_then(|g| g.get("mcpService"))).map(trim);
     Ok(SkypeToken {
         token,
         expires_in_s,
         chat_service,
         middle_tier,
         presence,
+        mcp_service,
         region,
     })
 }
@@ -362,6 +370,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(t.presence, "https://teams.cloud.microsoft/ups/noam/v1");
+    }
+
+    /// The meeting content service has its own key: an EMEA tenant may have an `amer` middle
+    /// tier (shape of the reference capture).
+    #[test]
+    fn authz_reads_the_meeting_content_service() {
+        let t = parse_authz(
+            r#"{"tokens":{"skypeToken":"S","expiresIn":100},"region":"emea",
+                "regionGtms":{"middleTier":"https://teams.microsoft.com/api/mt/part/amer-03",
+                "mcpService":"https://teams.microsoft.com/api/mcps/eu/"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            t.mcp_service.as_deref(),
+            Some("https://teams.microsoft.com/api/mcps/eu")
+        );
+        let t = parse_authz(r#"{"tokens":{"skypeToken":"S","expiresIn":100}}"#).unwrap();
+        assert_eq!(t.mcp_service, None);
     }
 
     #[test]

@@ -813,14 +813,14 @@ export component SharedView inherits Rectangle {
                 padding: 16px;
                 spacing: 10px;
                 Text {
-                    text: root.prompt == "folder" ? @tr("New folder") : (root.prompt == "rename" ? @tr("Rename") : @tr("Delete this file?"));
+                    text: root.prompt == "folder" ? @tr("New folder") : (root.prompt == "rename" ? @tr("Rename") : (root.file.ext == "DIR" ? @tr("Delete this folder?") : @tr("Delete this file?")));
                     color: Theme.fg;
                     font-size: 16px * Theme.font-scale;
                     font-weight: 600;
                     overflow: elide;
                 }
                 if root.prompt == "delete": Text {
-                    text: @tr("{} goes to the site's recycle bin.", root.file.name);
+                    text: root.file.ext == "DIR" ? @tr("{} and everything in it go to the site's recycle bin.", root.file.name) : @tr("{} goes to the site's recycle bin.", root.file.name);
                     color: Theme.fg-muted;
                     font-size: 12px * Theme.font-scale;
                     wrap: word-wrap;

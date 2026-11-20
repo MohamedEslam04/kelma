@@ -27,6 +27,8 @@ pub struct Recaps {
     detail_loading: bool,
 }
 
+const NO_RECORDINGS: &str = "No recordings in the last 30 days.";
+
 /// `1 h 5 min`-style length of a meeting, empty when the end is unknown.
 fn length(m: &RecapMeeting) -> String {
     match (m.start_ms, m.end_ms) {
@@ -36,6 +38,31 @@ fn length(m: &RecapMeeting) -> String {
 }
 
 impl Recaps {
+    /// Takes the answer of a load: whatever it is, loading ends and the list or a line saying
+    /// why it is empty shows.
+    fn finish(&mut self, found: anyhow::Result<(Vec<RecapMeeting>, &'static str)>) {
+        self.loading = false;
+        match found {
+            Ok((m, source)) => {
+                self.loaded = true;
+                self.meetings = m;
+                self.note = if self.meetings.is_empty() {
+                    NO_RECORDINGS.to_owned()
+                } else {
+                    source.to_owned()
+                };
+                // Keep the open meeting if it is still listed, else open the newest.
+                self.selected = self
+                    .selected
+                    .clone()
+                    .filter(|k| self.meetings.iter().any(|m| m.key == *k))
+                    .or_else(|| self.meetings.first().map(|m| m.key.clone()));
+            }
+            // A failed load is tried again the next time the view opens.
+            Err(e) => self.note = format!("Loading your meetings failed: {e:#}"),
+        }
+    }
+
     fn current(&self) -> Option<&RecapMeeting> {
         self.meetings
             .iter()
@@ -79,7 +106,7 @@ impl Recaps {
         let note = if !self.note.is_empty() {
             self.note.clone()
         } else if self.loaded && !self.loading && self.meetings.is_empty() {
-            "No meetings with a recording or transcript in the last 30 days.".into()
+            NO_RECORDINGS.into()
         } else if self.loaded && !self.loading && meetings.is_empty() {
             "No meeting matches your search.".into()
         } else {
@@ -188,22 +215,7 @@ impl Engine {
         let first = {
             let mut a = self.apps.lock().unwrap();
             let r = &mut a.recaps;
-            r.loading = false;
-            match found {
-                Ok((m, source)) => {
-                    r.loaded = true;
-                    r.meetings = m;
-                    r.note = source.to_owned();
-                    // Keep the open meeting if it is still listed, else open the newest.
-                    r.selected = r
-                        .selected
-                        .clone()
-                        .filter(|k| r.meetings.iter().any(|m| m.key == *k))
-                        .or_else(|| r.meetings.first().map(|m| m.key.clone()));
-                }
-                // A failed load is tried again the next time the view opens.
-                Err(e) => r.note = format!("Loading your meetings failed: {e}"),
-            }
+            r.finish(found);
             r.selected.clone()
         };
         self.recaps_push();
@@ -344,6 +356,117 @@ mod tests {
             meetings,
             ..Default::default()
         }
+    }
+
+    use super::super::source::{RECAPS_FROM_MCPS, RECAPS_FROM_ONEDRIVE, recaps_from};
+    use teams_proto::recaps::RecordingFile;
+
+    fn block<T>(f: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    fn recording(name: &str) -> RecordingFile {
+        RecordingFile {
+            id: format!("id-{name}"),
+            drive_id: "drive".into(),
+            name: name.into(),
+            web_url: "https://example.invalid/r.mp4".into(),
+            modified_ms: teams_proto::time::now_ms() - 86_400_000,
+        }
+    }
+
+    fn http_401() -> teams_proto::Error {
+        teams_proto::Error::status("meeting contents", 401, "")
+    }
+
+    /// A load in progress, as `recaps_refresh` starts it.
+    fn loading() -> Recaps {
+        Recaps {
+            loading: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_mcps_failure_falls_back_to_the_onedrive_recordings() {
+        let found = block(recaps_from(Err(http_401()), async {
+            Ok(vec![recording("Weekly sync-Meeting Recording.mp4")])
+        }));
+        let (m, source) = found.as_ref().unwrap();
+        assert_eq!(*source, RECAPS_FROM_ONEDRIVE);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].subject, "Weekly sync");
+        let mut r = loading();
+        r.finish(found);
+        let d = r.data();
+        assert!(!d.loading, "the list replaced the loading line");
+        assert_eq!(d.meetings.len(), 1);
+        assert_eq!(d.note, RECAPS_FROM_ONEDRIVE);
+        assert!(d.detail.open, "the newest meeting opens");
+    }
+
+    #[test]
+    fn an_empty_answer_says_there_are_no_recordings() {
+        // MCPS has nothing, so OneDrive is asked; it has nothing either.
+        let found = block(recaps_from(Ok(vec![]), async { Ok(vec![]) }));
+        let mut r = loading();
+        r.finish(found);
+        let d = r.data();
+        assert!(!d.loading);
+        assert!(d.meetings.is_empty());
+        assert_eq!(d.note, "No recordings in the last 30 days.");
+        // A 401 from MCPS and an empty OneDrive folder: the same.
+        let mut r = loading();
+        r.finish(block(recaps_from(Err(http_401()), async { Ok(vec![]) })));
+        assert_eq!(r.data().note, "No recordings in the last 30 days.");
+        assert!(!r.data().loading);
+    }
+
+    #[test]
+    fn both_sources_failing_shows_an_error_and_ends_loading() {
+        let found = block(recaps_from(Err(http_401()), async {
+            Err(anyhow::anyhow!("no answer within 45 seconds"))
+        }));
+        let mut r = loading();
+        r.finish(found);
+        let d = r.data();
+        assert!(!d.loading);
+        assert!(d.meetings.is_empty());
+        assert!(
+            d.note
+                .starts_with("Loading your meetings failed: the meeting content service (")
+                && d.note.contains("401")
+                && d.note.contains("no answer within 45 seconds"),
+            "{}",
+            d.note
+        );
+        // MCPS answered (empty) and only OneDrive failed.
+        let mut r = loading();
+        r.finish(block(recaps_from(Ok(vec![]), async {
+            Err(anyhow::anyhow!("HTTP 503"))
+        })));
+        assert_eq!(
+            r.data().note,
+            "Loading your meetings failed: the OneDrive recordings failed: HTTP 503"
+        );
+        assert!(!r.data().loading);
+    }
+
+    #[test]
+    fn meetings_from_mcps_are_used_without_asking_onedrive() {
+        let now = teams_proto::time::now_ms();
+        let listed = parse_meetings(&super::super::fixtures::recap_meetings(now));
+        let asked = std::cell::Cell::new(false);
+        let found = block(recaps_from(Ok(listed.clone()), async {
+            asked.set(true);
+            Ok(vec![])
+        }));
+        let (m, source) = found.unwrap();
+        assert_eq!((m, source), (listed, RECAPS_FROM_MCPS));
+        assert!(!asked.get(), "OneDrive is not asked when MCPS has meetings");
     }
 
     #[test]

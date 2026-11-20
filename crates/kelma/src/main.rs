@@ -175,6 +175,13 @@ const APP_ID: &str = tray::APP_ID;
 const EMOJI_FONT: &[u8] = include_bytes!("../ui/fonts/TwemojiMozilla.ttf");
 
 /// Finds a system font file for a fontconfig pattern.
+/// The window saw a right button go up: the message under the pointer opens its "…" menu
+/// (`MessagePointer` in `message_row.slint`; its text takes the press itself).
+fn right_click_released(w: &AppWindow) {
+    let p = w.global::<MessagePointer>();
+    p.set_right_clicks(p.get_right_clicks().wrapping_add(1));
+}
+
 fn fc_match(pattern: &str) -> Option<std::path::PathBuf> {
     let out = std::process::Command::new("fc-match")
         .args(["-f", "%{file}", pattern])
@@ -509,12 +516,23 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Files dropped on the window become attachments. winit reports one event per file. Wayland has
-    // no drop events in winit 0.30, so this only fires on X11, Windows and macOS.
+    // no drop events in winit 0.30, so this only fires on X11, Windows and macOS. Right clicks are
+    // counted for the message under the pointer (`right_click_released`).
     {
-        use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
+        use slint::winit_030::winit::event::{ElementState, MouseButton, WindowEvent};
+        use slint::winit_030::{EventResult, WinitWindowAccessor};
         let tx = tx.clone();
         let weak = window.as_weak();
         window.window().on_winit_window_event(move |_, event| {
+            if let WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Right,
+                ..
+            } = event
+                && let Some(w) = weak.upgrade()
+            {
+                right_click_released(&w);
+            }
             if let WindowEvent::DroppedFile(path) = event {
                 // On the OneDrive view a drop uploads; elsewhere it attaches to the message.
                 let on_drive = weak.upgrade().is_some_and(|w| w.get_view() == "onedrive");

@@ -103,6 +103,9 @@ msgstr "مخصص"
 msgid "Delete this file?"
 msgstr "هل تريد حذف هذا الملف؟"
 
+msgid "Delete this folder?"
+msgstr "هل تريد حذف هذا المجلد؟"
+
 msgid "Delete voicemail from {}"
 msgstr "حذف البريد الصوتي من {}"
 
@@ -480,6 +483,9 @@ msgstr "الوقت"
 
 msgid "{} goes to the site's recycle bin."
 msgstr "سينتقل {} إلى سلة محذوفات الموقع."
+
+msgid "{} and everything in it go to the site's recycle bin."
+msgstr "سينتقل {} وكل ما فيه إلى سلة محذوفات الموقع."
 
 msgid "{} is controlling your screen"
 msgstr "{} يتحكم في شاشتك"
