@@ -291,6 +291,9 @@ pub struct Engine {
     last_cmid: AtomicI64,
     /// The call commands' lane: they run one at a time, in the order they were sent (`in_order`).
     calls_lane: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<Cmd>>,
+    /// One lane per store (Find, People, Calendar, ...): each command's ordered part runs in the
+    /// order the store's commands were sent (`in_order::store_lane`).
+    store_lanes: Mutex<HashMap<&'static str, tokio::sync::mpsc::UnboundedSender<Cmd>>>,
 }
 
 const PAGE: usize = 60;
@@ -352,6 +355,7 @@ impl Engine {
             retry_pending: AtomicBool::new(false),
             last_cmid: AtomicI64::new(0),
             calls_lane: std::sync::OnceLock::new(),
+            store_lanes: Mutex::default(),
         });
         // The call window's photos come from the chat avatar cache. A miss downloads in the
         // background, which needs the runtime; without one only the cache is read.
@@ -432,7 +436,8 @@ impl Engine {
 
     /// Runs a command in the background. Quick local ones run inline, so they stay ordered with the
     /// command that follows them (a draft edit must land before the chat switch that flushes it).
-    /// The call commands take their own lane, in order (`in_order`).
+    /// The call commands take their own lane, in order, and each store's commands take the
+    /// store's lane (`in_order`).
     pub fn dispatch(self: &Arc<Self>, cmd: Cmd) {
         match cmd {
             Cmd::DraftEdited(text) => self.draft_edited(text),
@@ -449,9 +454,12 @@ impl Engine {
             cmd @ Cmd::Call(_) => self.in_order(cmd),
             #[cfg(feature = "calls")]
             cmd @ (Cmd::DirectCall(_) | Cmd::CallsPage(_)) => self.in_order(cmd),
-            cmd => {
-                tokio::spawn(self.clone().handle(cmd));
-            }
+            cmd => match in_order::store_lane(&cmd) {
+                Some(lane) => self.in_store_lane(lane, cmd),
+                None => {
+                    tokio::spawn(self.clone().handle(cmd));
+                }
+            },
         }
     }
 

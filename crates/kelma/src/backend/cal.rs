@@ -788,6 +788,12 @@ fn snooze_body(until_ms: i64) -> serde_json::Value {
 
 impl Engine {
     /// Starts the calendar sync and reminder loops.
+    /// The date the calendar shows (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn calendar_date_for_test(&self) -> Date {
+        self.cal.lock().date
+    }
+
     pub(super) fn start_calendar(self: &Arc<Self>) {
         let e = self.clone();
         tokio::spawn(async move {
