@@ -48,6 +48,7 @@ mod people;
 #[cfg(test)]
 mod people_live;
 mod people_presence;
+mod remind;
 mod render;
 mod scheduled;
 mod send;
@@ -90,6 +91,7 @@ pub use media::MediaCmd;
 #[cfg(test)]
 pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
+pub use remind::{RemindCmd, ReminderData, SnoozedData};
 pub use scheduled::{ScheduledCmd, ScheduledData};
 
 /// Commands sent by the UI.
@@ -161,6 +163,8 @@ pub enum Cmd {
     /// The image viewer, Translate and link previews (plan 9.5 to 9.7).
     Media(MediaCmd),
     Apps(AppsCmd),
+    /// Reminders on messages and snoozed chats (local to this device).
+    Remind(RemindCmd),
     /// The call window (pre-join, meeting controls, call ended).
     Call(call::CallCmd),
     /// The composer's "+" apps picker (plan S3.6).
@@ -274,6 +278,7 @@ pub struct Engine {
     drive: Mutex<drive::Drive>,
     engage: Mutex<engage::State>,
     lists: Mutex<lists::State>,
+    remind: Mutex<remind::State>,
     channels: Mutex<channels::State>,
     media: Mutex<media::State>,
     apps: Mutex<appstore::Apps>,
@@ -353,6 +358,7 @@ impl Engine {
             drive: Mutex::new(drive::Drive::default()),
             engage: Mutex::new(engage::State::default()),
             lists: Mutex::new(lists::State::default()),
+            remind: Mutex::new(remind::State::default()),
             channels: Mutex::new(channels::State::default()),
             media: Mutex::new(media::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
@@ -423,6 +429,7 @@ impl Engine {
         self.start_notify_prefs();
         self.start_my_presence();
         self.start_people_presence();
+        self.start_reminders();
         let e = self.clone();
         tokio::spawn(async move { e.render_loop().await });
         let e = self.clone();
@@ -702,6 +709,8 @@ impl Engine {
             Cmd::Channels(c) => self.channel_cmd(c).await?,
             Cmd::Media(c) => self.media_cmd(c).await?,
             Cmd::Apps(c) => self.apps_cmd(c).await?,
+            // Boxed: the notification's "Open" opens a chat through `handle` again.
+            Cmd::Remind(c) => Box::pin(self.remind_cmd(c)).await?,
             Cmd::Call(c) => in_order::finish(self.call_cmd(c)?).await?,
             #[cfg(feature = "calls")]
             Cmd::DirectCall(c) => self.direct_call_cmd(c)?,

@@ -66,6 +66,7 @@ pub(super) fn store_lane(cmd: &Cmd) -> Option<&'static str> {
         Cmd::Channels(_) => "channels",
         Cmd::Media(_) => "media",
         Cmd::Apps(_) => "apps",
+        Cmd::Remind(_) => "remind",
         Cmd::ComposerApps(_) => "composer-apps",
         _ => return None,
     })
@@ -448,6 +449,10 @@ mod tests {
         assert_eq!(
             super::store_lane(&Cmd::Lists(ListsCmd::CollapseAll)),
             Some("lists")
+        );
+        assert_eq!(
+            super::store_lane(&Cmd::Remind(crate::backend::RemindCmd::Refresh)),
+            Some("remind")
         );
         assert_eq!(super::store_lane(&Cmd::SelectChat("19:x".into())), None);
         assert_eq!(super::store_lane(&Cmd::Call(CallCmd::Leave)), None);

@@ -1259,3 +1259,48 @@ msgstr "وضع علامة كمقروء"
 
 msgid "Play"
 msgstr "تشغيل"
+
+msgid "Remind me"
+msgstr "ذكّرني"
+
+msgid "In 20 minutes"
+msgstr "بعد 20 دقيقة"
+
+msgid "In 1 hour"
+msgstr "بعد ساعة"
+
+msgid "In 3 hours"
+msgstr "بعد 3 ساعات"
+
+msgid "Tomorrow at 9:00"
+msgstr "غدًا الساعة 9:00"
+
+msgid "Reminders"
+msgstr "التذكيرات"
+
+msgid "No reminders. Use \"Remind me\" in a message's menu."
+msgstr "لا توجد تذكيرات. استخدم «ذكّرني» من قائمة الرسالة."
+
+msgid "Snoozed chats"
+msgstr "المحادثات المؤجلة"
+
+msgid "Returns {}"
+msgstr "تعود {}"
+
+msgid "Unsnooze"
+msgstr "إلغاء التأجيل"
+
+msgid "Snooze"
+msgstr "تأجيل"
+
+msgid "‹ Snooze"
+msgstr "‹ تأجيل"
+
+msgid "For 1 hour"
+msgstr "لمدة ساعة"
+
+msgid "Until tomorrow 9:00"
+msgstr "حتى غد الساعة 9:00"
+
+msgid "Until next week (Monday 9:00)"
+msgstr "حتى الأسبوع القادم (الاثنين 9:00)"

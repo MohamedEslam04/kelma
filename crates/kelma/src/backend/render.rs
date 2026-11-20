@@ -197,6 +197,8 @@ impl Engine {
             .map(|d| (d.conversation_id, d.text))
             .collect();
         let ov = self.lists_overlay();
+        let snoozed = self.remind_snoozed();
+        let now = teams_proto::time::now_ms();
         let mut rows = {
             let st = self.store.lock().unwrap();
             if search.trim().is_empty() {
@@ -218,6 +220,7 @@ impl Engine {
         if filter == "meetings" {
             rows.retain(|r| r.kind == ConvKind::Meeting);
         }
+        let rows = super::remind::filter_snoozed(rows, |r| r.id.as_str(), &snoozed, now);
         let mut fav = vec![];
         let mut main = vec![];
         let mut chans = vec![];

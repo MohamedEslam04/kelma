@@ -4,6 +4,7 @@
 import { Theme } from "theme.slint";
 import { ChatRow } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
+import { RemindStore } from "remind.slint";
 
 // A section of the list: sections made in Teams (read from the account) and local ones.
 export struct SectionRow {
@@ -98,7 +99,7 @@ export component ItemMenu inherits Rectangle {
     callback done();
 
     property <string> view: "main";
-    property <int> main-rows: 5 + (root.in-section ? 1 : 0) + (root.data.channel ? 1 + (ListStore.channel-private ? 1 : 0) : 0) + (root.data.group ? 1 : 0);
+    property <int> main-rows: 6 + (root.in-section ? 1 : 0) + (root.data.channel ? 1 + (ListStore.channel-private ? 1 : 0) : 0) + (root.data.group ? 1 : 0);
 
     background: Theme.surface;
     border-radius: 6px;
@@ -110,6 +111,7 @@ export component ItemMenu inherits Rectangle {
         if root.view == "main": VerticalLayout {
             MenuRow { label: @tr("Mark as unread"); clicked => { root.mark-unread(); root.done(); } }
             MenuRow { label: @tr("Move to section"); chevron: true; clicked => { root.view = "sections"; } }
+            MenuRow { label: @tr("Snooze"); chevron: true; clicked => { root.view = "snooze"; } }
             if root.in-section: MenuRow { label: @tr("Remove from section"); clicked => { ListStore.command("remove-section", root.data.id); root.done(); } }
             if !root.data.channel: MenuRow {
                 label: root.data.muted ? @tr("Unmute") : @tr("Mute");
@@ -140,6 +142,12 @@ export component ItemMenu inherits Rectangle {
                     root.done();
                 }
             }
+        }
+        if root.view == "snooze": VerticalLayout {
+            MenuRow { label: @tr("‹ Snooze"); dim: true; clicked => { root.view = "main"; } }
+            MenuRow { label: @tr("For 1 hour"); clicked => { RemindStore.command("snooze", root.data.id + "\u{9}1h"); root.done(); } }
+            MenuRow { label: @tr("Until tomorrow 9:00"); clicked => { RemindStore.command("snooze", root.data.id + "\u{9}tomorrow"); root.done(); } }
+            MenuRow { label: @tr("Until next week (Monday 9:00)"); clicked => { RemindStore.command("snooze", root.data.id + "\u{9}week"); root.done(); } }
         }
         if root.view == "notify": VerticalLayout {
             MenuRow { label: @tr("‹ Manage notifications"); dim: true; clicked => { root.view = "main"; } }
