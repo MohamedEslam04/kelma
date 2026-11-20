@@ -521,7 +521,7 @@ impl Engine {
     fn command_failed(&self, err: anyhow::Error) {
         tracing::warn!(%err, "command failed");
         if !self.offline.load(Ordering::Relaxed) {
-            self.ui.banner(format!("{err}"));
+            self.ui.banner(util::shown_error(&err));
         }
     }
 
