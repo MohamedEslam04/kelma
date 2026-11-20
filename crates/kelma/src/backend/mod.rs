@@ -48,8 +48,8 @@ mod people;
 #[cfg(test)]
 mod people_live;
 mod people_presence;
-mod remind;
 pub(crate) mod quiet;
+mod remind;
 mod render;
 mod scheduled;
 mod send;

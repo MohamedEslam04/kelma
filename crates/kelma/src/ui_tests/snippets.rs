@@ -71,7 +71,7 @@ fn placeholders_use_the_other_persons_first_name_in_a_one_to_one_chat() {
 
 #[test]
 fn arrows_and_tab_choose_and_escape_closes() {
-    let (app, _dir, sent) = ready("keys");
+    let (app, _dir, _sent) = ready("keys");
     // "/" lists all three examples in order: brb, omw, thanks.
     type_text(&app, "/");
     key(&app, Key::DownArrow, true);
