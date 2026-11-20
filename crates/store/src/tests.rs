@@ -688,6 +688,7 @@ fn every_outbox_kind_roundtrips() {
         OutboxKind::Image,
         OutboxKind::File,
         OutboxKind::Card,
+        OutboxKind::Voice,
     ]
     .into_iter()
     .enumerate()

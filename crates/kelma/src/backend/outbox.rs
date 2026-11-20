@@ -109,6 +109,8 @@ pub(super) fn row_from_outbox(item: &OutboxItem, me: &str, my_name: &str) -> Mes
         OutboxKind::Text => item.html.clone(),
         OutboxKind::Image => render::text_to_teams_html(&format!("🖼 {}", payload_name(item))),
         OutboxKind::File => render::text_to_teams_html(&format!("📎 {}", payload_name(item))),
+        // The voice card, pointing at the local recording: the pending row already plays.
+        OutboxKind::Voice => item.html.clone(),
         // The typed text, then a line for each card (the real card is drawn from the echo).
         OutboxKind::Card => {
             let mut html = item.html.clone();
@@ -396,6 +398,18 @@ impl Engine {
                 self.ui.banner(String::new());
                 sent
             }
+            // A voice message: the recording goes to the media service, then a message whose
+            // audio card points at it (what Teams mobile sends).
+            OutboxKind::Voice => {
+                let (name, data) = read_payload(item)?;
+                let duration_ms = teams_proto::cards::split_voice(&item.html)
+                    .and_then(|(_, clips)| clips.first().map(|c| c.duration_ms))
+                    .unwrap_or(0);
+                let id = self.client.upload_voice(chat, &name, data).await?;
+                self.client
+                    .send_voice_as(target, &id, duration_ms, &self.my_name, cmid)
+                    .await
+            }
         }
     }
 
@@ -417,6 +431,7 @@ impl Engine {
                 OutboxKind::Text => format!("You: {plain}"),
                 OutboxKind::Card if plain.trim().is_empty() => "You: 🗂 Card".to_owned(),
                 OutboxKind::Card => format!("You: {plain}"),
+                OutboxKind::Voice => "You: 🎤 Voice message".to_owned(),
                 _ => format!("You: 📎 {}", payload_name(item)),
             };
             let _ = st.touch_conversation(&chat, now_ms(), &preview, false);

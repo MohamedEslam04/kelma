@@ -6,6 +6,7 @@ pub use appstore::wire as install_apps;
 pub use cal::read_form as read_form_for_test;
 pub use cal::wire as install_calendar;
 pub use composer_apps::wire as install_composer_apps;
+pub use voice::{PlayerView, RecorderView, wire as install_voice};
 
 use crate::data::{
     AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
@@ -40,6 +41,7 @@ mod palette;
 mod people;
 pub(crate) mod popout;
 mod remind;
+mod voice;
 pub(crate) mod settings;
 mod teams;
 pub(crate) mod topbar;

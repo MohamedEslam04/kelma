@@ -1,3 +1,4 @@
+import { VoiceRecStore, VoiceRecorderBar } from "voice_recorder.slint";
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Edited, ComposerEmoji, PendingAttachment } from "types.slint";
@@ -466,6 +467,11 @@ export component Composer inherits Rectangle {
                                 root.edit-last();
                                 return accept;
                             }
+                            // Ctrl+Shift+R records a voice message (ui/voice_recorder.slint).
+                            if event.modifiers.control && event.modifiers.shift && (event.text == "R" || event.text == "r") {
+                                VoiceRecStore.start();
+                                return accept;
+                            }
                             if (event.text == Key.Return && (root.enter-sends ? !event.modifiers.shift : event.modifiers.control || event.modifiers.meta)) {
                                 root.submit();
                                 return accept;
@@ -534,6 +540,11 @@ export component Composer inherits Rectangle {
                         }
                     }
                     ComposerAppsButton { }
+                    IconButton {
+                        icon: @image-url("icons/mic.svg");
+                        tooltip: @tr("Record a voice message (Ctrl+Shift+R)");
+                        clicked => { VoiceRecStore.start(); }
+                    }
                     Rectangle { width: 1px; background: Theme.border; }
                     SendButton {
                         ready: composer-input.text != "" || root.pending-attachments.length > 0;
@@ -546,6 +557,17 @@ export component Composer inherits Rectangle {
                 y: parent.height - 2px;
                 height: 2px;
                 background: composer-input.has-focus ? Theme.accent : transparent;
+            }
+            // While a voice message is recorded or listened back, its bar takes the box.
+            if VoiceRecStore.state != "idle": Rectangle {
+                background: Theme.surface;
+                border-radius: Theme.radius;
+                VoiceRecorderBar {
+                    x: 8px;
+                    width: parent.width - 16px;
+                    y: (parent.height - self.height) / 2;
+                    init => { self.focus(); }
+                }
             }
         }
     }

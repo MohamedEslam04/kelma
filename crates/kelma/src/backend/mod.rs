@@ -52,6 +52,7 @@ mod people_presence;
 mod photo;
 pub(crate) mod quiet;
 mod remind;
+mod voice_messages;
 mod render;
 pub(crate) mod ringtone;
 mod scheduled;
@@ -97,6 +98,7 @@ pub use media::MediaCmd;
 pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
 pub use remind::{RemindCmd, ReminderData, SnoozedData};
+pub use voice_messages::VoiceCmd;
 pub use scheduled::{ScheduledCmd, ScheduledData};
 
 /// Commands sent by the UI.
@@ -170,6 +172,8 @@ pub enum Cmd {
     Apps(AppsCmd),
     /// Reminders on messages and snoozed chats (local to this device).
     Remind(RemindCmd),
+    /// Voice messages: the players in chat rows and the recorder (`voice_messages`).
+    Voice(VoiceCmd),
     /// The call window (pre-join, meeting controls, call ended).
     Call(call::CallCmd),
     /// The composer's "+" apps picker (plan S3.6).
@@ -284,6 +288,7 @@ pub struct Engine {
     engage: Mutex<engage::State>,
     lists: Mutex<lists::State>,
     remind: Mutex<remind::State>,
+    voice: Mutex<voice_messages::State>,
     channels: Mutex<channels::State>,
     media: Mutex<media::State>,
     apps: Mutex<appstore::Apps>,
@@ -364,6 +369,7 @@ impl Engine {
             engage: Mutex::new(engage::State::default()),
             lists: Mutex::new(lists::State::default()),
             remind: Mutex::new(remind::State::default()),
+            voice: Mutex::default(),
             channels: Mutex::new(channels::State::default()),
             media: Mutex::new(media::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
@@ -720,6 +726,7 @@ impl Engine {
             Cmd::Apps(c) => self.apps_cmd(c).await?,
             // Boxed: the notification's "Open" opens a chat through `handle` again.
             Cmd::Remind(c) => Box::pin(self.remind_cmd(c)).await?,
+            Cmd::Voice(c) => Box::pin(self.voice_cmd(c)).await?,
             Cmd::Call(c) => in_order::finish(self.call_cmd(c)?).await?,
             #[cfg(feature = "calls")]
             Cmd::DirectCall(c) => self.direct_call_cmd(c)?,

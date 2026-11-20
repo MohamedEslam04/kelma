@@ -6,6 +6,16 @@ use reqwest::Method;
 use serde_json::{Value, json};
 use url::Url;
 
+/// Host of the media service URLs messages point at (`…/v1/objects/<id>/views/<view>`).
+pub const AMS_VIEW_HOST: &str = "as-api.asm.skype.com";
+/// Host objects are created and uploaded on.
+const AMS_UPLOAD: &str = "https://as-prod.asyncgw.teams.microsoft.com/v1/objects/";
+/// AMS object type of a voice message recording. NOT YET CONFIRMED: the metadata of a voice
+/// message Teams mobile uploaded must be read (`kelma-cli ams-meta`) before this is trusted.
+pub const AUDIO_OBJECT_TYPE: &str = "sharing/audio";
+/// Content slot an audio object's bytes are written to (its view is `audio`).
+const AUDIO_CONTENT: &str = "audio";
+
 /// Largest image we download.
 pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
@@ -79,24 +89,50 @@ impl Client {
         filename: &str,
         data: Vec<u8>,
     ) -> Result<String> {
+        self.upload_object(conversation_id, filename, "pish/image", "imgpsh", data)
+            .await
+    }
+
+    /// Uploads a voice message recording (AAC in MP4) visible to `conversation_id` and returns
+    /// the AMS object id.
+    pub async fn upload_voice(
+        &self,
+        conversation_id: &str,
+        filename: &str,
+        data: Vec<u8>,
+    ) -> Result<String> {
+        self.upload_object(
+            conversation_id,
+            filename,
+            AUDIO_OBJECT_TYPE,
+            AUDIO_CONTENT,
+            data,
+        )
+        .await
+    }
+
+    /// Creates an AMS object of `kind` that `conversation_id` may read, writes `data` to its
+    /// `content` slot and returns its id.
+    async fn upload_object(
+        &self,
+        conversation_id: &str,
+        filename: &str,
+        kind: &str,
+        content: &str,
+        data: Vec<u8>,
+    ) -> Result<String> {
         let mut perms = serde_json::Map::new();
         perms.insert(conversation_id.to_string(), json!(["read"]));
-        let body = json!({"type": "pish/image", "permissions": perms, "filename": filename, "sharingMode": "Inline"});
+        let body = json!({"type": kind, "permissions": perms, "filename": filename, "sharingMode": "Inline"});
         let v = self
-            .json(
-                "ams_create",
-                Method::POST,
-                "https://as-prod.asyncgw.teams.microsoft.com/v1/objects/",
-                Some(&body),
-            )
+            .json("ams_create", Method::POST, AMS_UPLOAD, Some(&body))
             .await?;
         let id = v
             .get("id")
             .and_then(Value::as_str)
             .ok_or_else(|| Error::Protocol("AMS create returned no id".into()))?
             .to_string();
-        let url =
-            format!("https://as-prod.asyncgw.teams.microsoft.com/v1/objects/{id}/content/imgpsh");
+        let url = format!("{AMS_UPLOAD}{id}/content/{content}");
         self.ensure_fresh().await?;
         let skype = self.tokens().await.skype.unwrap_or_default();
         let resp = self
