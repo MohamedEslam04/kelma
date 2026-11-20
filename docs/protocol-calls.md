@@ -223,6 +223,29 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
   - Calls that are no meeting (1:1) keep the old port-0 stub.
   - `live.rs` joins each frame with `Depacketizer`, keeps data id 3 and sends `Event::Caption`.
     A result without `displayName` takes the roster's name for its `userId`.
+- **Live (2026-11-20), meeting join.** The media server accepted the `x-data` line (port 3478,
+  `a=label:data`, mid 12, inside `a=group:BUNDLE`) and answered `a=setup:passive` with no
+  `a=sctp-port`. So kelma is the DTLS client. The log, at the default `warn` level, shows one
+  `rtc_sctp::endpoint: refusing first packet due to empty server_config` right after the DTLS
+  handshake, and no caption text arrived.
+  - What the warning means (rtc 0.21.1 `transport/sctp/mod.rs` `start`, rtc-sctp
+    `endpoint/mod.rs` `handle_first_packet`): as DTLS client, webrtc-rs builds its SCTP endpoint
+    without a server config and sends its own INIT once DTLS completes. The media server sent
+    an INIT too (simultaneous open). The endpoint routes an INIT to an existing association only
+    by our own tag, so the server's INIT is refused. No `SettingEngine` option changes this.
+  - That alone does not keep the channel shut: the association comes up when the server
+    answers our INIT, as RFC 4960 §5.2.1 requires while its own INIT is out
+    (`tests/media_data_channel.rs` covers kelma's side with these roles). The server did not
+    send its INIT again in the next three minutes (a retransmit would log the warning again),
+    which suggests it did answer ours.
+  - The `warn` log cannot show whether `main-channel` opened. Next run:
+    `KELMA_LOG=warn,calling=info,rtc::peer_connection::handler::sctp=debug,rtc_sctp=debug`.
+    A working channel logs `association_handle … is connected`, then
+    `calling::media: data channel open label=main-channel`.
+  - If the server never answers our INIT, kelma must accept the server's: either patch rtc-sctp
+    so an INIT that collides with our own goes to our association (the association already
+    handles INIT in COOKIE-WAIT), or offer `a=setup:passive` so kelma is the DTLS (and SCTP)
+    server. The second changes DTLS for audio too.
 
 ### UNVERIFIED
 
@@ -236,10 +259,9 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
   `addParticipant`. Captions may need a meeting.
 - Whether the web client sends the `updateEndpointMetadata` preference. Only rusty-teams does;
   kelma sends it after each captions start and stop, as rusty-teams does.
-- The data channel as kelma opens it: whether the media server accepts our `x-data` line
-  (webrtc-rs's SDP, not libwebrtc's, under rusty-teams' mapping), whether webrtc-rs's SCTP
-  association comes up with the media server's, and whether it needs our own `main-channel` or
-  opens its own.
+- The data channel as kelma opens it: whether webrtc-rs's SCTP association comes up with the
+  media server's (the `x-data` line is accepted, see "Live (2026-11-20)" above), and whether it
+  needs our own `main-channel` or opens its own.
 - Whether a caption's `userId` is a full MRI (`8:orgid:<id>`) or the bare id: kelma looks up
   both.
 
