@@ -608,6 +608,33 @@ fn activity_notification_settings_entry_opens_the_notifications_page() {
     assert!(!checked(app, "Chat messages: Off"));
 }
 
+/// Settings covers the page right of the rail. A click on the rail leaves Settings for that
+/// page, as in Teams, even for the page that is already open under it.
+#[test]
+fn a_rail_click_closes_settings_and_opens_the_page() {
+    let ui = window(Home::new("rail"));
+    let app = &ui.app;
+    let rail = |label: &str| {
+        ElementHandle::find_by_accessible_label(app, label)
+            .find(|e| e.absolute_position().x < 68.)
+            .unwrap_or_else(|| panic!("rail entry {label}"))
+    };
+    app.set_view("chat".into());
+    open_page(app, "general");
+    assert!(store(app).get_open());
+    rail("Chat").mock_single_click(PointerEventButton::Left);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(!store(app).get_open(), "Settings closed for the chat");
+    assert_eq!(app.get_view(), "chat");
+
+    open_page(app, "privacy");
+    assert!(store(app).get_open());
+    rail("Teams").mock_single_click(PointerEventButton::Left);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(!store(app).get_open(), "Settings closed for Teams");
+    assert_eq!(app.get_view(), "teams");
+}
+
 #[test]
 fn the_page_list_and_find_in_settings_switch_pages() {
     let ui = window(Home::new("nav"));

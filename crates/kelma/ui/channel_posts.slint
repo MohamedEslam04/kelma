@@ -270,6 +270,8 @@ export component ChannelPosts inherits Rectangle {
     callback retry-send(string);
     callback discard-send(string);
     callback load-older();
+    // Bumped when the conversation opens (and when End is pressed): back to the newest post.
+    in property <int> scroll-tick;
     background: Theme.main;
 
     VerticalLayout {
@@ -302,6 +304,23 @@ export component ChannelPosts inherits Rectangle {
         Rectangle { height: 1px; background: Theme.border; }
         ListView {
             vertical-stretch: 1;
+            // Teams opens a channel at its newest post: at the bottom (at the top with "See new
+            // posts at top"), and stays there while cards grow, until the list is scrolled away.
+            property <bool> pinned: true;
+            property <int> tick: root.scroll-tick;
+            function to-newest() {
+                self.content-y = ChannelStore.newest-top ? 0px : min(0px, self.visible-height - self.content-height);
+            }
+            changed tick => {
+                self.pinned = true;
+                self.to-newest();
+            }
+            changed content-height => {
+                if self.pinned { self.to-newest(); }
+            }
+            changed content-y => {
+                self.pinned = ChannelStore.newest-top ? self.content-y >= -4px : self.content-y <= self.visible-height - self.content-height + 4px;
+            }
             for item in ChannelStore.posts: PostCard {
                 item: item;
                 bubble: min(720px, root.width - 100px);

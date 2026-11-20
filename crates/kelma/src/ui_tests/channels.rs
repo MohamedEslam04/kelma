@@ -125,6 +125,51 @@ fn first(app: &AppWindow, label: &str) -> ElementHandle {
 
 // ---- 8.4 posts ---------------------------------------------------------------------------
 
+/// A channel opens at its newest post at the bottom, as in Teams (and as a chat opens), not at
+/// the oldest one.
+#[test]
+fn a_channel_opens_at_its_newest_post() {
+    let store = Store::open_in_memory().unwrap();
+    demo::seed(&store, teams_proto::time::now_ms()).unwrap();
+    for i in 0..30 {
+        store
+            .upsert_message(&row(
+                &format!("{}", 3000 + i),
+                None,
+                &format!("8:orgid:00000000-0000-0000-0000-0000000001{i:02}"),
+                &format!("Poster {i}"),
+                &format!("post number {i}"),
+                json!({}),
+            ))
+            .unwrap();
+    }
+    let h = Harness::with_store(store);
+    h.runner()(Cmd::SelectChannel(TECH.into(), TECH_TITLE.into()));
+    for ms in [16, 16, 200, 16] {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+    }
+    let posts = ElementHandle::find_by_element_type_name(&h.app, "ChannelPosts")
+        .next()
+        .expect("the Posts tab");
+    let (top, bottom) = (
+        posts.absolute_position().y,
+        posts.absolute_position().y + posts.size().height,
+    );
+    let on_screen = |name: &str| {
+        posts
+            .query_descendants()
+            .match_accessible_label(format!("Open profile of {name}"))
+            .find_all()
+            .iter()
+            .any(|e| {
+                let y = e.absolute_position().y;
+                y >= top && y < bottom
+            })
+    };
+    assert!(on_screen("Poster 29"), "the newest post shows");
+    assert!(!on_screen("Poster 0"), "the oldest is scrolled away above");
+}
+
 #[test]
 fn a_channel_shows_posts_as_cards_with_the_first_two_replies_inline() {
     let h = channel_harness(3);

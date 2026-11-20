@@ -294,8 +294,16 @@ fn set_recaps(w: &AppWindow, d: RecapsData) {
 impl UiHandle {
     /// Switches the main area to a view (`store`, `planner`, `workflows`, `onenote`, `lists`,
     /// `app`, or one of the chat views).
+    /// Shows an app's page. Settings covers the pages, so it closes (an app opened from the More
+    /// flyout or a menu while Settings is open).
     pub fn open_view(&self, view: String) {
-        self.run(move |w| w.set_view(view.into()));
+        self.run(move |w| {
+            w.set_view(view.into());
+            let settings = w.global::<crate::SettingsStore>();
+            if settings.get_open() {
+                settings.invoke_close();
+            }
+        });
     }
 
     pub fn apps_rail(&self, d: RailData) {

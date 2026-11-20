@@ -466,6 +466,88 @@ fn right_click_opens_the_same_menu() {
     assert_eq!(menu_labels(&app), others, "bar and right click agree");
 }
 
+/// The bubble of a row (the `MessageRow::bubble` inside it).
+fn bubble_of(app: &AppWindow, row: &ElementHandle) -> ElementHandle {
+    let (top, bottom) = (
+        row.absolute_position().y,
+        row.absolute_position().y + row.size().height,
+    );
+    ElementHandle::find_by_element_id(app, "MessageRow::bubble")
+        .find(|b| {
+            let y = b.absolute_position().y;
+            y >= top && y < bottom
+        })
+        .expect("the row's bubble")
+}
+
+/// Left and right edge of an element.
+fn span(e: &ElementHandle) -> (f32, f32) {
+    let x = e.absolute_position().x;
+    (x, x + e.size().width)
+}
+
+/// Teams puts the hover bar at the top right corner of the hovered message: for someone else's
+/// message (on the left) it sits at the bubble, not at the far edge of the pane.
+#[test]
+fn the_hover_bar_sits_at_the_hovered_bubble() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false), msg("m2", "mine", true)]);
+    let rows = rows(&app);
+    let bar = |app: &AppWindow| {
+        ElementHandle::find_by_element_id(app, "MessageRow::bar")
+            .next()
+            .expect("the hover bar")
+    };
+
+    hover(&app, &rows[0]);
+    let (b_left, b_right) = span(&bubble_of(&app, &rows[0]));
+    let (left, right) = span(&bar(&app));
+    assert!(
+        left >= b_left - 0.5 && left <= b_right,
+        "the bar starts at the bubble ({left}..{right}, bubble {b_left}..{b_right})"
+    );
+    assert!(
+        right <= (b_right - 8.).max(b_left + (right - left)) + 0.5,
+        "and ends at its right edge, or as close as the bar allows ({left}..{right}, bubble \
+         {b_left}..{b_right})"
+    );
+    // Its buttons are still the band at the top of the row.
+    assert_eq!(bar_buttons(&app, &rows[0]).len(), 3);
+
+    // Mine (on the right): its right edge just inside the bubble's, as before.
+    hover(&app, &rows[1]);
+    let (_, b_right) = span(&bubble_of(&app, &rows[1]));
+    let (_, right) = span(&bar(&app));
+    assert!((right - (b_right - 8.)).abs() < 0.5, "{right} vs {b_right}");
+}
+
+/// A right click on the words of a message opens the "…" menu too. The text takes the press
+/// (it is selectable), so the row never sees it; the window reports it (`main.rs`).
+#[test]
+fn right_click_on_the_message_text_opens_the_menu() {
+    let app = app_with_messages(vec![msg("m1", "some words from someone else", false)]);
+    let row = &rows(&app)[0];
+    let bubble = bubble_of(&app, row);
+    // On the text: the last line of the bubble, above its bottom padding.
+    let at = LogicalPosition::new(
+        bubble.absolute_position().x + 40.,
+        bubble.absolute_position().y + bubble.size().height - 18.,
+    );
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    crate::right_click_released(&app);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(app.get_menu_open(), "the menu opened");
+    assert_eq!(app.get_menu_msg().id, "m1");
+}
+
 #[test]
 fn menu_actions_fire_with_the_message_id_and_close_the_menu() {
     let app = app_with_messages(vec![msg("m1", "theirs", false), msg("m2", "mine", true)]);
