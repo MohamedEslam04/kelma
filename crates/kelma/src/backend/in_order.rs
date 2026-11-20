@@ -174,7 +174,9 @@ mod tests {
 
     /// The offline engine and its window (kept alive for the engine's UI handle).
     fn engine() -> (Arc<Engine>, crate::AppWindow) {
-        i_slint_backend_testing::init_no_event_loop();
+        // The testing platform is set once per thread; a test may build two engines.
+        thread_local! { static INIT: std::sync::Once = const { std::sync::Once::new() }; }
+        INIT.with(|once| once.call_once(i_slint_backend_testing::init_no_event_loop));
         let window = crate::AppWindow::new().unwrap();
         let ui = crate::ui::UiHandle::new(slint::ComponentHandle::as_weak(&window));
         let e = Engine::new(

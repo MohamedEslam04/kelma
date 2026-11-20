@@ -322,21 +322,21 @@ impl Engine {
             if let Some(list) = key.strip_prefix("todo:") {
                 let tasks = self.src_todo_tasks(list).await?;
                 let mut a = self.apps.lock().unwrap();
-                if here(&*a) {
+                if here(&a) {
                     a.tasks.todo = tasks;
                 }
             } else if let Some(plan) = key.strip_prefix("plan:") {
                 let (tasks, buckets) =
                     tokio::join!(self.src_planner_tasks(Some(plan)), self.src_buckets(plan));
                 let mut a = self.apps.lock().unwrap();
-                if here(&*a) {
+                if here(&a) {
                     a.tasks.planner = tasks?;
                     a.tasks.buckets = buckets.unwrap_or_default();
                 }
             } else {
                 let tasks = self.src_planner_tasks(None).await?;
                 let mut a = self.apps.lock().unwrap();
-                if here(&*a) {
+                if here(&a) {
                     a.tasks.planner = tasks;
                 }
             }
