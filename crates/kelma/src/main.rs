@@ -13,6 +13,7 @@ mod markdown;
 mod media_data;
 mod mention;
 mod reactions;
+mod send_options;
 mod shortcuts;
 mod tray_wiring;
 mod ui;
@@ -366,7 +367,18 @@ fn main() -> anyhow::Result<()> {
             if weak.upgrade().is_some_and(|w| w.get_important()) {
                 let _ = tx.send(Cmd::SetImportant(true));
             }
+            if weak.upgrade().is_some_and(|w| w.get_urgent()) {
+                let _ = tx.send(Cmd::SetUrgent(true));
+            }
             let _ = tx.send(Cmd::Send(text.into(), subject));
+        });
+    }
+    {
+        let tx = tx.clone();
+        window.global::<SendStore>().on_command(move |name, arg| {
+            if let Some(c) = backend::ScheduledCmd::parse(&name, &arg) {
+                let _ = tx.send(Cmd::Scheduled(c));
+            }
         });
     }
     ui::install_calendar(&window, tx.clone());

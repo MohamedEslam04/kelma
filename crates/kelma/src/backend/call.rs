@@ -575,6 +575,8 @@ pub struct CallModel {
     /// The driver can share a screen in this call (it negotiated a sharing line).
     pub can_share: bool,
     pub sharing: bool,
+    /// The chat header's "Share screen": share (the picker opens) as soon as the call can.
+    pub share_when_ready: bool,
     /// The driver can send our camera in this call (it negotiated a main-video line).
     pub can_camera: bool,
     pub camera: bool,
@@ -775,6 +777,7 @@ impl CallModel {
         self.hand = false;
         self.can_share = false;
         self.sharing = false;
+        self.share_when_ready = false;
         self.can_camera = false;
         self.camera = false;
         self.presenter.clear();
@@ -879,6 +882,15 @@ impl CallModel {
     pub fn toggle_share(&self) -> Option<Control> {
         (self.phase.active() && (self.can_share || self.sharing))
             .then_some(Control::Share(!self.sharing))
+    }
+
+    /// A pending "Share screen" (chat header): starts sharing once the call can, then is used up.
+    pub fn take_share_when_ready(&mut self) -> Option<Control> {
+        if !self.share_when_ready || !self.phase.active() || !self.can_share || self.sharing {
+            return None;
+        }
+        self.share_when_ready = false;
+        Some(Control::Share(true))
     }
 
     /// The Camera toggle: on the pre-join screen it flips the choice; in a call that can send
@@ -1346,10 +1358,14 @@ impl Shared {
         if generation != self.generation.load(Ordering::SeqCst) {
             return self.apply_held(generation, ev);
         }
-        let (mut changed, mut phase) = {
+        let (mut changed, mut phase, share) = {
             let mut m = self.model.lock().unwrap();
-            (m.apply(ev, Instant::now()), m.phase)
+            let changed = m.apply(ev, Instant::now());
+            (changed, m.phase, m.take_share_when_ready())
         };
+        if let Some(c) = share {
+            self.control(c);
+        }
         if phase == Phase::Ended {
             // The driver is done; dropping the handle stops whatever it still runs.
             self.handle.lock().unwrap().take();
@@ -1973,6 +1989,20 @@ pub fn manager() -> Option<Arc<CallManager>> {
 /// The entry points of the 1:1 call flows (`call_direct`).
 #[cfg(feature = "calls")]
 impl CallManager {
+    /// The chat header's "Share screen": the adopted call shares (the screen and window picker
+    /// opens) now if it can, else as soon as its sharing line is ready.
+    pub fn share_when_ready(&self) {
+        let control = {
+            let mut m = self.shared.model.lock().unwrap();
+            m.share_when_ready = true;
+            m.take_share_when_ready()
+        };
+        if let Some(c) = control {
+            self.shared.control(c);
+            self.shared.push();
+        }
+    }
+
     /// The entry point for a connected 1:1 call (answered or placed by the ringing flows): the
     /// manager runs it from here on (keepAlive, roster, controls, audio through cpal with echo
     /// cancellation, leave). Needs a tokio runtime. `current`: what happens to the call in
@@ -2951,6 +2981,34 @@ mod tests {
         assert!(!d.can_rejoin);
         m.leave(t0);
         assert_eq!(m.ended, YOU_LEFT_CALL);
+    }
+
+    #[test]
+    fn share_screen_from_the_header_shares_once_the_call_can() {
+        let t0 = Instant::now();
+        let mut m = CallModel::default();
+        m.adopted(
+            CallKind::Direct {
+                peer_name: "Ada".into(),
+                chat_id: "19:a_b@unq.gbl.spaces".into(),
+            },
+            Devices::default(),
+            t0,
+        );
+        m.share_when_ready = true;
+        assert_eq!(m.take_share_when_ready(), None, "no sharing line yet");
+        m.apply(
+            Event::Share {
+                available: true,
+                sharing: false,
+            },
+            t0,
+        );
+        assert_eq!(m.take_share_when_ready(), Some(Control::Share(true)));
+        assert_eq!(m.take_share_when_ready(), None, "used up");
+        m.share_when_ready = true;
+        m.leave(t0);
+        assert!(!m.share_when_ready, "a call that ends forgets it");
     }
 
     #[test]

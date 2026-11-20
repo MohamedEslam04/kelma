@@ -7,6 +7,7 @@ import { MentionApi, MentionPicker } from "mention_picker.slint";
 import { FormatApi, FormatBar, FormatEdit, FormatPreview, FormatToggle } from "composer_format.slint";
 import { ComposerAppsButton } from "composer_apps.slint";
 import { GifPicker, GifStore } from "gif_picker.slint";
+import { SendStore, SendButton, SendMenu, SchedulePicker, ScheduleBanner } from "composer_send.slint";
 
 // Emoji search, `:name` completion and cursor-aware insertion live in Rust (src/composer.rs).
 export global EmojiApi {
@@ -61,6 +62,8 @@ export component Composer inherits Rectangle {
     // "Mark as important" (Ctrl+Shift+I): the next message is sent with the Important delivery
     // option. It shows as a red chip and is used up by the send.
     in-out property <bool> important: false;
+    // "Set delivery options" › Urgent: like `important`, for the next message only.
+    in-out property <bool> urgent: false;
     // True while the text box has the keyboard focus (the window leaves Ctrl+Shift+7 and 8 to the composer then).
     property <bool> input-focused: composer-input.has-focus;
     callback input-focus(bool);
@@ -134,6 +137,7 @@ export component Composer inherits Rectangle {
     function format(act: string, a: int, c: int) {
         if act == "important" {
             root.important = !root.important;
+            root.urgent = false;
             root.focus-tick += 1;
             return;
         }
@@ -173,12 +177,36 @@ export component Composer inherits Rectangle {
         root.put(EmojiApi.complete(root.draft, composer-input.cursor-position-byte-offset, root.suggestions[root.sug-index].ch));
     }
 
+    // "Schedule message" is offered for a chat message (not a channel post, a reply or an edit).
+    property <bool> can-schedule: !root.current-is-channel && root.thread-root == "" && root.editing-id == "";
+
     function submit() {
+        // A chosen send time: the text is scheduled instead of sent (attachments stay here).
+        if SendStore.schedule-at != "" && root.can-schedule {
+            if composer-input.text != "" {
+                SendStore.command("schedule", SendStore.schedule-at + "\u{9}" + composer-input.text);
+                composer-input.text = "";
+                SendStore.schedule-at = "";
+                SendStore.schedule-label = "";
+                root.important = false;
+                root.urgent = false;
+            }
+            return;
+        }
         if composer-input.text != "" || root.pending-attachments.length > 0 {
             root.send(composer-input.text);
             composer-input.text = "";
             root.important = false;
+            root.urgent = false;
         }
+    }
+
+    function open-schedule() {
+        if SendStore.schedule-at == "" {
+            SendStore.pick-day = 1;
+            SendStore.pick-minutes = 480;
+        }
+        schedule-popup.show();
     }
 
     // Size like the layout inside, so the parent layout treats this exactly as it did the bare layout.
@@ -257,7 +285,8 @@ export component Composer inherits Rectangle {
                         }
                     }
                 }
-                if root.important: HorizontalLayout {
+                if SendStore.schedule-at != "" && root.can-schedule: ScheduleBanner { }
+                if root.important || root.urgent: HorizontalLayout {
                     padding-left: 10px;
                     padding-top: 6px;
                     alignment: start;
@@ -269,10 +298,10 @@ export component Composer inherits Rectangle {
                         border-width: 1px;
                         border-color: Theme.danger;
                         accessible-role: groupbox;
-                        accessible-label: @tr("Important message");
+                        accessible-label: root.urgent ? @tr("Urgent message") : @tr("Important message");
                         important-text := Text {
                             x: 10px;
-                            text: @tr("IMPORTANT!");
+                            text: root.urgent ? @tr("URGENT!") : @tr("IMPORTANT!");
                             color: #ff7e83;
                             font-size: 11px;
                             font-weight: 800;
@@ -286,9 +315,15 @@ export component Composer inherits Rectangle {
                             border-radius: 9px;
                             background: important-x.has-hover ? #6b2f33 : transparent;
                             accessible-role: button;
-                            accessible-label: @tr("Remove important");
+                            accessible-label: root.urgent ? @tr("Remove urgent") : @tr("Remove important");
                             Text { text: "✕"; color: #ff7e83; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; accessible-role: none; }
-                            important-x := TouchArea { mouse-cursor: pointer; clicked => { root.important = false; } }
+                            important-x := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.important = false;
+                                    root.urgent = false;
+                                }
+                            }
                         }
                     }
                 }
@@ -425,10 +460,10 @@ export component Composer inherits Rectangle {
                     }
                     ComposerAppsButton { }
                     Rectangle { width: 1px; background: Theme.border; }
-                    IconButton {
-                        icon: @image-url("icons/send.svg");
-                        tint: composer-input.text != "" || root.pending-attachments.length > 0 ? Theme.accent : Theme.fg-subtle;
-                        clicked => { root.submit(); }
+                    SendButton {
+                        ready: composer-input.text != "" || root.pending-attachments.length > 0;
+                        send => { root.submit(); }
+                        options => { send-popup.show(); }
                     }
                 }
             }
@@ -478,6 +513,41 @@ export component Composer inherits Rectangle {
                         root.accept-suggestion();
                     }
                 }
+            }
+        }
+    }
+
+    send-popup := PopupWindow {
+        x: parent.width - 300px;
+        y: parent.height - send-menu.menu-height - 60px;
+        width: 280px;
+        height: send-menu.menu-height;
+        close-policy: close-on-click-outside;
+        send-menu := SendMenu {
+            can-schedule: root.can-schedule;
+            important <=> root.important;
+            urgent <=> root.urgent;
+            schedule => {
+                send-popup.close();
+                root.open-schedule();
+            }
+            done => {
+                send-popup.close();
+                root.focus-tick += 1;
+            }
+        }
+    }
+
+    schedule-popup := PopupWindow {
+        x: parent.width - 340px;
+        y: parent.height - 256px;
+        width: 300px;
+        height: 196px;
+        close-policy: close-on-click-outside;
+        SchedulePicker {
+            done => {
+                schedule-popup.close();
+                root.focus-tick += 1;
             }
         }
     }

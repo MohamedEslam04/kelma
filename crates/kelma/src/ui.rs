@@ -340,6 +340,37 @@ impl UiHandle {
         });
     }
 
+    /// The open chat's scheduled messages ("Sending on …" bubbles).
+    pub fn scheduled(&self, items: Vec<crate::backend::ScheduledData>) {
+        self.run(move |w| {
+            w.global::<crate::SendStore>().set_scheduled(model(
+                items
+                    .into_iter()
+                    .map(|s| crate::ScheduledItem {
+                        id: s.id.into(),
+                        label: s.label.into(),
+                        text: s.text.into(),
+                    })
+                    .collect(),
+            ));
+        });
+    }
+
+    /// The composer's "Schedule message" choice: the banner above the box shows it and Send
+    /// schedules. `None` clears it.
+    pub fn schedule_choice(&self, at_ms: Option<i64>) {
+        self.run(move |w| {
+            let s = w.global::<crate::SendStore>();
+            s.set_schedule_at(at_ms.map(|m| m.to_string()).unwrap_or_default().into());
+            s.set_schedule_label(
+                at_ms
+                    .map(crate::send_options::when_label)
+                    .unwrap_or_default()
+                    .into(),
+            );
+        });
+    }
+
     /// Saved composer preferences: Enter behavior, emoji skin tone and the recent emoji row.
     pub fn prefs(&self, enter_sends: bool, skin_tone: u8, recent: Vec<String>) {
         self.run(move |w| {
@@ -444,6 +475,7 @@ impl UiHandle {
             w.set_current_avatar(avatar);
             w.set_current_has_avatar(has);
             w.set_current_is_channel(h.is_channel);
+            w.set_current_muted(h.muted);
             w.set_thread_root(h.thread_root.into());
         });
     }

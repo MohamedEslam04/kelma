@@ -25,7 +25,9 @@ mod call_direct;
 #[cfg(feature = "calls")]
 mod call_waiting;
 mod channels;
+mod chat_header;
 mod composer_apps;
+mod composer_send;
 mod drive;
 mod engage;
 mod find;
@@ -690,16 +692,15 @@ fn send_button_sends_draft() {
     let app = app_with_messages(vec![]);
     let sent = record_send(&app);
     app.set_draft(SharedString::from("from button"));
-    // The composer's buttons, not the header's (find and details sit at the header's right edge).
-    let send = ElementHandle::find_by_element_id(&app, "IconButton::touch")
-        .filter(|e| e.absolute_position().y > 400.0)
-        .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
+    let send = ElementHandle::find_by_element_id(&app, "SendButton::touch")
+        .next()
         .unwrap();
     send.mock_single_click(PointerEventButton::Left);
     assert_eq!(*sent.borrow(), vec!["from button".to_string()]);
 }
 
-/// Composer toolbar buttons below the input, left to right: emoji, image, file, send.
+/// Composer toolbar buttons below the input, left to right: emoji, image, file, more, GIF, apps
+/// (Send and its options are the `SendButton`).
 fn toolbar(app: &AppWindow) -> Vec<ElementHandle> {
     let input_y = composer(app).absolute_position().y;
     let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "IconButton::touch")
@@ -720,7 +721,7 @@ fn toolbar_emoji_picker_and_attach_buttons() {
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 7, "emoji, image, file, more, GIF, apps, send");
+    assert_eq!(tb.len(), 6, "emoji, image, file, more, GIF, apps");
 
     tb[1].mock_single_click(PointerEventButton::Left);
     tb[2].mock_single_click(PointerEventButton::Left);

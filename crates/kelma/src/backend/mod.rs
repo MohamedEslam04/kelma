@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use store::{MessageRow, Store};
 use teams_proto::Client;
+use teams_proto::delivery::Importance;
 
 mod actions;
 mod activity;
@@ -48,6 +49,7 @@ mod people;
 mod people_live;
 mod people_presence;
 mod render;
+mod scheduled;
 mod send;
 pub(crate) mod settings;
 mod shared;
@@ -88,6 +90,7 @@ pub use media::MediaCmd;
 #[cfg(test)]
 pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
+pub use scheduled::{ScheduledCmd, ScheduledData};
 
 /// Commands sent by the UI.
 #[derive(Debug, Clone)]
@@ -116,6 +119,10 @@ pub enum Cmd {
     ToggleSave(String),
     /// The composer's "Mark as important" state, sent right before the message it applies to.
     SetImportant(bool),
+    /// "Set delivery options" › Urgent, sent right before the message it applies to.
+    SetUrgent(bool),
+    /// The send button's "Schedule message" and the scheduled messages of the open chat.
+    Scheduled(ScheduledCmd),
     Pin(String),
     /// Message menu "Mark as unread": the chat turns unread from this message on.
     MarkUnread(String),
@@ -216,8 +223,13 @@ struct View {
     older_anchor: Option<String>,
     /// New messages that arrived while scrolled up; shown on the jump button.
     new_count: usize,
-    /// "Mark as important" is on for the next message (set by the composer just before a send).
-    important: bool,
+    /// The delivery option of the next message: "Mark as important" or "Set delivery options"
+    /// (set by the composer just before a send).
+    importance: teams_proto::delivery::Importance,
+    /// The scheduled messages of the account, as last read (or made here).
+    scheduled: Vec<teams_proto::scheduled::ScheduledMessage>,
+    /// `scheduled` was read from the account once.
+    scheduled_loaded: bool,
     /// Latest composer text of the current chat as the engine knows it.
     draft_text: String,
     /// `draft_text` (or the reply target) changed since it was last written to the store.
@@ -371,6 +383,11 @@ impl Engine {
         f(&mut self.dirty.lock().unwrap());
     }
 
+    /// The delivery option for the next message: `level` when `on`, else Standard.
+    fn set_importance(&self, on: bool, level: Importance) {
+        self.view.lock().unwrap().importance = if on { level } else { Importance::Standard };
+    }
+
     /// Starts only the render loop (demo mode: no network).
     pub fn start_offline(self: &Arc<Self>) {
         self.offline.store(true, Ordering::Relaxed);
@@ -442,7 +459,8 @@ impl Engine {
                 self.stop_my_presence();
             }
             // In order with the Send that follows it.
-            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
+            Cmd::SetImportant(on) => self.set_importance(on, Importance::Important),
+            Cmd::SetUrgent(on) => self.set_importance(on, Importance::Urgent),
             // Selection and view changes run in order with the command that follows them.
             Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             // The call window, the 1:1 ringing flows and the Calls page share the call state.
@@ -625,7 +643,9 @@ impl Engine {
             Cmd::AttachFile => self.attach_file().await?,
             Cmd::CopyLink(id) => self.copy_link(&id)?,
             Cmd::ToggleSave(id) => self.toggle_save(&id).await?,
-            Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
+            Cmd::SetImportant(on) => self.set_importance(on, Importance::Important),
+            Cmd::SetUrgent(on) => self.set_importance(on, Importance::Urgent),
+            Cmd::Scheduled(c) => self.scheduled_cmd(c).await?,
             Cmd::Pin(id) => self.pin(&id).await?,
             Cmd::MarkUnread(id) => self.mark_unread_from(&id).await?,
             Cmd::ForwardBegin(id) => self.forward_begin(id)?,
