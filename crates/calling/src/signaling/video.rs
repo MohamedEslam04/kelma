@@ -24,6 +24,10 @@ use crate::signaling::bodies;
 use crate::types::{Links, Modality, SdpBlob};
 use crate::video::VideoRole;
 
+/// The `requestId` of the media descriptions a meeting join declares; every later
+/// `UpdateMediaDescriptions` counts on from it.
+pub const JOIN_REQUEST_ID: u64 = 1;
+
 /// One line in an `UpdateMediaDescriptions`: its mid, its direction and, while it sends, its
 /// label.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +52,15 @@ impl MediaDescription {
         }
     }
 
+    /// The line `mid`, receive-only.
+    pub fn receive_only(mid: impl Into<String>) -> Self {
+        MediaDescription {
+            mid: mid.into(),
+            direction: "recvonly",
+            label: None,
+        }
+    }
+
     pub fn wire(&self) -> Value {
         let mut v = json!({"mid": self.mid, "direction": self.direction});
         if let Some(label) = self.label {
@@ -55,6 +68,24 @@ impl MediaDescription {
         }
         v
     }
+}
+
+/// The descriptions of every one of our `live` video lines (mids, in order) for an
+/// `UpdateMediaDescriptions`, as the web client and mautrix-teams (`SetVideo`) post them: the
+/// lines in `sending` (mid, role) send, every other one is receive-only. A mid that is not live
+/// is never named.
+pub fn meeting_descriptions(
+    live: &[String],
+    sending: &[(String, VideoRole)],
+) -> Vec<MediaDescription> {
+    live.iter()
+        .map(
+            |mid| match sending.iter().find(|(m, _)| m == mid).map(|(_, r)| *r) {
+                Some(role) => MediaDescription::line(mid.clone(), role, true),
+                None => MediaDescription::receive_only(mid.clone()),
+            },
+        )
+        .collect()
 }
 
 /// `<participantId>;ss_1` (share), `;v_2` (camera on) or `;v_1` (camera off).

@@ -420,7 +420,10 @@ What kelma does with this (`calling::video`, `calling::media`, `calling::signali
 - Meeting: start/stop is `UpdateMediaDescriptions` (`sendonly` + label, tag `;ss_1`), on the
   `updateMediaDescriptions` link, else `{callLeg}/updateMediaDescriptions`.
   1:1: start/stop is a `mediaNegotiation` re-offer with `ScreenSharer`, the sharing line
-  `sendonly` (stop: `inactive`).
+  `sendonly` (stop: `inactive`) and the camera line as the camera is (`recvonly` off). A browser
+  that refused the sharing line (a port-0 stub with its label and no mid, seen after a hold on
+  2026-11-20) gets it offered again on its own mid and label; the stub kept for a line not
+  offered again keeps its label.
 - A `controlVideoStreaming` callback with `KeyFrame=1` forces a keyframe; otherwise one goes out
   every 2 s.
 - Capture: the ScreenCast portal (`ashpd`, monitors and windows, cursor embedded), the PipeWire
@@ -555,6 +558,18 @@ What kelma does (`calling::signaling::{roster, video}`, `calling::media`,
 - A meeting join offers nine receive-only `main-video` lines after the video lines when
   `KELMA_CAMERA=1` (`MediaOptions::receive_slots`); `from_teams_with` keeps that many main-video
   sections of the answer. A media server's re-offer (lobby admission) is answered without them.
+- A join that offers video lines is laid out as the web client's (camera mid 1, gallery 2-10,
+  sharing mid 11; `KELMA_MEETING_VIDEO_LAYOUT=sharing-second` puts the sharing line at mid 2,
+  kelma's first layout), every video line states `a=x-signaling-fb:* x-message app send:src
+  recv:src,vc` and an `a=x-ssrc-range` (`1-1` when it sends nothing), and the join declares the
+  lines as the web client and mautrix-teams (`calls.go` `videoMedia`) do: `callModalities`
+  gains `ScreenViewer`, `mediaContent` gains `mediaDescriptions` (every video mid `recvonly`,
+  `requestId` 1) and `applyChannelParameters` (`sendSideBWSeed`). A join that declared only
+  `Audio` had every video line answered with port 0 (live 2026-11-20). Every later
+  `UpdateMediaDescriptions` lists all our live video lines with a call-wide `requestId`, and a
+  line the media server answered with port 0 is never named: Share and Camera stay disabled
+  ("Sharing/Video isn't available in this meeting"), since an update naming a refused line was
+  400 (1047) and then ended the call (410).
 - On every roster change (and a new answer) the gallery is re-planned: the others whose camera
   sends, latest speakers first; a slot keeps its person while they still send. Changed slots are
   subscribed in order through one queue (`sequenceNumber` rising per call), on the

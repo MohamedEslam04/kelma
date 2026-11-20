@@ -5,7 +5,7 @@
 
 use calling::media::sdp::with_role_direction;
 use calling::media::{MediaOptions, MediaSession};
-use calling::signaling::call_ops::hold_offer;
+use calling::signaling::call_ops::{hold_offer, keep_media_running};
 use calling::video::VideoRole;
 
 /// mid0 audio sendrecv, mid1 `main-video` recvonly, mid2 `applicationsharing-video` inactive,
@@ -151,5 +151,93 @@ async fn a_refused_re_offer_rolls_back_and_the_caller_s_offer_is_answered() {
     assert_eq!(layout(&answer), negotiated(), "{answer}");
     // Nothing pending: a second rollback is a no-op.
     session.rollback_offer().await.unwrap();
+    session.close().await.unwrap();
+}
+
+/// The browser's answer to one of our re-offers as a live 1:1 call had it (2026-11-20, after a
+/// hold): audio and mid1 `main-video` accepted (`audio`, `video` directions), the sharing line and
+/// `x-data` refused with bare port-0 stubs that name no mid, only a label. On the caller's own
+/// transport (the fixture's).
+fn answer_refusing_the_sharing_line(audio: &str, video: &str) -> String {
+    let offer = sections(OFFER);
+    let mut out: Vec<String> = OFFER
+        .lines()
+        .take_while(|l| !l.starts_with("m="))
+        .map(|l| match l {
+            l if l.starts_with("a=group:BUNDLE") => "a=group:BUNDLE 0 1".to_owned(),
+            l => l.to_owned(),
+        })
+        .collect();
+    for (s, direction) in offer.iter().take(2).zip([audio, video]) {
+        for l in s {
+            let d = ["a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"].contains(l);
+            out.push(if d {
+                format!("a={direction}")
+            } else {
+                (*l).to_owned()
+            });
+        }
+    }
+    out.extend(
+        [
+            "m=video 0 RTP/SAVP 34",
+            "a=label:applicationsharing-video",
+            "m=x-data 0 RTP/SAVP 34",
+            "a=label:data",
+        ]
+        .map(String::from),
+    );
+    out.join("\r\n") + "\r\n"
+}
+
+#[tokio::test]
+async fn a_share_after_the_sharing_line_was_refused_offers_it_again_on_its_own_mid() {
+    let (session, _events) = MediaSession::with_options(vec![], camera_and_share())
+        .await
+        .unwrap();
+    session.accept_offer(OFFER).await.unwrap();
+    // Hold: the browser refuses the sharing line.
+    let ours = session.create_offer().await.unwrap();
+    let hold = answer_refusing_the_sharing_line("inactive", "inactive");
+    session
+        .set_answer(&keep_media_running(&hold, &ours))
+        .await
+        .unwrap();
+    // Resume: still refused.
+    let ours = session.create_offer().await.unwrap();
+    let resume = answer_refusing_the_sharing_line("sendrecv", "recvonly");
+    session
+        .set_answer(&keep_media_running(&resume, &ours))
+        .await
+        .unwrap();
+    // Share.
+    let ours = session.create_offer().await.unwrap();
+    let share = with_role_direction(&ours, VideoRole::ApplicationSharing, "sendonly");
+    assert_eq!(
+        layout(&share),
+        [
+            ("audio", "0", "main-audio", false),
+            ("video", "1", "main-video", false),
+            ("video", "2", "applicationsharing-video", false),
+            ("x-data", "", "data", true),
+        ]
+        .iter()
+        .map(|(k, m, l, d)| ((*k).into(), (*m).into(), (*l).into(), *d))
+        .collect::<Vec<(String, String, String, bool)>>(),
+        "{share}"
+    );
+    assert_eq!(bundle(&share), "0 1 2", "{share}");
+    let line = &sections(&share)[2];
+    assert!(line.contains(&"a=sendonly"), "{line:?}");
+    assert!(
+        line.iter()
+            .any(|l| l.starts_with("a=rtpmap:") && l.ends_with(" H264/90000")),
+        "{line:?}"
+    );
+    assert!(
+        line.iter()
+            .any(|l| l.starts_with("a=msid:applicationsharing-video ")),
+        "the screen goes out on the sharing line: {line:?}"
+    );
     session.close().await.unwrap();
 }

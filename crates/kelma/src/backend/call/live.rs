@@ -18,7 +18,7 @@ use super::bots::Bots;
 use super::camera::{self, Camera, CameraMsg};
 use super::remote_control::{self, Ctx, RemoteControl, Step};
 use super::remote_video::{self, RemoteVideo};
-use super::share::{self, Picked, SessionNews, Share, ShareMsg};
+use super::share::{self, Picked, Sending, SessionNews, Share, ShareMsg};
 use super::{
     CallDriver, CallHandle, Caption, Control, ControlAction, Device, Devices, Event, EventSink,
     JoinOptions, JoinTarget, Link, Person, Phase, live_phase, recording_state,
@@ -438,6 +438,7 @@ async fn join_meeting(
     // A meeting join also offers the gallery's receive-only lines (UNVERIFIED).
     let options = MediaOptions {
         receive_slots: remote_video::wanted_slots(),
+        layout: remote_video::wanted_layout(),
         ..media_options(true)
     };
     let (media, events) = MediaSession::with_options(ice.clone(), options).await?;
@@ -1319,7 +1320,7 @@ impl Call {
                 }
             }
             let can_share = self.link == Link::Connected
-                && share::available(&self.media, &self.links, self.meeting);
+                && share::available(&self.media, &self.links, self.meeting).await;
             if let Some((available, sharing)) = self.share.changed(can_share) {
                 sink.send(Event::Share { available, sharing });
             }
@@ -1330,7 +1331,7 @@ impl Call {
                 self.control_changed(&sink);
             }
             let can_camera = self.link == Link::Connected
-                && camera::available(&self.media, &self.links, self.meeting);
+                && camera::available(&self.media, &self.links, self.meeting).await;
             if can_camera && std::mem::take(&mut camera_wanted) {
                 self.camera.open(&camera_tx);
             }
@@ -1388,6 +1389,10 @@ impl Call {
         sink: &EventSink,
     ) {
         if on {
+            if self.meeting && self.media.live_video_mid(share::ROLE).await.is_none() {
+                sink.send(Event::Error(share::unavailable_text(share::ROLE).into()));
+                return;
+            }
             self.share.pick(tx);
         } else if self.share.stop().await {
             self.tell_share(false, sink).await;
@@ -1575,19 +1580,34 @@ impl Call {
     /// meeting, a re-offer in a 1:1 call.
     async fn tell_share(&mut self, sending: bool, sink: &EventSink) {
         let r = if self.meeting {
+            let lines = Sending {
+                camera: self.camera.on(),
+                share: sending,
+            };
+            let request_id = self.share.next_request_id();
             share::tell_meeting(
                 &self.ngc,
                 &self.s,
                 &self.links,
                 &self.media,
-                &mut self.share,
-                sending,
+                share::ROLE,
+                lines,
+                request_id,
             )
             .await
         } else {
             // The answer comes inline or on `call/mediaAnswer/`, which `apply_answer` takes.
             self.answered = false;
-            match share::reoffer_direct(&self.ngc, &self.s, &self.links, &self.media, sending).await
+            let camera_on = self.camera.on();
+            match share::reoffer_direct(
+                &self.ngc,
+                &self.s,
+                &self.links,
+                &self.media,
+                sending,
+                camera_on,
+            )
+            .await
             {
                 Ok(Some(a)) => {
                     self.apply_answer(&a).await;
@@ -1630,6 +1650,10 @@ impl Call {
         sink: &EventSink,
     ) {
         if on {
+            if self.meeting && self.media.live_video_mid(camera::ROLE).await.is_none() {
+                sink.send(Event::Error(share::unavailable_text(camera::ROLE).into()));
+                return;
+            }
             self.camera.open(tx);
         } else if self.camera.stop(sink).await {
             self.tell_camera(false, sink).await;
@@ -1670,13 +1694,19 @@ impl Call {
     /// a re-offer in a 1:1 call.
     async fn tell_camera(&mut self, on: bool, sink: &EventSink) {
         let r = if self.meeting {
-            camera::tell_meeting(
+            let lines = Sending {
+                camera: on,
+                share: self.share.sharing(),
+            };
+            let request_id = self.share.next_request_id();
+            share::tell_meeting(
                 &self.ngc,
                 &self.s,
                 &self.links,
                 &self.media,
-                &mut self.camera,
-                on,
+                camera::ROLE,
+                lines,
+                request_id,
             )
             .await
         } else {
