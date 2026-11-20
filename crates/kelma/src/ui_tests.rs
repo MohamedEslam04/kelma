@@ -35,6 +35,7 @@ mod global_search;
 mod language;
 mod lists;
 mod media;
+mod msg_extras;
 mod people;
 mod saved;
 mod settings;
@@ -395,6 +396,9 @@ fn menu_for_others_message() {
             "Save this message",
             "Pin for everyone",
             "Mark as unread",
+            "Immersive Reader",
+            "Share to Outlook",
+            "Report this message",
         ]
     );
 }
@@ -411,6 +415,8 @@ fn menu_for_own_message_has_edit_and_delete_but_no_save() {
             "Copy message link",
             "Pin for everyone",
             "Mark as unread",
+            "Immersive Reader",
+            "Share to Outlook",
             "Edit",
             "Delete",
         ]
@@ -418,7 +424,7 @@ fn menu_for_own_message_has_edit_and_delete_but_no_save() {
 }
 
 #[test]
-fn menu_in_a_channel_has_no_pin_and_a_saved_message_offers_unsave() {
+fn menu_in_a_channel_offers_pin_and_a_saved_message_offers_unsave() {
     let app = app_with_messages(vec![Msg {
         saved: true,
         ..msg("m1", "theirs", false)
@@ -426,8 +432,9 @@ fn menu_in_a_channel_has_no_pin_and_a_saved_message_offers_unsave() {
     app.set_current_is_channel(true);
     open_menu(&app, &rows(&app)[0]);
     let labels = menu_labels(&app);
+    // The post pin is offered; its write is not known and says so (backend/actions.rs).
     assert!(
-        !labels.contains(&"Pin for everyone".to_string()),
+        labels.contains(&"Pin for everyone".to_string()),
         "{labels:?}"
     );
     assert!(

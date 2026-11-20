@@ -102,6 +102,14 @@ impl Engine {
 }
 
 #[cfg(test)]
+impl Engine {
+    /// Records an availability as if it had been read (no network in tests).
+    pub(crate) fn test_set_presence(&self, mri: &str, availability: &str) {
+        set(mri, availability);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -446,6 +446,7 @@ impl Engine {
                 .unwrap_or_default(),
             avatar: self.avatar(&p.mri),
             kind: "person",
+            presence: super::people_presence::want(&p.mri),
         }
     }
 
@@ -466,6 +467,7 @@ impl Engine {
             subtitle: user.and_then(|u| u.email).unwrap_or_default(),
             avatar: self.avatar(mri),
             kind: "person",
+            presence: super::people_presence::want(mri),
         }
     }
 
@@ -611,6 +613,7 @@ impl Engine {
                     MentionKind::Channel => "channel",
                     _ => "person",
                 },
+                presence: String::new(),
             })
             .collect();
         self.people.lock().unwrap().candidates = list;
@@ -1069,6 +1072,7 @@ impl Engine {
                 subtitle: String::new(),
                 avatar: self.card_photo(&mri),
                 kind: "person",
+                presence: String::new(),
             },
             loading: true,
             email: known.and_then(|u| u.email).unwrap_or_default(),
@@ -1164,6 +1168,18 @@ impl Engine {
         if self.current_chat().as_deref() == Some(conv) {
             self.ui.pinned(data);
         }
+        // The message menu offers Unpin on pinned rows.
+        self.mark(|d| d.messages = true);
+    }
+
+    /// Whether a message is pinned for everyone in its chat (as last read).
+    pub(super) fn is_pinned(&self, conv: &str, id: &str) -> bool {
+        self.people
+            .lock()
+            .unwrap()
+            .pins
+            .get(conv)
+            .is_some_and(|p| p.iter().any(|x| x.id == id))
     }
 
     /// Loads older history of `conv` until all `ids` are stored (at most `pages` pages).

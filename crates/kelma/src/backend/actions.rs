@@ -35,6 +35,13 @@ pub(super) fn message_link(
     }
 }
 
+/// "Pin for everyone" on a channel post. UNVERIFIED: the web client reads pinned posts, but the
+/// write call was never captured (docs/protocol.md, "Pin a post"), so nothing is sent and the
+/// user is told.
+fn pin_channel_post_unverified(_channel: &str, _post: &str) -> anyhow::Result<()> {
+    anyhow::bail!("Pinning channel posts is not available in kelma yet. Pin it in Teams on the web")
+}
+
 /// Conversation id to send to for a message: a channel reply lives in its thread.
 fn target_of(row: &MessageRow) -> String {
     match &row.parent_id {
@@ -119,12 +126,14 @@ impl Engine {
             return Ok(());
         };
         if self.is_channel(&row.conversation_id) {
-            anyhow::bail!("Pinning is only available in chats");
+            return pin_channel_post_unverified(&row.conversation_id, &row.id);
         }
         self.client
             .set_pinned(&row.conversation_id, &row.id, true)
             .await?;
         self.ui.banner("Message pinned for everyone".into());
+        // The banner and the menu's Unpin follow.
+        self.refresh_pins(&row.conversation_id).await;
         Ok(())
     }
 

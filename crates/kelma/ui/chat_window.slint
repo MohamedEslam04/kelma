@@ -1,0 +1,115 @@
+// "Pop out chat": one chat in a window of its own, with its messages and a plain composer. It
+// shares the engine with the main window: the Rust side (src/ui/popout.rs) forwards what is done
+// here through the main window's callbacks.
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Msg } from "types.slint";
+import { MessageRow } from "message_row.slint";
+
+export component ChatWindow inherits Window {
+    in property <string> conv-id;
+    in property <string> chat-title;
+    in property <[Msg]> messages;
+    in-out property <string> draft;
+    callback send(string);
+    callback react(string, string);
+    callback open-url(string);
+
+    title: root.chat-title == "" ? "kelma" : root.chat-title + " - kelma";
+    preferred-width: 560px;
+    preferred-height: 680px;
+    min-width: 360px;
+    min-height: 320px;
+    background: Theme.main;
+    default-font-size: 14px * Theme.font-scale;
+
+    function send-now() {
+        if root.draft != "" {
+            root.send(root.draft);
+            root.draft = "";
+        }
+    }
+
+    VerticalLayout {
+        Rectangle {
+            height: 52px;
+            background: Theme.topbar;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                Text {
+                    text: root.chat-title;
+                    color: Theme.fg;
+                    font-size: 16px * Theme.font-scale;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    accessible-role: text;
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        pop-list := ListView {
+            vertical-stretch: 1;
+            // Stays at the newest message while it is at the bottom.
+            property <bool> pinned: true;
+            changed content-height => {
+                if self.pinned {
+                    self.content-y = min(0px, self.visible-height - self.content-height);
+                }
+            }
+            changed content-y => {
+                self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
+            }
+            for m in root.messages: MessageRow {
+                m: m;
+                max-bubble: min(640px, pop-list.width * 0.8);
+                react(k) => { root.react(m.id, k); }
+                open-url(u) => { root.open-url(u); }
+            }
+        }
+        Rectangle {
+            height: 84px;
+            background: Theme.main;
+            Rectangle {
+                x: 12px;
+                y: 6px;
+                width: parent.width - 24px;
+                height: parent.height - 12px;
+                border-radius: 4px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: pop-input.has-focus ? Theme.accent : Theme.border;
+                FocusScope {
+                    capture-key-pressed(event) => {
+                        if event.text == Key.Return && !event.modifiers.shift {
+                            root.send-now();
+                            return accept;
+                        }
+                        reject
+                    }
+                    pop-input := TextInput {
+                        x: 10px;
+                        y: 8px;
+                        width: parent.width - 20px;
+                        height: parent.height - 16px;
+                        text <=> root.draft;
+                        color: Theme.fg;
+                        font-size: 14px * Theme.font-scale;
+                        wrap: word-wrap;
+                        accessible-role: text-input;
+                        accessible-label: @tr("Type a message");
+                        init => { self.focus(); }
+                    }
+                }
+                if root.draft == "": Text {
+                    x: 10px;
+                    y: 8px;
+                    text: @tr("Type a message");
+                    color: Theme.fg-subtle;
+                    font-size: 14px * Theme.font-scale;
+                }
+            }
+        }
+    }
+}

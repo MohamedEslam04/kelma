@@ -301,6 +301,7 @@ impl State {
     fn data(&self) -> TeamsData {
         TeamsData {
             teams: self.page.rows(),
+            all_teams: self.page.all_rows(),
             stats: self.page.stats(),
             loading: self.loading,
             error: self.error.clone(),

@@ -3,6 +3,7 @@
 //! pushes the result to the UI.
 
 mod chip;
+pub(super) use chip::file_card_labels;
 mod cmd;
 pub(crate) mod state;
 
@@ -1768,9 +1769,14 @@ impl Engine {
     // -- share --------------------------------------------------------------------------------
 
     async fn drive_share_begin(self: &Arc<Self>) -> anyhow::Result<()> {
-        let Some(item) = self.drive_one() else {
-            return Ok(());
-        };
+        if let Some(item) = self.drive_one() {
+            self.drive_share_item(item).await;
+        }
+        Ok(())
+    }
+
+    /// Opens the share dialog for one item.
+    async fn drive_share_item(self: &Arc<Self>, item: DriveItem) {
         self.drive.lock().unwrap().share = Some(Share {
             item: item.clone(),
             role: Role::Write,
@@ -1781,7 +1787,6 @@ impl Engine {
         });
         self.drive_share_push();
         self.drive_share_reload_perms().await;
-        Ok(())
     }
 
     fn drive_share_push(&self) {

@@ -184,6 +184,9 @@ messages were deleted afterwards.
 | Mark as unread | `PUT …/properties?name=consumptionHorizonBookmark` `"<prevId>;<nowMs>;<cmid>"`. `mark_read` now also writes `"0;<nowMs>;0"`, because a read horizon alone does not clear the bookmark | ✅ 200 |
 | Mute | `PUT …/properties?name=alerts` `{"alerts":"false"}` (`"true"` unmutes) | unit-tested |
 | Hide | `PUT …/properties?name=unpinnedTime` `{unpinnedTime:<ms>}` then `historyHiddenTime` `"<ms>"`; unhide `{unpinnedTime:null}`. A hidden chat comes back with its next message | unit-tested |
+| Share to Outlook | Graph `POST /me/messages` `{subject, body:{contentType:"HTML", content}}` (Mail.ReadWrite, in the Graph `.default` token per plans/README.md) creates an unsent draft; its `webLink` opens in Outlook on the web. `Client::create_mail_draft` | documented Graph call, not tried live |
+| Report this message | **UNVERIFIED**: the call Teams makes was never captured. `report_message_unverified` (backend/media/extras.rs) sends nothing and tells the user to report it in Teams on the web | not built |
+| Pin a chat | No separate write: new Teams keeps pinned chats in the Favorites folder (`migratedPinnedToFavorites` in `conversationFolders`, see docs/research/open-source.md). The chat menu's Favorite / Unfavorite is that write | ✅ (Favorites) |
 
 ## OneDrive (`crates/onedrive`) ✅ 2026-11-18
 
@@ -561,7 +564,7 @@ already see.
 | Announcement | `POST …/conversations/<channel>/messages` through `delivery::Delivery::Announcement` (`send_message_delivery`): `properties.title` = the headline, `properties.cards` = a JSON **string** of one card `{appId:"announcement-card", cardClientId, contentType:"application/vnd.microsoft.teams.messaging-announcementBanner", content:{colorTheme:"<0..11>"}}`, and `properties.subject`. kelma offers five colors (theme 0, 1, 2, 3 and 5). The theme palette of Teams was not captured, so the banner is drawn in an approximate color | ✅ stored and read back with title, theme and subject, parsed by `delivery::parse_announcement`. How Teams draws the banner was not seen |
 | Follow a thread | `PUT chat/v1/users/ME/conversations/<channel>/rcmetadata/<root id>` `{"f": 1}` (0 unfollows). `{"f": true}` answers `400 Unexpected character`. Read back with `POST …/getrcmetadata` `{"rootMessageIds":[<root>]}` → `rcMetadataList[].rcMetadata.f` | ✅ 1 then 0 |
 | Also send to channel | not found in the web client's public JavaScript (no property or call by that name), so kelma does not offer it | not built |
-| Pin a post | the web client reads pinned posts; the write call was not captured | not built |
+| Pin a post | **UNVERIFIED**: the web client reads pinned posts; the write call was not captured. The message menu offers "Pin for everyone" on posts; `pin_channel_post_unverified` (backend/actions.rs) sends nothing and says so | not built |
 
 ### Adaptive cards (8.8)
 `teams_proto::chat_card` turns the card JSON into a flat list of rows (text with size, weight,

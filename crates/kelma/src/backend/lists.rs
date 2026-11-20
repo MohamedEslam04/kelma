@@ -836,6 +836,7 @@ impl Engine {
                 .as_ref()
                 .is_some_and(|c| c.kind == ChannelKind::Private),
             hidden: info.as_ref().is_some_and(|c| !c.shown),
+            pinned: self.pinned_ids().iter().any(|p| p == id),
         });
     }
 

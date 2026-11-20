@@ -12,8 +12,8 @@ use crate::data::{
 };
 use crate::reactions;
 use crate::{
-    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard, Msg,
-    PendingAttachment, ReactionItem, Recipient, TeamRow,
+    AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard,
+    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -37,6 +37,7 @@ mod gifs;
 mod lists;
 mod media;
 mod people;
+pub(crate) mod popout;
 pub(crate) mod settings;
 mod teams;
 
@@ -136,6 +137,8 @@ fn msg(m: MsgData) -> Msg {
                     name: f.name.into(),
                     url: f.url.into(),
                     ext: f.ext.into(),
+                    place: f.place.into(),
+                    detail: f.detail.into(),
                 })
                 .collect(),
         ),
@@ -182,6 +185,17 @@ fn msg(m: MsgData) -> Msg {
                         thumb,
                         has_thumb,
                     }
+                })
+                .collect(),
+        ),
+        pinned: m.pinned,
+        urls: model(m.urls.into_iter().map(SharedString::from).collect()),
+        loops: model(
+            m.loops
+                .into_iter()
+                .map(|l| LoopCard {
+                    url: l.url.into(),
+                    title: l.title.into(),
                 })
                 .collect(),
         ),
