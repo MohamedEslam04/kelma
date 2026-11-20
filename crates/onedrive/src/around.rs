@@ -1,5 +1,7 @@
 //! Around files: meeting recordings and the "Sync" explanation.
 
+use futures_util::future::join;
+use futures_util::stream::{self, StreamExt};
 use reqwest::Method;
 use serde_json::Value;
 use teams_proto::files::encode_path_segment;
@@ -118,9 +120,13 @@ async fn list_recordings(client: &Client, folder: &ItemRef, place: &str) -> Resu
     }
 }
 
+/// How many Graph calls the channel crawl keeps in flight at once.
+const CRAWL_CONCURRENCY: usize = 8;
+
 /// Recordings of channel meetings: the `Recordings` folder in each channel's files folder of
 /// every joined team. A channel without that folder, or one that cannot be read, is skipped.
-/// Costs two Graph calls per channel.
+/// Costs two Graph calls per channel; the channels are read side by side (one after the other,
+/// a user in many teams waited minutes).
 pub async fn channel_recordings(client: &Client) -> Result<Vec<Recording>> {
     let teams = graph(
         client,
@@ -130,16 +136,30 @@ pub async fn channel_recordings(client: &Client) -> Result<Vec<Recording>> {
         None,
     )
     .await?;
-    let mut out = Vec::new();
-    for (team_id, team_name) in parse_named(&teams) {
-        let url = format!(
-            "{GRAPH}/teams/{}/channels?$select=id,displayName",
-            encode_path_segment(&team_id)
-        );
-        let Ok(channels) = graph(client, "channels", Method::GET, &url, None).await else {
-            continue;
-        };
-        for (channel_id, channel_name) in parse_named(&channels) {
+    // (team, channel, place) of every channel of every team.
+    let channels: Vec<(String, String, String)> = stream::iter(parse_named(&teams))
+        .map(|(team_id, team_name)| async move {
+            let url = format!(
+                "{GRAPH}/teams/{}/channels?$select=id,displayName",
+                encode_path_segment(&team_id)
+            );
+            let Ok(channels) = graph(client, "channels", Method::GET, &url, None).await else {
+                return Vec::new();
+            };
+            parse_named(&channels)
+                .into_iter()
+                .map(|(channel_id, channel_name)| {
+                    let place = format!("{team_name} › {channel_name}");
+                    (team_id.clone(), channel_id, place)
+                })
+                .collect()
+        })
+        .buffer_unordered(CRAWL_CONCURRENCY)
+        .concat()
+        .await;
+    // A channel's two calls depend on each other; different channels do not.
+    let mut out: Vec<Recording> = stream::iter(channels)
+        .map(|(team_id, channel_id, place)| async move {
             let folder = graph(
                 client,
                 "files_folder",
@@ -150,21 +170,30 @@ pub async fn channel_recordings(client: &Client) -> Result<Vec<Recording>> {
             .await
             .ok()
             .and_then(|v| parse_files_folder(&v));
-            let Some(folder) = folder else { continue };
-            let place = format!("{team_name} › {channel_name}");
-            if let Ok(found) = list_recordings(client, &folder, &place).await {
-                out.extend(found);
-            }
-        }
-    }
+            let Some(folder) = folder else {
+                return Vec::new();
+            };
+            list_recordings(client, &folder, &place)
+                .await
+                .unwrap_or_default()
+        })
+        .buffer_unordered(CRAWL_CONCURRENCY)
+        .concat()
+        .await;
     sort_recordings(&mut out);
     Ok(out)
 }
 
-/// The Meetings view: recordings in My files and in the channel libraries, newest first.
+/// The Meetings view: recordings in My files and in the channel libraries, newest first. The
+/// two are read at the same time.
 pub async fn meeting_recordings(client: &Client) -> Result<Vec<Recording>> {
-    let mut out = list_recordings(client, &ItemRef::my_root(), MY_FILES).await?;
-    out.extend(channel_recordings(client).await?);
+    let (mine, channels) = join(
+        list_recordings(client, &ItemRef::my_root(), MY_FILES),
+        channel_recordings(client),
+    )
+    .await;
+    let mut out = mine?;
+    out.extend(channels?);
     sort_recordings(&mut out);
     Ok(out)
 }
