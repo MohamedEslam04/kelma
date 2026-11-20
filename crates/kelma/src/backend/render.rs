@@ -382,7 +382,17 @@ impl Engine {
             ConvKind::Notes => Some(self.me.clone()),
             _ => None,
         };
+        let person = match kind {
+            ConvKind::OneOnOne => avatar_mri.clone().unwrap_or_default(),
+            _ => String::new(),
+        };
         self.ui.header(HeaderData {
+            presence: if person.is_empty() {
+                String::new()
+            } else {
+                super::people_presence::want(&person)
+            },
+            person,
             initials: initials(&title),
             color: color_for(&id),
             avatar: avatar_mri.and_then(|m| self.avatar(&m)),
@@ -718,6 +728,11 @@ impl Engine {
                 selected: selected.contains(&r.id),
                 failed: failed.contains(&r.id),
                 new_above: divider == Some(i),
+                presence: if show_header && !mine && system.is_none() {
+                    super::people_presence::want(&r.sender_mri)
+                } else {
+                    String::new()
+                },
                 sender_id: r.sender_mri.clone(),
                 mentions_me: super::mentions::mentions_me(&props, &self.me),
                 receipt: receipt

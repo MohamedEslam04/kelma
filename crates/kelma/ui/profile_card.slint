@@ -16,14 +16,15 @@ export component ProfileCard inherits Rectangle {
     in property <string> presence;
     in property <string> presence-label;
     in property <string> work-location;
-    // Opened by hovering a name or photo: it closes once the pointer leaves it (or never comes).
+    // Opened by hovering a name or photo: it closes once the pointer is on neither it nor that
+    // photo (`anchor-hovered`).
     in property <bool> hover-mode;
+    in property <bool> anchor-hovered;
     callback quick-message(string);
     callback copy-email();
     callback chat(string);
     callback send-email(string);
     callback close();
-    property <bool> entered: false;
 
     width: 320px;
     height: content.preferred-height;
@@ -37,7 +38,6 @@ export component ProfileCard inherits Rectangle {
     accessible-label: "Profile card";
 
     hover-area := TouchArea {
-    changed has-hover => { if self.has-hover { root.entered = true; } }
     content := VerticalLayout {
         padding: 16px;
         spacing: 10px;
@@ -202,12 +202,7 @@ export component ProfileCard inherits Rectangle {
     }
     Timer {
         interval: 400ms;
-        running: root.hover-mode && root.entered && !hover-area.has-hover;
-        triggered => { root.close(); }
-    }
-    Timer {
-        interval: 2500ms;
-        running: root.hover-mode && !root.entered;
+        running: root.hover-mode && !hover-area.has-hover && !root.anchor-hovered;
         triggered => { root.close(); }
     }
 }

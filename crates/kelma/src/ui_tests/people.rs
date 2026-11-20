@@ -844,6 +844,231 @@ fn resting_on_a_photo_opens_a_hover_card_whose_quick_message_goes_to_their_chat(
     assert_eq!(h.app.get_current_id(), BACKEND);
 }
 
+// ---- hover cards and presence dots ---------------------------------------------------------
+
+/// Lets the message list lay out: on the first frames rows only have an estimated height.
+fn settle() {
+    for _ in 0..6 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+}
+
+fn wait_ms(ms: u64) {
+    for _ in 0..ms / 100 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(100));
+    }
+}
+
+fn window_size(app: &AppWindow) -> slint::LogicalSize {
+    app.window().size().to_logical(app.window().scale_factor())
+}
+
+/// Sara's photo lowest on screen in the message list (rows above the view are laid out but
+/// clipped).
+fn lowest_photo_of_sara(app: &AppWindow) -> ElementHandle {
+    let height = window_size(app).height;
+    ids(app, "MessageRow::avatar-touch")
+        .into_iter()
+        .filter(|e| {
+            let y = e.absolute_position().y + e.size().height / 2.;
+            label(e) == "Open profile of Sara Hassan" && (120. ..height - 120.).contains(&y)
+        })
+        .max_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y))
+        .expect("Sara's photo on screen")
+}
+
+fn point_at(app: &AppWindow, e: &ElementHandle) {
+    let (p, s) = (e.absolute_position(), e.size());
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.),
+    });
+}
+
+#[test]
+fn an_authors_photo_in_the_message_list_shows_their_presence() {
+    let h = harness_with_sara_email();
+    h.engine.test_set_presence(&mri(3), "Busy");
+    h.select(BACKEND);
+    settle();
+    let photo = lowest_photo_of_sara(&h.app);
+    let (p, s) = (photo.absolute_position(), photo.size());
+    let dots = find_label(&h.app, "Presence");
+    assert!(
+        dots.iter().any(|d| {
+            let c = d.absolute_position();
+            d.accessible_value().as_deref() == Some("Busy")
+                && (p.x..p.x + s.width + 2.).contains(&c.x)
+                && (p.y..p.y + s.height + 2.).contains(&c.y)
+        }),
+        "a Busy dot on the corner of Sara's photo"
+    );
+}
+
+#[test]
+fn a_hover_card_opens_next_to_a_photo_low_in_the_list_and_stays_in_the_window() {
+    let h = harness_with_sara_email();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    settle();
+    let photo = lowest_photo_of_sara(&h.app);
+    let (p, s) = (photo.absolute_position(), photo.size());
+    point_at(&h.app, &photo);
+    wait_ms(800);
+    assert!(ps(&h.app).get_card_open(), "resting opens the card");
+    let card = ElementHandle::find_by_element_type_name(&h.app, "ProfileCard")
+        .next()
+        .expect("the card");
+    let (cp, cs) = (card.absolute_position(), card.size());
+    let win = window_size(&h.app);
+    // On the photo's right, a small gap away.
+    assert!(
+        cp.x >= p.x + s.width && cp.x <= p.x + s.width + 24.,
+        "card x {} next to the photo ending at {}",
+        cp.x,
+        p.x + s.width
+    );
+    // Level with the photo (flipped above it when there is no room below).
+    assert!(
+        cp.y <= p.y + s.height && cp.y + cs.height >= p.y,
+        "card {}..{} level with the photo at {}",
+        cp.y,
+        cp.y + cs.height,
+        p.y
+    );
+    // Inside the window.
+    assert!(cp.x >= 0. && cp.y >= 0.);
+    assert!(cp.x + cs.width <= win.width && cp.y + cs.height <= win.height);
+}
+
+#[test]
+fn resting_on_a_photo_opens_its_card_without_a_click_even_when_a_message_arrives() {
+    let h = harness_with_sara_email();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    settle();
+    let photo = lowest_photo_of_sara(&h.app);
+    point_at(&h.app, &photo);
+    wait_ms(300);
+    // A message lands while the pointer rests (the list gets a new row).
+    h.runner()(Cmd::Send("back in 5".into(), String::new()));
+    wait_ms(600);
+    assert!(ps(&h.app).get_card_open(), "the rest still opens the card");
+    assert!(ps(&h.app).get_card_by_hover());
+    assert_eq!(ps(&h.app).get_card().name, "Sara Hassan");
+
+    // Resting on the photo keeps it open.
+    for _ in 0..40 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(100));
+        assert!(ps(&h.app).get_card_open(), "open while the pointer rests");
+    }
+
+    // Leaving the photo (not for the card) closes it shortly after.
+    let win = window_size(&h.app);
+    h.app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(win.width - 4., win.height / 2.),
+    });
+    wait_ms(600);
+    assert!(!ps(&h.app).get_card_open(), "leaving closes it");
+
+    // Coming back opens it again, still without a click. (The list rebuilt its rows when it
+    // scrolled to the new message, so the photo is looked up again.)
+    point_at(&h.app, &lowest_photo_of_sara(&h.app));
+    wait_ms(800);
+    assert!(ps(&h.app).get_card_open(), "a second rest opens it again");
+}
+
+#[test]
+fn moving_from_the_photo_onto_the_hover_card_keeps_it_open() {
+    let h = harness_with_sara_email();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    settle();
+    let photo = lowest_photo_of_sara(&h.app);
+    point_at(&h.app, &photo);
+    wait_ms(800);
+    assert!(ps(&h.app).get_card_open());
+    let card = ElementHandle::find_by_element_type_name(&h.app, "ProfileCard")
+        .next()
+        .expect("the card");
+    point_at(&h.app, &card);
+    wait_ms(1500);
+    assert!(ps(&h.app).get_card_open(), "the pointer is on the card");
+}
+
+#[test]
+fn a_one_on_one_header_and_my_own_photo_show_presence() {
+    let h = Harness::new();
+    h.engine.test_set_presence(&mri(2), "Away");
+    h.select(ONE_ON_ONE);
+    assert_eq!(h.app.get_current_person(), mri(2));
+    assert_eq!(h.app.get_current_presence(), "Away");
+    let dots = || find_label(&h.app, "Presence");
+    assert!(
+        dots()
+            .iter()
+            .any(|d| d.accessible_value().as_deref() == Some("Away")),
+        "a dot on the header photo"
+    );
+
+    // Our own status reaches the photo at the top right.
+    h.engine.test_set_presence(demo::ME, "DoNotDisturb");
+    assert_eq!(
+        h.app.global::<crate::SettingsStore>().get_me_presence(),
+        "DoNotDisturb"
+    );
+    assert!(
+        dots()
+            .iter()
+            .any(|d| d.accessible_value().as_deref() == Some("DoNotDisturb"))
+    );
+}
+
+#[test]
+fn a_card_shows_what_is_already_known_at_once() {
+    let h = harness_with_sara_email();
+    let _log = wire(&h);
+    // An earlier card read her details; her presence came with the chat. (The presence cache is
+    // shared by the tests that run at the same time: hers is Busy in all of them.)
+    h.engine.test_set_presence(&mri(3), "Busy");
+    h.engine
+        .test_cache_profile(&mri(3), "Engineer · Platform", "Example Org");
+    h.select(BACKEND);
+    settle();
+    click(&lowest_photo_of_sara(&h.app));
+    let s = ps(&h.app);
+    assert!(s.get_card_open());
+    assert!(!s.get_card_loading(), "nothing left to wait for");
+    assert_eq!(s.get_card().name, "Sara Hassan");
+    assert_eq!(s.get_card().subtitle, "Engineer · Platform");
+    assert_eq!(s.get_card_work(), "Example Org");
+    assert_eq!(s.get_card_email(), "sara@example.com");
+    assert_eq!(s.get_card_presence(), "Busy");
+    assert_eq!(s.get_card_presence_label(), "Busy");
+}
+
+#[test]
+fn clicking_the_header_photo_of_a_one_on_one_opens_the_card_next_to_it() {
+    let h = Harness::new();
+    let _log = wire(&h);
+    h.select(ONE_ON_ONE);
+    let title = h.app.get_current_title().to_string();
+    let photo = find_label(&h.app, &format!("Open profile of {title}"))
+        .into_iter()
+        .min_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y))
+        .expect("the header photo is a button");
+    let (p, s) = (photo.absolute_position(), photo.size());
+    click(&photo);
+    assert!(ps(&h.app).get_card_open());
+    assert!(!ps(&h.app).get_card_by_hover());
+    assert_eq!(ps(&h.app).get_card().id, mri(2));
+    let card = ElementHandle::find_by_element_type_name(&h.app, "ProfileCard")
+        .next()
+        .expect("the card");
+    let cp = card.absolute_position();
+    assert!(cp.x >= p.x + s.width && cp.x <= p.x + s.width + 24.);
+    assert!((cp.y - p.y).abs() < 1., "top-aligned with the photo");
+}
+
 // ---- 6.6 pinned messages banner ----------------------------------------------
 
 fn pins() -> Vec<PinnedData> {

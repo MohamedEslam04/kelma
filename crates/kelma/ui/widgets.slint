@@ -68,7 +68,7 @@ export component Avatar inherits Rectangle {
             image-fit: cover;
         }
     }
-    if root.presence != "": Rectangle {
+    if root.presence != "": dot := Rectangle {
         property <string> p: root.presence;
         width: max(8px, root.size * 0.3);
         height: self.width;
@@ -77,13 +77,24 @@ export component Avatar inherits Rectangle {
         border-radius: self.width / 2;
         border-width: 2px;
         border-color: Theme.surface;
+        // Offline (and an unknown status) is a grey ring, as in Teams.
+        property <bool> ring: !(p == "Available" || p == "AvailableIdle" || p == "Busy" || p == "BusyIdle" || p == "DoNotDisturb" || p == "BeRightBack" || p == "Away");
         background: (p == "Available" || p == "AvailableIdle") ? #6bb700
             : (p == "Busy" || p == "BusyIdle" || p == "DoNotDisturb") ? #c4314b
             : (p == "BeRightBack" || p == "Away") ? #ffaa44
-            : #8a8886;
+            : Theme.surface;
         accessible-role: image;
         accessible-label: @tr("Presence");
         accessible-value: root.presence;
+        if dot.ring: Rectangle {
+            x: 2px;
+            y: 2px;
+            width: dot.width - 4px;
+            height: self.width;
+            border-radius: self.width / 2;
+            border-width: max(1px, self.width * 0.2);
+            border-color: #8a8886;
+        }
     }
 }
 

@@ -164,6 +164,7 @@ fn msg(m: MsgData) -> Msg {
         failed: m.failed,
         new_above: m.new_above,
         sender_id: m.sender_id.into(),
+        presence: m.presence.into(),
         mentions_me: m.mentions_me,
         receipt: m.receipt.into(),
         receipt_names: m.receipt_names.into(),
@@ -499,6 +500,8 @@ impl UiHandle {
             w.set_current_has_avatar(has);
             w.set_current_is_channel(h.is_channel);
             w.set_current_muted(h.muted);
+            w.set_current_person(h.person.into());
+            w.set_current_presence(h.presence.into());
             w.set_thread_root(h.thread_root.into());
         });
     }
@@ -514,17 +517,48 @@ impl UiHandle {
                     w.set_messages(ModelRc::from(m.clone()));
                     m
                 });
-                let same_ids = m.row_count() == msgs.len()
-                    && msgs
-                        .iter()
-                        .enumerate()
-                        .all(|(i, x)| m.row_data(i).is_some_and(|r| r.id == x.id.as_str()));
-                if same_ids {
-                    for (i, x) in msgs.into_iter().enumerate() {
-                        m.set_row_data(i, msg(x));
-                    }
-                } else {
+                // The rows both lists share (the list window slid by a new message, an older
+                // page came in above, a pending message became the sent one) are updated in
+                // place and only the rows around them are removed or added: a rebuilt row
+                // forgets the pointer resting on it until the pointer moves again, so its photo
+                // would not open the hover card.
+                let old = m.row_count();
+                let id = |i: usize| m.row_data(i).map(|r| r.id).unwrap_or_default();
+                // Where the shared run starts in the old list (a) and in the new one (b).
+                let (a, b) = match msgs
+                    .first()
+                    .and_then(|f| (0..old).find(|&i| id(i) == f.id.as_str()))
+                {
+                    Some(a) => (a, 0),
+                    None => (
+                        0,
+                        (0..msgs.len())
+                            .find(|&j| old > 0 && id(0) == msgs[j].id.as_str())
+                            .unwrap_or(msgs.len()),
+                    ),
+                };
+                let run = (0..(old - a).min(msgs.len().saturating_sub(b)))
+                    .take_while(|&k| id(a + k) == msgs[b + k].id.as_str())
+                    .count();
+                if run == 0 {
                     m.set_vec(msgs.into_iter().map(msg).collect::<Vec<_>>());
+                } else {
+                    // Keep only the run, then add the new rows before and after it.
+                    for _ in 0..a {
+                        m.remove(0);
+                    }
+                    for _ in 0..old - a - run {
+                        m.remove(run);
+                    }
+                    for (j, x) in msgs.into_iter().enumerate() {
+                        if j < b {
+                            m.insert(j, msg(x));
+                        } else if j < b + run {
+                            m.set_row_data(j, msg(x));
+                        } else {
+                            m.push(msg(x));
+                        }
+                    }
                 }
             });
             match scroll {

@@ -2,7 +2,7 @@
 
 use super::{UiHandle, img, model, rgb};
 use crate::data::{CardData, PersonData, PinnedData, color_for, initials};
-use crate::{AppWindow, PeopleStore, PersonItem, PinnedItem};
+use crate::{AppWindow, PeopleStore, PersonItem, PinnedItem, SettingsStore};
 use slint::{ComponentHandle, ModelRc};
 
 fn person(d: PersonData) -> PersonItem {
@@ -18,6 +18,18 @@ fn person(d: PersonData) -> PersonItem {
         kind: d.kind.into(),
         presence: d.presence.into(),
     }
+}
+
+fn fill_card(s: &PeopleStore<'_>, c: CardData) {
+    s.set_card_loading(c.loading);
+    s.set_card(person(c.person));
+    s.set_card_email(c.email.into());
+    s.set_card_work(c.work.into());
+    s.set_card_location(c.location.into());
+    s.set_card_time(c.time.into());
+    s.set_card_presence(c.presence.into());
+    s.set_card_presence_label(c.presence_label.into());
+    s.set_card_work_location(c.work_location.into());
 }
 
 fn people(v: Vec<PersonData>) -> ModelRc<PersonItem> {
@@ -83,15 +95,25 @@ impl UiHandle {
     pub fn card(&self, open: bool, c: CardData) {
         self.store(move |s| {
             s.set_card_open(open);
-            s.set_card_loading(c.loading);
-            s.set_card(person(c.person));
-            s.set_card_email(c.email.into());
-            s.set_card_work(c.work.into());
-            s.set_card_location(c.location.into());
-            s.set_card_time(c.time.into());
-            s.set_card_presence(c.presence.into());
-            s.set_card_presence_label(c.presence_label.into());
-            s.set_card_work_location(c.work_location.into());
+            fill_card(&s, c);
+        });
+    }
+
+    /// Fills in the card of `c.person` with what arrived, if it is still the open card (a hover
+    /// card may have closed, or moved to someone else, while the details were on their way).
+    pub fn card_details(&self, c: CardData) {
+        self.store(move |s| {
+            if s.get_card_open() && s.get_card().id == c.person.id.as_str() {
+                fill_card(&s, c);
+            }
+        });
+    }
+
+    /// Our own availability, for the dot on the photo at the top right.
+    pub fn me_presence(&self, availability: String) {
+        self.run(move |w: AppWindow| {
+            w.global::<SettingsStore>()
+                .set_me_presence(availability.into())
         });
     }
 

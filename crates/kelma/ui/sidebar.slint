@@ -55,14 +55,14 @@ component ChatItem inherits Rectangle {
             // Resting on a 1:1 chat's photo opens the person's hover card.
             avatar-hover := TouchArea {
                 clicked => { root.clicked(); }
-            }
-            Timer {
-                interval: 600ms;
-                running: avatar-hover.has-hover && root.data.person != "";
-                triggered => {
-                    if !PeopleStore.card-open {
-                        PeopleStore.card-by-hover = true;
-                        PeopleStore.command("profile", root.data.person);
+                // The list may reuse this row for another chat while the pointer rests on it.
+                property <string> hovered: "";
+                changed has-hover => {
+                    if self.has-hover && root.data.person != "" {
+                        self.hovered = root.data.person;
+                        PeopleStore.hover-enter(root.data.person, self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+                    } else if !self.has-hover {
+                        PeopleStore.hover-leave(self.hovered);
                     }
                 }
             }

@@ -34,8 +34,51 @@ export global PeopleStore {
     in property <string> card-presence;
     in property <string> card-presence-label;
     in property <string> card-work-location;
-    // The card was opened by hovering (it closes when the pointer leaves it).
+    // The card was opened by hovering (it closes when the pointer leaves it and its photo).
     in-out property <bool> card-by-hover: false;
+    // The photo (or name) the card belongs to, in window coordinates: the card opens next to
+    // it. A width of 0 means none (the card opens in the middle of the window).
+    in-out property <length> anchor-x;
+    in-out property <length> anchor-y;
+    in-out property <length> anchor-w;
+    in-out property <length> anchor-h;
+    // The photo under the pointer, and where it is. `hover-armed` is cleared once its card has
+    // been opened, so resting on it does not open the card again and again.
+    in-out property <string> hover-id;
+    in-out property <bool> hover-armed;
+    in-out property <length> hover-x;
+    in-out property <length> hover-y;
+    in-out property <length> hover-w;
+    in-out property <length> hover-h;
+
+    // Opens the profile card of `id` next to the rectangle (window coordinates); `hover` opens
+    // it as a hover card.
+    public function open-card(id: string, x: length, y: length, w: length, h: length, hover: bool) {
+        if id == "" { return; }
+        root.anchor-x = x;
+        root.anchor-y = y;
+        root.anchor-w = w;
+        root.anchor-h = h;
+        root.card-by-hover = hover;
+        root.command("profile", id);
+    }
+    // The pointer came onto a person's photo: their card opens after a short rest (the window's
+    // timer, so a list row that is rebuilt meanwhile does not lose it).
+    public function hover-enter(id: string, x: length, y: length, w: length, h: length) {
+        if id == "" { return; }
+        root.hover-id = id;
+        root.hover-x = x;
+        root.hover-y = y;
+        root.hover-w = w;
+        root.hover-h = h;
+        root.hover-armed = true;
+    }
+    public function hover-leave(id: string) {
+        if root.hover-id == id {
+            root.hover-id = "";
+            root.hover-armed = false;
+        }
+    }
 
     // Pinned messages banner: the pins of the open chat and the one shown.
     in property <[PinnedItem]> pinned;

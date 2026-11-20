@@ -93,6 +93,7 @@ export struct Msg {
     failed: bool,          // could not be sent: show Retry and Delete
     new-above: bool,       // draw the "New messages" divider above this row
     sender-id: string,     // MRI of the sender, for the profile card
+    presence: string,      // the sender's availability for the dot on their photo ("" draws none)
     mentions-me: bool,     // the message @mentions me (or everyone)
     receipt: string,       // on my newest message: "" | "sent" | "seen"
     receipt-names: string, // who has seen it
