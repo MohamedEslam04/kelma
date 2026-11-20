@@ -152,36 +152,74 @@ export component SSwitch inherits Rectangle {
 
 // One choice out of a few, as a row of pills. Each pill is labelled "<group>: <option>" for
 // screen readers, so groups with the same options (Auto, On, Off) stay distinct.
+// One pill of a `SChoice`.
+component SChoicePill inherits Rectangle {
+    in property <string> group;
+    in property <SOption> o;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback picked();
+    width: opt-text.preferred-width + 24px;
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.selected : (ot.has-hover && root.enabled ? Theme.surface-hover : transparent);
+    accessible-role: radio-button;
+    accessible-label: root.group + ": " + root.o.l;
+    accessible-checked: root.on;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.picked(); } }
+    opt-text := Text {
+        text: root.o.l;
+        color: root.on ? Theme.accent : (root.enabled ? Theme.fg : Theme.fg-subtle);
+        font-size: SFont.body;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ot := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.picked(); } }
+}
+
+// Choices as pills in a row; when the row is wider than the space it has (a narrow window), the
+// pills stack one under another instead of pushing the page wider than the window.
 export component SChoice inherits Rectangle {
     in property <string> group;
     in property <[SOption]> options;
     in property <string> value;
     in property <bool> enabled: true;
     callback picked(string);
-    height: 30px * max(1, Theme.font-scale);
-    HorizontalLayout {
+    property <length> pill-height: 30px * max(1, Theme.font-scale) - 2px;
+    // The row's own width, measured whenever the row is shown.
+    property <length> row-width;
+    property <bool> fits: root.row-width <= root.width;
+    // The page decides the width: the pills never widen it.
+    min-width: 0px;
+    height: root.fits ? root.pill-height + 2px : root.options.length * (root.pill-height + 6px);
+    if root.fits: HorizontalLayout {
         spacing: 6px;
         alignment: start;
-        for o in root.options: Rectangle {
-            height: parent.height - 2px;
-            width: opt-text.preferred-width + 24px;
-            border-radius: self.height / 2;
-            border-width: 1px;
-            border-color: root.value == o.v ? Theme.accent : Theme.border;
-            background: root.value == o.v ? Theme.selected : (ot.has-hover && root.enabled ? Theme.surface-hover : transparent);
-            accessible-role: radio-button;
-            accessible-label: root.group + ": " + o.l;
-            accessible-checked: root.value == o.v;
-            accessible-enabled: root.enabled;
-            accessible-action-default => { if root.enabled { root.picked(o.v); } }
-            opt-text := Text {
-                text: o.l;
-                color: root.value == o.v ? Theme.accent : (root.enabled ? Theme.fg : Theme.fg-subtle);
-                font-size: SFont.body;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+        init => { root.row-width = self.preferred-width; }
+        for o in root.options: SChoicePill {
+            height: root.pill-height;
+            group: root.group;
+            o: o;
+            on: root.value == o.v;
+            enabled: root.enabled;
+            picked => { root.picked(o.v); }
+        }
+    }
+    if !root.fits: VerticalLayout {
+        spacing: 6px;
+        alignment: start;
+        for o in root.options: HorizontalLayout {
+            alignment: start;
+            SChoicePill {
+                height: root.pill-height;
+                group: root.group;
+                o: o;
+                on: root.value == o.v;
+                enabled: root.enabled;
+                picked => { root.picked(o.v); }
             }
-            ot := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.picked(o.v); } }
         }
     }
 }
