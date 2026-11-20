@@ -643,6 +643,25 @@ channel, "give/request control".
   KDE asks once for the screen and for input. `InputInjector` maps a normalized point onto the
   shared stream (`NotifyPointerMotionAbsolute` on its PipeWire node), and sends buttons (evdev
   `BTN_*`), scrolling and keys (keysyms). Injection runs on its own task.
+- The controller's own cursor (as Teams): while someone controls our screen, their pointer is
+  drawn as a separate arrow with their name and photo (`calling::video::control_overlay`), on a
+  wlr-layer-shell surface on the overlay layer (click-through: empty input region, no keyboard
+  focus), drawn in software on its own thread. Our real pointer stays ours: a remote move only
+  moves the drawn cursor; a remote button or scroll first moves the real pointer to the
+  controller's point (`NotifyPointerMotionAbsolute` on the stream node) and then happens there;
+  while a remote button is held (a drag) moves drive the real pointer too; keys go wherever the
+  focus is (`calling::remote_control::PointerPolicy`). Points outside 0..1 of the stream are
+  dropped and hide the drawn cursor; a click or scroll off the stream does nothing; a held
+  button's release always goes through. The cursor goes away on Release, Revoke, Take back, the
+  share stopping and the call ending. LIMITS: Wayland can't read or restore the pointer's
+  position, so after a remote click our pointer stays where they clicked. A monitor share's
+  cursor covers the output the portal names by position (else by size, else the first); a window
+  share is known only by its size, so its area is centered on that output and the drawn cursor is
+  off by the window's offset from center (clicks still land right: the portal maps them onto the
+  window). Wayland can't tell what is on top of a shared window, so a click inside the stream
+  lands on whatever covers that spot. Without layer-shell (GNOME) there is no drawn cursor,
+  logged. The overlay also shows in the shared picture. The label is not shaped (Arabic names
+  show unjoined).
 - Safety: while someone controls our screen, any key pressed in kelma's window that is not the
   echo of a key we injected in the last 300 ms, or Escape twice within 1 s, takes control back
   (Revoke). Stopping the share ends control. LIMIT: Wayland gives kelma no keys pressed in other
