@@ -89,6 +89,7 @@ enum Portal {
 }
 
 async fn portal() -> Result<Portal> {
+    super::portal::ensure_registered().await;
     let camera = match Camera::new().await {
         Ok(c) => c,
         Err(e) => return Ok(Portal::NoCamera(format!("no Camera portal: {e}"))),
