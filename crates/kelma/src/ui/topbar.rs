@@ -2,17 +2,30 @@
 //! commands) and Back and Forward. Fills the `TopBarStore` global from `crate::topbar` and turns
 //! what the user picks into the same calls the rest of the window already makes.
 //!
-//! Commands from `TopBarStore.command(name, argument)`: input, focus, close, activate, submit,
-//! back, forward, visit (`view` U+001F `chat`), help.
+//! Commands from `TopBarStore.command(name, argument)`: input, focus, close, clear, activate,
+//! submit, back, forward, visit (`view` U+001F `chat`), help.
+//!
+//! Names are suggested for every keystroke; message hits once typing has paused for
+//! [`MESSAGE_PAUSE`] (the engine adds the server's after a further pause, see
+//! `backend/find/top_messages.rs`).
 
-use super::{UiHandle, model, rgb};
+use super::{UiHandle, img, model, rgb, styled};
+use crate::find_data::HitData;
 use crate::suggest::SuggestData;
 use crate::topbar::{self, Action, History, Pick, Recents, Row};
 use crate::{AppWindow, FindStore, SettingsStore, TopBarStore, TopRow};
-use slint::{ComponentHandle, SharedString};
+use slint::{ComponentHandle, SharedString, Timer, TimerMode};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
+
+/// Typing pauses this long before the cache's messages are searched.
+const MESSAGE_PAUSE: Duration = Duration::from_millis(150);
+/// Heights of the dropdown's rows and of a group's heading, as `topbar.slint` draws them.
+const ROW_H: f32 = 36.0;
+const MESSAGE_ROW_H: f32 = 52.0;
+const HEADING_H: f32 = 24.0;
 
 struct Ctl {
     recents: Recents,
@@ -21,6 +34,14 @@ struct Ctl {
     history: History,
     rows: Vec<Row>,
     suggestions: Vec<SuggestData>,
+    /// The message hits shown, and the text they were found for.
+    messages: Vec<HitData>,
+    messages_for: String,
+    /// Waits for typing to pause before the messages are searched.
+    message_timer: Timer,
+    /// A `FindStore` command to send once the controller is free again: an engine that answers
+    /// at once (tests) calls back into it.
+    pending: Option<(&'static str, String)>,
     ui: UiHandle,
 }
 
@@ -48,6 +69,10 @@ pub fn install(window: &AppWindow, config_dir: Option<PathBuf>) {
         history: History::default(),
         rows: Vec::new(),
         suggestions: Vec::new(),
+        messages: Vec::new(),
+        messages_for: String::new(),
+        message_timer: Timer::default(),
+        pending: None,
         ui: UiHandle::new(window.as_weak()),
     }));
     CTL.with(|c| *c.borrow_mut() = Some(shared.clone()));
@@ -55,19 +80,25 @@ pub fn install(window: &AppWindow, config_dir: Option<PathBuf>) {
     window.global::<TopBarStore>().on_command(move |name, arg| {
         let Some(w) = weak.upgrade() else { return };
         // A call from inside a call (a callback fired while a command still runs) is dropped.
-        let ask = match shared.try_borrow_mut() {
-            Ok(mut c) => command(&mut c, &w, &name, &arg),
+        let pending = match shared.try_borrow_mut() {
+            Ok(mut c) => {
+                command(&mut c, &w, &name, &arg);
+                c.pending.take()
+            }
             Err(_) => None,
         };
-        // Asked once the controller is free again: an engine that answers at once (tests)
-        // calls back into it.
-        if let Some(q) = ask {
-            w.global::<FindStore>().invoke_command(s("suggest"), s(q));
+        if let Some((cmd, a)) = pending {
+            w.global::<FindStore>().invoke_command(s(cmd), s(a));
         }
     });
 }
 
-fn to_row(r: &Row) -> TopRow {
+fn to_row(r: &Row, top: f32, messages: &[HitData]) -> TopRow {
+    let (avatar, has_avatar) = messages
+        .iter()
+        .find(|m| r.kind == "message" && m.id == r.id)
+        .map(|m| img(&m.avatar))
+        .unwrap_or_default();
     TopRow {
         kind: s(r.kind),
         id: s(r.id.as_str()),
@@ -77,15 +108,76 @@ fn to_row(r: &Row) -> TopRow {
         color: rgb(r.color),
         section: s(r.section),
         insert: s(r.insert.as_str()),
+        snippet: styled(&r.snippet),
+        snippet_plain: s(r.snippet.replace("**", "")),
+        time: s(r.time.as_str()),
+        rtl: r.rtl,
+        avatar,
+        has_avatar,
+        top,
     }
 }
 
-/// Shows the rows for what is in the box.
+/// Shows the rows for what is in the box; the arrow keys' choice starts over.
 fn rebuild(w: &AppWindow, c: &mut Ctl) {
+    show_rows(w, c);
+    w.global::<TopBarStore>().set_selected(-1);
+}
+
+/// Shows the rows for what is in the box and keeps the arrow keys' choice where it is (more
+/// results came while the user was choosing).
+fn show_rows(w: &AppWindow, c: &mut Ctl) {
     let store = w.global::<TopBarStore>();
-    c.rows = topbar::rows(&store.get_input(), c.recents.items(), &c.suggestions);
-    store.set_rows(model(c.rows.iter().map(to_row).collect()));
-    store.set_selected(-1);
+    c.rows = topbar::rows(
+        &store.get_input(),
+        c.recents.items(),
+        &c.suggestions,
+        &c.messages,
+    );
+    // Where each row's body starts, so the dropdown can scroll the chosen one into view.
+    let mut y = 0.0;
+    let rows: Vec<TopRow> = c
+        .rows
+        .iter()
+        .map(|r| {
+            if !r.section.is_empty() {
+                y += HEADING_H;
+            }
+            let row = to_row(r, y, &c.messages);
+            y += if r.kind == "message" {
+                MESSAGE_ROW_H
+            } else {
+                ROW_H
+            };
+            row
+        })
+        .collect();
+    store.set_rows(model(rows));
+    if store.get_selected() >= c.rows.len() as i32 {
+        store.set_selected(c.rows.len() as i32 - 1);
+    }
+}
+
+/// Forgets the message hits and any search of them still waiting.
+fn drop_messages(c: &mut Ctl) {
+    c.message_timer.stop();
+    c.messages.clear();
+    c.messages_for.clear();
+}
+
+/// Searches the messages for what is in the box once typing has paused.
+fn ask_messages_later(w: &AppWindow, c: &mut Ctl) {
+    let weak = w.as_weak();
+    c.message_timer
+        .start(TimerMode::SingleShot, MESSAGE_PAUSE, move || {
+            let Some(w) = weak.upgrade() else { return };
+            let q = w.global::<TopBarStore>().get_input();
+            let q = q.trim();
+            if !q.is_empty() && !q.starts_with('/') {
+                w.global::<FindStore>()
+                    .invoke_command(s("suggest-messages"), s(q));
+            }
+        });
 }
 
 fn save_recents(c: &Ctl) {
@@ -102,6 +194,7 @@ fn clear_input(w: &AppWindow, c: &mut Ctl) {
     store.set_input(s(""));
     store.set_search_open(false);
     c.suggestions.clear();
+    drop_messages(c);
     rebuild(w, c);
     w.invoke_search(s(""));
 }
@@ -176,6 +269,8 @@ fn search(w: &AppWindow, c: &mut Ctl, text: &str) {
     }
     c.recents.add(text);
     save_recents(c);
+    // The Search page has the messages now.
+    c.message_timer.stop();
     let f = w.global::<FindStore>();
     f.set_query(s(text));
     w.set_view(s("search"));
@@ -205,6 +300,13 @@ fn apply(w: &AppWindow, c: &mut Ctl, pick: Pick, input: &str) {
             }
             clear_input(w, c);
         }
+        Pick::OpenMessage(id) => {
+            c.recents.add(input);
+            save_recents(c);
+            clear_input(w, c);
+            // The engine opens the chat and lands on the message, as for a Search page hit.
+            c.pending = Some(("open", id));
+        }
         Pick::Run(action) => {
             if run(w, c, action) {
                 clear_input(w, c);
@@ -226,22 +328,31 @@ fn go(w: &AppWindow, place: &topbar::Place) {
     }
 }
 
-/// Runs one command; the text to ask the engine suggestions for, if any.
-fn command(c: &mut Ctl, w: &AppWindow, name: &str, arg: &str) -> Option<String> {
+/// Runs one command; a `FindStore` command to send after it goes in `c.pending`.
+fn command(c: &mut Ctl, w: &AppWindow, name: &str, arg: &str) {
     let store = w.global::<TopBarStore>();
-    let mut ask = None;
     match name {
         "input" => {
             let q = arg.trim();
             // The chat list is filtered by what is typed, except for a command.
             w.invoke_search(s(if q.starts_with('/') { "" } else { arg }));
             c.suggestions.clear();
-            if !q.is_empty() && !q.starts_with('/') {
-                ask = Some(q.to_string());
+            if q.is_empty() || q.starts_with('/') {
+                drop_messages(c);
+            } else {
+                c.pending = Some(("suggest", q.to_string()));
+                // The hits of a query this one grew from stay until the new ones come, so the
+                // list does not flicker; any other text drops them.
+                if !q.to_lowercase().starts_with(&c.messages_for.to_lowercase()) {
+                    c.messages.clear();
+                }
+                ask_messages_later(w, c);
             }
             store.set_search_open(true);
             rebuild(w, c);
         }
+        // The box's clear button, and Escape with text in the box.
+        "clear" => clear_input(w, c),
         "focus" => {
             store.set_search_open(true);
             rebuild(w, c);
@@ -287,7 +398,6 @@ fn command(c: &mut Ctl, w: &AppWindow, name: &str, arg: &str) -> Option<String> 
         }
         other => tracing::debug!(command = other, "topbar: unknown command"),
     }
-    ask
 }
 
 impl UiHandle {
@@ -301,6 +411,21 @@ impl UiHandle {
             if w.global::<TopBarStore>().get_input().trim() == query.trim() {
                 c.suggestions = rows;
                 rebuild(&w, &mut c);
+            }
+        });
+    }
+
+    /// The message hits for `query`; dropped when the box has moved on.
+    pub fn topbar_messages(&self, query: String, hits: Vec<HitData>) {
+        self.run(move |w| {
+            let Some(shared) = ctl() else { return };
+            let Ok(mut c) = shared.try_borrow_mut() else {
+                return;
+            };
+            if w.global::<TopBarStore>().get_input().trim() == query.trim() {
+                c.messages = hits;
+                c.messages_for = query.trim().to_string();
+                show_rows(&w, &mut c);
             }
         });
     }

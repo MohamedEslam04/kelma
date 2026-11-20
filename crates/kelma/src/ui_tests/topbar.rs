@@ -5,7 +5,7 @@
 use super::*;
 use crate::backend::FindCmd;
 use crate::suggest::SuggestData;
-use crate::{FindStore, SettingsStore, TopBarStore};
+use crate::{FindStore, SettingsStore, TopBarStore, TopRow};
 use std::path::PathBuf;
 
 const SARA: &str =
@@ -398,14 +398,62 @@ fn ctrl_e_focuses_the_search_box_and_ctrl_slash_lists_the_commands() {
 }
 
 #[test]
-fn escape_closes_the_dropdown_and_the_box_keeps_its_text() {
+fn escape_clears_the_text_and_with_an_empty_box_closes_the_dropdown() {
     let app = ready_window(None);
+    let filtered = Log::default();
+    let f = filtered.clone();
+    app.on_search(move |q| f.borrow_mut().push(q.to_string()));
     focus_box(&app);
     type_text(&app, "abc");
     assert!(tb(&app).get_search_open());
     press(&app, Key::Escape);
+    assert_eq!(tb(&app).get_input(), "");
     assert!(!tb(&app).get_search_open());
-    assert_eq!(tb(&app).get_input(), "abc");
+    assert_eq!(
+        filtered.borrow().last().unwrap(),
+        "",
+        "the chat list is no longer filtered"
+    );
+    // Nothing typed: Escape only closes the list.
+    tb(&app).invoke_command("focus".into(), "".into());
+    assert!(tb(&app).get_search_open());
+    press(&app, Key::Escape);
+    assert!(!tb(&app).get_search_open());
+}
+
+#[test]
+fn the_clear_button_empties_the_box_closes_the_list_and_keeps_the_cursor_there() {
+    let app = ready_window(None);
+    let filtered = Log::default();
+    let f = filtered.clone();
+    app.on_search(move |q| f.borrow_mut().push(q.to_string()));
+    settle();
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Clear search")
+            .next()
+            .is_none(),
+        "no clear button while the box is empty"
+    );
+    focus_box(&app);
+    type_text(&app, "budget");
+    assert_eq!(filtered.borrow().last().unwrap(), "budget");
+    control(&app, "Clear search").mock_single_click(PointerEventButton::Left);
+    assert_eq!(tb(&app).get_input(), "");
+    assert!(!tb(&app).get_search_open());
+    assert_eq!(
+        filtered.borrow().last().unwrap(),
+        "",
+        "as if the text had been deleted"
+    );
+    settle();
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Clear search")
+            .next()
+            .is_none()
+    );
+    // The box still has the focus: typing goes on there.
+    type_text(&app, "x");
+    assert_eq!(tb(&app).get_input(), "x");
 }
 
 fn control(app: &AppWindow, label: &str) -> ElementHandle {
@@ -563,4 +611,144 @@ fn chat_and_goto_open_the_conversation_the_name_means() {
     enter(&h.app);
     assert!(h.app.get_banner().contains("nobody-by-this-name"));
     assert_eq!(h.app.get_current_id(), GENERAL);
+}
+
+// ---- the Messages group of the dropdown ---------------------------------------------------------
+
+/// Lets typing pause long enough for the dropdown to search the messages.
+fn pause_typing() {
+    testing::mock_elapsed_time(std::time::Duration::from_millis(200));
+}
+
+/// The message rows the open chat highlights, as their text.
+fn flashed(app: &AppWindow) -> Vec<String> {
+    app.get_messages()
+        .iter()
+        .filter(|m| m.flash)
+        .map(|m| m.plain.to_string())
+        .collect()
+}
+
+fn message_rows(app: &AppWindow) -> Vec<TopRow> {
+    tb(app)
+        .get_rows()
+        .iter()
+        .filter(|r| r.kind == "message")
+        .collect()
+}
+
+#[test]
+fn a_pause_in_typing_lists_the_messages_of_the_cache_under_their_own_heading() {
+    let (h, log) = engine_window();
+    focus_box(&h.app);
+    type_text(&h.app, "deployed");
+    // Names come at once; the messages wait for typing to pause.
+    assert!(message_rows(&h.app).is_empty());
+    assert!(
+        !log.borrow()
+            .iter()
+            .any(|l| l.starts_with("suggest-messages"))
+    );
+    pause_typing();
+    assert_eq!(
+        log.borrow()
+            .iter()
+            .filter(|l| l.starts_with("suggest-messages"))
+            .collect::<Vec<_>>(),
+        ["suggest-messages deployed"],
+        "one search for the whole word, not one per key"
+    );
+    assert_eq!(row_kinds(&h.app), ["message", "search"]);
+    let m = &message_rows(&h.app)[0];
+    assert_eq!(m.section, "Messages");
+    assert_eq!(m.title, "Sara Hassan");
+    assert_eq!(m.subtitle, "Backend Team");
+    assert!(
+        m.snippet_plain.contains("deployed to staging"),
+        "{}",
+        m.snippet_plain
+    );
+    assert!(!m.time.is_empty());
+    assert!(!m.rtl);
+    // An answer for text the box no longer holds is dropped.
+    UiHandle::new(h.app.as_weak()).topbar_messages("zz".into(), vec![]);
+    assert_eq!(message_rows(&h.app).len(), 1);
+    // Clearing the box drops the hits.
+    tb(&h.app).invoke_command("clear".into(), "".into());
+    assert!(message_rows(&h.app).is_empty());
+}
+
+#[test]
+fn the_arrow_keys_reach_a_message_hit_and_enter_opens_its_chat_at_the_message() {
+    let (h, _log) = engine_window();
+    h.select(NOTES);
+    focus_box(&h.app);
+    type_text(&h.app, "deployed");
+    pause_typing();
+    assert_eq!(row_kinds(&h.app), ["message", "search"]);
+    press(&h.app, Key::DownArrow);
+    press(&h.app, Key::DownArrow);
+    assert_eq!(tb(&h.app).get_selected(), 1, "the search row");
+    press(&h.app, Key::UpArrow);
+    assert_eq!(tb(&h.app).get_selected(), 0, "back on the message");
+    enter(&h.app);
+    assert_eq!(h.app.get_view(), "chat");
+    assert_eq!(h.app.get_current_id(), BACKEND);
+    let hit = flashed(&h.app);
+    assert_eq!(hit.len(), 1, "the message is highlighted");
+    assert!(hit[0].contains("deployed to"), "{hit:?}");
+    assert_eq!(tb(&h.app).get_input(), "");
+    assert!(!tb(&h.app).get_search_open());
+}
+
+#[test]
+fn clicking_a_message_hit_opens_its_chat_at_the_message() {
+    let (h, _log) = engine_window();
+    h.select(NOTES);
+    focus_box(&h.app);
+    type_text(&h.app, "deployed");
+    pause_typing();
+    settle();
+    let row = ElementHandle::find_by_accessible_label(&h.app, "Sara Hassan")
+        .find(|e| {
+            e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::ListItem)
+                && e.accessible_description()
+                    .is_some_and(|d| d.contains("deployed to staging"))
+        })
+        .expect("the message hit in the dropdown");
+    row.mock_single_click(PointerEventButton::Left);
+    assert_eq!(h.app.get_view(), "chat");
+    assert_eq!(h.app.get_current_id(), BACKEND);
+    let hit = flashed(&h.app);
+    assert_eq!(hit.len(), 1, "the message is highlighted");
+    assert!(hit[0].contains("deployed to"), "{hit:?}");
+}
+
+#[test]
+fn an_arabic_message_hit_runs_right_to_left() {
+    let (h, _log) = engine_window();
+    h.engine.test_store(|st| {
+        st.upsert_message(&store::MessageRow {
+            id: "1795000000001".into(),
+            conversation_id: BACKEND.into(),
+            parent_id: None,
+            sender_mri: "8:orgid:00000000-0000-0000-0000-000000000002".into(),
+            sender_name: "Ahmed Ali".into(),
+            compose_ms: 1_795_000_000_001,
+            edited_ms: None,
+            deleted: false,
+            message_type: "RichText/Html".into(),
+            content_html: "<p>تم النشر على بيئة الاختبار</p>".into(),
+            client_message_id: None,
+            reactions_json: "[]".into(),
+        })
+        .unwrap();
+    });
+    focus_box(&h.app);
+    type_text(&h.app, "النشر");
+    pause_typing();
+    let m = message_rows(&h.app);
+    assert_eq!(m.len(), 1, "{:?}", row_titles(&h.app));
+    assert!(m[0].rtl);
+    assert!(m[0].snippet_plain.contains("النشر"));
 }
