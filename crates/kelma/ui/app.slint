@@ -81,7 +81,7 @@ export component AppWindow inherits Window {
     icon: @image-url("icons/app.svg");
     preferred-width: 1400px;
     preferred-height: 900px;
-    min-width: 900px;
+    min-width: 640px;
     min-height: 560px;
     background: Theme.main;
     default-font-size: 14px * Theme.font-scale;
@@ -105,7 +105,11 @@ export component AppWindow inherits Window {
         TopBarStore.command("visit", root.view + "\u{1f}" + root.current-id);
     }
     // Back and Forward follow the chats opened as well as the pages.
-    changed current-id => { TopBarStore.command("visit", root.view + "\u{1f}" + root.current-id); }
+    changed current-id => {
+        TopBarStore.command("visit", root.view + "\u{1f}" + root.current-id);
+        // A chat opened (from anywhere) takes the window in one-pane mode.
+        root.pane-list = false;
+    }
     // Opens a page of the left rail the way a click on it does (also Back and Forward, and the
     // search box's commands).
     public function navigate(v: string) {
@@ -304,6 +308,14 @@ export component AppWindow inherits Window {
     in-out property <int> anchor-tick;
     // Width of the chat and teams list (the divider next to it drags it; Rust remembers it).
     in-out property <length> sidebar-width: 320px;
+    // Narrow windows. Below 800px one pane shows at a time, as in Teams: an open chat takes the
+    // window and its header's Back shows the list again. Above it the list gives way so the
+    // conversation keeps 480px.
+    property <bool> single-pane: root.width < 800px;
+    in-out property <bool> pane-list: false;
+    property <bool> list-only: root.single-pane && (root.current-id == "" || root.pane-list);
+    property <bool> chat-only: root.single-pane && !root.list-only;
+    property <length> list-width: min(root.sidebar-width, max(220px, root.width - AppsStore.rail-width - 5px - 480px));
     in property <int> anchor-index: -1;
 
 
@@ -487,7 +499,8 @@ export component AppWindow inherits Window {
                 padding-right: 16px;
                 spacing: 12px;
                 HorizontalLayout {
-                    width: 260px;
+                    // Narrow windows give the room to the search box.
+                    width: root.width < 1000px ? 100px : 260px;
                     spacing: 8px;
                     Image { source: @image-url("icons/logo.svg"); colorize: Theme.accent; width: 22px; height: 22px; y: 13px; }
                     Text { text: "kelma"; color: Theme.fg; font-size: 15px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
@@ -561,8 +574,9 @@ export component AppWindow inherits Window {
 
             // Sidebar
             if root.view != "calendar" && root.view != "onedrive" && root.view != "calls": Sidebar {
-                visible: root.view != "activity" && root.view != "search";
-                width: root.view == "activity" || root.view == "search" ? 0px : root.sidebar-width;
+                visible: root.view != "activity" && root.view != "search" && !root.chat-only;
+                width: root.view == "activity" || root.view == "search" || root.chat-only ? 0px
+                    : root.list-only ? root.width - AppsStore.rail-width : root.list-width;
                 max-height: 100000px;
                 view: root.view;
                 filter <=> root.filter;
@@ -594,7 +608,7 @@ export component AppWindow inherits Window {
             }
 
             // The divider: drag to resize the list, as in Teams.
-            if root.view != "calendar" && root.view != "onedrive" && root.view != "activity" && root.view != "search": Rectangle {
+            if root.view != "calendar" && root.view != "onedrive" && root.view != "activity" && root.view != "search" && !root.single-pane: Rectangle {
                 width: 5px;
                 background: list-split.pressed || list-split.has-hover ? Theme.accent : Theme.border;
                 accessible-role: slider;
@@ -614,18 +628,19 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if root.view == "calendar": CalendarView { horizontal-stretch: 1; }
-            if root.view == "onedrive": OneDriveView { horizontal-stretch: 1; }
+            if root.view == "calendar": CalendarView { horizontal-stretch: 1; window-width: root.width; }
+            if root.view == "onedrive": OneDriveView { horizontal-stretch: 1; window-width: root.width; }
             if root.view == "calls": CallsPage {
                 horizontal-stretch: 1;
+                window-width: root.width;
                 open-chat(mri) => {
                     root.view = "chat";
                     CallsPageStore.command("chat", mri);
                 }
             }
 
-            // Conversation
-            if root.view != "calendar" && root.view != "onedrive" && root.view != "calls": Rectangle {
+            // Conversation (in one-pane mode, not while the list has the window)
+            if root.view != "calendar" && root.view != "onedrive" && root.view != "calls" && !(root.list-only && root.view != "activity" && root.view != "search"): Rectangle {
                 background: Theme.main;
                 if root.view == "search": SearchView {
                     z: 40;
@@ -730,14 +745,22 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.current-id != "": VerticalLayout {
-                    // Header
-                    Rectangle {
+                    // Header. When it is narrow (half a laptop screen), participants, find,
+                    // details and Schedule a meeting move into the … menu so the name stays readable.
+                    header := Rectangle {
+                        property <bool> compact: self.width < 720px;
                         height: 60px;
                         background: Theme.sidebar;
                         HorizontalLayout {
                             padding-left: 20px;
                             padding-right: 16px;
                             spacing: 12px;
+                            if root.single-pane && root.thread-root == "": IconButton {
+                                icon: @image-url("icons/back.svg");
+                                y: 14px;
+                                tooltip: @tr("Back to the chat list");
+                                clicked => { root.pane-list = true; }
+                            }
                             if root.thread-root != "": IconButton { icon: @image-url("icons/back.svg"); y: 14px; clicked => { root.close-thread(); } }
                             Avatar {
                                 y: 12px;
@@ -755,6 +778,8 @@ export component AppWindow inherits Window {
                                 vertical-alignment: center;
                                 overflow: elide;
                                 horizontal-stretch: 0;
+                                // Everything else gives way first.
+                                min-width: min(self.preferred-width, 120px);
                             }
                             if root.renaming && root.thread-root == "": Rectangle {
                                 y: 14px;
@@ -830,7 +855,7 @@ export component AppWindow inherits Window {
                                 tooltip: @tr("Add a tab");
                                 clicked => { FindStore.tab-add-open = true; }
                             }
-                            if root.thread-root == "" && !root.current-is-channel: IconButton {
+                            if root.thread-root == "" && !root.current-is-channel && !header.compact: IconButton {
                                 icon: @image-url("icons/calendar.svg");
                                 y: 14px;
                                 tooltip: @tr("Schedule a meeting");
@@ -840,7 +865,7 @@ export component AppWindow inherits Window {
                             Rectangle { horizontal-stretch: 1; }
                             if root.thread-root == "" && !root.current-is-channel: CallHeaderButtons { chat-id: root.current-id; y: 14px; height: 32px; }
                             // "View and add participants": group and 1:1 chats (a 1:1 starts a group).
-                            if (PeopleStore.header-group || PeopleStore.member-count > 0) && !root.current-is-channel && root.thread-root == "": people-btn := Rectangle {
+                            if (PeopleStore.header-group || PeopleStore.member-count > 0) && !root.current-is-channel && root.thread-root == "" && !header.compact: people-btn := Rectangle {
                                 width: people-count.preferred-width + 40px;
                                 height: 32px;
                                 y: 14px;
@@ -864,7 +889,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
-                            if root.thread-root == "": IconButton {
+                            if root.thread-root == "" && !header.compact: IconButton {
                                 icon: @image-url("icons/search.svg");
                                 y: 14px;
                                 tooltip: root.current-is-channel ? @tr("Find in channel") : @tr("Find in chat");
@@ -875,7 +900,7 @@ export component AppWindow inherits Window {
                                     FindStore.command(FindStore.chat-find-open ? "find-open" : "find-close", "");
                                 }
                             }
-                            if root.thread-root == "": IconButton {
+                            if root.thread-root == "" && !header.compact: IconButton {
                                 icon: @image-url("icons/info.svg");
                                 y: 14px;
                                 tooltip: @tr("Open chat details");
@@ -885,11 +910,14 @@ export component AppWindow inherits Window {
                                     FindStore.command("details", FindStore.details-open ? "open" : "close");
                                 }
                             }
-                            if root.thread-root == "" && !root.current-is-channel: HeaderMoreButton {
+                            if root.thread-root == "" && (!root.current-is-channel || header.compact): HeaderMoreButton {
                                 y: 14px;
                                 chat-id: root.current-id;
                                 muted: root.current-muted;
+                                channel: root.current-is-channel;
+                                extras: header.compact;
                                 mark-unread => { root.mark-chat-unread(root.current-id); }
+                                schedule-meeting => { root.schedule-meeting(root.current-id); }
                             }
                         }
                         Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }

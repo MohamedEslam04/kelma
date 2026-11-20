@@ -43,6 +43,7 @@ mod msg_extras;
 pub(crate) mod overflow;
 mod palette;
 mod people;
+pub(crate) mod responsive;
 mod saved;
 mod settings;
 mod shortcuts;
