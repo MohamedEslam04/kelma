@@ -53,6 +53,7 @@ mod scheduled;
 mod send;
 pub(crate) mod settings;
 mod shared;
+mod stickers;
 mod sync;
 mod unread;
 mod util;

@@ -115,8 +115,12 @@ component CaRow inherits Rectangle {
     }
 }
 
-// The picker. It sits over the window; a click outside closes it.
+// The picker. It sits over the window; a click outside closes it. In a chat its list starts with
+// "Schedule a meeting" and "Meet now", as in Teams.
 export component ComposerAppsOverlay inherits Rectangle {
+    in property <bool> meetings;
+    callback schedule-meeting();
+    callback meet-now();
     if ComposerApps.open: Rectangle {
         width: parent.width;
         height: parent.height;
@@ -181,6 +185,32 @@ export component ComposerAppsOverlay inherits Rectangle {
                         content-height: cmds.preferred-height;
                         cmds := VerticalLayout {
                             alignment: start;
+                            if root.meetings: Text {
+                                text: "Meetings";
+                                color: Theme.fg-muted;
+                                font-size: 11px * Theme.font-scale;
+                                font-weight: 600;
+                                height: 28px;
+                                vertical-alignment: bottom;
+                            }
+                            if root.meetings: CaRow {
+                                title: "Schedule a meeting";
+                                detail: "A Teams meeting with the people in this chat";
+                                clicked => {
+                                    ComposerApps.open = false;
+                                    ComposerApps.command("close", "");
+                                    root.schedule-meeting();
+                                }
+                            }
+                            if root.meetings: CaRow {
+                                title: "Meet now";
+                                detail: "Start a meeting right away and get its link";
+                                clicked => {
+                                    ComposerApps.open = false;
+                                    ComposerApps.command("close", "");
+                                    root.meet-now();
+                                }
+                            }
                             for c in ComposerApps.commands: VerticalLayout {
                                 if c.header: Text {
                                     text: c.app;

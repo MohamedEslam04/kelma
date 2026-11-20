@@ -15,6 +15,7 @@ use store::{ConvKind, ConversationRow, MessageRow, OutboxKind, UserRow};
 use teams_proto::mentions::{Mention, MentionKind, parse_mentions};
 use teams_proto::people::{Person, oid_of_mri};
 use teams_proto::receipts::{Horizon, seen_by};
+use teams_proto::tags::Tag;
 use teams_proto::threads::one_on_one_id;
 use teams_proto::time::now_ms;
 
@@ -107,6 +108,8 @@ pub(super) struct State {
     candidates: Vec<Entry>,
     /// Mentions picked in the composer for the draft.
     pub(super) entries: Vec<Entry>,
+    /// The tags of each team (by team thread id), fetched the first time a channel mentions one.
+    tags: HashMap<String, Vec<Tag>>,
     /// Bumped by every search; a slow answer for an older one is dropped.
     seq: u64,
     /// The same for @mention queries, so typing a mention and a New chat search do not drop each
@@ -550,6 +553,14 @@ impl Engine {
                             kind: MentionKind::Team,
                         });
                     }
+                    // @tags: the team's groups of people, mentioned as `tag:<id>`.
+                    if let Some(team) = &r.team_id {
+                        list.extend(self.team_tags(team).await.iter().map(|t| Entry {
+                            mri: t.mri(),
+                            name: t.name.clone(),
+                            kind: MentionKind::Tag,
+                        }));
+                    }
                 }
             }
             ConvKind::Notes => list.push(person(&self.me, self.my_name.clone())),
@@ -617,6 +628,7 @@ impl Engine {
                     MentionKind::Everyone => "Everyone in this chat".into(),
                     MentionKind::Team => "Team".into(),
                     MentionKind::Channel => "Channel".into(),
+                    MentionKind::Tag => self.tag_subtitle(&e.mri),
                     _ => String::new(),
                 },
                 avatar: matches!(e.kind, MentionKind::Person)
@@ -626,12 +638,55 @@ impl Engine {
                     MentionKind::Everyone => "everyone",
                     MentionKind::Team => "team",
                     MentionKind::Channel => "channel",
+                    MentionKind::Tag => "tag",
                     _ => "person",
                 },
             })
             .collect();
         self.people.lock().unwrap().candidates = list;
         self.ui.mention_items(data);
+    }
+
+    /// The tags of a team, fetched once (none offline or when the fetch fails).
+    async fn team_tags(&self, team: &str) -> Vec<Tag> {
+        if let Some(t) = self.people.lock().unwrap().tags.get(team) {
+            return t.clone();
+        }
+        if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
+            return Vec::new();
+        }
+        match self.client.tags(team).await {
+            Ok(t) => {
+                self.people
+                    .lock()
+                    .unwrap()
+                    .tags
+                    .insert(team.to_string(), t.clone());
+                t
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "team tags for mentions");
+                Vec::new()
+            }
+        }
+    }
+
+    /// "Tag · 3 people" under a tag in the mention picker.
+    fn tag_subtitle(&self, mri: &str) -> String {
+        let count = self
+            .people
+            .lock()
+            .unwrap()
+            .tags
+            .values()
+            .flatten()
+            .find(|t| t.mri() == mri)
+            .map_or(0, |t| t.member_count);
+        match count {
+            0 => "Tag".into(),
+            1 => "Tag · 1 person".into(),
+            n => format!("Tag · {n} people"),
+        }
     }
 
     fn mention_pick(&self, id: &str) {
@@ -1493,6 +1548,11 @@ impl Engine {
             .unwrap()
             .members
             .insert(conv.into(), members.iter().map(|m| m.to_string()).collect());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_set_tags(&self, team: &str, tags: Vec<Tag>) {
+        self.people.lock().unwrap().tags.insert(team.into(), tags);
     }
 
     #[cfg(test)]

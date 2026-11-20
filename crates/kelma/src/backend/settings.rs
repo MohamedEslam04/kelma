@@ -868,6 +868,11 @@ const INDEX: &[(&str, &str, &str)] = &[
     ("general", "Translation", "translate"),
     (
         "general",
+        "Check spelling",
+        "spell spelling dictionary typo",
+    ),
+    (
+        "general",
         "Start kelma when I sign in",
         "autostart login startup boot",
     ),

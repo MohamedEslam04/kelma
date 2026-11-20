@@ -99,6 +99,7 @@ pub fn wire(window: &AppWindow) {
     crate::composer_format::wire(window);
     crate::shortcuts::wire(window);
     crate::send_options::wire(window);
+    crate::spell::wire(window);
 }
 
 #[cfg(test)]

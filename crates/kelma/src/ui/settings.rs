@@ -14,7 +14,7 @@
 //! call-feedback, open-files, perm, switch-account, switch-org, add-account, remove-account,
 //! refresh-license, restart, sign-out, view-account, report-problem, check-updates, check-now,
 //! release-notes, status, work-location, status-note, banner-photo, banner-actions, notify-sound,
-//! meeting-chat.
+//! meeting-chat, check-spelling.
 
 use super::{UiHandle, model, rgb};
 use crate::backend::Cmd;
@@ -452,6 +452,10 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_check_updates(gp.check_updates);
     g.set_banner_photo(gp.banner_photo);
     g.set_banner_actions(gp.banner_actions);
+    g.set_check_spelling(gp.check_spelling);
+    if gp.check_spelling {
+        crate::spell::ensure_loaded(w);
+    }
 
     let x = &l.a11y;
     g.set_high_contrast(s(st::switch_slug(x.high_contrast)));
@@ -1223,6 +1227,13 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 g.set_update_status(s(""));
                 g.set_update_available(false);
             }
+            saved(w, r);
+        }
+        "check-spelling" => {
+            let mut c = shared.borrow_mut();
+            c.local.general.check_spelling = bit(arg);
+            let r = c.local.save_general();
+            push_local(w, &c);
             saved(w, r);
         }
         "check-now" => check_updates(w, &mut shared.borrow_mut(), true),

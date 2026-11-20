@@ -71,6 +71,15 @@ export component GeneralPage inherits VerticalLayout {
         Para { text: @tr("An IANA name such as Africa/Cairo. Leave it empty to follow the system. Times are shown in the system zone for now: kelma does not use this choice yet."); }
     }
     SSection {
+        title: @tr("Writing");
+        SSwitch {
+            label: @tr("Check spelling");
+            hint: @tr("Underline misspelled words in the message box. Right-click a word for suggestions. Uses the English and Arabic Hunspell dictionaries installed on this computer.");
+            on: SettingsStore.check-spelling;
+            toggled(on) => { SettingsStore.check-spelling = on; SettingsStore.command("check-spelling", on ? "1" : "0"); }
+        }
+    }
+    SSection {
         title: @tr("Translation");
         Para { text: @tr("Translation preferences are a Teams account setting. kelma cannot change them yet."); }
     }

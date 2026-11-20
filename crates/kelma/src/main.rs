@@ -15,6 +15,7 @@ mod mention;
 mod reactions;
 mod send_options;
 mod shortcuts;
+mod spell;
 mod tray_wiring;
 mod ui;
 #[cfg(test)]
