@@ -34,6 +34,30 @@ pub fn meeting_chat_thread_id(join_url: &str) -> Option<String> {
     (segment.starts_with("19:") && segment.contains("@thread.")).then_some(segment)
 }
 
+/// The page where the organizer sets a meeting's options (lobby, who presents, recording),
+/// built from the join URL: its thread and the `Tid` (tenant) and `Oid` (organizer) of its
+/// `context` parameter. The shape is the one `docs/research/calendar-meetings.md` records; the
+/// page itself is the organizer's only (Teams refuses it for others). `None` when the join link
+/// carries no thread or no context (a `/meet/<code>` link).
+pub fn meeting_options_url(join_url: &str) -> Option<String> {
+    let thread = meeting_chat_thread_id(join_url)?;
+    let query = join_url.split_once('?')?.1.split('#').next()?;
+    let context = query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("context="))?;
+    let v: Value = serde_json::from_str(&percent_decode(context)).ok()?;
+    let id = |key: &str| {
+        v.get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-'))
+    };
+    let (tenant, organizer) = (id("Tid")?, id("Oid")?);
+    Some(format!(
+        "https://teams.microsoft.com/meetingOptions/?organizerId={organizer}&tenantId={tenant}&threadId={}&messageId=0&language=en-US",
+        crate::graph::enc(&thread)
+    ))
+}
+
 /// `https://teams.microsoft.com/meet/<id>?p=<passcode>`, the page that joins by meeting ID.
 /// Spaces in the ID ("123 456 789 012") are dropped.
 pub fn join_by_id_url(meeting_id: &str, passcode: &str) -> Option<String> {
@@ -167,6 +191,29 @@ mod tests {
             .as_deref(),
             Some("19:meeting_abc@thread.v2")
         );
+    }
+
+    #[test]
+    fn the_options_page_is_built_from_the_join_link() {
+        let u = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%22Tid%22%3a%22aaaa-1111%22%2c%22Oid%22%3a%22bbbb-2222%22%7d";
+        assert_eq!(
+            meeting_options_url(u).as_deref(),
+            Some(
+                "https://teams.microsoft.com/meetingOptions/?organizerId=bbbb-2222&tenantId=aaaa-1111&threadId=19%3Ameeting_abc%40thread.v2&messageId=0&language=en-US"
+            )
+        );
+        for none in [
+            // No context.
+            "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0",
+            // A context that names no organizer.
+            "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%22Tid%22%3a%22aaaa%22%7d",
+            // Ids that are not ids do not reach the URL.
+            "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%22Tid%22%3a%22a%26b%22%2c%22Oid%22%3a%22c%22%7d",
+            // A meeting-by-code link has no thread.
+            "https://teams.microsoft.com/meet/123456789012?p=abc",
+        ] {
+            assert_eq!(meeting_options_url(none), None, "{none}");
+        }
     }
 
     #[test]

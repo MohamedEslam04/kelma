@@ -2338,7 +2338,7 @@ fn plural(n: usize) -> &'static str {
 }
 
 /// A file name that is safe to create in a directory of ours.
-fn sanitize_file_name(name: &str) -> String {
+pub(super) fn sanitize_file_name(name: &str) -> String {
     let s: String = name
         .chars()
         .map(|c| {

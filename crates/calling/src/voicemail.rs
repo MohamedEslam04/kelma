@@ -255,6 +255,24 @@ pub async fn mark_read(client: &Client, id: &str, read: bool) -> Result<()> {
     Ok(())
 }
 
+/// `DELETE /me/messages/{id}`: removes the voicemail (Exchange keeps it in Deleted Items).
+pub fn delete_url(id: &str) -> String {
+    message_url(id)
+}
+
+/// Deletes voicemail `id`.
+pub async fn delete(client: &Client, id: &str) -> Result<()> {
+    client
+        .json(
+            "voicemail delete",
+            reqwest::Method::DELETE,
+            &delete_url(id),
+            None,
+        )
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +353,10 @@ mod tests {
             "https://graph.microsoft.com/v1.0/me/messages/AA%2Fk%3D/attachments/x%2By/$value"
         );
         assert_eq!(read_body(true), json!({"isRead": true}));
+        assert_eq!(read_body(false), json!({"isRead": false}));
+        assert_eq!(
+            delete_url("AA/k="),
+            "https://graph.microsoft.com/v1.0/me/messages/AA%2Fk%3D"
+        );
     }
 }

@@ -7,7 +7,7 @@ import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { SettingsStore, SFind } from "settings_store.slint";
 import { SButton, SField, SFont, SNavItem, SRadio, SSwitch, ZoomRow } from "settings_widgets.slint";
-import { AboutPage, AccessibilityPage, AccountsPage, AppearancePage, ChatsPage, DevicesPage, FilesPage, GeneralPage, NotificationsPage, PermissionsPage, PrivacyPage } from "settings_pages.slint";
+import { AboutPage, AccessibilityPage, AccountsPage, AppearancePage, CallsSettingsPage, ChatsPage, DevicesPage, FilesPage, GeneralPage, NotificationsPage, PermissionsPage, PrivacyPage } from "settings_pages.slint";
 
 export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings_store.slint";
 
@@ -100,6 +100,7 @@ export component SettingsPage inherits Rectangle {
                         {key: "appearance", label: @tr("Appearance"), icon: @image-url("icons/eye.svg")},
                         {key: "accessibility", label: @tr("Accessibility"), icon: @image-url("icons/people.svg")},
                         {key: "devices", label: @tr("Devices"), icon: @image-url("icons/video.svg")},
+                        {key: "calls", label: @tr("Calls"), icon: @image-url("icons/call-direct.svg")},
                         {key: "files", label: @tr("Files and links"), icon: @image-url("icons/file.svg")},
                         {key: "permissions", label: @tr("App permissions"), icon: @image-url("icons/shortcut.svg")},
                     ]: SNavItem {
@@ -151,7 +152,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         if SettingsStore.query == "": Text {
                             horizontal-alignment: Theme.start-align;
-                            text: SettingsStore.page == "general" ? @tr("General") : SettingsStore.page == "chats" ? @tr("Chats") : SettingsStore.page == "accounts" ? @tr("Accounts and orgs") : SettingsStore.page == "privacy" ? @tr("Privacy") : SettingsStore.page == "notifications" ? @tr("Notifications and activity") : SettingsStore.page == "appearance" ? @tr("Appearance") : SettingsStore.page == "accessibility" ? @tr("Accessibility") : SettingsStore.page == "devices" ? @tr("Devices") : SettingsStore.page == "files" ? @tr("Files and links") : SettingsStore.page == "permissions" ? @tr("App permissions") : @tr("About");
+                            text: SettingsStore.page == "general" ? @tr("General") : SettingsStore.page == "chats" ? @tr("Chats") : SettingsStore.page == "accounts" ? @tr("Accounts and orgs") : SettingsStore.page == "privacy" ? @tr("Privacy") : SettingsStore.page == "notifications" ? @tr("Notifications and activity") : SettingsStore.page == "appearance" ? @tr("Appearance") : SettingsStore.page == "accessibility" ? @tr("Accessibility") : SettingsStore.page == "devices" ? @tr("Devices") : SettingsStore.page == "calls" ? @tr("Calls") : SettingsStore.page == "files" ? @tr("Files and links") : SettingsStore.page == "permissions" ? @tr("App permissions") : @tr("About");
                             color: Theme.fg;
                             font-size: SFont.title;
                             font-weight: 700;
@@ -170,6 +171,7 @@ export component SettingsPage inherits Rectangle {
                         if SettingsStore.query == "" && SettingsStore.page == "appearance": AppearancePage { }
                         if SettingsStore.query == "" && SettingsStore.page == "accessibility": AccessibilityPage { }
                         if SettingsStore.query == "" && SettingsStore.page == "devices": DevicesPage { }
+                        if SettingsStore.query == "" && SettingsStore.page == "calls": CallsSettingsPage { }
                         if SettingsStore.query == "" && SettingsStore.page == "files": FilesPage { }
                         if SettingsStore.query == "" && SettingsStore.page == "permissions": PermissionsPage { }
                         if SettingsStore.query == "" && SettingsStore.page == "about": AboutPage { }

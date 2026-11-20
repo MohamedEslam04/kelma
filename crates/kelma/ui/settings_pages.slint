@@ -621,6 +621,51 @@ export component DevicesPage inherits VerticalLayout {
     if SettingsStore.devices-status != "": Para { text: SettingsStore.devices-status; }
 }
 
+export component CallsSettingsPage inherits VerticalLayout {
+    alignment: start;
+    SSection {
+        title: @tr("Ringtone");
+        hint: @tr("The sound kelma plays for an incoming call. It is kept on this computer.");
+        SChoiceRow {
+            label: @tr("Ringtone");
+            options: [{v: "chime", l: @tr("Chime")}, {v: "soft", l: @tr("Soft")}, {v: "pulse", l: @tr("Pulse")}];
+            value: SettingsStore.ringtone;
+            picked(v) => { SettingsStore.ringtone = v; SettingsStore.command("ringtone", v); }
+        }
+        SButton { label: @tr("Play ringtone"); clicked => { SettingsStore.command("ringtone-preview", SettingsStore.ringtone); } }
+    }
+    SSection {
+        title: @tr("Call forwarding");
+        hint: @tr("kelma can't read or change these yet: the Teams service that keeps them is not documented for it. Change them in Teams.");
+        SChoiceRow {
+            label: @tr("Forward my calls");
+            options: [{v: "none", l: @tr("Don't forward")}, {v: "voicemail", l: @tr("To voicemail")}];
+            value: "";
+            enabled: false;
+            picked(v) => { }
+        }
+        SChoiceRow {
+            label: @tr("If unanswered");
+            options: [{v: "voicemail", l: @tr("Voicemail")}, {v: "person", l: @tr("A person")}, {v: "number", l: @tr("A number")}];
+            value: "";
+            enabled: false;
+            picked(v) => { }
+        }
+        SChoiceRow {
+            label: @tr("Ring for");
+            options: [{v: "10", l: @tr("10 seconds")}, {v: "20", l: @tr("20 seconds")}, {v: "30", l: @tr("30 seconds")}, {v: "45", l: @tr("45 seconds")}];
+            value: "";
+            enabled: false;
+            picked(v) => { }
+        }
+    }
+    SSection {
+        title: @tr("Voicemail greeting");
+        hint: @tr("Recording or choosing a greeting needs the same Teams service, so it stays in Teams for now.");
+        SButton { label: @tr("Record a greeting"); enabled: false; clicked => { } }
+    }
+}
+
 export component FilesPage inherits VerticalLayout {
     alignment: start;
     SSection {

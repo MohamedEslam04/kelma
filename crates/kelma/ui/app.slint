@@ -27,7 +27,7 @@ import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
 import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
 import { RemindStore, RemindPanel } from "remind.slint";
 import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
-import { AddTabDialog, FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
+import { AddTabDialog, ChannelTabButton, ChannelTabOverlays, FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
 import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
 import { CommandPalette, PaletteApi, PaletteStore, PaletteItem } from "palette.slint";
 import { MediaStore, ImageViewer } from "media.slint";
@@ -800,17 +800,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                             // The channel's other tabs (empty for chats), then "+" Add a tab.
-                            for ct in FindStore.channel-tabs: ct-item := Rectangle {
-                                width: min(ct-label.preferred-width, 200px);
-                                accessible-role: AccessibleRole.tab;
-                                accessible-label: ct.name;
-                                VerticalLayout {
-                                    alignment: center;
-                                    ct-label := Text { text: ct.name; color: ct-touch.has-hover ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; overflow: elide; }
-                                    Rectangle { height: 3px; }
-                                }
-                                ct-touch := TouchArea { mouse-cursor: pointer; clicked => { FindStore.command("channel-tab-open", ct.url); } }
-                            }
+                            for ct in FindStore.channel-tabs: ChannelTabButton { tab: ct; }
                             if root.thread-root == "" && root.current-is-channel: IconButton {
                                 icon: @image-url("icons/plus.svg");
                                 y: 14px;
@@ -1351,6 +1341,11 @@ export component AppWindow inherits Window {
             }
             cancel => { ChatHeaderStore.remove-history = ""; }
         }
+    }
+
+    if root.login-state == "ready" && FindStore.tab-menu-id != "": ChannelTabOverlays {
+        width: root.width;
+        height: root.height;
     }
 
     if root.login-state == "ready" && FindStore.tab-add-open: Rectangle {

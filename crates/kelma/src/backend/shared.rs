@@ -11,6 +11,8 @@ use std::sync::atomic::Ordering;
 use store::{ConvKind, MessageRow};
 use teams_proto::views::{SharedItem, SharedKind};
 
+mod files;
+
 /// Messages of the cache scanned for files and links.
 const CACHE_SCAN: usize = 3000;
 /// Items the details pane lists.
@@ -24,6 +26,8 @@ pub(super) struct Item {
     shared_by: String,
     shared_ms: i64,
     url: String,
+    /// The SharePoint drive item, for the files of a channel's folder (row actions need it).
+    drive: Option<onedrive::DriveItem>,
 }
 
 impl From<SharedItem> for Item {
@@ -35,6 +39,7 @@ impl From<SharedItem> for Item {
             shared_by: i.shared_by,
             shared_ms: i.shared_ms,
             url: i.url,
+            drive: None,
         }
     }
 }
@@ -54,6 +59,11 @@ pub(super) struct State {
     seq: u64,
     /// Team thread id to AAD group id, for the channel folders.
     groups: HashMap<String, String>,
+    /// The open channel's SharePoint files folder, once read: where New folder and New document
+    /// create things.
+    pub(super) folder: Option<onedrive::ItemRef>,
+    /// What the last file action did or why it failed, shown over the list.
+    note: String,
 }
 
 /// `Nov 18, 2026`.
@@ -133,6 +143,7 @@ fn items_from_cache(rows: &[MessageRow]) -> Vec<Item> {
                     shared_by: m.sender_name.clone(),
                     shared_ms: m.compose_ms,
                     url: url.to_string(),
+                    drive: None,
                 });
             }
         }
@@ -145,6 +156,7 @@ fn items_from_cache(rows: &[MessageRow]) -> Vec<Item> {
                     shared_by: m.sender_name.clone(),
                     shared_ms: m.compose_ms,
                     url,
+                    drive: None,
                 });
             }
         }
@@ -189,6 +201,8 @@ fn data(i: &Item) -> SharedData {
         shared_by: i.shared_by.clone(),
         date: date_label(i.shared_ms),
         url: i.url.clone(),
+        editable: i.drive.is_some(),
+        sharepoint: i.kind == SharedKind::File && files::is_sharepoint(&i.url),
     }
 }
 
@@ -202,6 +216,8 @@ impl Engine {
             s.items.clear();
             s.keyword.clear();
             s.filter = "recent".into();
+            s.folder = None;
+            s.note.clear();
             s.tab_open = false;
             s.seq += 1;
             s.details_open
@@ -259,7 +275,7 @@ impl Engine {
     }
 
     fn push_shared(&self) {
-        let (rows, recent, loading) = {
+        let (rows, recent, loading, can_create, note) = {
             let f = self.find.lock().unwrap();
             let s = &f.shared;
             (
@@ -269,9 +285,12 @@ impl Engine {
                     .collect(),
                 s.items.iter().take(RECENT).map(data).collect(),
                 s.loading,
+                s.folder.is_some(),
+                s.note.clone(),
             )
         };
         self.ui.shared(rows, recent, loading);
+        self.ui.shared_tools(can_create, note);
     }
 
     /// Fills the list: the cache at once, then the server.
@@ -389,18 +408,24 @@ impl Engine {
                 return vec![];
             }
         };
+        self.find.lock().unwrap().shared.folder =
+            Some(onedrive::ItemRef::new(&folder.drive_id, &folder.item_id));
         match onedrive::children(&self.client, &folder.drive_id, &folder.item_id, None).await {
             Ok(page) => page
                 .items
                 .into_iter()
-                .filter(|i| !i.is_folder)
                 .map(|i| Item {
                     kind: SharedKind::File,
-                    ext: ext_of(&i.name),
-                    name: i.name,
-                    shared_by: i.modified_by,
+                    ext: if i.is_folder {
+                        "DIR".into()
+                    } else {
+                        ext_of(&i.name)
+                    },
+                    name: i.name.clone(),
+                    shared_by: i.modified_by.clone(),
                     shared_ms: i.modified_ms,
-                    url: i.web_url,
+                    url: i.web_url.clone(),
+                    drive: Some(i),
                 })
                 .collect(),
             Err(err) => {
@@ -488,6 +513,7 @@ mod tests {
                 shared_by: "Sara".into(),
                 shared_ms: 3,
                 url: "u1".into(),
+                drive: None,
             },
             Item {
                 kind: SharedKind::Link,
@@ -496,6 +522,7 @@ mod tests {
                 shared_by: "Omar".into(),
                 shared_ms: 2,
                 url: "u2".into(),
+                drive: None,
             },
         ];
         assert_eq!(visible(&items, "recent", "").len(), 2);
@@ -518,6 +545,7 @@ mod tests {
             shared_by: String::new(),
             shared_ms: ms,
             url: url.into(),
+            drive: None,
         };
         let mut items = vec![a("u1", 1)];
         merge_items(&mut items, vec![a("u1", 9), a("u2", 5)]);

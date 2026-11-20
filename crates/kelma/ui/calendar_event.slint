@@ -81,6 +81,9 @@ component EventActions inherits VerticalLayout {
             CalMenuItem { label: "Duplicate"; clicked => { CalStore.peek-menu = ""; CalStore.command("duplicate", ""); } }
             CalMenuItem { label: "Forward"; clicked => { CalStore.ask("forward", "Forward", "Send this event to people who are not invited yet. Separate addresses with commas.", "To", "Message (optional)", "", "Forward"); } }
             CalMenuItem { label: "Export as .ics"; clicked => { CalStore.peek-menu = ""; CalStore.command("export-event", ""); } }
+            if CalStore.peek.notes-url != "": CalMenuItem { label: "Meeting notes"; hint: "↗"; clicked => { CalStore.peek-menu = ""; CalStore.command("meeting-link", "notes"); } }
+            if CalStore.peek.recap-url != "": CalMenuItem { label: "Recap"; hint: "↗"; clicked => { CalStore.peek-menu = ""; CalStore.command("meeting-link", "recap"); } }
+            if CalStore.peek.options-url != "": CalMenuItem { label: "Meeting options"; hint: "↗"; clicked => { CalStore.peek-menu = ""; CalStore.command("meeting-link", "options"); } }
             if CalStore.peek.can-cancel: CalMenuItem { label: "Cancel meeting"; tone: #ff8a8d; clicked => { CalStore.ask("cancel", "Cancel meeting", "Everyone invited gets a cancellation.", "Message to attendees (optional)", "", CalStore.peek.recurring ? "Cancel the whole series" : "", "Cancel meeting"); } }
             if CalStore.peek.can-delete: CalMenuItem { label: "Delete"; tone: #ff8a8d; clicked => { CalStore.ask("delete", "Delete event", "Delete \"" + CalStore.peek.title + "\"? This can't be undone.", "", "", "", "Delete"); } }
         }

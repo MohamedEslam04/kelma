@@ -40,6 +40,10 @@ pub struct SharedData {
     pub shared_by: String,
     pub date: String,
     pub url: String,
+    /// A SharePoint drive item: Download, Share, Rename and Delete apply.
+    pub editable: bool,
+    /// The address is on SharePoint: "Open in SharePoint" applies.
+    pub sharepoint: bool,
 }
 
 /// The words of a query, lowercased. Quotes are dropped.
