@@ -207,6 +207,62 @@ export component PrivacyPage inherits VerticalLayout {
     if SettingsStore.dry-runs.length > 0: DryRuns { }
 }
 
+// A day of the week in the quiet hours row.
+component DayChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    callback toggled();
+    height: 30px * max(1, Theme.font-scale);
+    width: max(44px, dl.preferred-width + 20px);
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.selected : (dt.has-hover ? Theme.surface-hover : transparent);
+    accessible-role: checkbox;
+    accessible-label: root.label;
+    accessible-checked: root.on;
+    accessible-action-default => { root.toggled(); }
+    dl := Text { text: root.label; color: root.on ? Theme.accent : Theme.fg; font-size: SFont.body; horizontal-alignment: center; vertical-alignment: center; }
+    dt := TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
+}
+
+// A text box with an Add button; the box empties after a word is added.
+component KeywordAdd inherits HorizontalLayout {
+    spacing: 8px;
+    alignment: start;
+    callback add(string);
+    Rectangle {
+        width: 260px;
+        height: max(30px, kw.preferred-height + 12px);
+        border-radius: 4px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: kw.has-focus ? Theme.accent : Theme.border;
+        kw := TextInput {
+            x: 10px;
+            width: parent.width - 20px;
+            color: Theme.fg;
+            font-size: SFont.body;
+            single-line: true;
+            vertical-alignment: center;
+            horizontal-alignment: Theme.start-align;
+            accessible-role: text-input;
+            accessible-label: @tr("Add a word or phrase");
+            accepted => { root.add(self.text); self.text = ""; }
+        }
+        if kw.text == "": Text {
+            x: 10px;
+            width: parent.width - 20px;
+            text: @tr("Add a word or phrase");
+            color: Theme.fg-subtle;
+            font-size: SFont.body;
+            vertical-alignment: center;
+            horizontal-alignment: Theme.start-align;
+        }
+    }
+    SButton { label: @tr("Add"); clicked => { root.add(kw.text); kw.text = ""; } }
+}
+
 export component NotificationsPage inherits VerticalLayout {
     alignment: start;
     SSection {
@@ -232,6 +288,60 @@ export component NotificationsPage inherits VerticalLayout {
         SButton { label: @tr("Test notification"); clicked => { SettingsStore.command("test-notification", ""); } }
     }
     if SettingsStore.notify-status != "": Para { text: SettingsStore.notify-status; }
+    SSection {
+        title: @tr("Quiet hours");
+        hint: @tr("No banners and no notification sound during these hours. Messages still arrive and unread counts still update. This applies to this computer only.");
+        SSwitch {
+            label: @tr("Turn on quiet hours");
+            on: SettingsStore.quiet-on;
+            toggled(on) => { SettingsStore.command("quiet-on", on ? "1" : "0"); }
+        }
+        if SettingsStore.quiet-on: VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for d[i] in [@tr("Mon"), @tr("Tue"), @tr("Wed"), @tr("Thu"), @tr("Fri"), @tr("Sat"), @tr("Sun")]: DayChip {
+                    label: d;
+                    on: SettingsStore.quiet-days[i];
+                    toggled => { SettingsStore.command("quiet-day", "" + i); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                SField { label: @tr("From"); initial: SettingsStore.quiet-start; width: 120px; committed(t) => { SettingsStore.command("quiet-start", t); } }
+                SField { label: @tr("To"); initial: SettingsStore.quiet-end; width: 120px; committed(t) => { SettingsStore.command("quiet-end", t); } }
+            }
+        }
+    }
+    SSection {
+        title: @tr("Focus mode");
+        hint: @tr("Only @mentions of you, urgent messages, priority people, calls and your keywords still show a banner. Your Teams status does not change.");
+        SSwitch {
+            label: @tr("Focus mode");
+            hint: SettingsStore.focus-label();
+            on: SettingsStore.focus-on;
+            toggled(on) => { SettingsStore.command("focus", on ? "1" : "0"); }
+        }
+        SChoiceRow {
+            label: @tr("Turn on for");
+            options: [{v: "1h", l: @tr("1 hour")}, {v: "2h", l: @tr("2 hours")}, {v: "tomorrow", l: @tr("Until tomorrow 9:00")}, {v: "manual", l: @tr("Until I turn it off")}];
+            value: SettingsStore.focus-duration;
+            picked(v) => { SettingsStore.focus-duration = v; SettingsStore.command("focus-duration", v); }
+        }
+    }
+    SSection {
+        title: @tr("Keyword alerts");
+        hint: @tr("A message from someone else with one of these words or phrases shows a banner, even in a muted chat, but not during quiet hours. Focus mode lets them through.");
+        KeywordAdd { add(t) => { SettingsStore.command("keyword-add", t); } }
+        if SettingsStore.keywords.length == 0: Para { text: @tr("No keywords yet."); }
+        for k in SettingsStore.keywords: SPersonRow {
+            name: k;
+            action: @tr("Remove");
+            act => { SettingsStore.command("keyword-remove", k); }
+        }
+    }
     SSection {
         title: @tr("Sounds and previews");
         for t in SettingsStore.notify-sounds: SSwitch {

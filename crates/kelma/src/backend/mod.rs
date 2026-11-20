@@ -49,6 +49,7 @@ mod people;
 mod people_live;
 mod people_presence;
 mod remind;
+pub(crate) mod quiet;
 mod render;
 mod scheduled;
 mod send;

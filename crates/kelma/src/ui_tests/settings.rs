@@ -200,6 +200,15 @@ fn checked(app: &AppWindow, label: &str) -> bool {
     control(app, label).accessible_checked().unwrap_or(false)
 }
 
+/// Controls scrolled out of the page are not found, so a long page needs a tall window to reach
+/// its last rows.
+fn tall_window(app: &AppWindow) {
+    app.window().set_size(LogicalSize::new(1000., 4000.));
+    for _ in 0..3 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
 fn open_page(app: &AppWindow, page: &str) {
     store(app).invoke_show(page.into());
 }
@@ -285,6 +294,7 @@ fn activity_notification_settings_entry_opens_the_notifications_page() {
     assert_eq!(store(app).get_page(), "notifications");
     assert_eq!(value_of(app, "Settings page"), "Notifications and activity");
     // Not read from Teams yet: the types are listed, nothing is selected.
+    tall_window(app);
     assert!(!checked(app, "Chat messages: Off"));
 }
 
@@ -529,6 +539,7 @@ fn privacy_toggle_plans_a_dry_run_and_changes_nothing() {
 
     // A notification type is planned the same way.
     open_page(app, "notifications");
+    tall_window(app);
     press(app, "Chat messages: Off");
     let first = store(app).get_dry_runs().row_data(0).unwrap();
     assert!(
@@ -607,6 +618,38 @@ fn notification_look_switches_start_on_and_save() {
     press(app, "Show Reply and Like buttons");
     let g = Local::load(&dir).general;
     assert!(!g.banner_photo && !g.banner_actions);
+}
+
+#[test]
+fn quiet_hours_and_keyword_alerts_save_to_the_temp_home() {
+    let home = Home::new("quiet-keywords");
+    let dir = home.paths().config_dir;
+    let ui = window(home);
+    let app = &ui.app;
+    open_page(app, "notifications");
+    assert!(!checked(app, "Turn on quiet hours"));
+    press(app, "Turn on quiet hours");
+    let cmd = |name: &str, arg: &str| store(app).invoke_command(name.into(), arg.into());
+    cmd("quiet-day", "5"); // Saturday off
+    cmd("quiet-start", "23:15");
+    cmd("quiet-end", "6:30");
+    cmd("quiet-end", "late"); // not a time: ignored
+    let q = Local::load(&dir).general.quiet_hours;
+    assert!(q.enabled && q.days[0] && !q.days[5]);
+    assert_eq!((q.start_min, q.end_min), (23 * 60 + 15, 6 * 60 + 30));
+    assert_eq!(store(app).get_quiet_start().as_str(), "23:15");
+
+    cmd("keyword-add", "  Deploy   window ");
+    cmd("keyword-add", "deploy window"); // the same words again
+    cmd("keyword-add", "نشر");
+    cmd("keyword-add", "   ");
+    assert_eq!(
+        Local::load(&dir).general.keyword_alerts,
+        ["Deploy window", "نشر"]
+    );
+    assert_eq!(slint::Model::row_count(&store(app).get_keywords()), 2);
+    cmd("keyword-remove", "Deploy window");
+    assert_eq!(Local::load(&dir).general.keyword_alerts, ["نشر"]);
 }
 
 #[test]

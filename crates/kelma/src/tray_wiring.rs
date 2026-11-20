@@ -143,6 +143,46 @@ fn send_unread() {
     }
 }
 
+/// Focus mode on (for the duration chosen in Settings) or off, from the tray.
+fn toggle_focus(w: &AppWindow, on: bool) {
+    use crate::backend::quiet;
+    let now = chrono::Local::now();
+    let until = on.then(|| {
+        let duration = quiet::load_prefs().focus_duration;
+        quiet::focus_end(duration, now.naive_local(), now.timestamp_millis())
+    });
+    quiet::set_focus(until);
+    quiet::persist_focus(until);
+    apply_focus(w, until);
+}
+
+/// Shows the Focus mode state everywhere: the top bar indicator and Settings, the tray
+/// checkmark, and a timer that turns it off when it ends.
+pub fn apply_focus(w: &AppWindow, until: Option<i64>) {
+    use crate::backend::quiet;
+    let now = chrono::Utc::now().timestamp_millis();
+    let active = quiet::focus_active(until, now);
+    crate::ui::settings::show_focus(w, until.filter(|_| active));
+    if let Some(tray) = TRAY.get() {
+        tray.set_focus(active);
+    }
+    if let (true, Some(end)) = (active, until)
+        && end != appearance::general::FOCUS_FOREVER
+    {
+        let weak = w.as_weak();
+        // A newer change (another end time, or off) makes this timer do nothing.
+        slint::Timer::single_shot(Duration::from_millis((end - now) as u64 + 500), move || {
+            if quiet::focus_override() == Some(Some(end))
+                && let Some(w) = weak.upgrade()
+            {
+                quiet::set_focus(None);
+                quiet::persist_focus(None);
+                apply_focus(&w, None);
+            }
+        });
+    }
+}
+
 /// Shows the window and brings it to the front.
 pub(crate) fn show_and_raise(w: &AppWindow) {
     use slint::winit_030::WinitWindowAccessor;
@@ -160,6 +200,11 @@ fn on_tray_event(ev: TrayEvent, weak: &slint::Weak<AppWindow>) {
             }
         }
         TrayEvent::ToggleMute(m) => MUTED.store(m, Ordering::Relaxed),
+        TrayEvent::ToggleFocus(on) => {
+            if let Some(w) = weak.upgrade() {
+                toggle_focus(&w, on);
+            }
+        }
         TrayEvent::Quit => {
             let _ = slint::quit_event_loop();
         }
@@ -213,6 +258,8 @@ pub fn run(window: &AppWindow, hidden_flag: bool) -> Result<(), slint::PlatformE
 
     let general = appearance::GeneralPrefs::load();
     set_keep_running(general.keep_running_on_close);
+    crate::backend::quiet::init_focus(&general, chrono::Utc::now().timestamp_millis());
+    apply_focus(window, crate::backend::quiet::focus_until(&general));
     let open_in_background = general.open_in_background;
     if !start_hidden(hidden_flag, open_in_background, registered) {
         window.show()?;
