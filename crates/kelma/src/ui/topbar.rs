@@ -3,7 +3,7 @@
 //! what the user picks into the same calls the rest of the window already makes.
 //!
 //! Commands from `TopBarStore.command(name, argument)`: input, focus, close, clear, activate,
-//! submit, back, forward, visit (`view` U+001F `chat`), help.
+//! submit, back, forward, visit (`view` U+001F `chat`), help, feedback, mobile-app.
 //!
 //! Names are suggested for every keystroke; message hits once typing has paused for
 //! [`MESSAGE_PAUSE`] (the engine adds the server's after a further pause, see
@@ -360,6 +360,8 @@ fn command(c: &mut Ctl, w: &AppWindow, name: &str, arg: &str) {
         }
         "close" => store.set_search_open(false),
         "help" => w.invoke_open_url(s(topbar::HELP_URL)),
+        "feedback" => w.invoke_open_url(s(topbar::FEEDBACK_URL)),
+        "mobile-app" => w.invoke_open_url(s(topbar::MOBILE_APP_URL)),
         "activate" => {
             let input = store.get_input().to_string();
             if let Some(row) = arg

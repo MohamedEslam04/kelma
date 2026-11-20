@@ -97,7 +97,7 @@ export component SettingsPage inherits Rectangle {
                     Rectangle { height: 6px; }
                     for p in [
                         {key: "general", label: @tr("General"), icon: @image-url("icons/home.svg")},
-                        {key: "chats", label: @tr("Chats"), icon: @image-url("icons/chat.svg")},
+                        {key: "chats", label: @tr("Chats and channels"), icon: @image-url("icons/chat.svg")},
                         {key: "accounts", label: @tr("Accounts and orgs"), icon: @image-url("icons/users.svg")},
                         {key: "privacy", label: @tr("Privacy"), icon: @image-url("icons/lock.svg")},
                         {key: "notifications", label: @tr("Notifications and activity"), icon: @image-url("icons/activity.svg")},
@@ -156,7 +156,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         if SettingsStore.query == "": Text {
                             horizontal-alignment: Theme.start-align;
-                            text: SettingsStore.page == "general" ? @tr("General") : SettingsStore.page == "chats" ? @tr("Chats") : SettingsStore.page == "accounts" ? @tr("Accounts and orgs") : SettingsStore.page == "privacy" ? @tr("Privacy") : SettingsStore.page == "notifications" ? @tr("Notifications and activity") : SettingsStore.page == "appearance" ? @tr("Appearance") : SettingsStore.page == "accessibility" ? @tr("Accessibility") : SettingsStore.page == "devices" ? @tr("Devices") : SettingsStore.page == "calls" ? @tr("Calls") : SettingsStore.page == "files" ? @tr("Files and links") : SettingsStore.page == "permissions" ? @tr("App permissions") : @tr("About");
+                            text: SettingsStore.page == "general" ? @tr("General") : SettingsStore.page == "chats" ? @tr("Chats and channels") : SettingsStore.page == "accounts" ? @tr("Accounts and orgs") : SettingsStore.page == "privacy" ? @tr("Privacy") : SettingsStore.page == "notifications" ? @tr("Notifications and activity") : SettingsStore.page == "appearance" ? @tr("Appearance") : SettingsStore.page == "accessibility" ? @tr("Accessibility") : SettingsStore.page == "devices" ? @tr("Devices") : SettingsStore.page == "calls" ? @tr("Calls") : SettingsStore.page == "files" ? @tr("Files and links") : SettingsStore.page == "permissions" ? @tr("App permissions") : @tr("About");
                             color: Theme.fg;
                             font-size: SFont.title;
                             font-weight: 700;
@@ -292,6 +292,9 @@ component StatusRow inherits Rectangle {
 export component ProfileMenu inherits Rectangle {
     callback open-saved();
     callback open-shortcuts();
+    // The "Set work location" and "Pause notifications" choices are showing.
+    property <bool> location-open: false;
+    property <bool> pause-open: false;
     // Clicking outside closes it.
     TouchArea { clicked => { SettingsStore.profile-open = false; SettingsStore.confirm-sign-out = false; } }
     menu-keys := FocusScope {
@@ -326,6 +329,31 @@ export component ProfileMenu inherits Rectangle {
                 padding: 14px;
                 padding-right: 18px;
                 spacing: 8px;
+                // Teams' first line: the organisation, and Sign out.
+                HorizontalLayout {
+                    spacing: 8px;
+                    for o in SettingsStore.orgs: HorizontalLayout {
+                        if o.active: Text {
+                            text: o.name;
+                            color: Theme.fg-muted;
+                            font-size: SFont.small;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            accessible-role: text;
+                            accessible-label: @tr("Organisation");
+                            accessible-value: self.text;
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Rectangle {
+                        width: sign-out-text.preferred-width;
+                        accessible-role: button;
+                        accessible-label: @tr("Sign out of kelma");
+                        accessible-action-default => { SettingsStore.confirm-sign-out = true; }
+                        sign-out-text := Text { text: @tr("Sign out"); color: Theme.accent; font-size: SFont.small; vertical-alignment: center; accessible-role: none; }
+                        TouchArea { mouse-cursor: pointer; clicked => { SettingsStore.confirm-sign-out = true; } }
+                    }
+                }
                 HorizontalLayout {
                     spacing: 12px;
                     Avatar {
@@ -418,12 +446,22 @@ export component ProfileMenu inherits Rectangle {
                         SButton { label: @tr("Save message"); clicked => { SettingsStore.command("status-note", note.text); } }
                         SButton { label: @tr("Clear message"); clicked => { SettingsStore.command("status-note", ""); } }
                     }
-                    Text { text: @tr("Work location today"); color: Theme.fg-muted; font-size: SFont.small; }
-                    HorizontalLayout {
-                        spacing: 6px;
-                        SButton { label: @tr("In the office"); clicked => { SettingsStore.command("work-location", "office"); } }
-                        SButton { label: @tr("Remote"); clicked => { SettingsStore.command("work-location", "remote"); } }
-                        SButton { label: @tr("Clear location"); clicked => { SettingsStore.command("work-location", "clear"); } }
+                }
+                // Teams' "Set work location ›" (the same write as the calendar's; UNVERIFIED).
+                SButton { label: @tr("Set work location"); clicked => { root.location-open = !root.location-open; } }
+                if root.location-open: HorizontalLayout {
+                    spacing: 6px;
+                    SButton { label: @tr("In the office"); clicked => { root.location-open = false; SettingsStore.command("work-location", "office"); } }
+                    SButton { label: @tr("Remote"); clicked => { root.location-open = false; SettingsStore.command("work-location", "remote"); } }
+                    SButton { label: @tr("Clear location"); clicked => { root.location-open = false; SettingsStore.command("work-location", "clear"); } }
+                }
+                // Teams' "Pause notifications ›": the same pause as Settings › Notifications.
+                SButton { label: SettingsStore.paused ? @tr("Pause notifications ({})", SettingsStore.pause-until != "" ? SettingsStore.pause-until : @tr("paused")) : @tr("Pause notifications"); accessible-label: @tr("Pause notifications"); clicked => { root.pause-open = !root.pause-open; } }
+                if root.pause-open: VerticalLayout {
+                    spacing: 4px;
+                    for p in [{v: "1h", l: @tr("1 hour")}, {v: "2h", l: @tr("2 hours")}, {v: "tomorrow", l: @tr("Until tomorrow")}, {v: "off", l: @tr("Turn off the pause")}]: SButton {
+                        label: p.l;
+                        clicked => { root.pause-open = false; SettingsStore.command("pause", p.v); }
                     }
                 }
                 SButton { label: @tr("Change profile photo"); clicked => { SettingsStore.command("photo-change", ""); } }

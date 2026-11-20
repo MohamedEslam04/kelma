@@ -61,6 +61,9 @@ pub enum FindCmd {
     ChannelTabAdd(String),
     /// "Add a tab" with an installed app, as `app id` U+001F `name`.
     ChannelTabAddApp(String),
+    /// "Add a tab" in a chat (website, then app), as the channel ones. UNVERIFIED endpoint.
+    ChatTabAdd(String),
+    ChatTabAddApp(String),
     /// Rename a tab, as `tab id` U+001F `name`.
     ChannelTabRename(String),
     ChannelTabRemove(String),
@@ -120,6 +123,8 @@ impl FindCmd {
             "channel-tab-open" => FindCmd::ChannelTabOpen(a),
             "channel-tab-add" => FindCmd::ChannelTabAdd(a),
             "channel-tab-add-app" => FindCmd::ChannelTabAddApp(a),
+            "chat-tab-add" => FindCmd::ChatTabAdd(a),
+            "chat-tab-add-app" => FindCmd::ChatTabAddApp(a),
             "channel-tab-rename" => FindCmd::ChannelTabRename(a),
             "channel-tab-remove" => FindCmd::ChannelTabRemove(a),
             "channel-tab-apps" => FindCmd::ChannelTabApps,
@@ -431,6 +436,8 @@ impl Engine {
             }
             FindCmd::ChannelTabAdd(arg) => self.add_channel_tab(&arg).await?,
             FindCmd::ChannelTabAddApp(arg) => self.add_channel_app_tab(&arg).await?,
+            FindCmd::ChatTabAdd(arg) => self.add_chat_tab(&arg, false).await?,
+            FindCmd::ChatTabAddApp(arg) => self.add_chat_tab(&arg, true).await?,
             FindCmd::ChannelTabRename(arg) => self.rename_channel_tab(&arg).await?,
             FindCmd::ChannelTabRemove(id) => self.remove_channel_tab(&id).await?,
             FindCmd::ChannelTabApps => self.load_tab_apps().await,

@@ -109,6 +109,34 @@ impl Engine {
         Ok(())
     }
 
+    /// "Add a tab" in the open chat: a website (`name` U+001F `url`) or, with `app`, an installed
+    /// app (`app id` U+001F `name`). UNVERIFIED: Graph's chat tabs were never tried from kelma,
+    /// and kelma does not list a chat's tabs, so it says where the tab shows.
+    pub(super) async fn add_chat_tab(self: &Arc<Self>, arg: &str, app: bool) -> anyhow::Result<()> {
+        let parts = if app { split_pair(arg) } else { split_add(arg) };
+        let Some((a, b)) = parts else {
+            anyhow::bail!("A tab needs a name and an https address or an app.");
+        };
+        let chat = self
+            .view
+            .lock()
+            .unwrap()
+            .current
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Open a chat first."))?;
+        if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
+            anyhow::bail!("kelma is offline: the tab was not added.");
+        }
+        if app {
+            self.client.add_chat_app_tab(&chat, &b, &a).await?;
+        } else {
+            self.client.add_chat_website_tab(&chat, &a, &b).await?;
+        }
+        self.ui
+            .banner("Tab added. kelma doesn't show chat tabs yet: open the chat in Teams to use it.".into());
+        Ok(())
+    }
+
     /// Renames a tab (`tab id` U+001F `new name`), then reads the tabs again.
     pub(super) async fn rename_channel_tab(self: &Arc<Self>, arg: &str) -> anyhow::Result<()> {
         let Some((id, name)) = split_pair(arg) else {

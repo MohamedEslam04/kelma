@@ -128,6 +128,11 @@ fn image_size(px: &Option<Pixels>) -> (f32, f32) {
     }
 }
 
+/// Teams leaves out a deleted post that nobody answered; one with replies stays (as "deleted").
+fn hidden_post(deleted: bool, replies: usize) -> bool {
+    deleted && replies == 0
+}
+
 impl Engine {
     /// The drawn rows of a message's card (`props` is the stored message extras), or none.
     pub(super) fn card_rows(self: &Arc<Self>, props: &Value, headline: &str) -> Vec<CardRowData> {
@@ -238,6 +243,9 @@ impl Engine {
                     .collect();
                 (replies, outbox)
             };
+            if hidden_post(root.deleted, replies.len() + outbox.len()) {
+                continue;
+            }
             let open = expanded.contains(&root.id);
             let total = replies.len();
             let shown = if open {
@@ -530,6 +538,13 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_deleted_post_shows_only_when_it_has_replies() {
+        assert!(hidden_post(true, 0));
+        assert!(!hidden_post(true, 2));
+        assert!(!hidden_post(false, 0));
+    }
 
     #[test]
     fn parses_commands() {

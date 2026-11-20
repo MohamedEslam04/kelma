@@ -864,7 +864,7 @@ pub fn dry_run_remove(middle_tier: &str, list: ContactList, mri: &str) -> Planne
 
 pub const PAGES: [(&str, &str); 12] = [
     ("general", "General"),
-    ("chats", "Chats"),
+    ("chats", "Chats and channels"),
     ("accounts", "Accounts and orgs"),
     ("privacy", "Privacy"),
     ("notifications", "Notifications and activity"),
@@ -1884,7 +1884,7 @@ mod tests {
 
     #[test]
     fn the_chats_page_is_listed_after_general_and_its_settings_are_found() {
-        assert_eq!(page_title("chats"), "Chats");
+        assert_eq!(page_title("chats"), "Chats and channels");
         let keys: Vec<_> = PAGES.iter().map(|(k, _)| *k).collect();
         assert_eq!(&keys[..2], ["general", "chats"]);
         let on_chats = |q: &str| {

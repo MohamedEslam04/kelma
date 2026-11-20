@@ -29,6 +29,10 @@ const REFRESH_EVERY_MS: i64 = 60_000;
 /// Longest section name.
 const NAME_MAX: usize = 64;
 
+/// What "Manage apps" says: kelma knows no read of the apps installed in one chat.
+pub const MANAGE_APPS_NOTE: &str =
+    "Managing a chat's apps isn't available in kelma yet. Use Teams to add or remove them.";
+
 /// Commands of the list UI (`ListStore.command(name, argument)`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListsCmd {
@@ -50,6 +54,9 @@ pub enum ListsCmd {
     Hide(String),
     /// The chat header's "Remove chat history": the messages so far are gone for this user.
     RemoveHistory(String),
+    /// The chat item menu's "Manage apps": no read of a chat's installed apps is known, so it
+    /// says so (see `MANAGE_APPS_NOTE`).
+    ManageApps(String),
     /// `previews`, `times` or `combined`, on or off.
     Option(String, bool),
     ChannelMenu(String),
@@ -81,6 +88,7 @@ impl ListsCmd {
             "copy-link" => ListsCmd::CopyLink(a),
             "hide" => ListsCmd::Hide(a),
             "remove-history" => ListsCmd::RemoveHistory(a),
+            "manage-apps" => ListsCmd::ManageApps(a),
             "option" => ListsCmd::Option(a, b == "on"),
             "channel-menu" => ListsCmd::ChannelMenu(a),
             "channel-show" => ListsCmd::ChannelShow(a),
@@ -565,6 +573,10 @@ impl Engine {
             ListsCmd::CopyLink(conv) => self.copy_text(&chat_link(&conv), "Chat link copied"),
             ListsCmd::Hide(conv) => self.hide_chat(&conv).await,
             ListsCmd::RemoveHistory(conv) => self.remove_history(&conv).await,
+            ListsCmd::ManageApps(_) => {
+                self.ui.banner(MANAGE_APPS_NOTE.into());
+                Ok(())
+            }
             ListsCmd::Option(name, on) => self.set_option(&name, on),
             ListsCmd::ChannelMenu(id) => self.channel_menu(&id).await,
             ListsCmd::ChannelShow(id) => self.set_channel_shown(&id, true).await,
@@ -1122,6 +1134,14 @@ mod tests {
             hidden_channels: ["chan-hidden".to_string()].into(),
             unknown_sections: HashSet::new(),
         }
+    }
+
+    #[test]
+    fn parses_manage_apps() {
+        assert_eq!(
+            ListsCmd::parse("manage-apps", "19:x"),
+            Some(ListsCmd::ManageApps("19:x".into()))
+        );
     }
 
     #[test]

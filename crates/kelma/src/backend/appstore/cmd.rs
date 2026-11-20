@@ -52,6 +52,8 @@ pub enum AppsCmd {
     TasksRefresh,
     /// Opens the New task dialog for the open list or plan.
     TaskNew,
+    /// More actions › Create a task: the message's text.
+    TaskFromMessage(String),
     /// Completes a task, or undoes it.
     TaskToggle(String),
     TaskEdit(String),
@@ -139,6 +141,7 @@ impl AppsCmd {
             "tasks-mode" => AppsCmd::TasksMode(s()),
             "tasks-refresh" => AppsCmd::TasksRefresh,
             "task-new" => AppsCmd::TaskNew,
+            "task-from-message" => AppsCmd::TaskFromMessage(s()),
             "task-toggle" => AppsCmd::TaskToggle(s()),
             "task-edit" => AppsCmd::TaskEdit(s()),
             "task-delete" => AppsCmd::TaskDelete(s()),

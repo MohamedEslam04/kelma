@@ -4,8 +4,8 @@
 //! the engine has no network, so account calls are skipped and only the local state changes.
 
 use super::*;
-use crate::ListStore;
 use crate::backend::ListsCmd;
+use crate::ListStore;
 use serde_json::json;
 use store::{ConvKind, ConversationRow};
 use teams_proto::sections::{Folder, FolderItem, FolderKind, Folders};
@@ -329,9 +329,42 @@ fn the_item_menu_of_a_chat_has_the_teams_entries() {
             "Move to section",
             "Snooze",
             "Mute",
+            "Manage apps",
+            "Set workflows",
             "Copy link",
+            "Remove chat history",
             "Hide"
         ]
+    );
+}
+
+#[test]
+fn the_item_menu_manages_apps_honestly_opens_workflows_and_asks_before_removing_history() {
+    let h = harness();
+    let log = wire(&h);
+    let flows = Log::default();
+    let f = flows.clone();
+    h.app
+        .global::<crate::FlowsStore>()
+        .on_command(move |n, a| f.borrow_mut().push(format!("{n} {a}")));
+    open_item_menu(&h.app, "Ahmed Ali");
+    click(&menu_row(&h.app, "Manage apps"));
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        &format!("manage-apps {AHMED}")
+    );
+    assert_eq!(h.app.get_banner(), crate::backend::MANAGE_APPS_NOTE);
+    open_item_menu(&h.app, "Ahmed Ali");
+    click(&menu_row(&h.app, "Set workflows"));
+    assert_eq!(*flows.borrow(), ["flows-enter "]);
+    open_item_menu(&h.app, "Ahmed Ali");
+    click(&menu_row(&h.app, "Remove chat history"));
+    assert_eq!(
+        h.app
+            .global::<crate::ChatHeaderStore>()
+            .get_remove_history(),
+        AHMED,
+        "the window's confirmation opens"
     );
 }
 
@@ -628,11 +661,10 @@ fn go_to_team_opens_the_teams_view_and_a_private_channel_can_be_left_after_confi
         "nothing is sent before the answer"
     );
     click(&find_label(&h.app, "Leave")[0]);
-    assert!(
-        log.borrow()
-            .iter()
-            .any(|l| l == "channel-leave 19:private@thread.tacv2")
-    );
+    assert!(log
+        .borrow()
+        .iter()
+        .any(|l| l == "channel-leave 19:private@thread.tacv2"));
     assert_eq!(ls(&h.app).get_dialog(), "");
 }
 

@@ -213,6 +213,15 @@ pub(super) fn is_channel_id(thread_id: &str) -> bool {
     split_thread(thread_id).0.ends_with("@thread.tacv2")
 }
 
+/// Where the preview's reply goes: a channel post's thread, or the chat itself (Teams replies in
+/// place from Activity for both).
+pub(super) fn reply_target(conv: &str, root: Option<&str>) -> String {
+    match root {
+        Some(r) => format!("{conv};messageid={r}"),
+        None => conv.to_string(),
+    }
+}
+
 /// A few messages before and after the source, or the newest ones when it is not found.
 pub(super) fn window_around<T>(mut rows: Vec<T>, pos: Option<usize>) -> Vec<T> {
     // The source stays within the first rows of the pane, so no scrolling is needed to see it.
@@ -251,6 +260,10 @@ pub(crate) fn row_data(
         preview,
         time: chat_time(item.timestamp_ms),
         location,
+        call_mri: match item.kind {
+            ActivityKind::MissedCall => item.actor_mri.clone(),
+            _ => String::new(),
+        },
     }
 }
 
@@ -443,17 +456,12 @@ impl Engine {
             return Ok(());
         };
         let (conv, root) = self.source_of(&item);
-        let Some(root) = root.filter(|_| !text.is_empty()) else {
+        if text.is_empty() || conv.is_empty() {
             return Ok(());
-        };
+        }
         let html = render::text_to_teams_html(&text);
         self.client
-            .send_message(
-                &format!("{conv};messageid={root}"),
-                &html,
-                &self.my_name,
-                None,
-            )
+            .send_message(&reply_target(&conv, root.as_deref()), &html, &self.my_name, None)
             .await?;
         self.load_source(&item).await;
         self.mark(|d| d.activity = true);
@@ -552,6 +560,20 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reply_goes_to_the_post_thread_or_to_the_chat() {
+        assert_eq!(reply_target("19:c@thread.tacv2", Some("17")), "19:c@thread.tacv2;messageid=17");
+        assert_eq!(reply_target("19:g@thread.v2", None), "19:g@thread.v2");
+    }
+
+    #[test]
+    fn only_a_missed_call_row_offers_to_call_back() {
+        let missed = item("1", ActivityKind::MissedCall, "u1", "", 1, false);
+        assert_eq!(row_data(&missed, String::new(), None).call_mri, "8:orgid:u1");
+        let mention = item("2", ActivityKind::Mention, "u1", "hi", 1, false);
+        assert_eq!(row_data(&mention, String::new(), None).call_mri, "");
+    }
 
     fn item(
         id: &str,

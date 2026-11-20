@@ -51,6 +51,7 @@ component CallChoice inherits Rectangle {
     in property <string> label;
     in property <bool> enabled: true;
     in property <string> note;
+    in property <string> keys;
     callback clicked();
     height: 36px;
     border-radius: 4px;
@@ -70,6 +71,8 @@ component CallChoice inherits Rectangle {
             Text { text: root.label; color: root.enabled ? Theme.fg : Theme.fg-subtle; font-size: 13px * Theme.font-scale; accessible-role: none; }
             if root.note != "": Text { text: root.note; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; accessible-role: none; }
         }
+        // The shortcut (Alt+Shift+A / Alt+Shift+V).
+        if root.keys != "": Text { text: root.keys; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 0; accessible-role: none; }
     }
     touch := TouchArea {
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
@@ -100,9 +103,9 @@ export component CallHeaderButtons inherits Rectangle {
         }
     }
     call-popup := PopupWindow {
-        x: root.width - 200px;
+        x: root.width - 250px;
         y: root.height + 4px;
-        width: 200px;
+        width: 250px;
         height: 88px;
         close-policy: close-on-click-outside;
         Rectangle {
@@ -117,10 +120,12 @@ export component CallHeaderButtons inherits Rectangle {
                     label: "Video call";
                     enabled: false;
                     note: "Video isn't available yet";
+                    keys: "Alt+Shift+V";
                 }
                 CallChoice {
                     icon: @image-url("icons/call-direct.svg");
                     label: "Audio call";
+                    keys: "Alt+Shift+A";
                     clicked => {
                         DirectCallStore.command("dial", root.chat-id);
                         call-popup.close();

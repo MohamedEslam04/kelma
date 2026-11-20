@@ -10,6 +10,7 @@ import { Icon, IconButton, Avatar, Pill } from "widgets.slint";
 import { ListView } from "std-widgets.slint";
 import { FileMenuItem } from "find.slint";
 import { PersonHover } from "people.slint";
+import { SettingsStore } from "settings_store.slint";
 
 export struct CallHistoryItem {
     id: string,
@@ -283,6 +284,8 @@ component VoicemailLine inherits Rectangle {
 export component CallsPage inherits Rectangle {
     // Opens the 1:1 chat with this person (app.slint switches the view to Chat).
     callback open-chat(string);
+    // "View contacts": the people search (app.slint switches the view).
+    callback view-contacts();
     // The history row whose "…" menu is open, and where.
     property <bool> menu-open: false;
     property <CallHistoryItem> menu-item;
@@ -291,6 +294,8 @@ export component CallsPage inherits Rectangle {
     // The window's width (from app.slint): a narrow window gets a narrower left pane and the
     // History filters without their title.
     in property <length> window-width: 1400px;
+    // The Speed dial's Add was pressed: the hint says how.
+    property <bool> adding: false;
     property <bool> narrow: root.window-width < 900px;
     background: Theme.main;
 
@@ -303,7 +308,10 @@ export component CallsPage inherits Rectangle {
                 padding: 12px;
                 spacing: 8px;
                 Text { text: @tr("Calls"); color: Theme.fg; font-size: 20px * Theme.font-scale; font-weight: 700; horizontal-alignment: Theme.start-align; }
+                HorizontalLayout {
+                spacing: 6px;
                 Rectangle {
+                    horizontal-stretch: 1;
                     height: 34px;
                     border-radius: 4px;
                     background: Theme.surface;
@@ -330,6 +338,19 @@ export component CallsPage inherits Rectangle {
                         font-size: 13px * Theme.font-scale;
                         vertical-alignment: center;
                     }
+                }
+                // Calls the first person found (a phone number can't be called yet).
+                Pill {
+                    y: 4px;
+                    label: @tr("Call");
+                    active: CallsPageStore.results.length > 0;
+                    clicked => {
+                        if CallsPageStore.results.length > 0 {
+                            CallsPageStore.command("call", CallsPageStore.results[0].mri);
+                            query.text = "";
+                        }
+                    }
+                }
                 }
                 // A phone number: shown as a call, but disabled until kelma can dial numbers.
                 if CallsPageStore.dial != "": Rectangle {
@@ -360,7 +381,19 @@ export component CallsPage inherits Rectangle {
                     call => { query.text = ""; CallsPageStore.command("call", p.mri); }
                     star => { CallsPageStore.command("speed-toggle", p.mri); }
                 }
-                Text { text: @tr("Speed dial"); color: Theme.fg-muted; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: Theme.start-align; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: @tr("Speed dial"); color: Theme.fg-muted; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; horizontal-alignment: Theme.start-align; horizontal-stretch: 1; }
+                    // Add: find the person above, then star them (speed dial is kept on this computer).
+                    IconButton { icon: @image-url("icons/plus.svg"); size: 26px; tooltip: @tr("Add to speed dial"); clicked => { query.focus(); root.adding = true; } }
+                }
+                if root.adding && CallsPageStore.speed.length > 0: Text {
+                    text: @tr("Type a name above, then star the person.");
+                    color: Theme.fg-subtle;
+                    font-size: 12px * Theme.font-scale;
+                    wrap: word-wrap;
+                    horizontal-alignment: Theme.start-align;
+                }
                 if CallsPageStore.speed.length == 0: Text {
                     text: @tr("Star someone in History or in the search results to add them here.");
                     color: Theme.fg-subtle;
@@ -377,6 +410,28 @@ export component CallsPage inherits Rectangle {
                     down => { CallsPageStore.command("speed-down", p.mri); }
                 }
                 Rectangle { vertical-stretch: 1; }
+                Pill { label: @tr("View contacts"); clicked => { root.view-contacts(); } }
+                // Call forwarding: kelma can't read or change it yet (Settings › Calls says why).
+                Rectangle {
+                    height: 34px;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    accessible-role: button;
+                    accessible-label: @tr("Call forwarding");
+                    accessible-description: @tr("Unknown: kelma can't read it yet");
+                    accessible-action-default => { SettingsStore.show("calls"); }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 6px;
+                        Icon { source: @image-url("icons/forward.svg"); width: 14px; height: 14px; y: 10px; }
+                        Text { text: @tr("Forwarding: unknown"); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; accessible-role: none; }
+                        Text { text: "▾"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; accessible-role: none; }
+                    }
+                    TouchArea { mouse-cursor: pointer; clicked => { SettingsStore.show("calls"); } }
+                }
+                Pill { label: @tr("Custom Setup"); clicked => { SettingsStore.show("calls"); } }
             }
         }
 

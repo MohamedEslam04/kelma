@@ -7,6 +7,8 @@ import { CommunitiesSection, TeamMenuItems } from "teams_page.slint";
 import { TeamsStore } from "teams_store.slint";
 import { PeopleStore, PersonHover } from "people.slint";
 import { RemindStore } from "remind.slint";
+import { NewChatSplit, PMenuItem } from "web_parity.slint";
+import { ChatHeaderStore } from "chat_header.slint";
 
 component MenuItem inherits Rectangle {
     in property <string> label;
@@ -27,7 +29,7 @@ component ChatItem inherits Rectangle {
     property <length> menu-up: 0px;
     property <bool> in-section: root.data.section != "favorites" && root.data.section != "chats" && root.data.section != "channels";
     // The menu's main view (as `ItemMenu.menu-height` counts it).
-    property <length> menu-height: (6 + (root.in-section ? 1 : 0) + (root.data.channel ? 2 + (ListStore.channel-private ? 1 : 0) : 1) + (root.data.group ? 1 : 0)) * 32px + 8px;
+    property <length> menu-height: (6 + (root.in-section ? 1 : 0) + (root.data.channel ? 2 + (ListStore.channel-private ? 1 : 0) : 4) + (root.data.group ? 1 : 0)) * 32px + 8px;
     function open-menu() {
         root.menu-up = root.absolute-position.y + root.height - 8px + root.menu-height > root.limit ? root.menu-height : 0px;
         item-menu.show();
@@ -146,9 +148,34 @@ component ChatItem inherits Rectangle {
             in-section: root.in-section;
             mark-unread => { root.mark-unread(); }
             leave => { root.leave(); }
+            remove-history => { ChatHeaderStore.remove-history = root.data.id; }
             toggle-favorite => { root.toggle-favorite(); }
             done => { item-menu.close(); }
         }
+    }
+}
+
+// The row of the chat being started in the New chat pane: "New message", selected.
+component NewMessageRow inherits Rectangle {
+    height: 56px;
+    border-radius: 4px;
+    background: Theme.selected;
+    accessible-role: list-item;
+    accessible-label: @tr("New message");
+    accessible-item-selected: true;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 10px;
+        Rectangle {
+            width: 32px;
+            height: 32px;
+            y: 12px;
+            border-radius: 16px;
+            background: Theme.surface-hover;
+            Icon { source: @image-url("icons/compose.svg"); width: 16px; height: 16px; }
+        }
+        Text { text: @tr("New message"); color: Theme.fg; font-size: 14px * Theme.font-scale; font-italic: true; vertical-alignment: center; overflow: elide; accessible-role: none; }
     }
 }
 
@@ -203,6 +230,8 @@ export component Sidebar inherits Rectangle {
     callback mark-all-read();
     callback leave-chat(string);
     callback new-chat();
+    // The New chat button's dropdown: Meet now.
+    callback meet-now();
     // Quick views: "mentions" or "followed".
     callback quick-view(string);
     callback manage-teams();
@@ -212,6 +241,10 @@ export component Sidebar inherits Rectangle {
     callback dismiss-away();
 
     property <bool> communities-open: true;
+    // The filter row's chevron shows the less used filters (Communities).
+    property <bool> more-filters: root.filter == "communities";
+    // The list menu's "Customize view" shows its options.
+    property <bool> customize-open: false;
     property <string> away-summary: (root.catch-chats == 1 ? @tr("1 chat with new messages") : @tr("{} chats with new messages", root.catch-chats))
         + (root.catch-mentions == 0 ? "" : ", " + (root.catch-mentions == 1 ? @tr("1 mention") : @tr("{} mentions", root.catch-mentions)));
 
@@ -237,16 +270,16 @@ export component Sidebar inherits Rectangle {
                 y: 15px;
                 clicked => { root.manage-teams(); }
             }
-            if root.view == "chat": IconButton {
-                icon: @image-url("icons/compose.svg");
-                tooltip: @tr("New chat");
+            if root.view == "chat": NewChatSplit {
                 y: 12px;
-                clicked => { root.new-chat(); }
+                new-chat => { root.new-chat(); }
+                meet-now => { root.meet-now(); }
             }
             if root.view == "chat": IconButton {
                 icon: @image-url("icons/more.svg");
+                tooltip: @tr("Chat list options");
                 y: 12px;
-                clicked => { list-menu.show(); }
+                clicked => { root.customize-open = false; list-menu.show(); }
             }
         }
         if root.view == "chat": VerticalLayout {
@@ -265,6 +298,12 @@ export component Sidebar inherits Rectangle {
                 alignment: start;
                 Pill { label: @tr("Meeting chats"); active: root.filter == "meetings"; clicked => { root.filter = root.filter == "meetings" ? "all" : "meetings"; root.set-filter(root.filter); } }
                 Pill { label: @tr("Drafts"); active: root.filter == "drafts"; clicked => { root.filter = root.filter == "drafts" ? "all" : "drafts"; root.set-filter(root.filter); } }
+                Pill { label: root.more-filters ? "‹" : "›"; accessible-label: root.more-filters ? @tr("Fewer filters") : @tr("More filters"); clicked => { root.more-filters = !root.more-filters; } }
+            }
+            if root.more-filters: HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Pill { label: @tr("Communities"); active: root.filter == "communities"; clicked => { root.filter = root.filter == "communities" ? "all" : "communities"; root.set-filter(root.filter); } }
             }
         }
         Rectangle { height: 1px; background: Theme.border; }
@@ -282,7 +321,9 @@ export component Sidebar inherits Rectangle {
                 padding: 6px;
                 spacing: 1px;
                 alignment: start;
-                SectionHeader { label: @tr("Favorites"); expanded <=> ListStore.favorites-open; }
+                // The chat being started in the New chat pane, as Teams lists it.
+                if PeopleStore.new-chat-open: NewMessageRow { }
+                if root.filter != "communities": SectionHeader { label: @tr("Favorites"); expanded <=> ListStore.favorites-open; }
                 if ListStore.favorites-open: VerticalLayout { for c in root.chats-favorites: ChatItem {
                     data: c;
                     selected: c.id == root.current-id;
@@ -304,7 +345,7 @@ export component Sidebar inherits Rectangle {
                         leave => { root.leave-chat(c.id); }
                     } }
                 }
-                SectionHeader { label: @tr("Chats"); expanded <=> ListStore.chats-open; }
+                if root.filter != "communities": SectionHeader { label: @tr("Chats"); expanded <=> ListStore.chats-open; }
                 if ListStore.chats-open: VerticalLayout { for c in root.chats-main: ChatItem {
                     data: c;
                     selected: c.id == root.current-id;
@@ -314,7 +355,7 @@ export component Sidebar inherits Rectangle {
                     mark-unread => { root.mark-unread(c.id); }
                     leave => { root.leave-chat(c.id); }
                 } }
-                if !ListStore.combined: SectionHeader { label: @tr("Teams and channels"); expanded <=> ListStore.channels-open; }
+                if !ListStore.combined && root.filter != "communities": SectionHeader { label: @tr("Teams and channels"); expanded <=> ListStore.channels-open; }
                 if ListStore.channels-open && !ListStore.combined: VerticalLayout { for c in root.chats-channels: ChatItem {
                     data: c;
                     selected: c.id == root.current-id;
@@ -326,6 +367,14 @@ export component Sidebar inherits Rectangle {
                 } }
                 if TeamsStore.communities.length > 0: SectionHeader { label: @tr("Communities"); expanded <=> root.communities-open; }
                 if TeamsStore.communities.length > 0 && root.communities-open: CommunitiesSection { open(id) => { root.open-community(id); } }
+                if TeamsStore.communities.length == 0 && root.filter == "communities": Text {
+                    text: @tr("You are not in any community.");
+                    color: Theme.fg-subtle;
+                    font-size: 13px * Theme.font-scale;
+                    horizontal-alignment: center;
+                    height: 40px;
+                    vertical-alignment: center;
+                }
             }
         }
 
@@ -452,21 +501,34 @@ export component Sidebar inherits Rectangle {
         x: parent.width - 240px;
         y: 48px;
         width: 228px;
-        height: 6 * 32px + 9px + 4 * 32px + 24px;
+        height: list-items.preferred-height + 2px;
         Rectangle {
             background: Theme.surface;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
-            VerticalLayout {
+            list-items := VerticalLayout {
                 padding: 4px;
                 MenuItem { label: @tr("Mark all as read"); clicked => { root.mark-all-read(); } }
                 MenuItem { label: @tr("New section"); clicked => { ListStore.dialog-target = ""; ListStore.dialog-text = ""; ListStore.dialog = "new-section"; } }
                 MenuItem { label: @tr("Collapse all sections"); clicked => { ListStore.command("collapse-all", ""); } }
+                // Teams' "Customize view": the list's display options, behind a chevron.
+                PMenuItem { label: @tr("Customize view"); chevron: true; checked: root.customize-open; clicked => { root.customize-open = !root.customize-open; } }
+                if root.customize-open: OptionRow { label: @tr("Show message previews"); checked: ListStore.show-previews; clicked => { ListStore.command("option", "previews\u{9}" + (ListStore.show-previews ? "off" : "on")); } }
+                if root.customize-open: OptionRow { label: @tr("Show time stamps"); checked: ListStore.show-times; clicked => { ListStore.command("option", "times\u{9}" + (ListStore.show-times ? "off" : "on")); } }
+                if root.customize-open: OptionRow { label: @tr("Chats and channels together"); checked: ListStore.combined; clicked => { ListStore.command("option", "combined\u{9}" + (ListStore.combined ? "off" : "on")); } }
                 Rectangle { height: 1px; background: Theme.border; }
-                OptionRow { label: @tr("Show message previews"); checked: ListStore.show-previews; clicked => { ListStore.command("option", "previews\u{9}" + (ListStore.show-previews ? "off" : "on")); } }
-                OptionRow { label: @tr("Show time stamps"); checked: ListStore.show-times; clicked => { ListStore.command("option", "times\u{9}" + (ListStore.show-times ? "off" : "on")); } }
-                OptionRow { label: @tr("Chats and channels together"); checked: ListStore.combined; clicked => { ListStore.command("option", "combined\u{9}" + (ListStore.combined ? "off" : "on")); } }
+                PMenuItem { label: @tr("Your teams and channels"); clicked => { list-menu.close(); root.manage-teams(); } }
+                PMenuItem {
+                    label: @tr("Your communities");
+                    clicked => {
+                        list-menu.close();
+                        TeamsStore.open = true;
+                        TeamsStore.command("open", "");
+                        TeamsStore.tab = "communities";
+                        TeamsStore.command("communities", "");
+                    }
+                }
                 HorizontalLayout {
                     height: 24px;
                     padding-left: 10px;

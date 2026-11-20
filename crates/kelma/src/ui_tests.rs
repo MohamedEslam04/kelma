@@ -50,6 +50,7 @@ mod shortcuts;
 mod snippets;
 mod teams;
 mod topbar;
+mod web_parity;
 mod window_state;
 
 type Log = Rc<RefCell<Vec<String>>>;
@@ -408,7 +409,9 @@ fn menu_for_others_message() {
             "Remind me",
             "Immersive Reader",
             "Share to Outlook",
+            "Translation",
             "Report this message",
+            "More actions",
         ]
     );
 }
@@ -428,6 +431,8 @@ fn menu_for_own_message_has_edit_and_delete_but_no_save() {
             "Remind me",
             "Immersive Reader",
             "Share to Outlook",
+            "Translation",
+            "More actions",
             "Edit",
             "Delete",
         ]

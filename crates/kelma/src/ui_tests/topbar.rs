@@ -517,11 +517,9 @@ fn the_more_menu_has_settings_zoom_shortcuts_updates_about_and_help() {
 
     tb(&app).set_more_open(true);
     control(&app, "Check for updates").invoke_accessible_default_action();
-    assert!(
-        settings
-            .borrow()
-            .contains(&"check-updates-menu ".to_string())
-    );
+    assert!(settings
+        .borrow()
+        .contains(&"check-updates-menu ".to_string()));
 
     tb(&app).set_more_open(true);
     control(&app, "Help").invoke_accessible_default_action();
@@ -531,6 +529,24 @@ fn the_more_menu_has_settings_zoom_shortcuts_updates_about_and_help() {
     control(&app, "About").invoke_accessible_default_action();
     assert!(app.global::<SettingsStore>().get_open());
     assert_eq!(app.global::<SettingsStore>().get_page(), "about");
+}
+
+#[test]
+fn the_more_menu_offers_feedback_and_the_mobile_app_as_links() {
+    let app = ready_window(None);
+    let opened = Log::default();
+    let o = opened.clone();
+    app.on_open_url(move |u| o.borrow_mut().push(u.to_string()));
+    tb(&app).set_more_open(true);
+    control(&app, "Feedback").invoke_accessible_default_action();
+    assert!(!tb(&app).get_more_open());
+    tb(&app).set_more_open(true);
+    control(&app, "Get the mobile app").invoke_accessible_default_action();
+    assert_eq!(
+        *opened.borrow(),
+        [crate::topbar::FEEDBACK_URL, crate::topbar::MOBILE_APP_URL]
+    );
+    assert!(crate::topbar::FEEDBACK_URL.ends_with("/issues"));
 }
 
 #[test]
@@ -681,11 +697,10 @@ fn a_pause_in_typing_lists_the_messages_of_the_cache_under_their_own_heading() {
     type_text(&h.app, "deployed");
     // Names come at once; the messages wait for typing to pause.
     assert!(message_rows(&h.app).is_empty());
-    assert!(
-        !log.borrow()
-            .iter()
-            .any(|l| l.starts_with("suggest-messages"))
-    );
+    assert!(!log
+        .borrow()
+        .iter()
+        .any(|l| l.starts_with("suggest-messages")));
     pause_typing();
     assert_eq!(
         log.borrow()

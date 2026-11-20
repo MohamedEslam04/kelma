@@ -88,7 +88,7 @@ pub use drive::DriveCmd;
 pub use engage::EngageCmd;
 pub use find::FindCmd;
 pub use gifs::{GifCmd, GifRow};
-pub use lists::ListsCmd;
+pub use lists::{ListsCmd, MANAGE_APPS_NOTE};
 pub use manage::{
     CommunityData, DeletedData, DialogData, DiscoverData, PersonData as TeamsPersonData, PostData,
     SettingData, TagData, TeamRowData, TeamsCmd, TeamsData,
