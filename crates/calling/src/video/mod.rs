@@ -15,6 +15,8 @@
 #[cfg(feature = "camera")]
 pub mod camera;
 #[cfg(feature = "screen-share")]
+pub mod control_overlay;
+#[cfg(feature = "screen-share")]
 mod gst;
 pub mod h264;
 pub mod receive;

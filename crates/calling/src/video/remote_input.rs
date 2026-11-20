@@ -13,8 +13,9 @@ use ashpd::desktop::Session;
 use ashpd::desktop::remote_desktop::{
     Axis, DeviceType, KeyState, NotifyPointerAxisOptions, RemoteDesktop, SelectDevicesOptions,
 };
-use ashpd::desktop::screencast::Screencast;
+use ashpd::desktop::screencast::{Screencast, SourceType};
 
+use super::control_overlay::ShareArea;
 use super::screencast::{
     CaptureSettings, PortalSession, ScreenCapture, ShareKind, capture_stream, portal_err,
     select_sources, stream_size,
@@ -31,6 +32,8 @@ pub struct InputInjector {
     stream: u32,
     /// The stream's size, in its own coordinates.
     size: (u32, u32),
+    /// What the stream covers on the desktop, for the controller's drawn cursor.
+    area: ShareArea,
 }
 
 fn state(pressed: bool) -> KeyState {
@@ -42,6 +45,11 @@ fn state(pressed: bool) -> KeyState {
 }
 
 impl InputInjector {
+    /// What the shared stream covers (`video::control_overlay`).
+    pub fn area(&self) -> ShareArea {
+        self.area
+    }
+
     /// Moves the pointer to a normalized point (0..=1) of the shared stream.
     pub async fn pointer_motion_absolute(&self, x: f64, y: f64) -> Result<()> {
         let (x, y) = stream_point(x, y, self.size);
@@ -173,13 +181,18 @@ pub async fn pick_with_control(
     }
     let node = stream.pipe_wire_node_id();
     let size = stream_size(stream);
+    let area = ShareArea {
+        monitor: stream.source_type() == Some(SourceType::MONITOR),
+        position: stream.position(),
+        size,
+    };
     let mut capture = match capture_stream(&cast, &session, stream, settings).await {
         Ok(c) => c,
         Err(e) => return fail(session, e).await,
     };
     let session = Arc::new(session);
     capture.attach(PortalSession::Remote(Arc::clone(&session)));
-    tracing::info!(node, ?size, "screen capture with remote control started");
+    tracing::info!(node, ?area, "screen capture with remote control started");
     Ok(Some((
         capture,
         InputInjector {
@@ -187,6 +200,7 @@ pub async fn pick_with_control(
             session,
             stream: node,
             size,
+            area,
         },
     )))
 }

@@ -161,7 +161,8 @@ pub fn decode(v: &Value) -> Option<ControlMessage> {
     let b = find_key(v, "remoteControl")?;
     let who = || b["participant"].as_str().map(str::to_owned);
     let f = |k: &str| b[k].as_f64();
-    let unit = |k: &str| f(k).filter(|n| n.is_finite()).map(|n| n.clamp(0.0, 1.0));
+    // Kept as sent: a point outside 0..1 is off the shared picture, and [`PointerPolicy`] drops it.
+    let unit = |k: &str| f(k).filter(|n| n.is_finite());
     Some(match b["action"].as_u64()? {
         REQUEST => ControlMessage::Request { from: who()? },
         GRANT => ControlMessage::Grant { to: who()? },
@@ -326,6 +327,102 @@ pub fn stream_point(x: f64, y: f64, size: (u32, u32)) -> (f64, f64) {
     (clamp(x, size.0), clamp(y, size.1))
 }
 
+/// Where the controller's pointer is drawn on the presenter's side.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Cursor {
+    /// At a normalized point of the shared picture.
+    At(f64, f64),
+    /// Off the shared picture.
+    Hidden,
+}
+
+/// What one controller event does on the presenter's side.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Routed {
+    /// The controller's drawn cursor moves (or hides).
+    pub cursor: Option<Cursor>,
+    /// Injected into the desktop, in order.
+    pub inject: Vec<InputEvent>,
+}
+
+/// Teams' model of remote control: the controller has a cursor of their own (drawn, see
+/// `video::control_overlay`), and the presenter's real pointer stays theirs. A move only moves
+/// the drawn cursor; a button or a scroll first moves the real pointer to the controller's
+/// point, then happens there. While a button is held (a drag), moves drive the real pointer too.
+/// Keys go wherever the focus is. Points outside 0..1 of the picture are dropped, and a click or
+/// scroll with the controller's pointer off the picture does nothing; a release of a held button
+/// always goes through, so no button stays stuck.
+///
+/// Wayland gives a client no way to read or restore the pointer's position, so after a click the
+/// presenter's pointer stays where the controller clicked.
+#[derive(Debug, Default)]
+pub struct PointerPolicy {
+    /// The controller's last point on the picture (`None`: off it, or not seen yet).
+    at: Option<(f64, f64)>,
+    /// The buttons the controller holds, by [`MouseButton::index`] bit.
+    held: u8,
+}
+
+/// A point of the shared picture: both coordinates finite and within 0..=1.
+pub fn on_picture(x: f64, y: f64) -> bool {
+    (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)
+}
+
+impl PointerPolicy {
+    pub fn route(&mut self, ev: InputEvent) -> Routed {
+        let move_to = |(x, y): (f64, f64)| InputEvent::PointerMove { x, y };
+        match ev {
+            InputEvent::PointerMove { x, y } if on_picture(x, y) => {
+                self.at = Some((x, y));
+                Routed {
+                    cursor: Some(Cursor::At(x, y)),
+                    inject: if self.held != 0 { vec![ev] } else { vec![] },
+                }
+            }
+            InputEvent::PointerMove { .. } => {
+                self.at = None;
+                Routed {
+                    cursor: Some(Cursor::Hidden),
+                    inject: vec![],
+                }
+            }
+            InputEvent::PointerButton { button, pressed } => {
+                let bit = 1 << button.index();
+                let was_held = self.held & bit != 0;
+                if pressed {
+                    let Some(at) = self.at else {
+                        return Routed::default();
+                    };
+                    self.held |= bit;
+                    Routed {
+                        cursor: None,
+                        inject: vec![move_to(at), ev],
+                    }
+                } else if was_held {
+                    self.held &= !bit;
+                    Routed {
+                        cursor: None,
+                        inject: self.at.map(move_to).into_iter().chain([ev]).collect(),
+                    }
+                } else {
+                    Routed::default()
+                }
+            }
+            InputEvent::Axis { .. } => match self.at {
+                Some(at) => Routed {
+                    cursor: None,
+                    inject: vec![move_to(at), ev],
+                },
+                None => Routed::default(),
+            },
+            InputEvent::Key { .. } => Routed {
+                cursor: None,
+                inject: vec![ev],
+            },
+        }
+    }
+}
+
 /// Sends control messages to the other side. One trait, so the guessed transport can be swapped
 /// for the captured one (or a fake in tests).
 #[async_trait::async_trait]
@@ -453,15 +550,17 @@ mod tests {
     }
 
     #[test]
-    fn a_pointer_outside_the_picture_is_clamped_and_junk_is_refused() {
+    fn a_pointer_outside_the_picture_is_kept_for_the_policy_and_junk_is_refused() {
         let far = json!({"remoteControl": {"action": 5, "x": 3.0, "y": -1.0}});
         assert_eq!(
             decode(&far),
             Some(ControlMessage::Input(InputEvent::PointerMove {
-                x: 1.0,
-                y: 0.0
+                x: 3.0,
+                y: -1.0
             }))
         );
+        let nan = json!({"remoteControl": {"action": 5, "x": "a", "y": 0.5}});
+        assert_eq!(decode(&nan), None);
         assert_eq!(decode(&json!({"remoteControl": {"action": 99}})), None);
         assert_eq!(
             decode(&json!({"remoteControl": {"action": 6, "button": 9}})),
@@ -522,6 +621,92 @@ mod tests {
         assert_eq!(stream_point(1.0, 1.0, (1920, 1080)), (1919.0, 1079.0));
         assert_eq!(stream_point(-2.0, 9.0, (100, 50)), (0.0, 49.0));
         assert_eq!(stream_point(f64::NAN, 0.5, (100, 50)), (0.0, 25.0));
+    }
+
+    fn mv(x: f64, y: f64) -> InputEvent {
+        InputEvent::PointerMove { x, y }
+    }
+
+    fn btn(pressed: bool) -> InputEvent {
+        InputEvent::PointerButton {
+            button: MouseButton::Left,
+            pressed,
+        }
+    }
+
+    #[test]
+    fn a_move_only_moves_the_drawn_cursor() {
+        let mut p = PointerPolicy::default();
+        assert_eq!(
+            p.route(mv(0.5, 0.25)),
+            Routed {
+                cursor: Some(Cursor::At(0.5, 0.25)),
+                inject: vec![]
+            }
+        );
+    }
+
+    #[test]
+    fn a_click_moves_the_real_pointer_there_first() {
+        let mut p = PointerPolicy::default();
+        p.route(mv(0.2, 0.3));
+        assert_eq!(p.route(btn(true)).inject, vec![mv(0.2, 0.3), btn(true)]);
+        // A drag: moves with a button held drive the real pointer too.
+        assert_eq!(p.route(mv(0.4, 0.3)).inject, vec![mv(0.4, 0.3)]);
+        assert_eq!(p.route(btn(false)).inject, vec![mv(0.4, 0.3), btn(false)]);
+        // Released: moves are the drawn cursor's alone again.
+        assert_eq!(p.route(mv(0.6, 0.3)).inject, vec![]);
+        let scroll = InputEvent::Axis { dx: 0.0, dy: 40.0 };
+        assert_eq!(p.route(scroll).inject, vec![mv(0.6, 0.3), scroll]);
+    }
+
+    #[test]
+    fn points_off_the_picture_are_dropped_and_hide_the_cursor() {
+        let mut p = PointerPolicy::default();
+        // Nothing seen yet: a click has nowhere to go.
+        assert_eq!(p.route(btn(true)), Routed::default());
+        p.route(mv(0.5, 0.5));
+        assert_eq!(
+            p.route(mv(1.2, 0.5)),
+            Routed {
+                cursor: Some(Cursor::Hidden),
+                inject: vec![]
+            }
+        );
+        assert_eq!(p.route(btn(true)), Routed::default());
+        assert_eq!(
+            p.route(InputEvent::Axis { dx: 0.0, dy: 1.0 }),
+            Routed::default()
+        );
+        assert_eq!(p.route(mv(f64::NAN, 0.5)).cursor, Some(Cursor::Hidden));
+        // A release with nothing held goes nowhere.
+        assert_eq!(p.route(btn(false)), Routed::default());
+    }
+
+    #[test]
+    fn a_held_button_is_released_even_off_the_picture() {
+        let mut p = PointerPolicy::default();
+        p.route(mv(0.9, 0.9));
+        p.route(btn(true));
+        p.route(mv(1.5, 0.9));
+        assert_eq!(p.route(btn(false)).inject, vec![btn(false)]);
+        assert_eq!(p.route(btn(false)), Routed::default());
+    }
+
+    #[test]
+    fn keys_go_wherever_the_focus_is() {
+        let mut p = PointerPolicy::default();
+        let key = InputEvent::Key {
+            keysym: 0x61,
+            pressed: true,
+        };
+        assert_eq!(
+            p.route(key),
+            Routed {
+                cursor: None,
+                inject: vec![key]
+            }
+        );
     }
 
     #[test]

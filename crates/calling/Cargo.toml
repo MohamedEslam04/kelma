@@ -54,6 +54,11 @@ openh264 = { version = "0.9.10", optional = true }
 # The PipeWire stream it hands over is read by a `gst-launch-1.0 pipewiresrc` child process, so
 # no pipewire-devel/gstreamer1-devel is needed at build time.
 ashpd = { version = "0.14.1", default-features = false, features = ["tokio", "screencast"], optional = true }
+# The controller's cursor over a share under remote control (`video::control_overlay`): a
+# wlr-layer-shell surface drawn in software. Both are already in the tree (smithay-clipboard and
+# sctk-adwaita); sctk without its xkbcommon feature needs only libwayland, no system xkbcommon.
+smithay-client-toolkit = { version = "0.20.0", default-features = false, features = ["calloop"], optional = true }
+ab_glyph = { version = "0.2.32", optional = true }
 
 [dev-dependencies]
 # Test certificates for the TURN-over-TLS shim (already in the tree through rtc).
@@ -69,7 +74,14 @@ aec = ["dep:sonora"]
 # Screen sharing: the ScreenCast portal and the H.264 encoder. Runtime needs xdg-desktop-portal and
 # GStreamer's `pipewiresrc` (gstreamer1-plugins / pipewire-gstreamer). The RemoteDesktop portal
 # (remote control of a share, `video::remote_input`) is the same crate, no new library.
-screen-share = ["dep:openh264", "dep:ashpd", "ashpd/remote_desktop"]
+# The controller's cursor is a wlr-layer-shell overlay (smithay-client-toolkit, ab_glyph).
+screen-share = [
+    "dep:openh264",
+    "dep:ashpd",
+    "ashpd/remote_desktop",
+    "dep:smithay-client-toolkit",
+    "dep:ab_glyph",
+]
 # Camera video: the Camera portal (or a V4L2 device) through the same GStreamer child and H.264
 # encoder, and the OpenH264 decoder for the other side's video. Runtime needs GStreamer's
 # `pipewiresrc` (portal) or `v4l2src` (gstreamer1-plugins-good) and `decodebin`.
