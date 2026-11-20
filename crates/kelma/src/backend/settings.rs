@@ -1311,11 +1311,7 @@ pub enum SettingsCmd {
 impl Engine {
     pub(super) async fn settings_cmd(self: &Arc<Self>, cmd: SettingsCmd) -> anyhow::Result<()> {
         match cmd {
-            SettingsCmd::Load => {
-                let data = self.settings_read().await;
-                remember_notification_settings(data.notifications.clone());
-                self.ui.settings_server(data);
-            }
+            SettingsCmd::Load => self.settings_reload(true).await,
             SettingsCmd::Redraw => self.mark(|d| {
                 d.chats = true;
                 d.messages = true;
@@ -1326,6 +1322,9 @@ impl Engine {
                 self.ui.settings_license(r);
             }
             SettingsCmd::Apply(req) => {
+                // One write at a time, in the order they were made: the settings bag is written
+                // whole, so an older write landing last would undo a newer one.
+                let turn = self.settings_writes.lock().await;
                 let r = if self.offline.load(Ordering::Relaxed) {
                     Err(anyhow::anyhow!("Not available offline."))
                 } else {
@@ -1334,6 +1333,7 @@ impl Engine {
                         .await
                         .map_err(anyhow::Error::from)
                 };
+                drop(turn);
                 match r {
                     Ok(_) => self.ui.settings_notice("Saved to Teams.".into()),
                     Err(e) => {
@@ -1342,23 +1342,38 @@ impl Engine {
                             .settings_notice(format!("Teams did not take the change: {e}"));
                     }
                 }
-                let data = self.settings_read().await;
-                remember_notification_settings(data.notifications.clone());
-                self.ui.settings_server(data);
+                self.settings_reload(true).await;
             }
             SettingsCmd::SetStatus(_)
             | SettingsCmd::SetWorkLocation(_)
             | SettingsCmd::SetStatusNote(_) => {
-                if let Err(e) = self.set_my_presence(&cmd).await {
+                let turn = self.settings_writes.lock().await;
+                let r = self.set_my_presence(&cmd).await;
+                drop(turn);
+                if let Err(e) = r {
                     tracing::warn!(%e, "could not change my status");
                     self.ui
                         .settings_notice(format!("Could not change your status: {e}"));
                 }
-                let data = self.settings_read().await;
-                self.ui.settings_server(data);
+                self.settings_reload(false).await;
             }
         }
         Ok(())
+    }
+
+    /// Reads the Teams-side settings and shows them, unless a newer read started meanwhile (an
+    /// older read can see the bag from before the latest write). `remember` keeps the
+    /// notification settings for the banners.
+    async fn settings_reload(self: &Arc<Self>, remember: bool) {
+        let ticket = self.settings_reads.fetch_add(1, Ordering::SeqCst) + 1;
+        let data = self.settings_read().await;
+        if self.settings_reads.load(Ordering::SeqCst) != ticket {
+            return;
+        }
+        if remember {
+            remember_notification_settings(data.notifications.clone());
+        }
+        self.ui.settings_server(data);
     }
 
     /// The network part of the status and work location commands.
