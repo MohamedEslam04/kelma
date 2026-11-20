@@ -1749,14 +1749,24 @@ impl Engine {
         let Some(item) = self.drive_one() else {
             return Ok(());
         };
+        // The dialog's item is set before the list loads, so a Close sent meanwhile ends it.
+        self.drive.lock().unwrap().versions_of = Some(item.clone());
         let list = if self.drive_offline() {
             crate::demo::drive_versions(now_ms())
         } else {
             ops::versions(&self.client, &ItemRef::from(&item)).await?
         };
-        self.drive.lock().unwrap().versions_of = Some(item.clone());
-        self.ui
-            .drive_versions(item.name, version_data(&list, now_ms()));
+        let still_open = self
+            .drive
+            .lock()
+            .unwrap()
+            .versions_of
+            .as_ref()
+            .is_some_and(|v| v.id == item.id);
+        if still_open {
+            self.ui
+                .drive_versions(item.name, version_data(&list, now_ms()));
+        }
         Ok(())
     }
 

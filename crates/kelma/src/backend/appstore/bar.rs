@@ -353,9 +353,7 @@ impl Engine {
         open: bool,
         query: Option<String>,
     ) -> anyhow::Result<()> {
-        if open {
-            self.apps_ensure_installed().await;
-        }
+        // The flyout's state changes first, so a Close sent while the apps load stays closed.
         {
             let mut a = self.apps.lock().unwrap();
             a.flyout = open;
@@ -366,16 +364,33 @@ impl Engine {
             }
         }
         self.apps_push_rail();
+        if open && self.apps.lock().unwrap().installed.is_none() {
+            self.apps_ensure_installed().await;
+            self.apps_push_rail();
+        }
         Ok(())
     }
 
     /// Opens an installed app in the main area.
     pub(super) async fn apps_open(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
-        self.apps_ensure_installed().await;
-        let (key, view) = {
+        // The flyout closes at once; the app opens once the installed apps are known, unless
+        // another app was opened meanwhile.
+        let turn = {
             let mut a = self.apps.lock().unwrap();
             a.flyout = false;
             a.flyout_query.clear();
+            a.open_seq += 1;
+            a.open_seq
+        };
+        if self.apps.lock().unwrap().installed.is_none() {
+            self.apps_push_rail();
+            self.apps_ensure_installed().await;
+        }
+        let (key, view) = {
+            let mut a = self.apps.lock().unwrap();
+            if a.open_seq != turn {
+                return Ok(());
+            }
             let Some(def) = a.def(id) else {
                 drop(a);
                 self.apps_push_rail();

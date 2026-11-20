@@ -27,6 +27,9 @@ const STRIP: usize = 12;
 #[derive(Default)]
 pub struct Shop {
     page: String,
+    /// Bumped by every page change (home, results, category, an app, manage, settings), so a page
+    /// still loading never replaces one opened after it.
+    nav: u64,
     home: Option<StoreHome>,
     org: Vec<CatalogApp>,
     hits: Vec<SearchHit>,
@@ -543,6 +546,7 @@ impl Engine {
         self.ui.open_view("store".into());
         self.shop_edit(|s| {
             s.page = "home".into();
+            s.nav += 1;
             s.loading = true;
             s.status.clear();
         });
@@ -577,8 +581,11 @@ impl Engine {
         }
         self.ui.open_view("store".into());
         let title = format!("Results for “{q}”");
+        let mut turn = 0;
         self.shop_edit(|s| {
             s.page = "results".into();
+            s.nav += 1;
+            turn = s.nav;
             s.title = title.clone();
             s.loading = true;
             s.status.clear();
@@ -587,10 +594,7 @@ impl Engine {
         self.apps_ensure_installed().await;
         let result = self.src_search(&q).await;
         // A newer search (or another page) since this one started keeps its own results.
-        let current = {
-            let a = self.apps.lock().unwrap();
-            a.shop.page == "results" && a.shop.title == title
-        };
+        let current = self.apps.lock().unwrap().shop.nav == turn;
         if !current {
             return Ok(());
         }
@@ -622,6 +626,7 @@ impl Engine {
         };
         self.shop_edit(|s| {
             s.page = "category".into();
+            s.nav += 1;
             s.category = key.to_owned();
             s.title = title;
             s.loading = true;
@@ -659,13 +664,25 @@ impl Engine {
         Ok(())
     }
 
+    /// Takes a turn at changing the page; see [`Shop::nav`].
+    fn shop_turn(&self) -> u64 {
+        let mut a = self.apps.lock().unwrap();
+        a.shop.nav += 1;
+        a.shop.nav
+    }
+
     /// Opens an app's page.
     pub(super) async fn shop_app(self: &Arc<Self>, id: &str) -> anyhow::Result<()> {
         self.ui.open_view("store".into());
+        let turn = self.shop_turn();
         self.apps_ensure_installed().await;
         self.shop_ensure_defs(&[id.to_owned()]).await;
         let found = {
             let mut a = self.apps.lock().unwrap();
+            // Another page was opened while this app's definition loaded.
+            if a.shop.nav != turn {
+                return Ok(());
+            }
             match a.def(id).cloned() {
                 Some(def) => {
                     let hit = a.shop.hits.iter().find(|h| h.id == id).cloned();
@@ -982,6 +999,7 @@ impl Engine {
         self.ui.open_view("store".into());
         self.shop_edit(|s| {
             s.page = "manage".into();
+            s.nav += 1;
             s.title = "Manage your apps".into();
             s.loading = true;
             s.status.clear();
@@ -1003,10 +1021,14 @@ impl Engine {
 
     pub(super) async fn shop_settings(self: &Arc<Self>) -> anyhow::Result<()> {
         self.ui.open_view("store".into());
+        let turn = self.shop_turn();
         self.apps_ensure_installed().await;
         let policy = self.src_policy().await.ok();
         {
             let mut a = self.apps.lock().unwrap();
+            if a.shop.nav != turn {
+                return Ok(());
+            }
             // Every time the page opens: Settings may have changed the file since.
             if !self.apps_offline()
                 && let Some(g) = load_grants()

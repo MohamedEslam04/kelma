@@ -232,6 +232,9 @@ pub(crate) struct State {
     /// dropped.
     discover_seq: u64,
     member_seq: u64,
+    /// Bumped by every pin or unpin, so the service's answer to an older one does not undo a
+    /// newer one shown here already.
+    pin_seq: u64,
 }
 
 impl Default for State {
@@ -257,6 +260,7 @@ impl Default for State {
             guard: Guard::from_env(),
             discover_seq: 0,
             member_seq: 0,
+            pin_seq: 0,
         }
     }
 }
@@ -582,17 +586,39 @@ impl Engine {
             "chan-pin" => {
                 let (id, on) = (c.arg(0).to_string(), c.flag(1));
                 self.manage_state(|s| s.allow_channel(&id))?;
-                st(&|s| {
+                let seq = self.manage_state(|s| {
                     if on {
                         s.page.pinned.push(id.clone());
                     } else {
                         s.page.pinned.retain(|p| p != &id);
                     }
+                    s.pin_seq += 1;
+                    s.pin_seq
                 });
                 self.mark(|d| d.teams = true);
                 self.manage_push();
-                let p = self.client.set_channel_pinned(&id, on).await?;
-                self.manage_state(|s| s.page.pinned = p.channel_ids);
+                let answer = self.client.set_channel_pinned(&id, on).await;
+                // Only the answer to the latest pin is the whole truth; an older one would undo
+                // the pins shown since.
+                let latest = self.manage_state(|s| s.pin_seq == seq);
+                match answer {
+                    Ok(p) if latest => self.manage_state(|s| s.page.pinned = p.channel_ids),
+                    Ok(_) => {}
+                    Err(err) => {
+                        if latest {
+                            self.manage_state(|s| {
+                                if on {
+                                    s.page.pinned.retain(|p| p != &id);
+                                } else {
+                                    s.page.pinned.push(id.clone());
+                                }
+                            });
+                            self.mark(|d| d.teams = true);
+                            self.manage_push();
+                        }
+                        return Err(err.into());
+                    }
+                }
                 self.manage_reload().await?;
             }
             "chan-default" => {
@@ -1253,13 +1279,23 @@ impl Engine {
                     anyhow::bail!("Give the tag a name");
                 }
                 // A tag needs at least one member; we are the first.
+                let before = self.manage_state(|s| s.tag.clone());
                 let t = self
                     .client
                     .create_tag(&team, name, c.arg(1).trim(), std::slice::from_ref(&self.me))
                     .await?;
-                self.manage_state(|s| s.tag = Some(t.id.clone()));
+                // The new tag opens unless another tag was picked while it was being made.
+                let open = self.manage_state(|s| {
+                    let open = s.tag == before;
+                    if open {
+                        s.tag = Some(t.id.clone());
+                    }
+                    open
+                });
                 self.manage_load_tags(&team).await?;
-                self.manage_load_tag_people(&team, &t.id).await?;
+                if open {
+                    self.manage_load_tag_people(&team, &t.id).await?;
+                }
             }
             "tag-rename" => {
                 // The version a change must quote moves with every change: read it fresh.
