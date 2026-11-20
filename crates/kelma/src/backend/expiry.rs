@@ -99,20 +99,13 @@ pub fn expiry_iso(choice: &str, custom: &str) -> Result<Option<String>, String> 
 /// "Until 3:45 PM" under the status in the profile menu: the clock time when the status ends
 /// today, else the day as well (`Until 11/21 3:45 PM`). `time_pat` and `date_pat` are the
 /// `strftime` patterns of the user's formats.
-pub fn until_text(
-    until: NaiveDateTime,
-    now: NaiveDateTime,
-    time_pat: &str,
-    date_pat: &str,
-) -> String {
+pub fn until_text(until: NaiveDateTime, now: NaiveDateTime, h24: bool, date_pat: &str) -> String {
+    use chrono::Timelike;
+    let clock = appearance::formats::clock_in((until.hour() * 60 + until.minute()) as i32, h24);
     if until.date() == now.date() {
-        format!("Until {}", until.format(time_pat))
+        format!("Until {clock}")
     } else {
-        format!(
-            "Until {} {}",
-            until.format(date_pat),
-            until.format(time_pat)
-        )
+        format!("Until {} {clock}", until.format(date_pat))
     }
 }
 
@@ -120,7 +113,7 @@ pub fn until_text(
 pub fn until_label(until_ms: i64) -> String {
     use appearance::formats as f;
     match (f::local(until_ms), f::local_now()) {
-        (Some(u), Some(n)) => until_text(u, n, f::time_pattern(), f::date_pattern(false)),
+        (Some(u), Some(n)) => until_text(u, n, f::is_h24(), f::date_pattern(false)),
         _ => String::new(),
     }
 }
@@ -137,11 +130,11 @@ mod tests {
     fn until_shows_the_clock_time_today_and_the_day_after_that() {
         let now = wall("2026-11-20 14:00");
         assert_eq!(
-            until_text(wall("2026-11-20 15:45"), now, "%-I:%M %p", "%-m/%-d"),
+            until_text(wall("2026-11-20 15:45"), now, false, "%-m/%-d"),
             "Until 3:45 PM"
         );
         assert_eq!(
-            until_text(wall("2026-11-21 00:00"), now, "%H:%M", "%-m/%-d"),
+            until_text(wall("2026-11-21 00:00"), now, true, "%-m/%-d"),
             "Until 11/21 00:00"
         );
     }
