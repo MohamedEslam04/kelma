@@ -66,6 +66,11 @@ Headers: `X-Skypetoken`, `BehaviorOverride: redirectAs404`, `X-Stratus-Caller: s
 | `properties.edittime` / `deletetime` | Edited / deleted markers ✅ |
 | `ThreadActivity/*`, `Event/Call` | System lines |
 
+Sending a sticker (composer Stickers tab, `backend/stickers.rs`): a `RichText/Html` message that is only
+`<img src="https://statics.teams.cdn.office.net/evergreen-assets/stickerassets/<category lowercase>-250x250/<file>?v=5" width="250" height="250" alt="<name>" itemtype="http://schema.skype.com/Sticker">`;
+nothing is uploaded. The image CDN needs no sign-in. Shape and catalogue from rusty-teams (MIT); 🧪 UNVERIFIED by kelma
+(nothing sent live). A Praise card (the Praise app's Adaptive Card) is not documented in the references, so kelma has none.
+
 ### Delivery options (9.4)
 
 `crates/teams-proto/src/delivery.rs` (`kelma-cli deliver`). Sources: the Teams web client JS bundle
@@ -471,7 +476,7 @@ channel), `GID` = the AAD group id (`teamSiteInformation.groupId`).
 | Members `GET …/tags/<id>/members?pageSize=200` | `{members:[{memberId}], totalMembersCount}` | ✅ |
 | Add people `POST …/memberTags?tagType=Team&action=add` | `{memberIds, tagNames}` (by tag **name**) | ✅ (myself) |
 | Remove people `POST …/memberTags?tagType=Team&action=delete` | `{memberIds, tagIds}`. Removing the last member deletes the tag | ✅ |
-| Mention | mri `tag:<tagId>`, `mentionType:"tag"` (`Tag::mention`, see `mentions.rs`) | 🧪 |
+| Mention | mri `tag:<tagId>`, `mentionType:"tag"` (`Tag::mention`, see `mentions.rs`). The composer's @ picker in a channel lists the team's tags (fetched once per team with the List call) and sends them in this shape | 🧪 UNVERIFIED (not sent live) |
 
 ### T2.5 Channel email address
 `GET MT/beta/channels/<c>/email` answers `404` until an address exists, then

@@ -204,6 +204,9 @@ pub struct GeneralPrefs {
     /// Message notifications have Reply and Like buttons (where the desktop supports buttons).
     #[serde(deserialize_with = "lenient")]
     pub banner_actions: bool,
+    /// Misspelled words in the message box get a red underline.
+    #[serde(deserialize_with = "lenient")]
+    pub check_spelling: bool,
 }
 
 impl Default for GeneralPrefs {
@@ -219,6 +222,7 @@ impl Default for GeneralPrefs {
             check_updates: false,
             banner_photo: true,
             banner_actions: true,
+            check_spelling: true,
         }
     }
 }
@@ -405,6 +409,10 @@ mod tests {
     fn notification_look_is_on_for_files_saved_before_it_existed() {
         let p: GeneralPrefs = serde_json::from_str(r#"{"auto_start":true}"#).unwrap();
         assert!(p.banner_photo && p.banner_actions);
+        assert!(
+            p.check_spelling,
+            "spell check is on for files saved before it existed"
+        );
     }
 
     #[test]
@@ -423,6 +431,7 @@ mod tests {
             check_updates: true,
             banner_photo: false,
             banner_actions: true,
+            check_spelling: false,
         };
         p.save_to(&path).unwrap();
         assert_eq!(GeneralPrefs::load_from(&path), p);

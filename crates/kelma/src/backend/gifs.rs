@@ -1,7 +1,9 @@
 //! The composer's GIF picker: search (trending when empty) through Teams' Giphy extension,
 //! small previews for the grid, and the picked GIF sent to the open chat, thread or channel.
+//! Its Stickers tab lists Teams' stickers (`stickers.rs`) the same way.
 
 use super::Engine;
+use super::stickers::{self, Sticker};
 use super::util::decode_image;
 use crate::data::Pixels;
 use std::sync::{Arc, Mutex};
@@ -12,6 +14,8 @@ use teams_proto::gifs::{Gif, gif_html};
 pub enum GifCmd {
     /// Searches; an empty query shows the trending GIFs.
     Search(String),
+    /// Lists the stickers matching a query (popular ones when empty).
+    Stickers(String),
     /// Sends the result at this index.
     Pick(usize),
 }
@@ -20,6 +24,7 @@ impl GifCmd {
     pub fn parse(name: &str, arg: &str) -> Option<GifCmd> {
         Some(match name {
             "search" => GifCmd::Search(arg.to_string()),
+            "stickers" => GifCmd::Stickers(arg.to_string()),
             "pick" => GifCmd::Pick(arg.parse().ok()?),
             _ => return None,
         })
@@ -33,11 +38,16 @@ pub struct GifRow {
     pub preview: Option<Pixels>,
 }
 
+/// Most stickers the tab shows at once.
+const STICKER_LIMIT: usize = 48;
+
 #[derive(Default)]
 struct State {
     /// Bumped by every search; a slower earlier answer is dropped.
     seq: u64,
     results: Vec<Gif>,
+    /// The Stickers tab's results; when set, the grid shows these instead of `results`.
+    stickers: Option<Vec<&'static Sticker>>,
     previews: Vec<Option<Pixels>>,
 }
 
@@ -50,11 +60,15 @@ fn with<T>(f: impl FnOnce(&mut State) -> T) -> T {
 
 fn rows() -> Vec<GifRow> {
     with(|s| {
-        s.results
-            .iter()
+        let titles: Vec<String> = match &s.stickers {
+            Some(found) => found.iter().map(|st| st.name.to_string()).collect(),
+            None => s.results.iter().map(|g| g.title.clone()).collect(),
+        };
+        titles
+            .into_iter()
             .zip(s.previews.iter())
-            .map(|(g, p)| GifRow {
-                title: g.title.clone(),
+            .map(|(title, p)| GifRow {
+                title,
                 preview: p.clone(),
             })
             .collect()
@@ -73,6 +87,10 @@ impl Engine {
     pub(super) async fn gif_cmd(self: &Arc<Self>, cmd: GifCmd) -> anyhow::Result<()> {
         match cmd {
             GifCmd::Search(q) => self.gif_search(q).await,
+            GifCmd::Stickers(q) => {
+                self.sticker_search(&q);
+                Ok(())
+            }
             GifCmd::Pick(i) => self.gif_pick(i).await,
         }
     }
@@ -80,6 +98,10 @@ impl Engine {
     async fn gif_search(self: &Arc<Self>, q: String) -> anyhow::Result<()> {
         let seq = with(|s| {
             s.seq += 1;
+            if s.stickers.take().is_some() {
+                s.results.clear();
+                s.previews.clear();
+            }
             s.seq
         });
         if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
@@ -101,6 +123,7 @@ impl Engine {
             }
             s.previews = vec![None; found.len()];
             s.results = found;
+            s.stickers = None;
             true
         });
         if !fresh {
@@ -112,7 +135,33 @@ impl Engine {
             ""
         };
         self.ui.gifs(rows(), status.into());
-        // Previews arrive one by one; each redraws the grid.
+        self.load_previews(seq, urls);
+        Ok(())
+    }
+
+    /// The Stickers tab: the catalogue matches, their previews from the CDN as they arrive.
+    fn sticker_search(self: &Arc<Self>, q: &str) {
+        let found = stickers::find(q, STICKER_LIMIT);
+        let urls: Vec<String> = found.iter().map(|s| s.url()).collect();
+        let seq = with(|s| {
+            s.seq += 1;
+            s.previews = vec![None; found.len()];
+            s.stickers = Some(found);
+            s.seq
+        });
+        let status = if urls.is_empty() {
+            "No stickers found."
+        } else {
+            ""
+        };
+        self.ui.gifs(rows(), status.into());
+        if !self.offline.load(std::sync::atomic::Ordering::Relaxed) {
+            self.load_previews(seq, urls);
+        }
+    }
+
+    /// Downloads the grid's previews; each one redraws the grid as it arrives.
+    fn load_previews(self: &Arc<Self>, seq: u64, urls: Vec<String>) {
         for (i, url) in urls.into_iter().enumerate() {
             let e = self.clone();
             tokio::spawn(async move {
@@ -137,11 +186,14 @@ impl Engine {
                 }
             });
         }
-        Ok(())
     }
 
     async fn gif_pick(self: &Arc<Self>, i: usize) -> anyhow::Result<()> {
-        let Some(gif) = with(|s| s.results.get(i).cloned()) else {
+        let html = with(|s| match &s.stickers {
+            Some(found) => found.get(i).map(|st| stickers::sticker_html(st)),
+            None => s.results.get(i).map(gif_html),
+        });
+        let Some(html) = html else {
             return Ok(());
         };
         let (conv, root) = {
@@ -154,7 +206,7 @@ impl Engine {
         let item = self.new_outbox_item(
             target(&conv, root.as_deref()),
             OutboxKind::Text,
-            gif_html(&gif),
+            html,
             None,
             None,
             None,
@@ -176,6 +228,10 @@ mod tests {
             Some(GifCmd::Search("cats".into()))
         );
         assert_eq!(GifCmd::parse("pick", "3"), Some(GifCmd::Pick(3)));
+        assert_eq!(
+            GifCmd::parse("stickers", "cat"),
+            Some(GifCmd::Stickers("cat".into()))
+        );
         assert_eq!(GifCmd::parse("pick", "x"), None);
     }
 

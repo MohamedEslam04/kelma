@@ -482,8 +482,8 @@ fn attach_cloud_files_opens_the_picker_with_recent_and_shared_and_attaches_the_p
             run(Cmd::Drive(c));
         }
     });
-    // The composer's "…" menu has it.
-    click(&toolbar(&h.app)[3]);
+    // The composer's Attach menu has it.
+    click(&toolbar(&h.app)[1]);
     click(&first(&h.app, "Attach cloud files"));
     assert_eq!(*log.borrow(), vec!["pick-begin attach"]);
     let s = h.app.global::<DriveStore>();

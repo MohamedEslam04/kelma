@@ -26,6 +26,7 @@ mod call_direct;
 mod call_waiting;
 mod channels;
 mod composer_apps;
+mod composer_gaps;
 mod drive;
 mod engage;
 mod find;
@@ -698,7 +699,7 @@ fn send_button_sends_draft() {
     assert_eq!(*sent.borrow(), vec!["from button".to_string()]);
 }
 
-/// Composer toolbar buttons below the input, left to right: emoji, image, file, send.
+/// Composer toolbar buttons below the input, left to right: emoji, attach, more, GIF, apps, send.
 fn toolbar(app: &AppWindow) -> Vec<ElementHandle> {
     let input_y = composer(app).absolute_position().y;
     let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "IconButton::touch")
@@ -708,22 +709,26 @@ fn toolbar(app: &AppWindow) -> Vec<ElementHandle> {
     v
 }
 
+/// One Attach button, like Teams: its menu has "Attach cloud files" and "Upload from this device".
 #[test]
-fn toolbar_emoji_picker_and_attach_buttons() {
+fn toolbar_attach_menu_offers_cloud_files_and_this_device() {
     let app = app_with_messages(vec![]);
     let log = Log::default();
     {
         let l = log.clone();
-        app.on_attach_image(move || l.borrow_mut().push("image".into()));
-        let l = log.clone();
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 7, "emoji, image, file, more, GIF, apps, send");
+    assert_eq!(tb.len(), 6, "emoji, attach, more, GIF, apps, send");
 
     tb[1].mock_single_click(PointerEventButton::Left);
-    tb[2].mock_single_click(PointerEventButton::Left);
-    assert_eq!(*log.borrow(), vec!["image", "file"]);
+    assert_eq!(find_label(&app, "Attach cloud files").len(), 1);
+    find_label(&app, "Upload from this device")[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), vec!["file"]);
+    assert!(
+        find_label(&app, "Upload from this device").is_empty(),
+        "the menu closes"
+    );
 }
 
 /// Buttons in the strip directly above the composer input (reply or edit preview).
@@ -1201,7 +1206,7 @@ fn composer_more_menu_switches_the_enter_behavior() {
         let l = log.clone();
         app.on_set_enter_sends(move |on| l.borrow_mut().push(format!("enter-sends {on}")));
     }
-    let more = &toolbar(&app)[3];
+    let more = &toolbar(&app)[2];
     assert_eq!(
         ElementHandle::find_by_element_id(&app, "Composer::enter-opt").count(),
         0

@@ -121,6 +121,16 @@ Checks: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
     returned 27 results). UI test `the_gif_button_shows_trending_gifs_and_a_pick_is_sent`. Reactions Teams sends by
     their Skype name (`loudlycrying`, `cwl`, `yes`, …) now show as emoji (`markdown::reaction_emoji`, test
     `named_teams_reactions_become_emoji`). Stickers stay out.
+  - **Evidence (composer gaps, 2026-11-20).** Spell check: misspelled words get a red underline once typing pauses
+    (500 ms) and a right click offers up to five suggestions and "Add to dictionary" (`src/spell.rs`,
+    `ui/spelling.slint`). Slint's TextInput has no spell-check hook, so the words are checked in Rust (`spellbook`,
+    the system's Hunspell English and Arabic dictionaries, none installed means nothing is flagged) and each word's
+    position comes from a hidden, disabled copy of the input whose cursor is moved to the word's ends
+    (`cursor-position-changed`). Settings › General › Writing › "Check spelling" turns it off. Added words are kept in
+    `spelling-words.txt` in the config dir. The composer has one Attach button with "Attach cloud files" and "Upload
+    from this device"; the "+" menu has "Schedule a meeting" (the calendar form with the chat's members) and "Meet now"
+    in chats; the GIF picker has a Stickers tab (Teams' sticker catalogue, see docs/protocol.md); the @ picker lists a
+    channel's team tags. Tests: `cargo test -p kelma --bin kelma spell composer_gaps stickers`.
 ### 5.6 Unread handling
 - [x] Impact 4, effort 2. Seen: settings › Chats ("When I open a chat, take me to"), chat menu, shortcuts.
   - **What.**

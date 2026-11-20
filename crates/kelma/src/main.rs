@@ -14,6 +14,7 @@ mod media_data;
 mod mention;
 mod reactions;
 mod shortcuts;
+mod spell;
 mod tray_wiring;
 mod ui;
 #[cfg(test)]

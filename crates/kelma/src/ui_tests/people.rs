@@ -209,6 +209,67 @@ fn a_picked_mention_goes_through_the_outbox_with_its_span_and_property() {
     assert_eq!(ms[0].item_id, 0);
 }
 
+/// In a channel the picker offers the team's tags too; a picked tag is sent like Teams sends it
+/// (`mri` `tag:<id>`, `mentionType` `tag`).
+#[test]
+fn a_channel_offers_the_team_tags_and_sends_a_tag_mention() {
+    const TECH: &str = "19:tech@thread.tacv2";
+    let h = Harness::new();
+    wire(&h);
+    let team = h.engine.test_store(|s| {
+        s.conversation(TECH)
+            .unwrap()
+            .and_then(|r| r.team_id)
+            .expect("the demo channel has a team")
+    });
+    let tag = |id: &str, name: &str, members: u32| teams_proto::tags::Tag {
+        id: id.into(),
+        name: name.into(),
+        description: String::new(),
+        member_count: members,
+        member_ids: vec![],
+        is_member: false,
+        version: 1,
+    };
+    h.engine.test_set_tags(
+        &team,
+        vec![tag("t1", "Designers", 3), tag("t2", "On call", 1)],
+    );
+    h.select(TECH);
+    // The channel's composer opens with "Post in channel".
+    if let Some(post) = find_label(&h.app, "Post in channel").into_iter().next() {
+        post.mock_single_click(PointerEventButton::Left);
+    }
+    h.type_in_composer("@des");
+    let items: Vec<(String, String)> = ps(&h.app)
+        .get_mention_items()
+        .iter()
+        .map(|p| (p.name.to_string(), p.subtitle.to_string()))
+        .collect();
+    assert_eq!(
+        items,
+        vec![("Designers".to_string(), "Tag · 3 people".to_string())]
+    );
+    enter(&h.app);
+    assert_eq!(h.app.get_draft(), "@Designers ");
+    type_text(&h.app, "please review");
+    enter(&h.app);
+
+    let queued = h.engine.test_store(|s| s.outbox_for(TECH).unwrap());
+    assert_eq!(queued.len(), 1);
+    assert!(
+        queued[0].html.contains(">Designers</span>"),
+        "{}",
+        queued[0].html
+    );
+    let ms = parse_mentions(Some(
+        &json!({"mentions": queued[0].mentions.clone().unwrap()}),
+    ));
+    assert_eq!(ms.len(), 1);
+    assert_eq!(ms[0].mri, "tag:t1");
+    assert_eq!(ms[0].kind, MentionKind::Tag);
+}
+
 #[test]
 fn text_without_a_picked_mention_carries_no_mentions_property() {
     let h = Harness::new();
@@ -1009,7 +1070,7 @@ fn the_read_receipts_setting_turns_the_marks_off_and_on() {
 fn the_composer_menu_has_the_read_receipts_switch() {
     let app = app_with_messages(vec![]);
     let log = record(&app);
-    click(&toolbar(&app)[3]); // the "…" button
+    click(&toolbar(&app)[2]); // the "…" button
     let on = find_label(&app, "Read receipts");
     assert!(!on.is_empty());
     click(&on[0]);

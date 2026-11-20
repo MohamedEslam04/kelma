@@ -42,6 +42,7 @@ import { ComposerAppsOverlay } from "composer_apps.slint";
 export { Theme } from "theme.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, Msg, ChannelRow, TeamRow } from "types.slint";
 export { EmojiApi } from "composer.slint";
+export { SpellApi, SpellWord } from "spelling.slint";
 export { FormatApi, FormatEdit } from "composer_format.slint";
 export { ShortcutApi } from "shortcuts.slint";
 export { MentionApi } from "mention_picker.slint";
@@ -1358,6 +1359,13 @@ export component AppWindow inherits Window {
     if root.login-state == "ready": ComposerAppsOverlay {
         width: root.width;
         height: root.height;
+        meetings: root.current-id != "" && !root.current-is-channel && root.thread-root == "";
+        schedule-meeting => { root.schedule-meeting(root.current-id); }
+        meet-now => {
+            root.view = "calendar";
+            CalStore.ask("meet-now", "Meet now", "Starts a Teams meeting right away and gives you the link.", "Meeting title (optional)", "", "", "Start meeting");
+            CalStore.prompt-text1 = PeopleStore.header-group ? root.current-title : "";
+        }
     }
     // 1:1 calls: the ringing screen of an outgoing call and the incoming-call toast, on top.
     if root.login-state == "ready" && DirectCallStore.outgoing-open: CallOutgoing { z: 80; width: root.width; height: root.height; }
