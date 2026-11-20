@@ -32,8 +32,12 @@ export component MessageRow inherits TouchArea {
     callback discard-send();
     // Click on the avatar or the sender's name: open the profile card (sender MRI).
     callback profile(string);
-    // The pointer rested on the photo or name (opens the card as a hover card).
-    callback profile-hover(string);
+    // The same with the clicked photo or name in window coordinates, for a card next to it.
+    callback profile-at(string, length, length, length, length);
+    profile-at(id, x, y, w, h) => { root.profile(id); }
+    // The pointer came onto (true) or left (false) the photo or name, with its rectangle in
+    // window coordinates: resting on it opens the hover card.
+    callback photo-hover(string, bool, length, length, length, length);
     height: content.preferred-height;
 
     // Right click opens the same menu as the "…" button, where the pointer is.
@@ -102,19 +106,22 @@ export component MessageRow inherits TouchArea {
                     tone: root.m.color;
                     img: root.m.avatar;
                     has-img: root.m.has-avatar;
+                    presence: root.m.presence;
                     size: 32px;
                     avatar-touch := TouchArea {
                         mouse-cursor: pointer;
                         accessible-role: button;
                         accessible-label: @tr("Open profile of {}", root.m.sender);
                         accessible-action-default => { root.profile(root.m.sender-id); }
-                        clicked => { root.profile(root.m.sender-id); }
-                    }
-                    // Resting on the photo opens the card, as in Teams.
-                    Timer {
-                        interval: 600ms;
-                        running: avatar-touch.has-hover;
-                        triggered => { root.profile-hover(root.m.sender-id); }
+                        clicked => { root.profile-at(root.m.sender-id, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
+                        // Resting on the photo opens the card, as in Teams.
+                        // A list row can be reused for another message while the pointer
+                        // rests on it: the leave names the person the pointer came to.
+                        property <string> hovered: "";
+                        changed has-hover => {
+                            if self.has-hover { self.hovered = root.m.sender-id; }
+                            root.photo-hover(self.hovered, self.has-hover, self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+                        }
                     }
                 }
             }
@@ -145,12 +152,12 @@ export component MessageRow inherits TouchArea {
                                 accessible-role: button;
                                 accessible-label: @tr("Open profile of {}", root.m.sender);
                                 accessible-action-default => { root.profile(root.m.sender-id); }
-                                clicked => { root.profile(root.m.sender-id); }
-                            }
-                            Timer {
-                                interval: 600ms;
-                                running: sender-touch.has-hover;
-                                triggered => { root.profile-hover(root.m.sender-id); }
+                                clicked => { root.profile-at(root.m.sender-id, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
+                                property <string> hovered: "";
+                                changed has-hover => {
+                                    if self.has-hover { self.hovered = root.m.sender-id; }
+                                    root.photo-hover(self.hovered, self.has-hover, self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+                                }
                             }
                         }
                         Text { text: root.m.time; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; }

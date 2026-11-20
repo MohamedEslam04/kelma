@@ -66,6 +66,49 @@ pub fn parse_loki_person(v: &Value) -> LokiDetails {
     out
 }
 
+/// Directory details Graph keeps for a person: phones, office, and their manager.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DirectoryDetails {
+    pub job_title: Option<String>,
+    pub department: Option<String>,
+    pub company: Option<String>,
+    pub office_location: Option<String>,
+    pub work_phone: Option<String>,
+    pub mobile_phone: Option<String>,
+    /// The manager's display name.
+    pub manager: Option<String>,
+}
+
+/// `GET /v1.0/users/{oid}` with the fields the card shows.
+pub fn directory_user_url(oid: &str) -> String {
+    crate::graph::graph_url(
+        &["users", oid],
+        "$select=jobTitle,department,companyName,officeLocation,businessPhones,mobilePhone",
+    )
+}
+
+/// `GET /v1.0/users/{oid}/manager`.
+pub fn directory_manager_url(oid: &str) -> String {
+    crate::graph::graph_url(&["users", oid, "manager"], "$select=displayName")
+}
+
+/// Parses a Graph `user` (and, when given, its manager).
+pub fn parse_directory_user(user: &Value, manager: Option<&Value>) -> DirectoryDetails {
+    use crate::graph::str_of;
+    DirectoryDetails {
+        job_title: str_of(user, "jobTitle"),
+        department: str_of(user, "department"),
+        company: str_of(user, "companyName"),
+        office_location: str_of(user, "officeLocation"),
+        work_phone: user["businessPhones"]
+            .as_array()
+            .and_then(|a| a.iter().filter_map(Value::as_str).find(|s| !s.is_empty()))
+            .map(str::to_owned),
+        mobile_phone: str_of(user, "mobilePhone"),
+        manager: manager.and_then(|m| str_of(m, "displayName")),
+    }
+}
+
 /// Loki host prefixes to try for a chat-service URL, the user's own region first.
 pub fn loki_prefixes(chat_service: &str) -> Vec<&'static str> {
     let host = url::Url::parse(chat_service)
@@ -88,6 +131,31 @@ pub fn loki_prefixes(chat_service: &str) -> Vec<&'static str> {
 }
 
 impl Client {
+    /// A person's directory entry and their manager, read from Graph (read only; UNVERIFIED live,
+    /// see docs/protocol.md). A person without a manager (or one Graph will not show) has none.
+    pub async fn directory_details(&self, mri: &str) -> Result<DirectoryDetails> {
+        let oid = crate::people::oid_of_mri(mri)
+            .ok_or_else(|| Error::Protocol("not a directory person".into()))?;
+        let (user_url, manager_url) = (directory_user_url(oid), directory_manager_url(oid));
+        let (user, manager) = tokio::join!(
+            self.json_as(
+                "directory user",
+                &Audience::Graph,
+                Method::GET,
+                &user_url,
+                None
+            ),
+            self.json_as(
+                "directory manager",
+                &Audience::Graph,
+                Method::GET,
+                &manager_url,
+                None
+            ),
+        );
+        Ok(parse_directory_user(&user?, manager.ok().as_ref()))
+    }
+
     /// Name, email and (when Delve has them) job title, department and office of one person.
     pub async fn profile_card(&self, mri: &str) -> Result<ProfileCard> {
         let p = self
@@ -175,6 +243,31 @@ mod tests {
         let v1 = json!({"workDetails": [{"value": {"title": "Lead"}}]});
         assert_eq!(parse_loki_person(&v1).job_title.as_deref(), Some("Lead"));
         assert_eq!(parse_loki_person(&json!(null)), LokiDetails::default());
+    }
+
+    #[test]
+    fn directory_entry_and_manager() {
+        assert_eq!(
+            directory_user_url("00000000-0000-0000-0000-000000000003"),
+            "https://graph.microsoft.com/v1.0/users/00000000-0000-0000-0000-000000000003?$select=jobTitle,department,companyName,officeLocation,businessPhones,mobilePhone"
+        );
+        assert_eq!(
+            directory_manager_url("abc"),
+            "https://graph.microsoft.com/v1.0/users/abc/manager?$select=displayName"
+        );
+        let user = json!({"jobTitle": "Engineer", "department": "", "officeLocation": "Building 4",
+            "businessPhones": ["", "+1 555 0100"], "mobilePhone": null});
+        let d = parse_directory_user(&user, Some(&json!({"displayName": "Lead Person"})));
+        assert_eq!(d.job_title.as_deref(), Some("Engineer"));
+        assert_eq!(d.department, None);
+        assert_eq!(d.office_location.as_deref(), Some("Building 4"));
+        assert_eq!(d.work_phone.as_deref(), Some("+1 555 0100"));
+        assert_eq!(d.mobile_phone, None);
+        assert_eq!(d.manager.as_deref(), Some("Lead Person"));
+        assert_eq!(
+            parse_directory_user(&json!({}), None),
+            DirectoryDetails::default()
+        );
     }
 
     #[test]

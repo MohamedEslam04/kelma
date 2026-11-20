@@ -16,7 +16,7 @@ import { LoginView } from "login.slint";
 import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
 import { CallsPage, CallsPageStore } from "calls_page.slint";
 import { ActivityView } from "activity.slint";
-import { PeopleStore } from "people.slint";
+import { PeopleStore, PersonHover } from "people.slint";
 import { NewChatPane } from "new_chat.slint";
 import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
 import { PinnedBanner } from "pinned_banner.slint";
@@ -141,6 +141,9 @@ export component AppWindow inherits Window {
     in property <color> current-color: Theme.accent-strong;
     in property <image> current-avatar;
     in property <bool> current-has-avatar;
+    // The other person of an open 1:1 chat ("" otherwise) and their availability.
+    in property <string> current-person;
+    in property <string> current-presence;
     in property <bool> current-is-channel;
     // The open chat is muted ("More chat options" offers Unmute).
     in property <bool> current-muted;
@@ -522,7 +525,10 @@ export component AppWindow inherits Window {
                     clicked => { SettingsStore.command("focus", "0"); }
                 }
                 MoreButton { y: 9px; }
-                Avatar { initials: root.me-initials; img: SettingsStore.me-photo; has-img: SettingsStore.me-has-photo; size: 30px; y: 9px; TouchArea { accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } mouse-cursor: pointer; clicked => { SettingsStore.open-profile(); } } }
+                Avatar { initials: root.me-initials; img: SettingsStore.me-photo; has-img: SettingsStore.me-has-photo; presence: SettingsStore.me-presence; size: 30px; y: 9px;
+                    // A rest shows our own card, as in Teams; a click opens the profile menu.
+                    me-photo := PersonHover { person: PeopleStore.me; click-opens: false; activated => { SettingsStore.open-profile(); } accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } }
+                }
             }
         }
 
@@ -772,7 +778,15 @@ export component AppWindow inherits Window {
                                 tone: root.current-color;
                                 img: root.current-avatar;
                                 has-img: root.current-has-avatar;
+                                presence: root.current-person != "" ? root.current-presence : "";
                                 size: 36px;
+                                // A 1:1 chat's photo opens the person's card: on a rest, or a click.
+                                if root.current-person != "": PersonHover {
+                                    person: root.current-person;
+                                    accessible-role: button;
+                                    accessible-label: @tr("Open profile of {}", root.current-title);
+                                    accessible-action-default => { PeopleStore.open-card(root.current-person, self.absolute-position.x, self.absolute-position.y, self.width, self.height, false); }
+                                }
                             }
                             if !root.renaming || root.thread-root != "": Text {
                                 text: root.thread-root != "" ? @tr("Thread") : root.current-title;
@@ -939,6 +953,30 @@ export component AppWindow inherits Window {
                     // Messages
                     Rectangle {
                         vertical-stretch: 1;
+                        // Sees every pointer move over the list and passes it on. The list rebuilds
+                        // its rows when it jumps (a new message scrolls it down), and a photo
+                        // rebuilt under the pointer never hears that the pointer left: this tells
+                        // the hover card instead.
+                        msg-pointer := TouchArea {
+                            // The hovered photo is in the list (its middle is inside the list) and
+                            // the pointer is no longer on it.
+                            function check() {
+                                if PeopleStore.hover-id != ""
+                                    && PeopleStore.hover-x + PeopleStore.hover-w / 2 > msg-pointer.absolute-position.x
+                                    && PeopleStore.hover-x + PeopleStore.hover-w / 2 < msg-pointer.absolute-position.x + msg-pointer.width
+                                    && PeopleStore.hover-y + PeopleStore.hover-h / 2 > msg-pointer.absolute-position.y
+                                    && PeopleStore.hover-y + PeopleStore.hover-h / 2 < msg-pointer.absolute-position.y + msg-pointer.height
+                                    && (!msg-pointer.has-hover
+                                        || msg-pointer.absolute-position.x + msg-pointer.mouse-x < PeopleStore.hover-x
+                                        || msg-pointer.absolute-position.x + msg-pointer.mouse-x > PeopleStore.hover-x + PeopleStore.hover-w
+                                        || msg-pointer.absolute-position.y + msg-pointer.mouse-y < PeopleStore.hover-y
+                                        || msg-pointer.absolute-position.y + msg-pointer.mouse-y > PeopleStore.hover-y + PeopleStore.hover-h) {
+                                    PeopleStore.hover-leave(PeopleStore.hover-id);
+                                }
+                            }
+                            changed mouse-x => { msg-pointer.check(); }
+                            changed mouse-y => { msg-pointer.check(); }
+                            changed has-hover => { msg-pointer.check(); }
                         msg-list := ListView {
                             visible: !root.posts-mode;
                             property <int> tick: root.scroll-tick;
@@ -1019,16 +1057,20 @@ export component AppWindow inherits Window {
                                     profile(id) => {
                                         if id != "" {
                                             PeopleStore.card-by-hover = false;
+                                            PeopleStore.anchor-w = 0;
                                             PeopleStore.command("profile", id);
                                         }
                                     }
-                                    profile-hover(id) => {
-                                        if id != "" && !PeopleStore.card-open {
-                                            PeopleStore.card-by-hover = true;
-                                            PeopleStore.command("profile", id);
+                                    profile-at(id, x, y, w, h) => { PeopleStore.open-card(id, x, y, w, h, false); }
+                                    photo-hover(id, on, x, y, w, h) => {
+                                        if on {
+                                            PeopleStore.hover-enter(id, x, y, w, h);
+                                        } else {
+                                            PeopleStore.hover-leave(id);
                                         }
                                     }
                                 }
+                        }
                         }
                         if root.posts-mode: ChannelPosts {
                             width: parent.width;
@@ -1438,19 +1480,54 @@ export component AppWindow inherits Window {
         }
     }
 
+    // Resting on a photo opens its person's card next to it, as in Teams. The timer lives here,
+    // not in the list row, so a row rebuilt by a new message does not lose the rest.
+    Timer {
+        interval: 600ms;
+        running: root.login-state == "ready" && PeopleStore.hover-id != "" && PeopleStore.hover-armed;
+        triggered => {
+            PeopleStore.hover-armed = false;
+            if !PeopleStore.card-open || (PeopleStore.card-by-hover && PeopleStore.card.id != PeopleStore.hover-id) {
+                PeopleStore.open-card(PeopleStore.hover-id, PeopleStore.hover-x, PeopleStore.hover-y, PeopleStore.hover-w, PeopleStore.hover-h, true);
+            }
+        }
+    }
+    // A card opened from somewhere else (no photo) opens in the middle.
+    property <bool> card-shown: PeopleStore.card-open;
+    changed card-shown => {
+        if !self.card-shown { PeopleStore.anchor-w = 0; }
+    }
+    property <string> hover-chat: root.current-id;
+    changed hover-chat => {
+        PeopleStore.hover-id = "";
+        PeopleStore.hover-armed = false;
+    }
+
     if root.login-state == "ready" && PeopleStore.card-open: Rectangle {
         width: root.width;
         height: root.height;
-        TouchArea {
+        // Above the call window too (its roster photos open cards).
+        z: 50;
+        // A clicked card closes on a click anywhere else; a hover card when the pointer leaves
+        // it and its photo (so the photo under it keeps its hover).
+        if !PeopleStore.card-by-hover: TouchArea {
             pointer-event(e) => {
                 if e.kind == PointerEventKind.down {
                     PeopleStore.card-open = false;
                 }
             }
         }
-        ProfileCard {
-            x: (root.width - self.width) / 2;
-            y: max(8px, min(160px, root.height - self.height - 8px));
+        profile-card := ProfileCard {
+            // Next to the photo it belongs to: on its right (on its left when that does not
+            // fit), top-aligned with it or, near the bottom, bottom-aligned (flipped above),
+            // and always inside the window. Without a photo, in the middle as before.
+            property <bool> anchored: PeopleStore.anchor-w > 0;
+            property <length> right-x: PeopleStore.anchor-x + PeopleStore.anchor-w + 8px;
+            property <length> side-x: self.right-x + self.width <= root.width - 8px ? self.right-x : PeopleStore.anchor-x - self.width - 8px;
+            property <length> side-y: PeopleStore.anchor-y + self.height <= root.height - 8px ? PeopleStore.anchor-y : PeopleStore.anchor-y + PeopleStore.anchor-h - self.height;
+            x: self.anchored ? max(8px, min(self.side-x, root.width - self.width - 8px)) : (root.width - self.width) / 2;
+            y: self.anchored ? max(8px, min(self.side-y, root.height - self.height - 8px)) : max(8px, min(160px, root.height - self.height - 8px));
+            anchor-hovered: PeopleStore.hover-id != "" && PeopleStore.hover-id == PeopleStore.card.id;
             person: PeopleStore.card;
             loading: PeopleStore.card-loading;
             email: PeopleStore.card-email;
@@ -1460,6 +1537,12 @@ export component AppWindow inherits Window {
             presence: PeopleStore.card-presence;
             presence-label: PeopleStore.card-presence-label;
             work-location: PeopleStore.card-work-location;
+            limit: root.height - 16px;
+            note: PeopleStore.card-note;
+            ooo: PeopleStore.card-ooo;
+            phone: PeopleStore.card-phone;
+            mobile: PeopleStore.card-mobile;
+            manager: PeopleStore.card-manager;
             hover-mode: PeopleStore.card-by-hover;
             quick-message(t) => {
                 PeopleStore.card-open = false;

@@ -124,6 +124,8 @@ pub(super) struct State {
     card_email: Option<String>,
     /// The person the profile card shows.
     card_mri: Option<String>,
+    /// What profile cards learned, by person: a second card for them shows it at once.
+    profiles: HashMap<String, (CardFacts, std::time::Instant)>,
     pins: HashMap<String, Vec<PinnedData>>,
     horizons: HashMap<String, Vec<Horizon>>,
     /// `readReceiptsEnabled` of the account, once known.
@@ -132,6 +134,66 @@ pub(super) struct State {
     jump: Option<String>,
     /// The row the last jump landed on, highlighted for a moment.
     flash: Option<String>,
+}
+
+/// A person's profile details as a card last read them.
+#[derive(Clone, Default)]
+struct CardFacts {
+    name: String,
+    subtitle: String,
+    email: String,
+    work: String,
+    location: String,
+    phone: String,
+    mobile: String,
+    manager: String,
+}
+
+/// Details older than this are read again (the card shows the old ones meanwhile).
+const CARD_FRESH: Duration = Duration::from_secs(15 * 60);
+
+/// Puts what a card read about a person on the card (an empty value keeps what it had).
+fn fill_facts(card: &mut CardData, f: CardFacts) {
+    if !f.name.is_empty() {
+        card.person.name = f.name;
+    }
+    card.person.subtitle = f.subtitle;
+    if !f.email.is_empty() {
+        card.email = f.email;
+    }
+    card.work = f.work;
+    card.location = f.location;
+    card.phone = f.phone;
+    card.mobile = f.mobile;
+    card.manager = f.manager;
+}
+
+/// The card's details from the Delve card and the directory entry: each field from the first
+/// source that has it.
+fn card_facts(
+    card: Option<teams_proto::card::ProfileCard>,
+    dir: Option<teams_proto::card::DirectoryDetails>,
+) -> CardFacts {
+    let (c, d) = (card.unwrap_or_default(), dir.unwrap_or_default());
+    let pick = |a: Option<String>, b: Option<String>| {
+        a.filter(|s| !s.is_empty()).or(b).unwrap_or_default()
+    };
+    let job = pick(c.job_title, d.job_title);
+    let dept = pick(c.department, d.department);
+    CardFacts {
+        name: c.display_name,
+        subtitle: [job, dept]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · "),
+        email: c.email.unwrap_or_default(),
+        work: pick(c.company, d.company),
+        location: pick(c.office_location, d.office_location),
+        phone: d.work_phone.unwrap_or_default(),
+        mobile: d.mobile_phone.unwrap_or_default(),
+        manager: d.manager.unwrap_or_default(),
+    }
 }
 
 /// Where a New chat or "Chat" button leads.
@@ -1169,6 +1231,9 @@ impl Engine {
             .or_else(|| self.avatar(mri))
     }
 
+    /// Opens the profile card: at once with everything already known (the stored name, email and
+    /// photo, the last presence, the details an earlier card read), then fills in the rest. The
+    /// details and the presence are read together.
     async fn profile(self: &Arc<Self>, mri: String) -> anyhow::Result<()> {
         let known = self.store.lock().unwrap().user(&mri)?;
         let name = if mri == self.me {
@@ -1180,6 +1245,8 @@ impl Engine {
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| "Someone".into())
         };
+        let cached = self.people.lock().unwrap().profiles.get(&mri).cloned();
+        let presence = super::people_presence::want(&mri);
         let mut card = CardData {
             person: PersonData {
                 id: mri.clone(),
@@ -1189,51 +1256,102 @@ impl Engine {
                 kind: "person",
                 presence: String::new(),
             },
-            loading: true,
+            loading: cached.is_none(),
             email: known.and_then(|u| u.email).unwrap_or_default(),
+            presence_label: super::people_presence::label(&presence).into(),
+            presence,
             ..Default::default()
         };
+        if let Some((f, _)) = &cached {
+            fill_facts(&mut card, f.clone());
+        }
         {
             let mut p = self.people.lock().unwrap();
             p.card_email = (!card.email.is_empty()).then(|| card.email.clone());
             p.card_mri = Some(mri.clone());
         }
         self.ui.card(true, card.clone());
-        let fetched = self.client.profile_card(&mri).await;
-        card.loading = false;
-        match fetched {
-            Ok(c) => {
-                if !c.display_name.is_empty() {
-                    card.person.name = c.display_name;
-                }
-                card.person.subtitle = [c.job_title, c.department]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                card.email = c.email.unwrap_or(card.email);
-                card.work = c.company.unwrap_or_default();
-                card.location = c.office_location.unwrap_or_default();
-                card.person.avatar = self.card_photo(&mri);
-            }
-            Err(err) => tracing::debug!(%err, "profile card"),
+        if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
+            card.loading = false;
+            self.ui.card_details(card);
+            return Ok(());
         }
-        match self.client.get_presence(std::slice::from_ref(&mri)).await {
+        // Details an earlier card read recently are not read again; the presence always is.
+        let stale = cached.is_none_or(|(_, at)| at.elapsed() > CARD_FRESH);
+        let details = async {
+            if stale {
+                Some(self.client.profile_card(&mri).await)
+            } else {
+                None
+            }
+        };
+        let directory = async {
+            if stale {
+                Some(self.client.directory_details(&mri).await)
+            } else {
+                None
+            }
+        };
+        let (fetched, dir, presence) = tokio::join!(
+            details,
+            directory,
+            self.client.get_presence(std::slice::from_ref(&mri))
+        );
+        card.loading = false;
+        let fetched = match fetched {
+            Some(Ok(c)) => Some(c),
+            Some(Err(err)) => {
+                tracing::debug!(%err, "profile card");
+                None
+            }
+            None => None,
+        };
+        let dir = match dir {
+            Some(Ok(d)) => Some(d),
+            Some(Err(err)) => {
+                tracing::debug!(%err, "profile card directory");
+                None
+            }
+            None => None,
+        };
+        if fetched.is_some() || dir.is_some() {
+            let facts = card_facts(fetched, dir);
+            self.people
+                .lock()
+                .unwrap()
+                .profiles
+                .insert(mri.clone(), (facts.clone(), std::time::Instant::now()));
+            fill_facts(&mut card, facts);
+            card.person.avatar = self.card_photo(&mri);
+        }
+        match presence {
             Ok(found) => {
                 if let Some(p) = found.into_iter().next() {
-                    super::people_presence::set(&mri, &p.availability);
+                    self.apply_presence(&mri, &p.availability);
                     card.presence_label = super::people_presence::label(&p.availability).into();
                     card.presence = p.availability;
                     card.work_location =
                         super::people_presence::work_location_label(p.work_location.as_deref())
                             .into();
+                    card.note = p.note.map(|n| n.text).unwrap_or_default();
+                    card.ooo = if p.ooo {
+                        "Out of office".into()
+                    } else {
+                        String::new()
+                    };
                 }
             }
             Err(err) => tracing::debug!(%err, "profile card presence"),
         }
-        self.people.lock().unwrap().card_email =
-            (!card.email.is_empty()).then(|| card.email.clone());
-        self.ui.card(true, card);
+        {
+            let mut p = self.people.lock().unwrap();
+            if p.card_mri.as_deref() != Some(mri.as_str()) {
+                // Another card opened meanwhile.
+                return Ok(());
+            }
+            p.card_email = (!card.email.is_empty()).then(|| card.email.clone());
+        }
+        self.ui.card_details(card);
         Ok(())
     }
 
@@ -1569,6 +1687,22 @@ impl Engine {
     #[cfg(test)]
     pub(crate) fn test_set_tags(&self, team: &str, tags: Vec<Tag>) {
         self.people.lock().unwrap().tags.insert(team.into(), tags);
+    }
+
+    /// Remembers a person's card details as if a card had read them.
+    #[cfg(test)]
+    pub(crate) fn test_cache_profile(&self, mri: &str, subtitle: &str, work: &str, phone: &str) {
+        let facts = CardFacts {
+            subtitle: subtitle.into(),
+            work: work.into(),
+            phone: phone.into(),
+            ..CardFacts::default()
+        };
+        self.people
+            .lock()
+            .unwrap()
+            .profiles
+            .insert(mri.to_string(), (facts, std::time::Instant::now()));
     }
 
     #[cfg(test)]

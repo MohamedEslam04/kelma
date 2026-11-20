@@ -127,6 +127,8 @@ pub struct MsgData {
     pub new_above: bool,
     /// MRI of the sender (opens the profile card).
     pub sender_id: String,
+    /// The sender's availability for the dot on their photo (`""` draws none).
+    pub presence: String,
     /// The message @mentions me or everyone.
     pub mentions_me: bool,
     /// On my newest message: `""`, `"sent"` or `"seen"`.
@@ -191,6 +193,14 @@ pub struct CardData {
     pub presence_label: String,
     /// Today's work location pin in words ("In the office today"), `""` when none.
     pub work_location: String,
+    /// The person's status message, `""` when none.
+    pub note: String,
+    /// "Out of office" (with until when, if known), `""` when not.
+    pub ooo: String,
+    /// Work and mobile phone numbers and the manager's name, `""` when not known.
+    pub phone: String,
+    pub mobile: String,
+    pub manager: String,
 }
 
 /// A forward target: an existing chat or channel.
@@ -240,6 +250,10 @@ pub struct HeaderData {
     pub thread_root: String,
     /// Notifications are off for this chat ("More chat options" offers Unmute).
     pub muted: bool,
+    /// The other person of a 1:1 chat (`""` otherwise): their photo opens their card.
+    pub person: String,
+    /// Their availability for the dot on the photo (`""` draws none).
+    pub presence: String,
 }
 
 /// One row of the Activity list.

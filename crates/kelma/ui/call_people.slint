@@ -5,6 +5,7 @@ import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton } from "widgets.slint";
 import { CallStore, CallPerson, CallFound } from "call_store.slint";
 import { CallAction, CallButton, DeviceSettings } from "call_widgets.slint";
+import { PersonHover } from "people.slint";
 
 // A small text button of a People row (Admit, Admit all).
 component RowButton inherits Rectangle {
@@ -51,6 +52,7 @@ component PersonRow inherits Rectangle {
             has-img: root.p.has-photo;
             size: 30px;
             y: 7px;
+            if !root.p.me && root.p.id != "": PersonHover { person: root.p.id; }
         }
         VerticalLayout {
             alignment: center;
