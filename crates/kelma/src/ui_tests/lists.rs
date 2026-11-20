@@ -113,6 +113,8 @@ fn harness() -> Harness {
         })
         .unwrap();
     let h = Harness::with_store(store);
+    // Tall enough for the channels below the Quick views header (scrolled-out rows are not found).
+    h.app.window().set_size(LogicalSize::new(1200., 900.));
     // Render the list once so the rows exist.
     h.runner()(Cmd::SetFilter("all".into()));
     h

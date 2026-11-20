@@ -875,7 +875,7 @@ impl Engine {
 
     // ---- channel menu ----
 
-    fn channel_info(&self, id: &str) -> Option<ChannelInfo> {
+    pub(super) fn channel_info(&self, id: &str) -> Option<ChannelInfo> {
         self.lists.lock().unwrap().channels.get(id).cloned()
     }
 

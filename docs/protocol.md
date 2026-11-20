@@ -105,6 +105,12 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
 - Profiles: `POST <middleTier>/beta/users/fetchShortProfile?…` with a JSON array of MRIs. The
   response is `value[]` with `displayName` and `email`.
 - Avatars: `GET <middleTier>/beta/users/{selfGuid}/profilepicturev2/{mri}?size=HR64x64`.
+- Team pictures (channel rows of the chat list, `mt::team_picture`):
+  `GET <middleTier>/beta/users/{selfGuid}/profilepicturev2/teams/{groupId}?displayName=<team name>`,
+  the group id being the CSA `teamSiteInformation.groupId`. From the reference API description
+  (`fetchTeamPicture`, which also passes `etag=<pictureETag>`; kelma does not read the etag yet).
+  Fetched once per run, kept in memory only; a refusal keeps the initials. **UNVERIFIED**: not
+  sent to any account.
 - Profile card directory details (2026-11-20, **UNVERIFIED** live, read only):
   Graph `GET /v1.0/users/{oid}?$select=jobTitle,department,companyName,officeLocation,businessPhones,mobilePhone`
   and `GET /v1.0/users/{oid}/manager?$select=displayName`, sent together with the Delve card and
@@ -353,6 +359,7 @@ Live checks ran with `kelma-cli find …` (counts and shapes only). Message cont
 | Follow: `PUT …/conversations/<channel>/messages/<root>/properties?name=emotions` `{"emotions":{"key":"follow","value":"0"}}` (follow) or `"1"` (unfollow); `DELETE` with `{"emotions":{"key":"follow"}}` clears it | the post then carries a `follow` emotion with the value (read back from the message properties). Because it is stored as an emotion, kelma hides the key `follow` from the reaction chips. **Not confirmed**: `48:threads` did not change within 30 s of an explicit follow or unfollow, so whether Teams' Followed threads view reads this flag was not seen (the Teams UI was not used) | 🧪 |
 | `GET substrate.office.com/AllFiles/api/users('OID:<oid>@<tenant>')/AllShared?ThreadId=<conv>&ItemTypes=File&ItemTypes=Link&PageSize=50` | header `x-anchormailbox`. `Items[]{ItemType: File \| Link, FileData{FileName, FileUrl, FileExtension, WebUrl}, WeblinkData{Title, WebUrl}, SharedByDisplayName, SharedByMRIId, SharedDateTime, TeamsMessageId, ParentMessageId, ThreadId}`, plus `HasMoreItems` and `Bookmark` (paging not used). `48:notes` returned 5 files and 22 links; the sandbox channel returned none | ✅ |
 | `GET graph/v1.0/teams/<group id>/channels/<channel id>/filesFolder` | the channel's SharePoint folder: `id`, `parentReference.driveId`, `folder.childCount`. Its children are listed with `onedrive::children` | ✅ (the sandbox folder is empty) |
+| Discover (Teams' feed of popular posts from your teams) | no endpoint is documented here, in docs/research or in the reference clients. kelma's Discover quick view is built locally (`find/discover.rs`): the cached channel posts of the last 7 days, ranked by reactions (not counting `follow`) plus replies, and the view says so | — (no network) |
 
 ## Real-time (trouter) ✅
 
@@ -555,6 +562,8 @@ audience and was not needed. Muting a channel uses the chat `alerts` property of
 | `GET messages/in_group/<id>.json?limit=<n>&older_than=<id>` | `{messages:[{id, thread_id, sender_id, replied_to_id, created_at ("2026/09/20 08:53:00 +0000"), body{plain, rich}, liked_by{count}, attachments[], web_url}], references:[users and threads], meta}`; sender names come from `references` | ✅ |
 | Storyline post `POST messages.json` | ⚠️ body `{"body":"…","is_storyline_post":true}` is a guess the Engage client never uses; with no `group_id` it may land in All Company. Do not send. The real call is GraphQL `createUserWallMessage` on `engage.cloud.microsoft/graphql`, with `isDraft` for an unpublished draft: see `docs/research/storyline.md` | ⛔ |
 | `engageCommunities[]` in the CSA v3 list | empty for this account, so the web client's own list is not used | ✅ |
+| Storyline tab card `GET users/by_email.json?email=<email>` (`Client::engage_user`) | first user of the array: `{id, full_name, stats{followers, following, updates}}`; the counts of the 1:1 chat's Storyline tab. Read only. From the public Yammer REST API, not captured from the Teams or Engage client | **UNVERIFIED**: not sent to any account |
+| Storyline tab posts `GET messages/from_user/<user id>.json?limit=<n>` (`Client::engage_user_posts`) | same shape as `messages/in_group` (`parse_feed`). It lists the person's posts, which may include community posts and not only storyline ones; the tab says "Recent Viva Engage posts". Read only | **UNVERIFIED**: not sent to any account |
 
 Communities are read-only in kelma; replying or reacting is not wired.
 

@@ -88,6 +88,7 @@ fn chat_row(c: ChatData) -> ChatRow {
         channel: c.channel,
         presence: c.presence.into(),
         person: c.person.into(),
+        private: c.private,
     }
 }
 

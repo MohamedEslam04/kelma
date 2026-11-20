@@ -199,6 +199,7 @@ impl Engine {
             .into_iter()
             .map(|d| (d.conversation_id, d.text))
             .collect();
+        self.ui.quick_drafts(drafts.len());
         let ov = self.lists_overlay();
         let snoozed = self.remind_snoozed();
         let now = teams_proto::time::now_ms();
@@ -241,6 +242,14 @@ impl Engine {
                 ConvKind::Notes => Some(self.me.clone()),
                 _ => None,
             };
+            // A channel shows its team's picture and, when private, a lock.
+            let chan = match r.kind {
+                ConvKind::Channel => self.channel_info(&r.id),
+                _ => None,
+            };
+            let team_photo = chan.as_ref().and_then(|c| {
+                self.team_avatar(&c.group_id, r.team_name.as_deref().unwrap_or_default())
+            });
             // A channel shows its own name; its team goes on the second line, as in Teams.
             let title = r.title.clone();
             let draft = drafts.get(&r.id);
@@ -272,7 +281,10 @@ impl Engine {
                 draft: draft.is_some(),
                 initials: initials(&r.title),
                 color: color_for(&r.id),
-                avatar: avatar_mri.and_then(|m| self.avatar(&m)),
+                avatar: avatar_mri.and_then(|m| self.avatar(&m)).or(team_photo),
+                private: chan
+                    .as_ref()
+                    .is_some_and(|c| c.kind == teams_proto::teams::ChannelKind::Private),
                 rtl_title: render::base_direction(&title) == render::Dir::Rtl,
                 rtl_preview: render::base_direction(preview_text) == render::Dir::Rtl,
                 preview: preview_text.replace('\n', " ").chars().take(120).collect(),

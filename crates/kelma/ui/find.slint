@@ -66,7 +66,7 @@ export global FindStore {
 
     // --- Quick views ---
     in-out property <bool> quick-open: false;
-    in property <string> quick-kind;     // mentions | saved | followed
+    in property <string> quick-kind;     // mentions | saved | followed | discover
     in property <[HitRow]> quick-rows;
     in property <bool> quick-loading;
     in property <bool> quick-more;
@@ -79,7 +79,7 @@ export global FindStore {
     in-out property <int> chat-find-tick;
 
     // --- Shared tab and details pane ---
-    in-out property <string> chat-tab: "chat"; // chat | shared
+    in-out property <string> chat-tab: "chat"; // chat | shared | storyline
     in property <[SharedRow]> shared;
     in property <[SharedRow]> recent;
     in property <bool> shared-loading;
@@ -415,7 +415,8 @@ export component QuickView inherits Rectangle {
                 padding-right: 16px;
                 spacing: 12px;
                 Text {
-                    text: FindStore.quick-kind == "mentions" ? "Mentions" : (FindStore.quick-kind == "saved" ? "Saved" : "Followed threads");
+                    text: FindStore.quick-kind == "mentions" ? "Mentions" : (FindStore.quick-kind == "saved" ? "Saved" : (FindStore.quick-kind == "discover" ? "Discover" : "Followed threads"));
+                    overflow: elide;
                     color: Theme.fg;
                     font-size: 17px * Theme.font-scale;
                     font-weight: 700;
@@ -426,6 +427,23 @@ export component QuickView inherits Rectangle {
                 IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; y: 14px; clicked => { root.close(); } }
             }
             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        }
+        // Discover is built from the cache (Teams' own feed has no known endpoint): say so.
+        if FindStore.quick-kind == "discover": Rectangle {
+            background: Theme.sidebar;
+            VerticalLayout {
+                padding-left: 20px;
+                padding-right: 16px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                Text {
+                    text: "Popular posts from your teams in the last 7 days, ranked by reactions and replies. Built from the channel messages kelma has stored, not from Teams' Discover feed.";
+                    color: Theme.fg-muted;
+                    font-size: 12px * Theme.font-scale;
+                    wrap: word-wrap;
+                    horizontal-alignment: Theme.start-align;
+                }
+            }
         }
         Rectangle {
             vertical-stretch: 1;
@@ -447,7 +465,7 @@ export component QuickView inherits Rectangle {
             if !FindStore.quick-loading && FindStore.quick-rows.length == 0: VerticalLayout {
                 alignment: center;
                 spacing: 6px;
-                Text { text: FindStore.quick-kind == "mentions" ? "No one has mentioned you yet" : (FindStore.quick-kind == "saved" ? "No saved messages" : "You are not following any threads"); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; }
+                Text { text: FindStore.quick-kind == "mentions" ? "No one has mentioned you yet" : (FindStore.quick-kind == "saved" ? "No saved messages" : (FindStore.quick-kind == "discover" ? "No channel posts from the last 7 days" : "You are not following any threads")); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; }
                 if FindStore.quick-kind == "saved": Text { text: "Choose Save this message in a message's \"…\" menu."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; }
                 if FindStore.quick-kind == "followed": Text { text: "Follow a channel post from its \"…\" menu."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; }
             }

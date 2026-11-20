@@ -1,5 +1,6 @@
-//! Window state wiring (plan 9.10): restores the size, position, maximized flag, last open chat
-//! and collapsed teams on start, and saves them again while the app runs.
+//! Window state wiring (plan 9.10): restores the size, position, maximized flag, last open chat,
+//! collapsed teams and the collapsed Quick views on start, and saves them again while the app
+//! runs.
 //!
 //! The data side is `session::window_state::WindowState`. This module decides what to apply and
 //! what to save (pure helpers, unit tested) and does the Slint side. Saving is debounced: one UI
@@ -8,8 +9,8 @@
 //! Changes made on other threads (the team toggles) only edit the shared state; the UI timer
 //! writes them.
 
-use crate::AppWindow;
 use crate::backend::Cmd;
+use crate::{AppWindow, QuickViewsStore};
 use session::window_state::WindowState;
 use slint::{ComponentHandle, LogicalSize, Model, PhysicalPosition, Timer, TimerMode};
 use std::collections::HashSet;
@@ -20,6 +21,8 @@ use std::time::{Duration, Instant};
 pub const SAVE_INTERVAL: Duration = Duration::from_millis(500);
 /// Prefix of the section id of a collapsed team in `collapsed_sections`.
 const TEAM_PREFIX: &str = "team:";
+/// The section id of the chat list's Quick views in `collapsed_sections`.
+const QUICK_VIEWS: &str = "quick-views";
 /// How often the restore of the last chat looks for it in the list, and for how many ticks after
 /// sign-in it keeps looking.
 const RESTORE_POLL: Duration = Duration::from_millis(300);
@@ -173,6 +176,16 @@ pub fn set_collapsed_teams(s: &mut WindowState, teams: &HashSet<String>) {
     }
 }
 
+/// Whether the chat list's Quick views section is open in `s` (it is unless collapsed).
+pub fn quick_views_open(s: &WindowState) -> bool {
+    !s.is_collapsed(QUICK_VIEWS)
+}
+
+/// Remembers whether the Quick views section is open.
+pub fn set_quick_views_open(s: &mut WindowState, open: bool) {
+    s.set_section_collapsed(QUICK_VIEWS, !open);
+}
+
 /// The team ids collapsed in `s`.
 pub fn collapsed_teams_of(s: &WindowState) -> HashSet<String> {
     s.collapsed_sections
@@ -297,6 +310,16 @@ fn observe(window: &slint::Window) -> Option<Observed> {
     })
 }
 
+/// Folds whether the Quick views section is open into `s`.
+pub(crate) fn remember_quick_views(w: &AppWindow, s: &mut WindowState) {
+    set_quick_views_open(s, w.global::<QuickViewsStore>().get_open());
+}
+
+/// Opens or collapses the Quick views section as `s` remembers it.
+pub(crate) fn restore_quick_views(w: &AppWindow, s: &WindowState) {
+    w.global::<QuickViewsStore>().set_open(quick_views_open(s));
+}
+
 /// Folds the live window and the open chat into the shared state.
 fn capture(w: &AppWindow) {
     let obs = observe(w.window());
@@ -307,6 +330,7 @@ fn capture(w: &AppWindow) {
             apply_observed(&mut s.state, &o);
         }
         s.state.sidebar_width = list;
+        remember_quick_views(w, &mut s.state);
         // An empty id means "nothing open yet" (start, sign-in): keep the remembered chat.
         if !chat.is_empty() {
             s.state.set_last_chat(Some(chat.as_str()));
@@ -406,6 +430,9 @@ pub fn install(
     let plan = restore_plan(&state);
     let last_chat = state.last_chat.clone();
     let sidebar = state.sidebar_width;
+    if persist {
+        restore_quick_views(window, &state);
+    }
     if let Ok(mut g) = SHARED.lock() {
         *g = Some(Shared {
             saved: state.clone(),
@@ -501,6 +528,21 @@ mod tests {
         assert_eq!(sidebar_width_to_save(5000.), Some(600));
         assert_eq!(sidebar_width_to_restore(Some(100)), Some(220.));
         assert_eq!(sidebar_width_to_restore(None), None);
+    }
+
+    #[test]
+    fn the_quick_views_collapse_is_remembered_beside_the_teams() {
+        let mut s = WindowState::default();
+        assert!(quick_views_open(&s), "open by default");
+        set_collapsed_teams(&mut s, &HashSet::from(["19:t".to_string()]));
+        set_quick_views_open(&mut s, false);
+        assert!(!quick_views_open(&s));
+        set_collapsed_teams(&mut s, &HashSet::new());
+        assert!(!quick_views_open(&s), "replacing the teams keeps it");
+        assert!(collapsed_teams_of(&s).is_empty());
+        set_quick_views_open(&mut s, true);
+        assert!(quick_views_open(&s));
+        assert!(s.collapsed_sections.is_empty());
     }
 
     fn saved() -> WindowState {

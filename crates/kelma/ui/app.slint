@@ -45,6 +45,7 @@ import { CallOutgoing, CallHeaderButtons } from "call_outgoing.slint";
 import { ComposerAppsOverlay } from "composer_apps.slint";
 import { SendStore, ScheduledList } from "composer_send.slint";
 import { ChatHeaderStore, HeaderMoreButton, RemoveHistoryConfirm } from "chat_header.slint";
+import { StorylineView } from "storyline.slint";
 import { TopBarStore, TopSearch, SearchDropdown, NavButtons, MoreButton, MoreMenu } from "topbar.slint";
 
 export { Theme } from "theme.slint";
@@ -75,6 +76,8 @@ export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, Driv
 export { ComposerApps, CaCommand, CaResult, CaCard } from "composer_apps.slint";
 export { SendStore, ScheduledItem, QuickChoice, PickCell } from "composer_send.slint";
 export { ChatHeaderStore } from "chat_header.slint";
+export { QuickViewsStore, ChatTipStore } from "chat_list_extras.slint";
+export { StorylineStore } from "storyline.slint";
 export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, RecapsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
 export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
 export { TopBarStore, TopRow } from "topbar.slint";
@@ -847,9 +850,12 @@ export component AppWindow inherits Window {
                                     root.renaming = true;
                                 }
                             }
-                            for tab in (root.current-is-channel ? [{k: "posts", l: @tr("Posts")}, {k: "files", l: @tr("Files")}] : [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}]): tab-item := Rectangle {
-                                // The Shared (Files) tab replaces the conversation, see `FindStore`.
-                                property <bool> active: (FindStore.chat-tab == "shared") == (tab.k == "shared" || tab.k == "files");
+                            for tab in (root.current-is-channel ? [{k: "posts", l: @tr("Posts")}, {k: "files", l: @tr("Files")}]
+                                : (root.current-person != "" || root.current-id == "48:notes") && root.thread-root == "" ? [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}, {k: "storyline", l: @tr("Storyline")}]
+                                : [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}]): tab-item := Rectangle {
+                                // The Shared (Files) and Storyline tabs replace the conversation, see `FindStore`.
+                                property <string> key: tab.k == "files" ? "shared" : (tab.k == "posts" ? "chat" : tab.k);
+                                property <bool> active: FindStore.chat-tab == self.key || (self.key == "chat" && FindStore.chat-tab != "shared" && FindStore.chat-tab != "storyline");
                                 width: min(tab-label.preferred-width, 200px);
                                 accessible-role: AccessibleRole.tab;
                                 accessible-label: tab.l;
@@ -862,7 +868,7 @@ export component AppWindow inherits Window {
                                 TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => {
-                                        FindStore.chat-tab = (tab.k == "shared" || tab.k == "files") ? "shared" : "chat";
+                                        FindStore.chat-tab = tab-item.key;
                                         FindStore.command("tab", FindStore.chat-tab);
                                     }
                                 }
@@ -1246,6 +1252,12 @@ export component AppWindow inherits Window {
                         attach-file => { root.attach-file(); }
                         attach-cloud => { DriveStore.command("pick-begin", "attach"); }
                     }
+                }
+                if root.current-id != "" && FindStore.chat-tab == "storyline" && root.view != "activity": StorylineView {
+                    z: 8;
+                    y: 60px;
+                    width: parent.width;
+                    height: parent.height - 60px;
                 }
                 // The Shared (Files) tab and the details pane sit below the 60px header.
                 if root.current-id != "" && FindStore.chat-tab == "shared" && root.view != "activity": SharedView {

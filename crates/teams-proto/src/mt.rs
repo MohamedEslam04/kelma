@@ -94,11 +94,51 @@ impl Client {
         );
         self.bytes(&url, &[], 2 * 1024 * 1024).await
     }
+
+    /// Downloads a team's picture (JPEG/PNG bytes). UNVERIFIED: read from the reference API
+    /// description (`fetchTeamPicture`), not yet sent by kelma to any account.
+    pub async fn team_picture(
+        &self,
+        self_mri: &str,
+        group_id: &str,
+        name: &str,
+    ) -> Result<Vec<u8>> {
+        let url = team_picture_url(&self.middle_tier().await, self_mri, group_id, name);
+        self.bytes(&url, &[], 2 * 1024 * 1024).await
+    }
+}
+
+/// `GET <middleTier>/beta/users/<selfGuid>/profilepicturev2/teams/<groupId>?displayName=<name>`:
+/// a team's picture, keyed by its Microsoft 365 group id.
+pub fn team_picture_url(middle_tier: &str, self_mri: &str, group_id: &str, name: &str) -> String {
+    let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
+    let self_guid = self_mri
+        .trim_start_matches("8:")
+        .trim_start_matches("orgid:");
+    format!(
+        "{middle_tier}/beta/users/{}/profilepicturev2/teams/{}?displayName={}",
+        enc(self_guid),
+        enc(group_id),
+        enc(name)
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn team_picture_url_names_the_group_and_the_team() {
+        assert_eq!(
+            team_picture_url(
+                "https://mt.example/api/mt/part/emea-02",
+                "8:orgid:00000000-0000-0000-0000-000000000001",
+                "00000000-0000-0000-0000-0000000000c1",
+                "Contoso & Co"
+            ),
+            "https://mt.example/api/mt/part/emea-02/beta/users/00000000-0000-0000-0000-000000000001/profilepicturev2/teams/00000000-0000-0000-0000-0000000000c1?displayName=Contoso+%26+Co"
+        );
+    }
 
     #[test]
     fn parses_profiles() {
