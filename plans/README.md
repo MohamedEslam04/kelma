@@ -31,6 +31,7 @@ plus files for teams management and for settings and platform work.
 | [`store-and-apps.md`](store-and-apps.md) | Store, app bar, "…" apps (Planner, Engage, Workflows, Office…) | 12 | Mixed, decided per app |
 | [`teams-and-channels.md`](teams-and-channels.md) | Teams and channels management, Communities | 14 | Mostly native after discovery |
 | [`settings-and-platform.md`](settings-and-platform.md) | Settings, accounts and orgs, web host, auth broker, packaging | 14 | Yes |
+| [`beyond-teams.md`](beyond-teams.md) | None: kelma's own features (catch-up, reminders, palette, Focus, offline search, snippets) | 1 | Yes, all local |
 
 Each item has the same parts:
 - a checkbox
