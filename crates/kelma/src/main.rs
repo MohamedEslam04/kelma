@@ -14,6 +14,7 @@ mod media_data;
 mod mention;
 mod reactions;
 mod send_options;
+mod snippets;
 mod shortcuts;
 mod spell;
 mod tray_wiring;
@@ -385,6 +386,7 @@ fn main() -> anyhow::Result<()> {
     ui::install_calendar(&window, tx.clone());
     ui::install_apps(&window, tx.clone());
     ui::settings::install_system(&window, tx.clone());
+    snippets::install_system(&window);
     #[cfg(feature = "calls")]
     ui::call_direct::install(&window, tx.clone());
     #[cfg(feature = "calls")]

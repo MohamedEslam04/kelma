@@ -1304,3 +1304,56 @@ msgstr "حتى غد الساعة 9:00"
 
 msgid "Until next week (Monday 9:00)"
 msgstr "حتى الأسبوع القادم (الاثنين 9:00)"
+msgid "Snippets"
+msgstr "الردود المحفوظة"
+
+msgid "Type / at the start of a line in the composer to insert a saved reply. In the text, {} becomes the other person's first name in a 1:1 chat, {} your name and {} today's date."
+msgstr "اكتب / في بداية سطر في خانة الكتابة لإدراج رد محفوظ. في النص، يتحول {} إلى الاسم الأول للطرف الآخر في محادثة فردية، و{} إلى اسمك، و{} إلى تاريخ اليوم."
+
+msgid "No snippets yet."
+msgstr "لا توجد ردود محفوظة بعد."
+
+msgid "New snippet"
+msgstr "رد محفوظ جديد"
+
+msgid "Edit snippet"
+msgstr "تعديل الرد المحفوظ"
+
+msgid "Edit snippet {}"
+msgstr "تعديل الرد المحفوظ {}"
+
+msgid "Delete snippet {}"
+msgstr "حذف الرد المحفوظ {}"
+
+msgid "Name (what you type after /)"
+msgstr "الاسم (ما تكتبه بعد /)"
+
+msgid "Snippet name"
+msgstr "اسم الرد المحفوظ"
+
+msgid "Text"
+msgstr "النص"
+
+msgid "Snippet text"
+msgstr "نص الرد المحفوظ"
+
+msgid "Snippet error"
+msgstr "خطأ في الرد المحفوظ"
+
+msgid "Save snippet"
+msgstr "حفظ الرد"
+
+msgid "Give the snippet a name."
+msgstr "أعطِ الرد المحفوظ اسمًا."
+
+msgid "A name is one word, without spaces or /."
+msgstr "الاسم كلمة واحدة بلا مسافات أو /."
+
+msgid "That name is too long."
+msgstr "هذا الاسم طويل جدًا."
+
+msgid "Another snippet already has that name."
+msgstr "هناك رد محفوظ آخر بهذا الاسم."
+
+msgid "Write the text to insert."
+msgstr "اكتب النص المراد إدراجه."

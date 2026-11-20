@@ -4,6 +4,7 @@ import { Edited, ComposerEmoji, PendingAttachment } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
 import { PeopleStore } from "people.slint";
 import { MentionApi, MentionPicker } from "mention_picker.slint";
+import { SnippetApi, SnippetItem, SnippetPicker, SnippetStore } from "snippet_picker.slint";
 import { FormatApi, FormatBar, FormatEdit, FormatPreview, FormatToggle } from "composer_format.slint";
 import { ComposerAppsButton } from "composer_apps.slint";
 import { GifPicker, GifStore } from "gif_picker.slint";
@@ -102,6 +103,13 @@ export component Composer inherits Rectangle {
     property <string> mention-query: MentionApi.query(root.draft, composer-input.cursor-position-byte-offset);
     property <bool> mention-open: root.mention-active && PeopleStore.mention-items.length > 0 && root.mention-dismissed != root.draft;
 
+    // Snippets: the saved quick replies that fit the `/query` before the cursor (src/snippets.rs).
+    property <[SnippetItem]> snippet-matches: SnippetApi.matches(root.draft, composer-input.cursor-position-byte-offset, SnippetStore.items);
+    property <int> snippet-index: 0;
+    property <string> snippet-dismissed; // the draft for which Escape closed the picker
+    property <bool> snippet-open: root.snippet-matches.length > 0 && root.snippet-dismissed != root.draft;
+    changed snippet-matches => { root.snippet-index = 0; }
+
     changed cursor-tick => { composer-input.set-selection-offsets(2000000000, 2000000000); }
     changed suggestions => { root.sug-index = 0; }
     changed mention-active => { if root.mention-active { PeopleStore.command("mention-query", root.mention-query); } }
@@ -137,6 +145,14 @@ export component Composer inherits Rectangle {
             self.running = false;
             root.spell-text = root.draft;
             root.spell-cursor = composer-input.cursor-position-byte-offset;
+        }
+    }
+
+    function pick-snippet(i: int) {
+        if i >= 0 && i < root.snippet-matches.length {
+            root.put(SnippetApi.complete(root.draft, composer-input.cursor-position-byte-offset, root.snippet-matches[i].text));
+            // A snippet may itself start with `/`: keep the picker closed until the text changes.
+            root.snippet-dismissed = root.draft;
         }
     }
 
@@ -382,6 +398,24 @@ export component Composer inherits Rectangle {
                             if root.try-shortcut(event) {
                                 return accept;
                             }
+                            if root.snippet-open {
+                                if event.text == Key.DownArrow {
+                                    root.snippet-index = min(root.snippet-index + 1, root.snippet-matches.length - 1);
+                                    return accept;
+                                }
+                                if event.text == Key.UpArrow {
+                                    root.snippet-index = max(root.snippet-index - 1, 0);
+                                    return accept;
+                                }
+                                if event.text == Key.Escape {
+                                    root.snippet-dismissed = root.draft;
+                                    return accept;
+                                }
+                                if event.text == Key.Tab || (event.text == Key.Return && !event.modifiers.shift) {
+                                    root.pick-snippet(root.snippet-index);
+                                    return accept;
+                                }
+                            }
                             if root.mention-open {
                                 if event.text == Key.DownArrow {
                                     root.mention-index = min(root.mention-index + 1, PeopleStore.mention-items.length - 1);
@@ -510,6 +544,15 @@ export component Composer inherits Rectangle {
                 background: composer-input.has-focus ? Theme.accent : transparent;
             }
         }
+    }
+
+    if root.snippet-open: SnippetPicker {
+        z: 100;
+        x: 20px;
+        y: -self.height - 4px;
+        items: root.snippet-matches;
+        index: root.snippet-index;
+        picked(i) => { root.pick-snippet(i); }
     }
 
     if root.mention-open: MentionPicker {

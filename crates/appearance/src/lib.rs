@@ -14,6 +14,7 @@ pub mod language;
 pub mod portal;
 pub mod prefs;
 pub mod resolve;
+pub mod snippets;
 mod store;
 
 pub use accessibility::{
@@ -29,4 +30,5 @@ pub use prefs::{AppearancePrefs, Density, FONT_SCALE_MAX, FONT_SCALE_MIN, Rgb, T
 pub use resolve::{
     Resolved, ResolvedTheme, resolve, resolve_accent, resolve_font_scale, resolve_theme,
 };
+pub use snippets::{Snippet, SnippetPrefs};
 pub use store::{Error, config_dir};

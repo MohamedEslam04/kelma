@@ -4,6 +4,7 @@
 import { Theme } from "theme.slint";
 import { SettingsStore, SOption } from "settings_store.slint";
 import { SButton, SChoice, SChoiceRow, SField, SFont, SPersonRow, SRadio, SSection, SSwitch } from "settings_widgets.slint";
+import { SnippetsSection } from "settings_snippets.slint";
 
 component Para inherits Text {
     color: Theme.fg-muted;
@@ -335,6 +336,7 @@ export component AppearancePage inherits VerticalLayout {
             picked(v) => { SettingsStore.command("skin-tone", v); }
         }
     }
+    SnippetsSection { }
 }
 
 export component AccessibilityPage inherits VerticalLayout {
