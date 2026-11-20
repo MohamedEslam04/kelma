@@ -4,7 +4,7 @@
 
 use calling::media::sdp::{
     answer_direction, from_teams, from_teams_with, mid_of_role, source_stream_ids,
-    to_teams_answer_with, to_teams_offer, with_role_direction,
+    to_teams_answer_with, to_teams_offer, to_teams_reoffer, with_role_direction,
 };
 use calling::video::VideoRole;
 
@@ -197,4 +197,58 @@ fn a_re_offer_states_the_sharing_direction() {
     let stopped = with_role_direction(&sharing, VideoRole::ApplicationSharing, "inactive");
     assert!(has(&sections(&stopped)[1], "a=inactive"));
     assert_eq!(stopped.lines().count(), sharing.lines().count());
+}
+
+/// A webrtc-rs offer as one went out live on a 1:1 call kelma answered: an extra `main-video`
+/// receiver took mid 2, the sharing line moved to mid 3, and the declined `x-data` is missing.
+const MOVED_REOFFER: &str = "v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n\
+a=fingerprint:sha-256 AA:BB\r\na=group:BUNDLE 0 1 2 3\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendrecv\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 107\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\n\
+a=msid:main-video kelma-1\r\na=sendonly\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 107\r\nc=IN IP4 0.0.0.0\r\na=mid:2\r\na=recvonly\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 107\r\nc=IN IP4 0.0.0.0\r\na=mid:3\r\n\
+a=msid:applicationsharing-video kelma-2\r\na=sendrecv\r\n";
+
+/// Our answer to the browser's offer: mid 0-2 bundled, the `x-data` line declined.
+const NEGOTIATED: &str = "v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n\
+a=group:BUNDLE 0 1 2\r\n\
+m=audio 9 RTP/SAVP 111\r\na=mid:0\r\na=sendrecv\r\na=label:main-audio\r\n\
+m=video 9 RTP/SAVP 107\r\na=mid:1\r\na=sendonly\r\na=label:main-video\r\n\
+m=video 9 RTP/SAVP 107\r\na=mid:2\r\na=inactive\r\na=label:applicationsharing-video\r\n\
+m=x-data 0 RTP/SAVP 34\r\nc=IN IP4 0.0.0.0\r\na=mid:3\r\na=label:data\r\n";
+
+#[test]
+fn a_re_offer_keeps_the_negotiated_lines_and_their_labels() {
+    let offer = to_teams_reoffer(MOVED_REOFFER, NEGOTIATED);
+    let s = sections(&offer);
+    let shape: Vec<(&str, Option<&str>, Option<&str>)> = s
+        .iter()
+        .map(|x| {
+            (
+                x[0].split(' ').next().unwrap(),
+                value(x, "mid"),
+                value(x, "label"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("m=audio", Some("0"), Some("main-audio")),
+            ("m=video", Some("1"), Some("main-video")),
+            ("m=video", Some("2"), Some("applicationsharing-video")),
+            ("m=x-data", Some("3"), Some("data")),
+        ],
+        "{offer}"
+    );
+    assert_eq!(s[3][0], "m=x-data 0 RTP/SAVP 34");
+    assert!(offer.contains("a=group:BUNDLE 0 1 2\r\n"), "{offer}");
+}
+
+#[test]
+fn a_first_offer_has_no_negotiated_lines_to_keep() {
+    let offer = to_teams_offer(MOVED_REOFFER);
+    assert_eq!(sections(&offer).len(), 4, "{offer}");
+    assert!(offer.contains("a=group:BUNDLE 0 1 2 3\r\n"), "{offer}");
 }

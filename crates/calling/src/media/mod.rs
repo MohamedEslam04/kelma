@@ -21,7 +21,7 @@
 pub mod sdp;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -145,6 +145,9 @@ pub struct MediaSession {
     data: bool,
     /// The data channel, for sending (remote control input, UNVERIFIED).
     data_channel: Option<Arc<dyn DataChannel>>,
+    /// The Teams SDP that last settled the session (our answer, or the answer to our offer):
+    /// the m-lines a re-offer keeps ([`sdp::to_teams_reoffer`]).
+    negotiated: Mutex<Option<String>>,
 }
 
 /// Sends whole messages on the session's data channel. Cheap to clone.
@@ -358,6 +361,7 @@ impl MediaSession {
                 state,
                 data: options.data_channel,
                 data_channel,
+                negotiated: Mutex::new(None),
             },
             MediaEvents {
                 state: state_rx,
@@ -369,7 +373,8 @@ impl MediaSession {
         ))
     }
 
-    /// Our offer (for an outgoing call or a meeting join), with every candidate in it.
+    /// Our offer (for an outgoing call or a meeting join), with every candidate in it. Once the
+    /// session is negotiated it is a re-offer (hold, camera, share) with the negotiated m-lines.
     pub async fn create_offer(&self) -> Result<String> {
         let offer = self
             .pc
@@ -377,7 +382,34 @@ impl MediaSession {
             .await
             .map_err(media_err("create offer"))?;
         let local = self.set_local(offer).await?;
-        Ok(sdp::to_teams_offer(&local))
+        Ok(match self.negotiated() {
+            Some(negotiated) => sdp::to_teams_reoffer(&local, &negotiated),
+            None => sdp::to_teams_offer(&local),
+        })
+    }
+
+    /// Withdraws our offer when the other side refused it (`call/rejection` to a re-offer): the
+    /// session is back as the last negotiation left it, and can answer the other side's offer.
+    /// Nothing to do when no offer of ours is pending.
+    pub async fn rollback_offer(&self) -> Result<()> {
+        if self.pc.pending_local_description().await.is_none() {
+            return Ok(());
+        }
+        let rollback = RTCSessionDescription::rollback(None).map_err(media_err("rollback"))?;
+        self.pc
+            .set_local_description(rollback)
+            .await
+            .map_err(media_err("roll back offer"))
+    }
+
+    fn negotiated(&self) -> Option<String> {
+        self.negotiated.lock().ok()?.clone()
+    }
+
+    fn set_negotiated(&self, sdp: &str) {
+        if let Ok(mut n) = self.negotiated.lock() {
+            *n = Some(sdp.to_owned());
+        }
     }
 
     /// The video roles this session has lines for.
@@ -415,7 +447,9 @@ impl MediaSession {
         self.pc
             .set_remote_description(desc)
             .await
-            .map_err(media_err("set answer"))
+            .map_err(media_err("set answer"))?;
+        self.set_negotiated(answer);
+        Ok(())
     }
 
     /// Whether `offer` starts a new media session rather than renegotiating this one: its audio
@@ -461,9 +495,9 @@ impl MediaSession {
             .await
             .map_err(media_err("create answer"))?;
         let local = self.set_local(answer).await?;
-        Ok(sdp::to_teams_answer_with_data(
-            &local, offer, &roles, self.data,
-        ))
+        let answer = sdp::to_teams_answer_with_data(&local, offer, &roles, self.data);
+        self.set_negotiated(&answer);
+        Ok(answer)
     }
 
     /// A handle for sending on the data channel, when the session has one.

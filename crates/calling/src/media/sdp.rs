@@ -251,7 +251,9 @@ pub fn from_teams(sdp: &str) -> Result<String> {
 
 /// [`from_teams`] for a session that also has video lines for `roles`. `offer` is whether `sdp`
 /// is the other side's offer: a kept video section it offers `sendonly` (a media server sending
-/// to us) is read as `sendrecv`, so our transceiver stays able to send on it; the media servers
+/// to us) or `inactive` (a browser's sharing line before anyone shares) is read as `sendrecv`, so
+/// our transceiver takes the line and stays able to send on it (webrtc-rs gives an `inactive`
+/// line a receiver of its own, and a later offer then moves ours to a new mid); the media servers
 /// switch sending with `UpdateMediaDescriptions`, not with SDP directions (mautrix-teams openapi).
 /// [`to_teams_answer`] puts the RFC direction back on the wire.
 pub fn from_teams_with(sdp: &str, roles: &[VideoRole], offer: bool) -> Result<String> {
@@ -321,7 +323,7 @@ pub fn from_teams_with_data(
             if rebundled.is_some() && is_transport_line(line) {
                 continue;
             }
-            if offer && m.kind == "video" && line == "a=sendonly" {
+            if offer && m.kind == "video" && (line == "a=sendonly" || line == "a=inactive") {
                 out.push("a=sendrecv".to_owned());
                 continue;
             }
@@ -517,21 +519,31 @@ fn candidate_from_teams(value: &str) -> Option<String> {
 
 /// Our (webrtc-rs) offer rewritten into the dialect the Teams calling service reads.
 pub fn to_teams_offer(sdp: &str) -> String {
-    to_teams(sdp, None, &[], false)
+    to_teams(sdp, None, None, &[], false)
+}
+
+/// [`to_teams_offer`] for a re-offer on a negotiated session: one section per section of
+/// `negotiated` (the Teams SDP that last settled the session, ours or theirs), in its order, with
+/// its mids, kinds and labels. A line webrtc-rs no longer offers (the declined `x-data` line it
+/// was never given) comes back as a port-0 stub; a line beyond the negotiated set is dropped, and
+/// the BUNDLE group with it. The other side refuses a re-offer whose lines moved
+/// (`CallEndReasonMediaAnswerError`, 488/3102).
+pub fn to_teams_reoffer(sdp: &str, negotiated: &str) -> String {
+    to_teams(sdp, None, Some(negotiated), &[], false)
 }
 
 /// Our (webrtc-rs) answer to `remote_offer` rewritten into the Teams dialect: one section per
 /// offered section, in the offer's order (those [`from_teams`] removed come back as stubs), each
 /// keeping the `a=label` the offer gave it.
 pub fn to_teams_answer(sdp: &str, remote_offer: &str) -> String {
-    to_teams(sdp, Some(remote_offer), &[], false)
+    to_teams(sdp, Some(remote_offer), None, &[], false)
 }
 
 /// [`to_teams_answer`] for a session with video lines for `roles` (as [`from_teams_with`] read
 /// the offer). Each answered section's direction is made one the offer allows: a line offered
 /// `sendonly` is answered `recvonly` even though webrtc-rs, given `sendrecv`, answered that.
 pub fn to_teams_answer_with(sdp: &str, remote_offer: &str, roles: &[VideoRole]) -> String {
-    to_teams(sdp, Some(remote_offer), roles, false)
+    to_teams(sdp, Some(remote_offer), None, roles, false)
 }
 
 /// [`to_teams_answer_with`] for a session that also has the data channel: the offer's `x-data`
@@ -542,7 +554,7 @@ pub fn to_teams_answer_with_data(
     roles: &[VideoRole],
     data: bool,
 ) -> String {
-    to_teams(sdp, Some(remote_offer), roles, data)
+    to_teams(sdp, Some(remote_offer), None, roles, data)
 }
 
 /// The direction an answer may give a line offered `offered`, given what we would do (`ours`).
@@ -652,13 +664,66 @@ fn in_offer_order(
                 section[i] = format!("a={}", answer_direction(&offered, &ours));
             }
             out.push(section);
-        } else if let Some(m) = MediaLine::parse(&theirs[0]) {
-            let mut stub = vec![format!("m={} 0 {MS_PROFILE} {STUB_PAYLOAD}", m.kind)];
-            stub.extend(mid.map(|mid| format!("a=mid:{mid}")));
-            out.push(stub);
+        } else {
+            out.extend(stub_of(theirs));
         }
     }
     out
+}
+
+/// A port-0 stand-in for `section`: its kind and mid only.
+fn stub_of(section: &[String]) -> Option<Vec<String>> {
+    let m = MediaLine::parse(&section[0])?;
+    let mut stub = vec![format!("m={} 0 {MS_PROFILE} {STUB_PAYLOAD}", m.kind)];
+    stub.extend(
+        section
+            .iter()
+            .find_map(|l| attr(l, "mid"))
+            .map(|mid| format!("a=mid:{mid}")),
+    );
+    Some(stub)
+}
+
+/// Our offer's sections laid out as `negotiated`'s: ours where a section has the same mid and
+/// kind, else a stub; ours beyond them go.
+fn in_negotiated_order(ours: Vec<Vec<String>>, negotiated: &Parsed) -> Vec<Vec<String>> {
+    let key = |s: &[String]| {
+        let kind = MediaLine::parse(&s[0]).map(|m| m.kind.to_owned());
+        (
+            kind,
+            s.iter().find_map(|l| attr(l, "mid")).map(str::to_owned),
+        )
+    };
+    let mut ours: Vec<Option<Vec<String>>> = ours.into_iter().map(Some).collect();
+    negotiated
+        .sections
+        .iter()
+        .filter_map(|theirs| {
+            let want = key(theirs);
+            ours.iter_mut()
+                .find(|s| s.as_ref().is_some_and(|s| key(s) == want))
+                .and_then(Option::take)
+                .or_else(|| stub_of(theirs))
+        })
+        .collect()
+}
+
+/// `session` with its BUNDLE group cut to the mids of `sections` that are not declined.
+fn bundle_of(session: &mut [String], sections: &[Vec<String>]) {
+    let live: Vec<&str> = sections
+        .iter()
+        .filter(|s| MediaLine::parse(&s[0]).is_some_and(|m| m.port != "0"))
+        .filter_map(|s| s.iter().find_map(|l| attr(l, "mid")))
+        .collect();
+    for line in session.iter_mut() {
+        if let Some(mids) = line.strip_prefix("a=group:BUNDLE") {
+            let kept: Vec<&str> = mids
+                .split_whitespace()
+                .filter(|m| live.contains(m))
+                .collect();
+            *line = format!("a=group:BUNDLE {}", kept.join(" "));
+        }
+    }
 }
 
 fn labels_by_mid(parsed: &Parsed) -> HashMap<String, String> {
@@ -699,18 +764,29 @@ fn bundle_transport(sections: &[Vec<String>]) -> Option<(String, String)> {
     Some((best[5].to_owned(), format!("IN {family} {}", best[4])))
 }
 
-fn to_teams(sdp: &str, remote_offer: Option<&str>, roles: &[VideoRole], data: bool) -> String {
+fn to_teams(
+    sdp: &str,
+    remote_offer: Option<&str>,
+    negotiated: Option<&str>,
+    roles: &[VideoRole],
+    data: bool,
+) -> String {
     let offer = remote_offer.is_none();
     let mut parsed = Parsed::new(sdp);
     for section in &mut parsed.sections {
         sctp_to_teams(section);
     }
-    let labels = match remote_offer.map(Parsed::new) {
-        Some(theirs) => {
+    let labels = match (remote_offer.map(Parsed::new), negotiated.map(Parsed::new)) {
+        (Some(theirs), _) => {
             parsed.sections = in_offer_order(parsed.sections, &theirs, roles, data);
             labels_by_mid(&theirs)
         }
-        None => HashMap::new(),
+        (None, Some(layout)) => {
+            parsed.sections = in_negotiated_order(parsed.sections, &layout);
+            bundle_of(&mut parsed.session, &parsed.sections);
+            labels_by_mid(&layout)
+        }
+        (None, None) => HashMap::new(),
     };
     let fingerprint = parsed
         .session
