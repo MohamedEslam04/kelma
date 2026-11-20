@@ -89,6 +89,20 @@ pub struct MediaOptions {
     /// participant's camera each once subscribed (`applyChannelParameters`). 0 (the default):
     /// none. Only for our own offer (a meeting join); UNVERIFIED live.
     pub receive_slots: usize,
+    /// Where the sharing line goes among the receive slots (only with [`Self::receive_slots`]).
+    pub layout: VideoLayout,
+}
+
+/// The order of a meeting join's video lines, which fixes their mids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VideoLayout {
+    /// The web client's: the camera (mid 1), the gallery (2-10), the sharing line (11), as its
+    /// join and mautrix-teams' openapi (`TeamsSdp`, mid 11 before a renegotiation) show.
+    #[default]
+    WebClient,
+    /// The camera, the sharing line, then the gallery: kelma's first join layout (refused live
+    /// 2026-11-20 with the join that declared no video), kept to try against the other.
+    SharingSecond,
 }
 
 impl Default for MediaOptions {
@@ -99,6 +113,7 @@ impl Default for MediaOptions {
             video: Vec::new(),
             data_channel: false,
             receive_slots: 0,
+            layout: VideoLayout::default(),
         }
     }
 }
@@ -323,9 +338,14 @@ impl MediaSession {
             ssrc,
             payload_type: Arc::new(OnceCell::new()),
         };
+        // The web client's join puts the sharing line after the gallery (see `VideoLayout`).
+        let sharing_last = options.receive_slots > 0 && options.layout == VideoLayout::WebClient;
+        let after_slots = |role: VideoRole| sharing_last && role == VideoRole::ApplicationSharing;
         let mut video = Vec::new();
         for role in options.video.iter().copied() {
-            video.push(VideoSender::add_to(&pc, role).await?);
+            if !after_slots(role) {
+                video.push(VideoSender::add_to(&pc, role).await?);
+            }
         }
         let mut data_channel = None;
         if options.data_channel {
@@ -350,6 +370,11 @@ impl MediaSession {
                     .await
                     .map_err(media_err("add receive slot"))?,
             );
+        }
+        for role in options.video.iter().copied() {
+            if after_slots(role) {
+                video.push(VideoSender::add_after_slots(&pc, role).await?);
+            }
         }
         Ok((
             Self {
@@ -526,6 +551,21 @@ impl MediaSession {
         None
     }
 
+    /// [`Self::video_mid`] when the line is live in the negotiation in force: an answer that
+    /// refused it (port 0, as the media servers answer a line they will not carry) leaves `None`,
+    /// and so does a session not negotiated yet. Nothing may be switched on such a line.
+    pub async fn live_video_mid(&self, role: VideoRole) -> Option<String> {
+        let mid = self.video_mid(role).await?;
+        self.live_video_mids().contains(&mid).then_some(mid)
+    }
+
+    /// The mids of every video line the negotiation in force carries (port not 0), in order.
+    pub fn live_video_mids(&self) -> Vec<String> {
+        self.negotiated()
+            .map(|sdp| sdp::video_mids(&sdp))
+            .unwrap_or_default()
+    }
+
     /// The sender for `role`'s video line, if the session has one.
     pub fn video_sender(&self, role: VideoRole) -> Option<VideoSender> {
         self.video.iter().find(|v| v.role == role).cloned()
@@ -602,6 +642,45 @@ impl VideoSender {
     /// A sendrecv video line for `role` on `pc`. The track's stream id is the role's label, which
     /// is how [`sdp::to_teams_offer`] labels the line.
     async fn add_to(pc: &Arc<dyn PeerConnection>, role: VideoRole) -> Result<Self> {
+        let (track, ssrc) = Self::track(role)?;
+        let rtp_sender = pc
+            .add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
+            .await
+            .map_err(media_err("add video track"))?;
+        Ok(VideoSender {
+            role,
+            track,
+            rtp_sender,
+            ssrc,
+        })
+    }
+
+    /// [`Self::add_to`] on a line of its own after the receive slots: `add_track` would take the
+    /// first slot (a video transceiver with no sender) instead.
+    async fn add_after_slots(pc: &Arc<dyn PeerConnection>, role: VideoRole) -> Result<Self> {
+        let (track, ssrc) = Self::track(role)?;
+        let init = RTCRtpTransceiverInit {
+            direction: RTCRtpTransceiverDirection::Sendrecv,
+            ..Default::default()
+        };
+        let transceiver = pc
+            .add_transceiver_from_track(Arc::clone(&track) as Arc<dyn TrackLocal>, Some(init))
+            .await
+            .map_err(media_err("add video line"))?;
+        let rtp_sender = transceiver
+            .sender()
+            .await
+            .map_err(media_err("video line sender"))?
+            .ok_or_else(|| Error::Media("video line has no sender".into()))?;
+        Ok(VideoSender {
+            role,
+            track,
+            rtp_sender,
+            ssrc,
+        })
+    }
+
+    fn track(role: VideoRole) -> Result<(Arc<TrackLocalStaticSample>, u32)> {
         let ssrc = rand::random::<u32>();
         let track = Arc::new(
             TrackLocalStaticSample::new(
@@ -623,16 +702,7 @@ impl VideoSender {
             )
             .map_err(media_err("video track"))?,
         );
-        let rtp_sender = pc
-            .add_track(Arc::clone(&track) as Arc<dyn TrackLocal>)
-            .await
-            .map_err(media_err("add video track"))?;
-        Ok(VideoSender {
-            role,
-            track,
-            rtp_sender,
-            ssrc,
-        })
+        Ok((track, ssrc))
     }
 
     pub fn role(&self) -> VideoRole {

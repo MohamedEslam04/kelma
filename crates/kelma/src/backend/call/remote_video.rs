@@ -13,8 +13,8 @@
 
 use super::{EventSink, VideoSlot};
 use calling::Links;
-use calling::media::MediaSession;
 use calling::media::sdp::source_stream_ids;
+use calling::media::{MediaSession, VideoLayout};
 use calling::signaling::roster::Roster;
 use calling::signaling::video::{SCREEN_LIMITS, SourceRequest, TILE_LIMITS, plan_receive};
 use calling::signaling::{CallSession, NgcClient};
@@ -46,6 +46,20 @@ pub fn wanted_slots() -> usize {
         RECEIVE_SLOTS
     } else {
         0
+    }
+}
+
+/// The order of a meeting join's video lines: the web client's (camera, gallery, then the
+/// sharing line at mid 11), or kelma's first (the sharing line right after the camera) with
+/// `KELMA_MEETING_VIDEO_LAYOUT=sharing-second`, to try both against the live service.
+pub fn wanted_layout() -> VideoLayout {
+    layout_by(std::env::var_os("KELMA_MEETING_VIDEO_LAYOUT").as_deref())
+}
+
+fn layout_by(v: Option<&std::ffi::OsStr>) -> VideoLayout {
+    match v.and_then(|v| v.to_str()) {
+        Some("sharing-second") => VideoLayout::SharingSecond,
+        _ => VideoLayout::WebClient,
     }
 }
 
@@ -360,6 +374,16 @@ async fn forward_frames(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_web_client_layout_is_the_default_and_the_other_is_one_switch_away() {
+        assert_eq!(layout_by(None), VideoLayout::WebClient);
+        assert_eq!(layout_by(Some("web".as_ref())), VideoLayout::WebClient);
+        assert_eq!(
+            layout_by(Some("sharing-second".as_ref())),
+            VideoLayout::SharingSecond
+        );
+    }
     use serde_json::json;
 
     fn roster(people: serde_json::Value) -> Roster {

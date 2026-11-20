@@ -27,7 +27,10 @@
 //!   and address on each m-line and `c=`, `a=rtcp:<port>` and the fingerprint per section; an
 //!   answer carries none of that (`SdpParsingFailure`);
 //! - each section states `a=label` and its SSRC as `a=x-ssrc-range:N-N` (Teams drops RTP from
-//!   SSRCs outside the advertised range, mautrix-teams `pkg/teamsmedia/sdp.go`).
+//!   SSRCs outside the advertised range, mautrix-teams `pkg/teamsmedia/sdp.go`);
+//! - every video line of an offer also states `a=x-signaling-fb:* x-message app send:src
+//!   recv:src,vc`, and a receive-only one the range `1-1` (the web client's meeting join and
+//!   mautrix-teams `writeVideoLine`).
 //!
 //! On the way in, candidates are reduced to what webrtc-rs uses: UDP, component 1 (rtcp-mux makes
 //! the RTCP component redundant), without vendor extras such as `MTURNID`.
@@ -50,6 +53,11 @@ pub const CONTENT_TYPE_NGC: &str = "application/sdp-ngc-1.0";
 const MS_PROFILE: &str = "RTP/SAVP";
 const DTLS_PROFILE: &str = "UDP/TLS/RTP/SAVPF";
 const SESSION_BANDWIDTH: &str = "b=CT:4000";
+/// What every video line of the web client's offer (and mautrix-teams') declares; the media
+/// servers answer theirs with `send:src,csrc,vc recv:src` (mautrix-teams openapi `TeamsSdp`).
+const VIDEO_SIGNALING_FB: &str = "a=x-signaling-fb:* x-message app send:src recv:src,vc";
+/// The SSRC range the web client gives a receive-only video line.
+const NO_SSRC_RANGE: &str = "1-1";
 /// The payload a declined section of an offer names (the web client's own stub).
 const STUB_PAYLOAD: &str = "34";
 const ENCODED_EXTENSIONS: [&str; 2] = [
@@ -611,6 +619,16 @@ pub fn source_stream_ids(sdp: &str) -> HashMap<String, u32> {
         .collect()
 }
 
+/// The mids of `sdp`'s video sections that are not declined (port 0), in order.
+pub fn video_mids(sdp: &str) -> Vec<String> {
+    Parsed::new(sdp)
+        .sections
+        .iter()
+        .filter(|s| MediaLine::parse(&s[0]).is_some_and(|m| m.kind == "video" && m.port != "0"))
+        .filter_map(|s| s.iter().find_map(|l| attr(l, "mid")).map(str::to_owned))
+        .collect()
+}
+
 /// The mid of the first section labelled for `role`.
 pub fn mid_of_role(sdp: &str, role: VideoRole) -> Option<String> {
     Parsed::new(sdp)
@@ -887,8 +905,19 @@ fn to_teams(
         if let (false, Some(label)) = (has_label, label) {
             out.push(format!("a=label:{label}"));
         }
-        if let (false, Some(ssrc)) = (has_range, ssrc) {
+        if let (false, Some(ssrc)) = (has_range, &ssrc) {
             out.push(format!("a=x-ssrc-range:{ssrc}-{ssrc}"));
+        }
+        if offer && m.kind == "video" {
+            // As the web client and mautrix-teams offer every video line: a line that sends
+            // nothing states the placeholder range `1-1`, and each declares the signalling
+            // feedback the media controller drives video with (source requests, `vc`).
+            if !has_range && ssrc.is_none() {
+                out.push(format!("a=x-ssrc-range:{NO_SSRC_RANGE}"));
+            }
+            if !section.iter().any(|l| attr(l, "x-signaling-fb").is_some()) {
+                out.push(VIDEO_SIGNALING_FB.to_owned());
+            }
         }
     }
     join(out)
