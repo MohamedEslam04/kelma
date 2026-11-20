@@ -154,6 +154,8 @@ impl Stretcher {
 }
 
 /// `input` played at `speed`, all at once (the pieces [`Stretcher::render`] gives, joined).
+/// Only the tests use it: playback streams through [`Stretcher::render`].
+#[cfg(test)]
 pub fn stretch(input: &[f32], sample_rate: u32, speed: f32) -> Vec<f32> {
     let mut stretcher = Stretcher::new(sample_rate, speed);
     let mut out = Vec::with_capacity((input.len() as f64 / f64::from(speed.max(0.01))) as usize);

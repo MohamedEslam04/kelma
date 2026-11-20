@@ -251,18 +251,13 @@ impl StreamThread {
             };
             still_open.store(true, Ordering::Release);
             let _ = ready_tx.send(Ok(()));
-            loop {
-                match stop_rx.recv_timeout(IDLE_CHECK) {
-                    Err(RecvTimeoutError::Timeout) => {
-                        // Decide and mark closed under the lock, so a resume that arrives
-                        // meanwhile either sees the stream gone and reopens it, or keeps it.
-                        let playback = locked(&shared);
-                        if playback.idle_for().is_some_and(|idle| idle >= IDLE_CLOSE) {
-                            still_open.store(false, Ordering::Release);
-                            break;
-                        }
-                    }
-                    _ => break,
+            while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(IDLE_CHECK) {
+                // Decide and mark closed under the lock, so a resume that arrives
+                // meanwhile either sees the stream gone and reopens it, or keeps it.
+                let playback = locked(&shared);
+                if playback.idle_for().is_some_and(|idle| idle >= IDLE_CLOSE) {
+                    still_open.store(false, Ordering::Release);
+                    break;
                 }
             }
             still_open.store(false, Ordering::Release);
