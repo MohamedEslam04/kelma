@@ -1,15 +1,15 @@
 //! UI-thread side of the app screens: turns the backend's view data into the `AppsStore`,
-//! `TasksStore`, `FlowsStore`, `NotesStore` and `ListsStore` globals.
+//! `TasksStore`, `FlowsStore`, `NotesStore`, `ListsStore` and `RecapsStore` globals.
 
 use super::{UiHandle, img, model, rgb};
 use crate::backend::appstore::view::{
-    AppPage, Card, FlowsData, ListsData, Nav, NotesData, PermItem, RailData, RailItem, Row,
-    StoreData, TableRow, TasksData,
+    AppPage, Card, FlowsData, FormData, ListsData, Nav, NotesData, PermItem, RailData, RailItem,
+    RecapsData, Row, StoreData, TableRow, TasksData,
 };
 use crate::backend::{AppsCmd, Cmd};
 use crate::{
     AppCard, AppNav, AppRow, AppWindow, AppsStore, BoardColumn, FlowsStore, ListsStore, NotesStore,
-    PermRow, RailApp, TableRow as SlintTableRow, TasksStore,
+    PermRow, RailApp, RecapsStore, TableRow as SlintTableRow, TasksStore,
 };
 use slint::{ComponentHandle, Image, ModelRc, SharedString};
 use tokio::sync::mpsc::UnboundedSender;
@@ -192,6 +192,7 @@ fn set_tasks(w: &AppWindow, d: TasksData) {
     s.set_progress(d.progress);
     s.set_status(d.status.into());
     s.set_loading(d.loading);
+    s.set_can_add(d.can_add);
 }
 
 fn set_flows(w: &AppWindow, d: FlowsData) {
@@ -200,8 +201,12 @@ fn set_flows(w: &AppWindow, d: FlowsData) {
     s.set_runs(rows(d.runs));
     s.set_environment(d.environment.into());
     s.set_selected_name(d.selected_name.into());
+    s.set_selected_id(d.selected_id.into());
     s.set_status(d.status.into());
     s.set_loading(d.loading);
+    s.set_can_run(d.can_run);
+    s.set_can_toggle(d.can_toggle);
+    s.set_selected_on(d.selected_on);
 }
 
 fn set_notes(w: &AppWindow, d: NotesData) {
@@ -212,6 +217,7 @@ fn set_notes(w: &AppWindow, d: NotesData) {
     s.set_page_title(d.page_title.into());
     s.set_page_text(d.page_text.into());
     s.set_can_open_web(d.can_open_web);
+    s.set_can_new_page(d.can_new_page);
     s.set_status(d.status.into());
     s.set_loading(d.loading);
 }
@@ -232,6 +238,57 @@ fn set_lists(w: &AppWindow, d: ListsData) {
     s.set_title(d.title.into());
     s.set_status(d.status.into());
     s.set_loading(d.loading);
+    s.set_can_edit(d.can_edit);
+}
+
+fn set_form(w: &AppWindow, d: FormData) {
+    let s = w.global::<AppsStore>();
+    if !d.open {
+        s.set_form_title("".into());
+        return;
+    }
+    let field = |i: usize| d.fields.get(i).cloned().unwrap_or_default();
+    s.set_form_body(d.body.into());
+    s.set_form_confirm(d.confirm.into());
+    s.set_form_danger(d.danger);
+    s.set_form_link_label(d.link_label.into());
+    s.set_form_error(d.error.into());
+    s.set_form_choices(rows(d.choices));
+    s.set_form_label1(field(0).0.into());
+    s.set_form_label2(field(1).0.into());
+    s.set_form_label3(field(2).0.into());
+    // A refresh (a choice picked, an error shown) must keep what the user typed.
+    if d.fresh {
+        s.set_form_text1(field(0).1.into());
+        s.set_form_text2(field(1).1.into());
+        s.set_form_text3(field(2).1.into());
+    }
+    s.set_form_title(d.title.into());
+}
+
+fn set_recaps(w: &AppWindow, d: RecapsData) {
+    let s = w.global::<RecapsStore>();
+    s.set_meetings(rows(d.meetings));
+    // The search box owns the text while the user types; write it only when it differs.
+    if s.get_query() != d.query.as_str() {
+        s.set_query(d.query.into());
+    }
+    s.set_note(d.note.into());
+    s.set_loading(d.loading);
+    let t = d.detail;
+    s.set_detail_open(t.open);
+    s.set_detail_title(t.title.into());
+    s.set_detail_when(t.when.into());
+    s.set_detail_organizer(t.organizer.into());
+    s.set_has_recording(t.has_recording);
+    s.set_has_transcript(t.has_transcript);
+    s.set_transcript(t.transcript.into());
+    s.set_transcript_note(t.transcript_note.into());
+    s.set_has_notes(t.has_notes);
+    s.set_notes_note(t.notes_note.into());
+    s.set_ai(t.ai.into());
+    s.set_has_ai_link(t.has_ai_link);
+    s.set_can_share(t.can_share);
 }
 
 impl UiHandle {
@@ -265,14 +322,13 @@ impl UiHandle {
         self.run(move |w| set_lists(&w, d));
     }
 
-    /// Opens the dialog that shows the request an install, uninstall or update would send.
-    pub fn apps_install(&self, title: String, request: String, link: String) {
-        self.run(move |w| {
-            let s = w.global::<AppsStore>();
-            s.set_install_request(request.into());
-            s.set_install_link(link.into());
-            s.set_install_title(title.into());
-        });
+    /// Shows, refreshes or (with `open` false) closes the confirm and input dialog.
+    pub fn apps_form(&self, d: FormData) {
+        self.run(move |w| set_form(&w, d));
+    }
+
+    pub fn apps_recaps(&self, d: RecapsData) {
+        self.run(move |w| set_recaps(&w, d));
     }
 }
 
@@ -296,4 +352,5 @@ pub fn wire(window: &AppWindow, tx: UnboundedSender<Cmd>) {
     wire_store!(FlowsStore);
     wire_store!(NotesStore);
     wire_store!(ListsStore);
+    wire_store!(RecapsStore);
 }

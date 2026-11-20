@@ -1,14 +1,21 @@
-//! OneNote (read: notebooks, sections, pages) and Lists (SharePoint lists: columns and items),
-//! both read only. Editing goes to the web.
+//! OneNote (notebooks, sections, pages, and New page) and Lists (SharePoint lists: columns and
+//! items, with New item and Edit item). Editing a OneNote page's content stays in OneNote.
 
+use super::form::{self, Pending, field};
 use super::view::{ListsData, NotesData, Row, TableRow, day};
 use crate::backend::Engine;
+use serde_json::{Map, Value};
 use std::sync::Arc;
-use teams_proto::lists::{Column, ListItem, Site, SpList, field_text};
-use teams_proto::onenote::{Notebook, Page, Section};
+use teams_proto::lists::{
+    Column, ListItem, Site, SpList, create_item_request, field_text, field_value,
+    update_item_request,
+};
+use teams_proto::onenote::{Notebook, Page, Section, create_page_request};
 
 /// How many columns the Lists table shows.
 const MAX_COLUMNS: usize = 8;
+/// How many columns the New item and Edit item dialog has fields for (Title first).
+const FORM_FIELDS: usize = 3;
 
 #[derive(Default)]
 pub struct Notes {
@@ -44,6 +51,17 @@ impl Notes {
         self.notebooks
             .iter()
             .find(|n| self.notebook.as_deref() == Some(n.id.as_str()))
+    }
+
+    fn current_section(&self) -> Option<&Section> {
+        self.sections
+            .iter()
+            .find(|s| self.section.as_deref() == Some(s.id.as_str()))
+    }
+
+    /// Where a new page of the open section is posted.
+    fn pages_url(&self) -> Option<&str> {
+        self.current_section().and_then(|s| s.pages_url.as_deref())
     }
 
     fn current_page(&self) -> Option<&Page> {
@@ -111,6 +129,7 @@ impl Notes {
             page_text: self.text.clone(),
             can_open_web: self.current_page().is_some_and(|p| p.web_url.is_some())
                 || self.current_notebook().is_some_and(|n| n.web_url.is_some()),
+            can_new_page: self.pages_url().is_some(),
             status,
             loading: self.loading,
         }
@@ -131,6 +150,22 @@ pub struct Lists {
 }
 
 impl Lists {
+    /// The columns the dialog has fields for: Title first, then other editable ones.
+    fn form_columns(&self) -> Vec<&Column> {
+        let mut cols: Vec<&Column> = self.columns.iter().filter(|c| c.is_editable()).collect();
+        cols.sort_by_key(|c| c.name != "Title");
+        cols.truncate(FORM_FIELDS);
+        cols
+    }
+
+    /// A user list (not a library) is open: items can be added and edited.
+    fn can_edit(&self) -> bool {
+        self.lists
+            .iter()
+            .any(|l| self.list.as_deref() == Some(l.id.as_str()) && l.is_user_list())
+            && !self.form_columns().is_empty()
+    }
+
     pub fn data(&self) -> ListsData {
         let sel = |id: &str, cur: &Option<String>| cur.as_deref() == Some(id);
         let columns: Vec<&Column> = self
@@ -185,9 +220,30 @@ impl Lists {
                         .collect(),
                 })
                 .collect(),
+            can_edit: self.can_edit(),
             status,
             loading: self.loading,
         }
+    }
+}
+
+/// How a dialog field is labelled: the column name, with the format a typed value needs.
+fn column_label(c: &Column) -> String {
+    match c.kind.as_str() {
+        "boolean" => format!("{} (yes or no)", c.display_name),
+        "dateTime" => format!("{} (2026-11-25)", c.display_name),
+        "number" => format!("{} (a number)", c.display_name),
+        _ => c.display_name.clone(),
+    }
+}
+
+/// An item's field as the dialog shows it.
+fn column_text(c: &Column, item: &ListItem) -> String {
+    let text = item.fields.get(&c.name).map(field_text).unwrap_or_default();
+    if c.kind == "dateTime" {
+        text.chars().take(10).collect()
+    } else {
+        text
     }
 }
 
@@ -351,6 +407,59 @@ impl Engine {
         Ok(())
     }
 
+    /// Opens the New page dialog for the open section.
+    pub(super) fn notes_begin_new_page(self: &Arc<Self>) -> anyhow::Result<()> {
+        let name = {
+            let a = self.apps.lock().unwrap();
+            a.notes
+                .pages_url()
+                .and(a.notes.current_section())
+                .map(|s| s.name.clone())
+        };
+        let Some(name) = name else {
+            self.ui.banner("Open a section to add a page to it.".into());
+            return Ok(());
+        };
+        let mut spec = form::confirm(format!("New page in {name}"), String::new(), "Add", false);
+        spec.fields = vec![
+            ("Title".into(), String::new()),
+            ("Text (optional)".into(), String::new()),
+        ];
+        self.form_open(Pending::PageNew, spec, String::new());
+        Ok(())
+    }
+
+    pub(super) async fn notes_do_new_page(
+        self: &Arc<Self>,
+        fields: &[String],
+    ) -> Result<(), String> {
+        let title = field(fields, 0);
+        if title.is_empty() {
+            return Err("Give the page a title.".into());
+        }
+        let (url, section) = {
+            let a = self.apps.lock().unwrap();
+            let n = &a.notes;
+            (
+                n.pages_url().map(str::to_owned),
+                n.section.clone().unwrap_or_default(),
+            )
+        };
+        let url = url.ok_or("Open a section to add a page to it.")?;
+        let w = create_page_request(&url, &title, &field(fields, 1));
+        match self.src_write("new page", w).await {
+            Ok(()) => {
+                self.ui.banner(format!("Page \"{title}\" added."));
+                let _ = self.notes_section(&section).await;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "new page failed");
+                self.ui.banner(format!("Could not add the page: {err}"));
+            }
+        }
+        Ok(())
+    }
+
     // -- Lists --
 
     fn lists_push(self: &Arc<Self>) {
@@ -459,6 +568,116 @@ impl Engine {
                 (Err(e), _) | (_, Err(e)) => l.status = format!("Loading the list failed: {e}"),
             }
         });
+        Ok(())
+    }
+}
+
+impl Engine {
+    /// Opens the New item dialog (`item` is `None`) or the Edit item dialog of that item.
+    pub(super) fn lists_begin_item(self: &Arc<Self>, item: Option<&str>) -> anyhow::Result<()> {
+        let spec = {
+            let a = self.apps.lock().unwrap();
+            let l = &a.lists;
+            if !l.can_edit() {
+                None
+            } else {
+                let existing = item.and_then(|id| l.items.iter().find(|i| i.id == id));
+                let fields: Vec<(String, String)> = l
+                    .form_columns()
+                    .into_iter()
+                    .map(|c| {
+                        let text = existing.map(|i| column_text(c, i)).unwrap_or_default();
+                        (column_label(c), text)
+                    })
+                    .collect();
+                let title = l
+                    .lists
+                    .iter()
+                    .find(|x| l.list.as_deref() == Some(x.id.as_str()))
+                    .map(|x| x.name.clone())
+                    .unwrap_or_default();
+                let mut spec = if item.is_some() {
+                    form::confirm(
+                        format!("Edit item in {title}"),
+                        String::new(),
+                        "Save",
+                        false,
+                    )
+                } else {
+                    form::confirm(format!("New item in {title}"), String::new(), "Add", false)
+                };
+                spec.fields = fields;
+                Some(spec)
+            }
+        };
+        let Some(spec) = spec else {
+            self.ui
+                .banner("Open a list to add or edit its items.".into());
+            return Ok(());
+        };
+        let pending = match item {
+            Some(id) => Pending::ItemEdit(id.to_owned()),
+            None => Pending::ItemNew,
+        };
+        self.form_open(pending, spec, String::new());
+        Ok(())
+    }
+
+    /// Sends the new item or the edit. Typed values that do not fit their column keep the
+    /// dialog open with the reason.
+    pub(super) async fn lists_do_item(
+        self: &Arc<Self>,
+        item: Option<&str>,
+        fields: &[String],
+    ) -> Result<(), String> {
+        let (site, list, columns) = {
+            let a = self.apps.lock().unwrap();
+            let l = &a.lists;
+            (
+                l.site.clone().unwrap_or_default(),
+                l.list.clone().unwrap_or_default(),
+                l.form_columns()
+                    .into_iter()
+                    .map(|c| (c.name.clone(), c.kind.clone(), c.display_name.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let mut values = Map::new();
+        for (i, (name, kind, label)) in columns.iter().enumerate() {
+            let v = field_value(kind, &field(fields, i)).map_err(|e| format!("{label}: {e}"))?;
+            // A new item leaves empty fields out; an edit clears them.
+            if v != Value::Null || item.is_some() {
+                values.insert(name.clone(), v);
+            }
+        }
+        if item.is_none()
+            && columns.first().is_some_and(|c| c.0 == "Title")
+            && !values.contains_key("Title")
+        {
+            return Err("Give the item a title.".into());
+        }
+        if item.is_none() && values.is_empty() {
+            return Err("Fill in at least one field.".into());
+        }
+        let w = match item {
+            Some(id) => update_item_request(&site, &list, id, values),
+            None => create_item_request(&site, &list, values),
+        };
+        let (done, failed) = if item.is_some() {
+            ("Item saved.", "Could not save the item")
+        } else {
+            ("Item added.", "Could not add the item")
+        };
+        match self.src_write("list item", w).await {
+            Ok(()) => {
+                self.ui.banner(done.to_owned());
+                let _ = self.lists_list(&list).await;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "{failed}");
+                self.ui.banner(format!("{failed}: {err}"));
+            }
+        }
         Ok(())
     }
 }

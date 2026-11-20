@@ -388,6 +388,40 @@ accepts those two API hosts as well, and still refuses every other host.
 alone finds none. Sections can sit in nested section groups, so kelma follows `sectionGroupsUrl`
 up to 4 levels.
 
+## Store, app bar and built-in apps: writes, Meeting Recaps 2026-11-20
+
+The screens send these after a confirm dialog (`crates/kelma/src/backend/appstore/form.rs`).
+**None was ever sent against a real account** (build and offline tests only; the demo mode and
+the tests log them as `Engine::apps_sent`). "Known" means a Microsoft docs or web client source
+names the request; **UNVERIFIED** means the shape is a best reading and a refusal is shown as it
+came.
+
+| Action | Request | Source | Status |
+|---|---|---|---|
+| Add an app (me, team, chat, meeting) | `POST MT/beta/{users\|teams/<id>\|chats/<id>}/apps/entitlements`, body the app definition | web client bundle, plans/store-and-apps.md S2.3 | known, unsent. The team, chat or meeting id comes from kelma's own store (the dialog's picker) |
+| Remove an app | `DELETE MT/beta/users/apps/entitlements/<appId>` | same | known, unsent. A permanent (built-in) app is refused before sending |
+| Update an app | `POST MT/beta/users/apps/Upgrade/<appId>?version=` | same | known, unsent |
+| Pin, unpin, reorder | `POST MT/beta/users/apps/pinned`, body `[{appId, appBarOrder}]` | web client bundle, plans S1.1 | known, unsent. The bar changes here first; if Teams refuses, the banner says the change is on this computer only |
+| To Do task: new, edit, complete, delete | Graph `POST /me/todo/lists/{id}/tasks`, `PATCH`, `DELETE …/tasks/{id}`; complete is `status: completed`, undo is `notStarted`; the due date is a `dateTimeTimeZone` at 00:00 UTC | Microsoft Graph docs (To Do) | known, unsent |
+| Planner task: new, edit, complete, delete | Graph `POST /planner/tasks` (`planId`, `bucketId`, `title`, `dueDateTime`), `PATCH`/`DELETE /planner/tasks/{id}` with `If-Match: <@odata.etag>`; complete is `percentComplete: 100` | Microsoft Graph docs (Planner) | known, unsent. A task without an etag is not edited (the screen asks to refresh). The `tasks.office.com` audience is not used (no usable path, see above) |
+| Flow: turn on or off | `POST https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments/{env}/flows/{flow}/start` and `…/stop` (`?api-version=2016-11-01`) | Power Automate management API | **UNVERIFIED**, unsent |
+| Flow: run a manual flow | `POST …/flows/{flow}/triggers/manual/run` with `{"inputs": {}}` | the maker portal's Run button; trigger name `manual` is the default | **UNVERIFIED**, unsent. Only a flow with a button trigger that is on offers Run |
+| OneNote: new page | Graph `POST <section pagesUrl>` (`/me/onenote/sections/{id}/pages`, or the group's path) with an HTML document, `Content-Type: text/html`; the `<title>` is the page title | Microsoft Graph docs (OneNote) | known, unsent |
+| Lists: new item, edit item | Graph `POST /sites/{site}/lists/{list}/items` `{"fields": {…}}`, `PATCH …/items/{id}/fields` | Microsoft Graph docs (lists) | known, unsent. The form covers Title and the first two other editable columns (text, number, choice, yes/no, date); an empty value clears the field on edit |
+
+### Meeting Recaps (`teams_proto::recaps`, plans/meeting-recaps.md R1)
+
+All reads. Sources, in the order kelma tries them:
+
+| What | Request | Status |
+|---|---|---|
+| Meetings with a recording or transcript | MCPS `GET https://teams.microsoft.com/api/mcps/<geo>/user/meetings/contents?top=&startDateTime=&endDateTime=&includeTypes=Recording,TranscriptV2`; each entry is `threadInfo` (`threadId`, `iCalUid`, `subject`, `start`, `end`, `organizer`) with `resources` (`Recording`, `TranscriptV2`, `AISummary`; `metadata` `driveId`, `driveItemId`, `webUrl`, `transcriptId`) | shape from the mautrix OpenAPI (captured web client). **UNVERIFIED**: the capture strips the bearer, so kelma sends the Teams host credentials, and `<geo>` is derived from the middle tier (`emea` to `eu`, `amer` to `us`, `apac` to `ap`) |
+| Fallback list | the recordings of the user's OneDrive `Recordings` folder and channel libraries (`onedrive::meeting_recordings`, Graph), grouped by the name `<subject>-<yyyymmdd_hhmmss>UTC-Meeting Recording.mp4` | known, used when MCPS fails or is empty |
+| Transcript text | SharePoint `GET <tenant>.sharepoint.com/_api/v2.1/drives/<d>/items/<i>/media/transcripts` (named by the plan) then `…/transcripts/<id>/streamContent?format=vtt` | list: plan; **streamContent path UNVERIFIED**. A `.vtt` file of the Recordings folder is read with Graph `GET /drives/{d}/items/{i}/content` (known). A `.docx` transcript is not read |
+| Meeting notes link | Graph `GET /chats/{thread}/tabs?$expand=teamsApp`, the tab named "Notes" | Graph docs; the tab name is **UNVERIFIED** |
+| Play, Share | Play opens the recording's `webUrl` in the browser (no native player). Share opens the OneDrive share dialog for the recording's drive item | known |
+| AI notes, tasks, chapters | not read: they need Teams Premium or Copilot, and the screen says "Not available" (or "Available in Teams" when the service lists an `AISummary`) | by design |
+
 ## Teams and channels (`teams_proto::teams`, `tags`, `engage`) 2026-11-19
 
 Code: `crates/teams-proto/src/{teams,tags,engage}.rs`, CLI `kelma-cli team …`. Plan:

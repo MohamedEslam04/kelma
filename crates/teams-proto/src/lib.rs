@@ -36,6 +36,7 @@ pub mod people;
 pub mod planner;
 pub mod posts;
 pub mod presence;
+pub mod recaps;
 pub mod receipts;
 pub mod scheduled;
 pub mod search;

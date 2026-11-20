@@ -1,15 +1,16 @@
 //! The commands the app screens send, as `(name, argument)` strings from the `AppsStore`,
-//! `TasksStore`, `FlowsStore`, `NotesStore` and `ListsStore` globals.
+//! `TasksStore`, `FlowsStore`, `NotesStore`, `ListsStore` and `RecapsStore` globals.
 
-/// Everything the app bar, the Store and the built-in app screens ask the engine to do. None of
-/// them writes to the server: pin, add and remove only show the request they would send.
+/// Everything the app bar, the Store and the built-in app screens ask the engine to do. The ones
+/// that change something on the server (add, remove, update, a task, a flow, a page, an item)
+/// first open the confirm dialog (`Form*`); the request is sent when the user confirms.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppsCmd {
     /// Loads the app bar (the engine does this at start-up).
     Load,
     // -- app bar and flyout --
     RailCollapse,
-    /// Pin an installed app to the bar (kept locally; the request is shown, not sent).
+    /// Pin an installed app to the bar (kept here, and sent to Teams).
     Pin(String),
     Unpin(String),
     /// Moves a pinned app to a position among the pinned apps (0 is first).
@@ -33,7 +34,7 @@ pub enum AppsCmd {
     /// `all`, `apps` or `agents`.
     StoreKind(String),
     AppPage(String),
-    /// `me`, `team`, `chat` or `meeting`: shows the install request, never sends it.
+    /// `me`, `team`, `chat` or `meeting`: opens the confirm dialog of an install.
     AppAdd(String),
     AppRemove(String),
     AppUpdate(String),
@@ -49,20 +50,51 @@ pub enum AppsCmd {
     TasksNav(String),
     TasksMode(String),
     TasksRefresh,
+    /// Opens the New task dialog for the open list or plan.
+    TaskNew,
+    /// Completes a task, or undoes it.
+    TaskToggle(String),
+    TaskEdit(String),
+    TaskDelete(String),
     // -- Workflows --
     FlowsEnter,
     FlowsSelect(String),
     FlowsRefresh,
+    /// Asks to run a flow now.
+    FlowRun(String),
+    /// Asks to turn a flow on or off.
+    FlowToggle(String),
     // -- OneNote --
     NotesEnter,
     NotesNotebook(String),
     NotesSection(String),
     NotesPage(String),
     NotesOpenWeb,
+    /// Opens the New page dialog for the open section.
+    PageNew,
     // -- Lists --
     ListsEnter,
     ListsSite(String),
     ListsList(String),
+    ItemNew,
+    ItemEdit(String),
+    // -- the confirm and input dialog --
+    /// The confirm button: the text fields joined with a newline.
+    FormSubmit(String),
+    FormCancel,
+    /// A choice of the dialog was picked.
+    FormChoice(String),
+    /// The dialog's link button.
+    FormLink,
+    // -- Meeting Recaps --
+    RecapsEnter,
+    RecapsRefresh,
+    RecapsQuery(String),
+    RecapsOpen(String),
+    RecapsPlay,
+    RecapsNotes,
+    RecapsShare,
+    RecapsAi,
 }
 
 impl AppsCmd {
@@ -106,17 +138,38 @@ impl AppsCmd {
             "tasks-nav" => AppsCmd::TasksNav(s()),
             "tasks-mode" => AppsCmd::TasksMode(s()),
             "tasks-refresh" => AppsCmd::TasksRefresh,
+            "task-new" => AppsCmd::TaskNew,
+            "task-toggle" => AppsCmd::TaskToggle(s()),
+            "task-edit" => AppsCmd::TaskEdit(s()),
+            "task-delete" => AppsCmd::TaskDelete(s()),
             "flows-enter" => AppsCmd::FlowsEnter,
             "flows-select" => AppsCmd::FlowsSelect(s()),
             "flows-refresh" => AppsCmd::FlowsRefresh,
+            "flow-run" => AppsCmd::FlowRun(s()),
+            "flow-toggle" => AppsCmd::FlowToggle(s()),
             "notes-enter" => AppsCmd::NotesEnter,
             "notes-notebook" => AppsCmd::NotesNotebook(s()),
             "notes-section" => AppsCmd::NotesSection(s()),
             "notes-page" => AppsCmd::NotesPage(s()),
             "notes-open-web" => AppsCmd::NotesOpenWeb,
+            "page-new" => AppsCmd::PageNew,
             "lists-enter" => AppsCmd::ListsEnter,
             "lists-site" => AppsCmd::ListsSite(s()),
             "lists-list" => AppsCmd::ListsList(s()),
+            "item-new" => AppsCmd::ItemNew,
+            "item-edit" => AppsCmd::ItemEdit(s()),
+            "form-submit" => AppsCmd::FormSubmit(s()),
+            "form-cancel" => AppsCmd::FormCancel,
+            "form-choice" => AppsCmd::FormChoice(s()),
+            "form-link" => AppsCmd::FormLink,
+            "recaps-enter" => AppsCmd::RecapsEnter,
+            "recaps-refresh" => AppsCmd::RecapsRefresh,
+            "recaps-query" => AppsCmd::RecapsQuery(s()),
+            "recaps-open" => AppsCmd::RecapsOpen(s()),
+            "recaps-play" => AppsCmd::RecapsPlay,
+            "recaps-notes" => AppsCmd::RecapsNotes,
+            "recaps-share" => AppsCmd::RecapsShare,
+            "recaps-ai" => AppsCmd::RecapsAi,
             _ => return None,
         })
     }
@@ -141,6 +194,15 @@ mod tests {
             AppsCmd::parse("grant", "app|media|off"),
             Some(AppsCmd::Grant("app".into(), "media".into(), false))
         );
+        assert_eq!(
+            AppsCmd::parse("form-submit", "a\nb"),
+            Some(AppsCmd::FormSubmit("a\nb".into()))
+        );
+        assert_eq!(
+            AppsCmd::parse("task-toggle", "t1"),
+            Some(AppsCmd::TaskToggle("t1".into()))
+        );
+        assert_eq!(AppsCmd::parse("recaps-play", ""), Some(AppsCmd::RecapsPlay));
         assert_eq!(AppsCmd::parse("shortcut", "x"), None);
         assert_eq!(AppsCmd::parse("nope", ""), None);
     }
