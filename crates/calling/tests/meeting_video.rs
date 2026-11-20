@@ -1,5 +1,5 @@
-//! A meeting join with video lines, offline: the offer's layout and attributes (the web client's,
-//! which the media servers accept), the join body that declares the lines, and an answer that
+//! A meeting join with video lines, offline: the offer's layout and attributes (the web client's),
+//! its data line, the join body (declaring the lines only when asked to), and an answer that
 //! refuses every video line (port 0), after which neither the camera nor the share is live.
 //!
 //! Live 2026-11-20: a join offering audio, camera, sharing, nine gallery lines and data, declared
@@ -171,8 +171,12 @@ fn meeting() -> MeetingInfo {
     }
 }
 
+/// Live 2026-11-20 on b1d38a7: a join declaring every video mid (1-11) `recvonly` in
+/// `mediaDescriptions`, with `ScreenViewer` and a bandwidth seed, was taken (201) and ended within
+/// 1.5 s: 410, 301999 "InvalidFinalAnswerMediaDescriptions". Unless asked to, a join with video
+/// lines declares nothing, as the join that kept audio up did.
 #[tokio::test]
-async fn a_join_with_video_lines_declares_them_as_the_web_client_does() {
+async fn a_join_with_video_lines_declares_nothing_by_default() {
     let (session, _events) =
         MediaSession::with_options(vec![], join_options(VideoLayout::WebClient))
             .await
@@ -185,19 +189,111 @@ async fn a_join_with_video_lines_declares_them_as_the_web_client_does() {
         &[Modality::Audio],
     );
     let inv = &b["callInvitation"];
+    assert_eq!(inv["callModalities"], json!(["Audio"]));
+    assert!(inv["mediaContent"].get("mediaDescriptions").is_none());
+    assert!(inv["mediaContent"].get("applyChannelParameters").is_none());
+    session.close().await.unwrap();
+}
+
+/// Asked to (`ScreenViewer` among the modalities: `KELMA_MEETING_VIDEO_DESCRIBE=1`), a join
+/// declares only its send-capable video lines, as the web client's captured join does (mids 1-6
+/// and 11, the lines its SDP offers `sendrecv`; never its `recvonly` 7-10): here the camera (1)
+/// and the sharing line (11), not the receive-only gallery (2-10).
+#[tokio::test]
+async fn a_join_asked_to_declares_only_its_send_capable_video_lines() {
+    let (session, _events) =
+        MediaSession::with_options(vec![], join_options(VideoLayout::WebClient))
+            .await
+            .unwrap();
+    let offer = session.create_offer().await.unwrap();
+    let b = join_meeting_body(
+        &session_ids(),
+        &meeting(),
+        &SdpBlob::ngc(offer),
+        &[Modality::Audio, Modality::ScreenViewer],
+    );
+    let inv = &b["callInvitation"];
     assert_eq!(inv["callModalities"], json!(["Audio", "ScreenViewer"]));
     let media = &inv["mediaContent"];
-    let descriptions: Vec<_> = (1..=11)
-        .map(|mid| json!({"mid": mid.to_string(), "direction": "recvonly"}))
-        .collect();
     assert_eq!(
         media["mediaDescriptions"],
-        json!({"descriptions": descriptions, "requestId": JOIN_REQUEST_ID})
+        json!({
+            "descriptions": [
+                {"mid": "1", "direction": "recvonly"},
+                {"mid": "11", "direction": "recvonly"},
+            ],
+            "requestId": JOIN_REQUEST_ID,
+        })
     );
     assert_eq!(
         media["applyChannelParameters"]["multiChannelParameter"]["mids"],
         json!(["*"])
     );
+    session.close().await.unwrap();
+}
+
+/// A join with receive-only video lines alone, asked to declare them, declares an empty list, as
+/// rusty-teams joins a meeting (`descriptions: []`).
+#[tokio::test]
+async fn a_receive_only_join_asked_to_declares_an_empty_list() {
+    let options = MediaOptions {
+        udp_addrs: vec!["127.0.0.1:0".into()],
+        receive_slots: 2,
+        ..Default::default()
+    };
+    let (session, _events) = MediaSession::with_options(vec![], options).await.unwrap();
+    let offer = session.create_offer().await.unwrap();
+    let b = join_meeting_body(
+        &session_ids(),
+        &meeting(),
+        &SdpBlob::ngc(offer),
+        &[Modality::Audio, Modality::ScreenViewer],
+    );
+    assert_eq!(
+        b["callInvitation"]["mediaContent"]["mediaDescriptions"],
+        json!({"descriptions": [], "requestId": JOIN_REQUEST_ID})
+    );
+    session.close().await.unwrap();
+}
+
+/// An audio-only offer asked to declare video still joins with audio alone (mautrix-teams
+/// `videoMedia`: no video mids, `["Audio"]`).
+#[test]
+fn an_audio_only_join_asked_to_declares_nothing() {
+    let b = join_meeting_body(
+        &session_ids(),
+        &meeting(),
+        &SdpBlob::ngc(MEETING_ANSWER),
+        &[Modality::Audio, Modality::ScreenViewer],
+    );
+    let inv = &b["callInvitation"];
+    assert_eq!(inv["callModalities"], json!(["Audio"]));
+    assert!(inv["mediaContent"].get("mediaDescriptions").is_none());
+}
+
+/// The meeting join's data line (live captions) is still offered with the web client's video
+/// layout: in Teams' `m=x-data` form, after every video line (mid 12, as the web client's).
+#[tokio::test]
+async fn a_meeting_join_still_offers_the_data_line() {
+    let options = MediaOptions {
+        data_channel: true,
+        ..join_options(VideoLayout::WebClient)
+    };
+    let (session, _events) = MediaSession::with_options(vec![], options).await.unwrap();
+    let offer = session.create_offer().await.unwrap();
+    let all = sections(&offer);
+    let data: Vec<_> = all
+        .iter()
+        .filter(|s| s[0].starts_with("m=x-data "))
+        .collect();
+    assert_eq!(data.len(), 1, "{offer}");
+    let data = data[0];
+    assert!(!data[0].starts_with("m=x-data 0 "), "{offer}");
+    assert_eq!(attr(data, "mid"), Some("12"), "{offer}");
+    assert_eq!(attr(data, "label"), Some("data"), "{offer}");
+    assert!(data.contains(&"a=x-data-protocol:sctp"), "{data:?}");
+    assert!(!offer.contains("m=application"), "{offer}");
+    assert_eq!(all.last().map(|s| s[0]), Some(data[0]), "{offer}");
     session.close().await.unwrap();
 }
 

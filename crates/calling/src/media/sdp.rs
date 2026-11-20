@@ -629,6 +629,19 @@ pub fn video_mids(sdp: &str) -> Vec<String> {
         .collect()
 }
 
+/// [`video_mids`] of the lines that can send (`sendrecv` or `sendonly`): the lines a meeting
+/// join's `mediaDescriptions` may name (the web client's names its `sendrecv` mids 1-6 and 11,
+/// never its `recvonly` 7-10; mautrix-teams openapi `TeamsSdp`).
+pub fn send_capable_video_mids(sdp: &str) -> Vec<String> {
+    Parsed::new(sdp)
+        .sections
+        .iter()
+        .filter(|s| MediaLine::parse(&s[0]).is_some_and(|m| m.kind == "video" && m.port != "0"))
+        .filter(|s| matches!(direction_of(s), "sendrecv" | "sendonly"))
+        .filter_map(|s| s.iter().find_map(|l| attr(l, "mid")).map(str::to_owned))
+        .collect()
+}
+
 /// The mid of the first section labelled for `role`.
 pub fn mid_of_role(sdp: &str, role: VideoRole) -> Option<String> {
     Parsed::new(sdp)

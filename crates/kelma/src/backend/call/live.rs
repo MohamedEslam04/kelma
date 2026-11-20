@@ -448,7 +448,12 @@ async fn join_meeting(
     // Callbacks can arrive before the join answers.
     let pushes = hub.add_session(s.callbacks.session_id());
     let conv = match ngc
-        .join(&s, &target, &SdpBlob::ngc(offer), &MODALITIES)
+        .join(
+            &s,
+            &target,
+            &SdpBlob::ngc(offer),
+            remote_video::join_modalities(),
+        )
         .await
     {
         Ok(c) => c,
