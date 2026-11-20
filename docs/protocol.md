@@ -149,6 +149,52 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
   Images from any other host are fetched without any credential.
 - **Files** are not AMS: see [Files](#files--2026-11-18) below.
 
+## Video clips and Loop paragraphs (feat/clip-loop) 2026-11-20
+
+### Video clips (`teams_proto::video_clip`, "Record video clip") **UNVERIFIED**
+
+Nothing here has been sent live. No capture of the Teams client sending a video clip is in
+`docs/`, `plans/` or the reference clones; the shape below is what the mautrix-teams bridge sends
+for a video and what its parser and the rusty-teams client read back.
+
+| Step | Request | Status |
+|---|---|---|
+| Create the object | `POST as-prod.asyncgw.teams.microsoft.com/v1/objects/` `{type: "sharing/videototranscode", permissions: {<conv>: ["read"]}, filename, sharingMode: "Inline"}` → `id`. `videototranscode` makes AMS prepare the `video`, `thumbnail` and lower-resolution views (mautrix-teams comment). Constants `VIDEO_OBJECT_TYPE` / `VIDEO_CONTENT` | **UNVERIFIED** placeholder, as `AUDIO_OBJECT_TYPE` for voice: confirm with `kelma-cli ams-meta` on a clip Teams sent before trusting it. mautrix sends no `sharingMode` for videos; kelma's shared upload sends `Inline` |
+| Upload | `PUT …/v1/objects/{id}/content/original` with the MP4 (H.264 video, AAC audio, `+faststart`) | **UNVERIFIED** (slot from mautrix-teams) |
+| Message | `RichText/Html`, content `<video src="https://as-api.asm.skype.com/v1/objects/{id}/views/video" itemscope="" itemtype="http://schema.skype.com/AMSVideo" width="640" height="360" data-duration="PT12.40S">Video clip</video>`, `amsreferences: [id]` (`video_clip_message_body`) | **UNVERIFIED**. The native Teams clip may instead be a `card.video` card or carry a `VideoMsg` preview image (an itemtype the mautrix parser lists); the `<video>` tag is what mautrix-teams sends and parses |
+| Thumbnail | `GET …/views/thumbnail` of the same object (rusty-teams `ams_video.rs`) | **UNVERIFIED** in kelma; fetched like an inline image, only for received clips |
+
+kelma records the clip itself: the call camera (`calling::video::camera`, Camera portal +
+PipeWire, else V4L2) at 640x360/15 fps piped into the system `ffmpeg` (`-c:v h264`, whichever H.264
+encoder it has), the microphone through `voice::Recorder`, then a second `ffmpeg` run adds the
+audio as AAC. Clips stop themselves at 60 s, as in Teams. When Teams refuses the upload or the
+message, the row shows "Failed to send" with Retry and Delete, and a notice says sending clips is
+not confirmed to work yet.
+
+Received clips (`split_video`): an AMS `<video … AMSVideo>` tag, or a
+`application/vnd.microsoft.card.video` card (already turned into a "🎬 Video" line and a
+`kelma-media:` link by `cards::attachments_html`), become a clip card with the thumbnail and a play
+button; playing downloads `views/video` once into the media cache and opens the system player
+(no inline video decoding).
+
+### Loop paragraphs (composer Loop button) — sent as formatted messages
+
+A Loop component in Teams is a `.loop` file in a SharePoint Embedded container, kept live through
+Fluid, and the chat message only links to it (`docs/research/apps-onedrive-copilot-store.md`, Loop:
+SharePoint Embedded, no known public write path; Graph's `FileStorageContainer.Selected` only
+reaches containers of the caller's own container types). kelma therefore does **not** create a
+Loop component. The paragraph is sent as an ordinary `RichText/Html` message through the outbox
+(`crate::loop_compose::to_html`):
+
+- title: `<p><b>…</b></p>`; text: one `<p>` per line;
+- Table: `<table><tbody><tr><th>…</th></tr><tr><td>…</td></tr></tbody></table>` (empty rows dropped);
+- Bulleted list: `<ul><li>…</li></ul>`; Checklist: `<p>☐ item</p>` / `<p>☑ item</p>`;
+- Task list: a table `Task | Assigned to | Due date`, the task prefixed ☐ / ☑;
+- Voting table: a table `Option | Votes`.
+
+The editor says so ("Sent as a formatted message: live Loop components need Microsoft Loop"), and
+so does the notice after sending. Received Loop components keep their `LoopCard`.
+
 ## Files ✅ 2026-11-18
 
 Chat files live in the sender's OneDrive, in `Microsoft Teams Chat Files`. The Teams client id

@@ -54,7 +54,7 @@ pub fn take_accept_with_video() -> bool {
 
 /// The V4L2 device for when the portal has no camera: `KELMA_CAMERA_DEVICE`, else the camera
 /// chosen in Settings (remembered by its bus), else the first one found.
-fn v4l2_device() -> Option<String> {
+pub(crate) fn v4l2_device() -> Option<String> {
     if let Some(d) = std::env::var_os("KELMA_CAMERA_DEVICE").filter(|d| !d.is_empty()) {
         return Some(d.to_string_lossy().into_owned());
     }

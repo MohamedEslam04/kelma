@@ -591,6 +591,12 @@ impl Engine {
                 Some((rest, clips)) => (rest.as_str(), self.voice_rows(clips, mine)),
                 None => (html, Vec::new()),
             };
+            // Video clips are drawn as clip cards: their tags and "▶ Play" links leave the text.
+            let clip_split = teams_proto::video_clip::split_video(html);
+            let (html, videos) = match &clip_split {
+                Some((rest, clips)) => (rest.as_str(), self.clip_rows(clips)),
+                None => (html, Vec::new()),
+            };
             let rich = render::parse_teams_html(html);
             let urls = render::links(&rich);
             let loops: Vec<LoopData> = urls
@@ -768,6 +774,7 @@ impl Engine {
                 urls,
                 loops,
                 voices,
+                videos,
             });
             prev = Some(r);
         }

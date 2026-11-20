@@ -27,6 +27,7 @@ mod call_waiting;
 mod catch_up;
 mod channels;
 mod chat_header;
+mod clip_loop;
 mod composer_apps;
 mod composer_gaps;
 mod composer_send;

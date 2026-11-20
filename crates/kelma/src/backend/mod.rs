@@ -30,6 +30,7 @@ pub(crate) mod call_presence;
 pub(crate) mod calls_page;
 mod channel_tabs;
 mod channels;
+mod clip_capture;
 pub(crate) mod composer_apps;
 mod drafts;
 pub(crate) mod drive;
@@ -40,6 +41,7 @@ mod gifs;
 mod in_order;
 mod lists;
 mod live;
+mod loop_paragraph;
 mod manage;
 mod media;
 mod mentions;
@@ -62,6 +64,7 @@ mod stickers;
 mod sync;
 mod unread;
 mod util;
+mod video_clips;
 mod voice_messages;
 
 pub use activity::ActivityCmd;
@@ -99,6 +102,7 @@ pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
 pub use remind::{RemindCmd, ReminderData, SnoozedData};
 pub use scheduled::{ScheduledCmd, ScheduledData};
+pub use video_clips::{ClipCamera, ClipCmd, ClipDevices, Picture, RecordedClip};
 pub use voice_messages::VoiceCmd;
 
 /// Commands sent by the UI.
@@ -174,6 +178,10 @@ pub enum Cmd {
     Remind(RemindCmd),
     /// Voice messages: the players in chat rows and the recorder (`voice_messages`).
     Voice(VoiceCmd),
+    /// "Record video clip" and the clip cards in chat rows (`video_clips`).
+    Clip(ClipCmd),
+    /// A Loop paragraph from the composer, sent as a formatted message (its HTML).
+    SendLoop(String),
     /// The call window (pre-join, meeting controls, call ended).
     Call(call::CallCmd),
     /// The composer's "+" apps picker (plan S3.6).
@@ -289,6 +297,7 @@ pub struct Engine {
     lists: Mutex<lists::State>,
     remind: Mutex<remind::State>,
     voice: Mutex<voice_messages::State>,
+    clips: Mutex<video_clips::State>,
     channels: Mutex<channels::State>,
     media: Mutex<media::State>,
     apps: Mutex<appstore::Apps>,
@@ -370,6 +379,7 @@ impl Engine {
             lists: Mutex::new(lists::State::default()),
             remind: Mutex::new(remind::State::default()),
             voice: Mutex::default(),
+            clips: Mutex::default(),
             channels: Mutex::new(channels::State::default()),
             media: Mutex::new(media::State::default()),
             apps: Mutex::new(appstore::Apps::default()),
@@ -727,6 +737,8 @@ impl Engine {
             // Boxed: the notification's "Open" opens a chat through `handle` again.
             Cmd::Remind(c) => Box::pin(self.remind_cmd(c)).await?,
             Cmd::Voice(c) => Box::pin(self.voice_cmd(c)).await?,
+            Cmd::Clip(c) => Box::pin(self.clip_cmd(c)).await?,
+            Cmd::SendLoop(html) => self.send_loop(html).await?,
             Cmd::Call(c) => in_order::finish(self.call_cmd(c)?).await?,
             #[cfg(feature = "calls")]
             Cmd::DirectCall(c) => self.direct_call_cmd(c)?,

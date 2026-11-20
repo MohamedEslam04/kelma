@@ -51,6 +51,7 @@ pub mod translate;
 pub mod trouter;
 pub mod urlpreview;
 pub mod user_settings;
+pub mod video_clip;
 pub mod views;
 pub mod voice;
 pub mod workflows;

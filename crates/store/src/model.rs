@@ -121,6 +121,9 @@ pub enum OutboxKind {
     /// A voice message: the recording is `payload_path` (an .m4a), and `html` is the card the
     /// pending row shows (it states the length).
     Voice,
+    /// A video clip: the MP4 is `payload_path`, and `html` is the clip tag the pending row shows
+    /// (it states the size and length).
+    VideoClip,
 }
 
 impl OutboxKind {
@@ -131,6 +134,7 @@ impl OutboxKind {
             OutboxKind::File => "file",
             OutboxKind::Card => "card",
             OutboxKind::Voice => "voice",
+            OutboxKind::VideoClip => "video-clip",
         }
     }
 
@@ -141,6 +145,7 @@ impl OutboxKind {
             "file" => OutboxKind::File,
             "card" => OutboxKind::Card,
             "voice" => OutboxKind::Voice,
+            "video-clip" => OutboxKind::VideoClip,
             _ => return None,
         })
     }
