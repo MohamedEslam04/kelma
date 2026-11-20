@@ -862,14 +862,12 @@ component Ended inherits Rectangle {
             }
         }
     }
-    // The quality survey; Send and Dismiss both close the screen, as Close does.
+    // The quality survey; Send and Dismiss both close the screen, as Close does. Send is one
+    // command (the backend keeps the answer, then closes): two would run in no set order.
     if CallStore.feedback-open: CallFeedback {
         width: root.width;
         height: root.height;
-        sent(answer) => {
-            CallStore.command("feedback", answer);
-            CallStore.command("close", "");
-        }
+        sent(answer) => { CallStore.command("feedback", answer); }
         dismissed => { CallStore.command("close", ""); }
     }
 }

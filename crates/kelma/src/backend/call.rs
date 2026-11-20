@@ -782,6 +782,11 @@ impl CallModel {
         self.recording = false;
         self.transcribing = false;
         self.notice.clear();
+        // An error from a call that ran (a camera that would not turn on) is not the ended
+        // screen's; one from a join that failed is its reason.
+        if self.connected_at.is_some() {
+            self.error.clear();
+        }
         self.set_captions(false);
         self.held = false;
         self.found.clear();
@@ -1173,7 +1178,7 @@ pub enum CallCmd {
     Leave,
     /// Close the call-ended screen.
     Close,
-    /// Send feedback on the call-ended screen's quality survey.
+    /// Send feedback on the call-ended screen's quality survey; it closes the screen too.
     Feedback(Feedback),
     Rejoin,
     DismissError,
@@ -1752,12 +1757,16 @@ impl CallManager {
                     m.close();
                     None
                 }
+                // Keeps the answer and closes the ended screen in one command: the engine runs
+                // every command in its own task, so a separate `close` could run first and leave
+                // no ended screen for the answer.
                 CallCmd::Feedback(f) => {
-                    let ended = m.phase == Phase::Ended;
+                    let ended = m.close();
                     let (kind, call) = (m.kind.name(), m.duration.unwrap_or_default());
                     drop(m);
                     if ended {
                         self.save_feedback(&f, kind, call);
+                        self.shared.push();
                     }
                     return;
                 }
@@ -2771,6 +2780,33 @@ mod tests {
         assert!(bot("28:00000000-0000-0000-0000-0000000000d1").is_bot());
         assert!(!bot("8:orgid:00000000-0000-0000-0000-0000000000d1").is_bot());
         assert!(!bot("").is_bot(), "an unknown MRI is a person");
+    }
+
+    #[test]
+    fn a_camera_error_does_not_follow_a_connected_call_to_the_ended_screen() {
+        let t0 = Instant::now();
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Connected, t0);
+        m.apply(Event::Error("Camera access wasn't allowed.".into()), t0);
+        assert_eq!(
+            m.error, "Camera access wasn't allowed.",
+            "shown in the call"
+        );
+        m.apply(Event::Ended("The call ended.".into()), t0);
+        assert_eq!(m.phase, Phase::Ended);
+        assert!(m.error.is_empty());
+        assert!(m.data(t0).error.is_empty());
+    }
+
+    #[test]
+    fn a_join_failure_still_shows_on_the_ended_screen() {
+        let t0 = Instant::now();
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Error("Couldn't join: no network".into()), t0);
+        m.apply(Event::Ended("Couldn't join the meeting.".into()), t0);
+        assert_eq!(m.error, "Couldn't join: no network");
     }
 
     #[test]

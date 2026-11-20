@@ -258,7 +258,11 @@ export component CallFeedback inherits Rectangle {
                         clicked => { root.category = "screenshare"; }
                     }
                 }
+                // As tall as the longest list (Audio, six issues), so the centred card stays put
+                // when the tabs switch.
                 VerticalLayout {
+                    height: 6 * 32px;
+                    alignment: start;
                     for issue[i] in root.all: VerticalLayout {
                         if issue.category == root.category: IssueRow {
                             text: issue.text;
@@ -269,7 +273,7 @@ export component CallFeedback inherits Rectangle {
                 }
             }
             Text {
-                text: "By pressing Send feedback, your feedback will be used to improve Microsoft products and services.";
+                text: "Your answer is kept on this device only. kelma doesn't send it to Microsoft.";
                 color: Theme.fg-subtle;
                 font-size: 11px * Theme.font-scale;
                 wrap: word-wrap;

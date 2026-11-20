@@ -88,6 +88,12 @@ export component AppWindow inherits Window {
     changed view => {
         if CallStore.phase != "" { CallStore.minimized = true; }
     }
+    // Settings covers the call window and its floating card, so a call that starts (answered,
+    // placed or joined) closes Settings and shows itself, as Teams does.
+    property <bool> call-showing: CallStore.phase != "";
+    changed call-showing => {
+        if self.call-showing && SettingsStore.open { SettingsStore.close(); }
+    }
     in-out property <string> filter: "all";
     in property <[ChatRow]> chats-favorites;
     in property <[ChatRow]> chats-main;

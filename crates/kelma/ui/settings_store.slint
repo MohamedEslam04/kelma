@@ -23,6 +23,10 @@ export global SettingsStore {
     // | permissions | about
     in-out property <string> page: "general";
     in-out property <string> query;
+    // The setting a Find result opened (its label), and where its row is once the page is up
+    // (window y); the page list scrolls it into view (settings.slint).
+    in-out property <string> target;
+    in-out property <length> target-y: -1px;
     in-out property <[SFind]> found;
     // A short message at the bottom of the page (saved, dry run, errors).
     in-out property <string> notice;

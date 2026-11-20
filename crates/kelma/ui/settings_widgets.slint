@@ -2,7 +2,7 @@
 // and high-contrast palettes, and their text follows `Theme.font-scale`.
 import { Theme } from "theme.slint";
 import { Icon } from "widgets.slint";
-import { SOption } from "settings_store.slint";
+import { SOption, SettingsStore } from "settings_store.slint";
 
 export global SFont {
     out property <length> body: 13px * Theme.font-scale;
@@ -61,6 +61,15 @@ export component SSwitch inherits Rectangle {
     in property <bool> enabled: true;
     callback toggled(bool);
     min-height: max(32px, col.preferred-height + 8px);
+    // Opened by a Find result: tells the page where this row is.
+    Timer {
+        running: root.label != "" && root.label == SettingsStore.target;
+        interval: 60ms;
+        triggered => {
+            SettingsStore.target-y = root.absolute-position.y;
+            SettingsStore.target = "";
+        }
+    }
     accessible-role: switch;
     accessible-label: root.label;
     accessible-checked: root.on;
@@ -147,6 +156,15 @@ export component SChoiceRow inherits VerticalLayout {
     in property <bool> enabled: true;
     callback picked(string);
     spacing: 4px;
+    // Opened by a Find result: tells the page where this row is.
+    Timer {
+        running: root.label != "" && root.label == SettingsStore.target;
+        interval: 60ms;
+        triggered => {
+            SettingsStore.target-y = root.absolute-position.y;
+            SettingsStore.target = "";
+        }
+    }
     Text { horizontal-alignment: Theme.start-align; text: root.label; color: Theme.fg; font-size: SFont.body; }
     if root.hint != "": Text { horizontal-alignment: Theme.start-align; text: root.hint; color: Theme.fg-subtle; font-size: SFont.small; wrap: word-wrap; }
     SChoice {

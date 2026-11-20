@@ -13,6 +13,15 @@ export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDev
 
 export component SettingsPage inherits Rectangle {
     background: Theme.main;
+    // A Find result opened a page: the row of that setting reports its place (settings_widgets),
+    // and the page scrolls it into view.
+    property <length> want-y: SettingsStore.target-y;
+    changed want-y => {
+        if self.want-y >= 0 {
+            sv.content-y = -clamp(self.want-y - sv.absolute-position.y - sv.content-y - 24px, 0px, max(0px, sv.content-height - sv.height));
+            SettingsStore.target-y = -1px;
+        }
+    }
     // Swallow clicks so the views underneath do not get them.
     TouchArea { }
     keys := FocusScope {
@@ -107,7 +116,7 @@ export component SettingsPage inherits Rectangle {
             // The open page, or the search results.
             VerticalLayout {
                 horizontal-stretch: 1;
-                ScrollView {
+                sv := ScrollView {
                     VerticalLayout {
                         padding: 24px;
                         padding-right: 32px;
@@ -123,7 +132,7 @@ export component SettingsPage inherits Rectangle {
                                 background: ft.has-hover ? Theme.surface-hover : Theme.surface;
                                 accessible-role: button;
                                 accessible-label: @tr("Result: {} in {}", f.label, f.page-title);
-                                accessible-action-default => { SettingsStore.query = ""; find-input.text = ""; SettingsStore.page = f.page; SettingsStore.command("page", f.page); }
+                                accessible-action-default => { SettingsStore.query = ""; find-input.text = ""; SettingsStore.target = f.label; SettingsStore.page = f.page; SettingsStore.command("page", f.page); }
                                 fr := VerticalLayout {
                                     padding-left: 12px;
                                     alignment: center;
@@ -132,7 +141,7 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 ft := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => { SettingsStore.query = ""; find-input.text = ""; SettingsStore.page = f.page; SettingsStore.command("page", f.page); }
+                                    clicked => { SettingsStore.query = ""; find-input.text = ""; SettingsStore.target = f.label; SettingsStore.page = f.page; SettingsStore.command("page", f.page); }
                                 }
                             }
                         }

@@ -67,6 +67,15 @@ fn v4l2_device() -> Option<String> {
     device_for(&cameras, chosen.as_deref())
 }
 
+/// What the red bar says when the camera did not open: `e` is the media error (logged in full).
+pub fn open_error_text(e: &str) -> String {
+    if e.contains("camera access refused") {
+        "Camera access wasn't allowed.".into()
+    } else {
+        "Couldn't turn on your camera.".into()
+    }
+}
+
 /// The device path of the camera on bus `chosen`, else of the first camera.
 fn device_for(cameras: &[devices::Camera], chosen: Option<&str>) -> Option<String> {
     chosen
@@ -303,5 +312,18 @@ mod tests {
         }
         accept_with_video(true);
         assert!(!take_accept_with_video());
+    }
+
+    #[test]
+    fn a_refused_camera_says_so_plainly() {
+        assert_eq!(
+            open_error_text("media: camera access refused: Portal request was cancelled"),
+            "Camera access wasn't allowed."
+        );
+        let other = open_error_text("media: Camera portal: no such device");
+        assert_eq!(other, "Couldn't turn on your camera.");
+        for t in ["Camera access wasn't allowed.", other.as_str()] {
+            assert!(!t.contains("media:") && !t.to_lowercase().contains("portal"));
+        }
     }
 }

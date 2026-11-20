@@ -213,6 +213,7 @@ component VoicemailLine inherits Rectangle {
     callback play();
     callback mark-read();
     height: 72px;
+    clip: true;
     background: vm-touch.has-hover ? Theme.surface-hover : transparent;
     vm-touch := TouchArea { HorizontalLayout {
         padding-left: 16px;
@@ -229,8 +230,7 @@ component VoicemailLine inherits Rectangle {
                 color: Theme.fg-subtle;
                 font-size: 12px * Theme.font-scale;
                 overflow: elide;
-                wrap: word-wrap;
-                max-height: 32px;
+                wrap: no-wrap;
                 horizontal-alignment: Theme.start-align;
             }
         }

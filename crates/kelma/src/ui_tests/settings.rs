@@ -279,6 +279,32 @@ fn the_page_list_and_find_in_settings_switch_pages() {
 }
 
 #[test]
+fn a_find_result_scrolls_its_setting_into_view() {
+    // "Ask about call quality after calls" sits at the bottom of Devices: opening the page alone
+    // left it below the window.
+    let ui = window(Home::new("find-scroll"));
+    let app = &ui.app;
+    app.window().set_size(LogicalSize::new(1200., 500.));
+    open_page(app, "general");
+    let find = control(app, "Find in Settings");
+    find.set_accessible_value("call quality");
+    press(app, "Result: Ask about call quality after calls in Devices");
+    assert_eq!(value_of(app, "Settings page"), "Devices");
+    for _ in 0..4 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(100));
+    }
+    let pill =
+        ElementHandle::find_by_accessible_label(app, "Ask about call quality after calls: Always")
+            .next()
+            .expect("the setting is in view");
+    let (y, h) = (pill.absolute_position().y, pill.size().height);
+    assert!(
+        y >= 0. && y + h <= 500.,
+        "the setting is in view: y={y} h={h}"
+    );
+}
+
+#[test]
 fn theme_choice_changes_the_theme_global_live() {
     let ui = window(Home::new("theme"));
     let app = &ui.app;
