@@ -251,6 +251,8 @@ pub(super) struct State {
     date: Date,
     editor: String,
     picks: Vec<(String, String)>,
+    /// Bumped per editor query, so a slow people search older than the latest one is dropped.
+    pick_seq: u64,
     seq: u64,
     hits: Vec<Hit>,
     msg_from: u32,
@@ -764,7 +766,8 @@ impl Engine {
             .await;
         {
             let mut f = self.find.lock().unwrap();
-            if f.seq != seq {
+            // A newer search, or a second quick "Show more" that already took this page.
+            if f.seq != seq || f.msg_from != from {
                 return;
             }
             match page {
@@ -800,7 +803,11 @@ impl Engine {
 
     /// Suggestions for the open "In" or "Person" editor.
     async fn pick_query(self: &Arc<Self>, q: String) {
-        let editor = self.find.lock().unwrap().editor.clone();
+        let (editor, seq) = {
+            let mut f = self.find.lock().unwrap();
+            f.pick_seq += 1;
+            (f.editor.clone(), f.pick_seq)
+        };
         let terms = terms_of(&q);
         let picks: Vec<(String, String, String)> = match editor.as_str() {
             "in" => {
@@ -849,7 +856,7 @@ impl Engine {
         };
         // Only the newest answer for the editor that is still open counts.
         let mut f = self.find.lock().unwrap();
-        if f.editor != editor {
+        if f.editor != editor || f.pick_seq != seq {
             return;
         }
         f.picks = picks

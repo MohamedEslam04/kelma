@@ -845,6 +845,13 @@ impl Engine {
 
     // ---- filters and options ----
 
+    /// The previews and times options (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn list_options_for_test(&self) -> (bool, bool) {
+        let st = self.lists.lock().unwrap();
+        (st.local.opts.previews, st.local.opts.times)
+    }
+
     fn set_option(&self, name: &str, on: bool) -> anyhow::Result<()> {
         let opts = {
             let mut st = self.lists.lock().unwrap();

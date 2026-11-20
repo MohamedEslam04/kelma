@@ -140,6 +140,8 @@ const PAGE_WIDTH: u32 = 1000;
 pub struct Drive {
     s: State,
     entered: bool,
+    /// Bumped per share-dialog people search; an older, slower answer is dropped.
+    share_seq: u64,
     /// Libraries, favorites and the "For you" cards load once, from whichever feature needs
     /// them first (the OneDrive view or the cloud-file picker).
     background_started: bool,
@@ -647,6 +649,12 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// The list's filter text (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn drive_filter_for_test(&self) -> String {
+        self.drive.lock().unwrap().s.filter.clone()
     }
 
     /// The commands that only change the view state (see `DriveCmd::is_instant`).
@@ -1843,6 +1851,11 @@ impl Engine {
     }
 
     async fn drive_share_search(self: &Arc<Self>, q: &str) -> anyhow::Result<()> {
+        let seq = {
+            let mut d = self.drive.lock().unwrap();
+            d.share_seq += 1;
+            d.share_seq
+        };
         if q.chars().count() < 2 {
             if let Some(s) = self.drive.lock().unwrap().share.as_mut() {
                 s.results.clear();
@@ -1865,8 +1878,15 @@ impl Engine {
                 email: p.email,
             })
             .collect();
-        if let Some(s) = self.drive.lock().unwrap().share.as_mut() {
-            s.results = results;
+        {
+            let mut d = self.drive.lock().unwrap();
+            // A slower answer to an older query never replaces a newer one.
+            if d.share_seq != seq {
+                return Ok(());
+            }
+            if let Some(s) = d.share.as_mut() {
+                s.results = results;
+            }
         }
         self.drive_share_push();
         Ok(())

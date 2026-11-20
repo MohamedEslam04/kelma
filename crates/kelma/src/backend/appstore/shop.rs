@@ -572,15 +572,25 @@ impl Engine {
             return self.shop_home().await;
         }
         self.ui.open_view("store".into());
+        let title = format!("Results for “{q}”");
         self.shop_edit(|s| {
             s.page = "results".into();
-            s.title = format!("Results for “{q}”");
+            s.title = title.clone();
             s.loading = true;
             s.status.clear();
             s.hits.clear();
         });
         self.apps_ensure_installed().await;
-        match self.src_search(&q).await {
+        let result = self.src_search(&q).await;
+        // A newer search (or another page) since this one started keeps its own results.
+        let current = {
+            let a = self.apps.lock().unwrap();
+            a.shop.page == "results" && a.shop.title == title
+        };
+        if !current {
+            return Ok(());
+        }
+        match result {
             Ok(hits) => self.shop_edit(|s| {
                 s.hits = hits;
                 s.loading = false;

@@ -109,6 +109,12 @@ pub(super) struct State {
     pub(super) entries: Vec<Entry>,
     /// Bumped by every search; a slow answer for an older one is dropped.
     seq: u64,
+    /// The same for @mention queries, so typing a mention and a New chat search do not drop each
+    /// other's answers.
+    mention_seq: u64,
+    /// The same for the New chat search. Opening, closing and adding a person bump it too, so a
+    /// search still on its way does not fill the list again after them.
+    new_chat_seq: u64,
     new_chat: NewChat,
     add_history: bool,
     add_results: Vec<Person>,
@@ -256,12 +262,18 @@ impl Engine {
                 Ok(())
             }
             PeopleCmd::NewChatOpen => {
-                self.people.lock().unwrap().new_chat = NewChat::default();
+                let mut p = self.people.lock().unwrap();
+                p.new_chat = NewChat::default();
+                p.new_chat_seq += 1;
+                drop(p);
                 self.push_new_chat(true);
                 Ok(())
             }
             PeopleCmd::NewChatClose => {
-                self.people.lock().unwrap().new_chat = NewChat::default();
+                let mut p = self.people.lock().unwrap();
+                p.new_chat = NewChat::default();
+                p.new_chat_seq += 1;
+                drop(p);
                 self.push_new_chat(false);
                 Ok(())
             }
@@ -514,8 +526,8 @@ impl Engine {
         let kind = row.as_ref().map_or(ConvKind::Group, |r| r.kind);
         let seq = {
             let mut p = self.people.lock().unwrap();
-            p.seq += 1;
-            p.seq
+            p.mention_seq += 1;
+            p.mention_seq
         };
         let mut list: Vec<Entry> = Vec::new();
         let person = |mri: &str, name: String| Entry {
@@ -571,10 +583,14 @@ impl Engine {
         let wants_search = matches!(kind, ConvKind::Channel | ConvKind::Meeting)
             && !q.trim().is_empty()
             && !self.offline.load(std::sync::atomic::Ordering::Relaxed);
+        // Loading the members waits on the network: a newer query may have answered meanwhile.
+        if self.people.lock().unwrap().mention_seq != seq {
+            return Ok(());
+        }
         self.set_candidates(list.clone());
         if wants_search && let Ok(found) = self.client.search_people(&self.me, q.trim()).await {
             let p = self.people.lock().unwrap();
-            if p.seq == seq {
+            if p.mention_seq == seq {
                 for f in found {
                     if list.len() >= MENTION_LIMIT {
                         break;
@@ -689,8 +705,8 @@ impl Engine {
     async fn new_chat_query(self: &Arc<Self>, q: String) -> anyhow::Result<()> {
         let seq = {
             let mut p = self.people.lock().unwrap();
-            p.seq += 1;
-            p.seq
+            p.new_chat_seq += 1;
+            p.new_chat_seq
         };
         if q.trim().is_empty() {
             self.people.lock().unwrap().new_chat.results.clear();
@@ -700,7 +716,7 @@ impl Engine {
         let found = self.client.search_people(&self.me, q.trim()).await?;
         {
             let mut p = self.people.lock().unwrap();
-            if p.seq != seq {
+            if p.new_chat_seq != seq {
                 return Ok(());
             }
             let picked: Vec<String> = p.new_chat.to.iter().map(|x| x.mri.clone()).collect();
@@ -722,8 +738,15 @@ impl Engine {
                 p.new_chat.to.push(f);
             }
             p.new_chat.results.clear();
+            p.new_chat_seq += 1;
         }
         self.push_new_chat(true);
+    }
+
+    /// The New chat search's sequence number (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn new_chat_seq_for_test(&self) -> u64 {
+        self.people.lock().unwrap().new_chat_seq
     }
 
     /// Opens (creating it when needed) the chat with `others` and returns its id. A new group is
