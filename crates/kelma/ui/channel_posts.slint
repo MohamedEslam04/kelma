@@ -6,6 +6,7 @@ import { Theme } from "theme.slint";
 import { Msg } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
 import { MessageRow } from "message_row.slint";
+import { PeopleStore } from "people.slint";
 
 export struct PostItem {
     post: Msg,
@@ -155,6 +156,8 @@ component PostCard inherits Rectangle {
             menu(x, y) => { root.menu(root.item.post, x, y); }
             open-url(u) => { root.open-url(u); }
             profile(id) => { root.profile(id); }
+            profile-at(id, x, y, w, h) => { PeopleStore.open-card(id, x, y, w, h, false); }
+            photo-hover(id, on, x, y, w, h) => { if on { PeopleStore.hover-enter(id, x, y, w, h); } else { PeopleStore.hover-leave(id); } }
             retry-send => { root.retry-send(root.item.post.id); }
             discard-send => { root.discard-send(root.item.post.id); }
         }
@@ -174,6 +177,8 @@ component PostCard inherits Rectangle {
             menu(x, y) => { root.menu(r, x, y); }
             open-url(u) => { root.open-url(u); }
             profile(id) => { root.profile(id); }
+            profile-at(id, x, y, w, h) => { PeopleStore.open-card(id, x, y, w, h, false); }
+            photo-hover(id, on, x, y, w, h) => { if on { PeopleStore.hover-enter(id, x, y, w, h); } else { PeopleStore.hover-leave(id); } }
             retry-send => { root.retry-send(r.id); }
             discard-send => { root.discard-send(r.id); }
         }

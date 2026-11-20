@@ -9,6 +9,7 @@ import { Theme } from "theme.slint";
 import { Icon, IconButton, Avatar, Pill } from "widgets.slint";
 import { ListView } from "std-widgets.slint";
 import { FileMenuItem } from "find.slint";
+import { PersonHover } from "people.slint";
 
 export struct CallHistoryItem {
     id: string,
@@ -94,7 +95,7 @@ component PersonLine inherits Rectangle {
             padding-left: 8px;
             padding-right: 4px;
             spacing: 4px;
-            Avatar { size: 32px; y: 8px; initials: root.person.initials; tone: root.person.color; img: root.person.avatar; has-img: root.person.has-avatar; }
+            Avatar { size: 32px; y: 8px; initials: root.person.initials; tone: root.person.color; img: root.person.avatar; has-img: root.person.has-avatar; PersonHover { person: root.person.mri; } }
             VerticalLayout {
                 alignment: center;
                 horizontal-stretch: 1;
@@ -159,7 +160,7 @@ component HistoryLine inherits Rectangle {
         padding-left: 16px;
         padding-right: 12px;
         spacing: 12px;
-        Avatar { size: 36px; y: 10px; initials: root.item.initials; tone: root.item.color; img: root.item.avatar; has-img: root.item.has-avatar; }
+        Avatar { size: 36px; y: 10px; initials: root.item.initials; tone: root.item.color; img: root.item.avatar; has-img: root.item.has-avatar; PersonHover { person: root.item.mri; } }
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;

@@ -303,6 +303,8 @@ impl Engine {
         }
         self.ui.chats(fav, main, chans);
         self.push_sections(by_section);
+        // The chat list draws first after sign-in: our own photo opens our card from then on.
+        self.ui.me_id(self.me.clone());
     }
 
     fn render_teams(self: &Arc<Self>) {

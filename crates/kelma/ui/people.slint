@@ -34,6 +34,14 @@ export global PeopleStore {
     in property <string> card-presence;
     in property <string> card-presence-label;
     in property <string> card-work-location;
+    // Status message, "Out of office", work and mobile phone, manager ("" hides the row).
+    in property <string> card-note;
+    in property <string> card-ooo;
+    in property <string> card-phone;
+    in property <string> card-mobile;
+    in property <string> card-manager;
+    // Our own MRI (the photo at the top right opens our card).
+    in property <string> me;
     // The card was opened by hovering (it closes when the pointer leaves it and its photo).
     in-out property <bool> card-by-hover: false;
     // The photo (or name) the card belongs to, in window coordinates: the card opens next to
@@ -92,4 +100,34 @@ export global PeopleStore {
     // participants-open, add-query, add-pick, add-history, leave, profile, profile-copy-email,
     // profile-chat, pin-jump, pin-unpin, receipts.
     callback command(string, string);
+}
+
+// The one hover-card trigger every person's photo uses, so they all open the card the same way:
+// resting on it opens the hover card next to it (after the window's short delay), a click opens
+// the card for good. With `click-opens: false` a click runs `activated` instead (the row's own
+// action, such as opening the chat). Place it over the photo (or the person's row), above any
+// other TouchArea there.
+export component PersonHover inherits TouchArea {
+    in property <string> person;
+    in property <bool> click-opens: true;
+    callback activated();
+    // A list may reuse this row for someone else while the pointer rests on it: the leave names
+    // the person the pointer came to.
+    property <string> hovered: "";
+    mouse-cursor: pointer;
+    clicked => {
+        if root.click-opens && root.person != "" {
+            PeopleStore.open-card(root.person, root.absolute-position.x, root.absolute-position.y, root.width, root.height, false);
+        } else {
+            root.activated();
+        }
+    }
+    changed has-hover => {
+        if root.has-hover && root.person != "" {
+            root.hovered = root.person;
+            PeopleStore.hover-enter(root.person, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+        } else if !root.has-hover && root.hovered != "" {
+            PeopleStore.hover-leave(root.hovered);
+        }
+    }
 }

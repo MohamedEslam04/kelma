@@ -3,7 +3,7 @@
 import { Theme } from "theme.slint";
 import { PersonItem } from "types.slint";
 import { Avatar, IconButton } from "widgets.slint";
-import { PeopleStore } from "people.slint";
+import { PeopleStore, PersonHover } from "people.slint";
 
 export component ParticipantsPanel inherits Rectangle {
     in property <[PersonItem]> members;
@@ -111,9 +111,10 @@ export component ParticipantsPanel inherits Rectangle {
                                 if r.subtitle != "": Text { text: r.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
                             }
                         }
-                        add-hit := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
+                        add-hit := PersonHover {
+                            person: r.id;
+                            click-opens: false;
+                            activated => {
                                 root.add-pick(r.id);
                                 root.adding = false;
                             }
@@ -158,17 +159,8 @@ export component ParticipantsPanel inherits Rectangle {
                                 if m.subtitle != "": Text { text: m.subtitle; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
                             }
                         }
-                        member-hit := TouchArea { mouse-cursor: pointer; clicked => { root.open-profile(m.id); } }
-                        Timer {
-                            interval: 600ms;
-                            running: member-hit.has-hover;
-                            triggered => {
-                                if !PeopleStore.card-open {
-                                    PeopleStore.card-by-hover = true;
-                                    PeopleStore.command("profile", m.id);
-                                }
-                            }
-                        }
+                        // Resting on a member opens their hover card next to the row.
+                        member-hit := PersonHover { person: m.id; click-opens: false; activated => { root.open-profile(m.id); } }
                     }
                 }
             }

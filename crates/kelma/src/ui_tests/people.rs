@@ -1031,7 +1031,7 @@ fn a_card_shows_what_is_already_known_at_once() {
     // shared by the tests that run at the same time: hers is Busy in all of them.)
     h.engine.test_set_presence(&mri(3), "Busy");
     h.engine
-        .test_cache_profile(&mri(3), "Engineer · Platform", "Example Org");
+        .test_cache_profile(&mri(3), "Engineer · Platform", "Example Org", "");
     h.select(BACKEND);
     settle();
     click(&lowest_photo_of_sara(&h.app));
@@ -1067,6 +1067,101 @@ fn clicking_the_header_photo_of_a_one_on_one_opens_the_card_next_to_it() {
     let cp = card.absolute_position();
     assert!(cp.x >= p.x + s.width && cp.x <= p.x + s.width + 24.);
     assert!((cp.y - p.y).abs() < 1., "top-aligned with the photo");
+}
+
+#[test]
+fn resting_on_my_own_photo_at_the_top_right_opens_my_card_and_a_click_opens_the_menu() {
+    let h = Harness::new();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    let me = find_label(&h.app, "Profile menu")
+        .into_iter()
+        .next()
+        .expect("my photo at the top right");
+    point_at(&h.app, &me);
+    wait_ms(800);
+    assert!(ps(&h.app).get_card_open(), "a rest opens my card");
+    assert!(ps(&h.app).get_card_by_hover());
+    assert_eq!(ps(&h.app).get_card().id, demo::ME);
+    let card = ElementHandle::find_by_element_type_name(&h.app, "ProfileCard")
+        .next()
+        .expect("the card");
+    let win = window_size(&h.app);
+    let cp = card.absolute_position();
+    assert!(
+        cp.x >= 0. && cp.x + card.size().width <= win.width,
+        "inside the window"
+    );
+
+    click(&me);
+    assert!(
+        h.app.global::<crate::SettingsStore>().get_profile_open(),
+        "a click still opens the profile menu"
+    );
+}
+
+#[test]
+fn resting_on_a_one_on_one_photo_in_the_chat_list_opens_the_persons_card() {
+    let h = Harness::new();
+    let _log = wire(&h);
+    h.select(NOTES);
+    let photo = ids(&h.app, "ChatItem::photo-hover")
+        .into_iter()
+        .next()
+        .expect("a 1:1 chat with a photo in the list");
+    let (p, s) = (photo.absolute_position(), photo.size());
+    point_at(&h.app, &photo);
+    wait_ms(800);
+    assert!(ps(&h.app).get_card_open(), "a rest opens the card");
+    assert!(ps(&h.app).get_card_by_hover());
+    assert!(ps(&h.app).get_card().id.starts_with("8:orgid:"));
+    assert_ne!(ps(&h.app).get_card().id, demo::ME);
+    let card = ElementHandle::find_by_element_type_name(&h.app, "ProfileCard")
+        .next()
+        .expect("the card");
+    let cp = card.absolute_position();
+    assert!(
+        cp.x >= p.x + s.width && cp.x <= p.x + s.width + 24.,
+        "next to the photo"
+    );
+    assert_eq!(
+        h.app.get_current_id(),
+        NOTES,
+        "a rest does not open the chat"
+    );
+}
+
+#[test]
+fn the_card_hides_what_is_not_known_and_shows_what_is() {
+    let h = harness_with_sara_email();
+    let _log = wire(&h);
+    h.select(BACKEND);
+    settle();
+    click(&lowest_photo_of_sara(&h.app));
+    assert!(ps(&h.app).get_card_open());
+    for row in [
+        "Work phone",
+        "Mobile",
+        "Manager",
+        "Out of office",
+        "Status message",
+    ] {
+        assert!(find_label(&h.app, row).is_empty(), "no {row} row");
+    }
+    assert_eq!(find_label(&h.app, "Copy email sara@example.com").len(), 1);
+    ps(&h.app).set_card_open(false);
+
+    h.engine
+        .test_cache_profile(&mri(3), "Engineer", "", "+1 555 0100");
+    click(&lowest_photo_of_sara(&h.app));
+    // The row carries the number (its caption text is labelled "Work phone" too).
+    let phone: Vec<_> = find_label(&h.app, "Work phone")
+        .into_iter()
+        .filter_map(|e| e.accessible_value())
+        .filter(|v| !v.is_empty())
+        .collect();
+    assert_eq!(phone, ["+1 555 0100"], "a known phone number shows");
+    assert!(find_label(&h.app, "Mobile").is_empty());
 }
 
 // ---- 6.6 pinned messages banner ----------------------------------------------

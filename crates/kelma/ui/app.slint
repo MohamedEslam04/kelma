@@ -16,7 +16,7 @@ import { LoginView } from "login.slint";
 import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
 import { CallsPage, CallsPageStore } from "calls_page.slint";
 import { ActivityView } from "activity.slint";
-import { PeopleStore } from "people.slint";
+import { PeopleStore, PersonHover } from "people.slint";
 import { NewChatPane } from "new_chat.slint";
 import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
 import { PinnedBanner } from "pinned_banner.slint";
@@ -525,7 +525,10 @@ export component AppWindow inherits Window {
                     clicked => { SettingsStore.command("focus", "0"); }
                 }
                 MoreButton { y: 9px; }
-                Avatar { initials: root.me-initials; img: SettingsStore.me-photo; has-img: SettingsStore.me-has-photo; presence: SettingsStore.me-presence; size: 30px; y: 9px; TouchArea { accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } mouse-cursor: pointer; clicked => { SettingsStore.open-profile(); } } }
+                Avatar { initials: root.me-initials; img: SettingsStore.me-photo; has-img: SettingsStore.me-has-photo; presence: SettingsStore.me-presence; size: 30px; y: 9px;
+                    // A rest shows our own card, as in Teams; a click opens the profile menu.
+                    me-photo := PersonHover { person: PeopleStore.me; click-opens: false; activated => { SettingsStore.open-profile(); } accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } }
+                }
             }
         }
 
@@ -778,19 +781,11 @@ export component AppWindow inherits Window {
                                 presence: root.current-person != "" ? root.current-presence : "";
                                 size: 36px;
                                 // A 1:1 chat's photo opens the person's card: on a rest, or a click.
-                                if root.current-person != "": TouchArea {
-                                    mouse-cursor: pointer;
+                                if root.current-person != "": PersonHover {
+                                    person: root.current-person;
                                     accessible-role: button;
                                     accessible-label: @tr("Open profile of {}", root.current-title);
                                     accessible-action-default => { PeopleStore.open-card(root.current-person, self.absolute-position.x, self.absolute-position.y, self.width, self.height, false); }
-                                    clicked => { PeopleStore.open-card(root.current-person, self.absolute-position.x, self.absolute-position.y, self.width, self.height, false); }
-                                    changed has-hover => {
-                                        if self.has-hover {
-                                            PeopleStore.hover-enter(root.current-person, self.absolute-position.x, self.absolute-position.y, self.width, self.height);
-                                        } else {
-                                            PeopleStore.hover-leave(root.current-person);
-                                        }
-                                    }
                                 }
                             }
                             if !root.renaming || root.thread-root != "": Text {
@@ -1511,6 +1506,8 @@ export component AppWindow inherits Window {
     if root.login-state == "ready" && PeopleStore.card-open: Rectangle {
         width: root.width;
         height: root.height;
+        // Above the call window too (its roster photos open cards).
+        z: 50;
         // A clicked card closes on a click anywhere else; a hover card when the pointer leaves
         // it and its photo (so the photo under it keeps its hover).
         if !PeopleStore.card-by-hover: TouchArea {
@@ -1540,6 +1537,12 @@ export component AppWindow inherits Window {
             presence: PeopleStore.card-presence;
             presence-label: PeopleStore.card-presence-label;
             work-location: PeopleStore.card-work-location;
+            limit: root.height - 16px;
+            note: PeopleStore.card-note;
+            ooo: PeopleStore.card-ooo;
+            phone: PeopleStore.card-phone;
+            mobile: PeopleStore.card-mobile;
+            manager: PeopleStore.card-manager;
             hover-mode: PeopleStore.card-by-hover;
             quick-message(t) => {
                 PeopleStore.card-open = false;

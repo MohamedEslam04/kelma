@@ -16,6 +16,12 @@ export component ProfileCard inherits Rectangle {
     in property <string> presence;
     in property <string> presence-label;
     in property <string> work-location;
+    // Status message, "Out of office", work and mobile phone, manager: "" hides each.
+    in property <string> note;
+    in property <string> ooo;
+    in property <string> phone;
+    in property <string> mobile;
+    in property <string> manager;
     // Opened by hovering a name or photo: it closes once the pointer is on neither it nor that
     // photo (`anchor-hovered`).
     in property <bool> hover-mode;
@@ -26,8 +32,11 @@ export component ProfileCard inherits Rectangle {
     callback send-email(string);
     callback close();
 
+    // The tallest the window lets it be: a taller card is cut at the bottom, not spilled out.
+    in property <length> limit: 100000px;
     width: 320px;
-    height: content.preferred-height;
+    height: min(content.preferred-height, root.limit);
+    clip: true;
     border-radius: 8px;
     background: Theme.surface;
     border-width: 1px;
@@ -56,11 +65,21 @@ export component ProfileCard inherits Rectangle {
                 spacing: 2px;
                 card-name := Text { text: root.person.name; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; wrap: word-wrap; accessible-role: text; accessible-label: root.person.name; }
                 if root.person.subtitle != "": card-title := Text { text: root.person.subtitle; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; accessible-role: text; accessible-label: root.person.subtitle; }
+                if root.note != "": card-note := Text { text: root.note; color: Theme.fg; font-size: 12px * Theme.font-scale; font-italic: true; wrap: word-wrap; max-height: 34px; overflow: elide; accessible-role: text; accessible-label: "Status message"; accessible-value: self.text; }
                 if root.loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; }
             }
             IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; size: 28px; clicked => { root.close(); } }
         }
 
+        if root.ooo != "": Rectangle {
+            height: 30px;
+            border-radius: 4px;
+            background: #b4009e40;
+            accessible-role: text;
+            accessible-label: "Out of office";
+            accessible-value: root.ooo;
+            card-ooo := Text { x: 10px; width: parent.width - 20px; text: root.ooo; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; overflow: elide; }
+        }
         if root.presence-label != "": Rectangle {
             height: 34px;
             border-radius: 4px;
@@ -163,6 +182,42 @@ export component ProfileCard inherits Rectangle {
                 spacing: 8px;
                 Text { text: "Today"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
                 card-work-location := Text { text: root.work-location; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; accessible-role: text; accessible-label: "Work location"; accessible-value: self.text; }
+            }
+        }
+        if root.phone != "": Rectangle {
+            height: 24px;
+            accessible-role: text;
+            accessible-label: "Work phone";
+            accessible-value: root.phone;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Work phone"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-phone := Text { text: root.phone; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        if root.mobile != "": Rectangle {
+            height: 24px;
+            accessible-role: text;
+            accessible-label: "Mobile";
+            accessible-value: root.mobile;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Mobile"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-mobile := Text { text: root.mobile; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        if root.manager != "": Rectangle {
+            height: 24px;
+            accessible-role: text;
+            accessible-label: "Manager";
+            accessible-value: root.manager;
+            HorizontalLayout {
+                padding-left: 6px;
+                spacing: 8px;
+                Text { text: "Manager"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; width: 64px; horizontal-stretch: 0; }
+                card-manager := Text { text: root.manager; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
             }
         }
         if root.local-time != "": Rectangle {

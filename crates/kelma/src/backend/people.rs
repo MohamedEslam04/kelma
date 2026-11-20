@@ -144,6 +144,9 @@ struct CardFacts {
     email: String,
     work: String,
     location: String,
+    phone: String,
+    mobile: String,
+    manager: String,
 }
 
 /// Details older than this are read again (the card shows the old ones meanwhile).
@@ -160,6 +163,37 @@ fn fill_facts(card: &mut CardData, f: CardFacts) {
     }
     card.work = f.work;
     card.location = f.location;
+    card.phone = f.phone;
+    card.mobile = f.mobile;
+    card.manager = f.manager;
+}
+
+/// The card's details from the Delve card and the directory entry: each field from the first
+/// source that has it.
+fn card_facts(
+    card: Option<teams_proto::card::ProfileCard>,
+    dir: Option<teams_proto::card::DirectoryDetails>,
+) -> CardFacts {
+    let (c, d) = (card.unwrap_or_default(), dir.unwrap_or_default());
+    let pick = |a: Option<String>, b: Option<String>| {
+        a.filter(|s| !s.is_empty()).or(b).unwrap_or_default()
+    };
+    let job = pick(c.job_title, d.job_title);
+    let dept = pick(c.department, d.department);
+    CardFacts {
+        name: c.display_name,
+        subtitle: [job, dept]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · "),
+        email: c.email.unwrap_or_default(),
+        work: pick(c.company, d.company),
+        location: pick(c.office_location, d.office_location),
+        phone: d.work_phone.unwrap_or_default(),
+        mobile: d.mobile_phone.unwrap_or_default(),
+        manager: d.manager.unwrap_or_default(),
+    }
 }
 
 /// Where a New chat or "Chat" button leads.
@@ -1251,34 +1285,44 @@ impl Engine {
                 None
             }
         };
-        let (fetched, presence) = tokio::join!(
+        let directory = async {
+            if stale {
+                Some(self.client.directory_details(&mri).await)
+            } else {
+                None
+            }
+        };
+        let (fetched, dir, presence) = tokio::join!(
             details,
+            directory,
             self.client.get_presence(std::slice::from_ref(&mri))
         );
         card.loading = false;
-        match fetched {
-            Some(Ok(c)) => {
-                let facts = CardFacts {
-                    name: c.display_name,
-                    subtitle: [c.job_title, c.department]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                    email: c.email.unwrap_or_default(),
-                    work: c.company.unwrap_or_default(),
-                    location: c.office_location.unwrap_or_default(),
-                };
-                self.people
-                    .lock()
-                    .unwrap()
-                    .profiles
-                    .insert(mri.clone(), (facts.clone(), std::time::Instant::now()));
-                fill_facts(&mut card, facts);
-                card.person.avatar = self.card_photo(&mri);
+        let fetched = match fetched {
+            Some(Ok(c)) => Some(c),
+            Some(Err(err)) => {
+                tracing::debug!(%err, "profile card");
+                None
             }
-            Some(Err(err)) => tracing::debug!(%err, "profile card"),
-            None => {}
+            None => None,
+        };
+        let dir = match dir {
+            Some(Ok(d)) => Some(d),
+            Some(Err(err)) => {
+                tracing::debug!(%err, "profile card directory");
+                None
+            }
+            None => None,
+        };
+        if fetched.is_some() || dir.is_some() {
+            let facts = card_facts(fetched, dir);
+            self.people
+                .lock()
+                .unwrap()
+                .profiles
+                .insert(mri.clone(), (facts.clone(), std::time::Instant::now()));
+            fill_facts(&mut card, facts);
+            card.person.avatar = self.card_photo(&mri);
         }
         match presence {
             Ok(found) => {
@@ -1289,6 +1333,12 @@ impl Engine {
                     card.work_location =
                         super::people_presence::work_location_label(p.work_location.as_deref())
                             .into();
+                    card.note = p.note.map(|n| n.text).unwrap_or_default();
+                    card.ooo = if p.ooo {
+                        "Out of office".into()
+                    } else {
+                        String::new()
+                    };
                 }
             }
             Err(err) => tracing::debug!(%err, "profile card presence"),
@@ -1641,10 +1691,11 @@ impl Engine {
 
     /// Remembers a person's card details as if a card had read them.
     #[cfg(test)]
-    pub(crate) fn test_cache_profile(&self, mri: &str, subtitle: &str, work: &str) {
+    pub(crate) fn test_cache_profile(&self, mri: &str, subtitle: &str, work: &str, phone: &str) {
         let facts = CardFacts {
             subtitle: subtitle.into(),
             work: work.into(),
+            phone: phone.into(),
             ..CardFacts::default()
         };
         self.people

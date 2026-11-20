@@ -105,6 +105,13 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
 - Profiles: `POST <middleTier>/beta/users/fetchShortProfile?…` with a JSON array of MRIs. The
   response is `value[]` with `displayName` and `email`.
 - Avatars: `GET <middleTier>/beta/users/{selfGuid}/profilepicturev2/{mri}?size=HR64x64`.
+- Profile card directory details (2026-11-20, **UNVERIFIED** live, read only):
+  Graph `GET /v1.0/users/{oid}?$select=jobTitle,department,companyName,officeLocation,businessPhones,mobilePhone`
+  and `GET /v1.0/users/{oid}/manager?$select=displayName`, sent together with the Delve card and
+  the presence lookup (`card::Client::directory_details`). Documented Microsoft Graph reads; whether
+  the app's `.default` Graph token may read other users (`User.ReadBasic.All` covers neither phones
+  nor the manager) is not known, so a refusal leaves those card rows hidden. The card shows no
+  local time or time zone: no documented read gives another person's zone.
 
 ## AMS (images, voice) ✅
 

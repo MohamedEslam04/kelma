@@ -3,6 +3,7 @@
 import { Theme } from "theme.slint";
 import { PersonItem } from "types.slint";
 import { Avatar, IconButton } from "widgets.slint";
+import { PersonHover } from "people.slint";
 
 export component NewChatPane inherits Rectangle {
     in property <[PersonItem]> to;
@@ -154,9 +155,10 @@ export component NewChatPane inherits Rectangle {
                                     if r.subtitle != "": Text { text: r.subtitle; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; overflow: elide; }
                                 }
                             }
-                            result-hit := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
+                            result-hit := PersonHover {
+                                person: r.kind == "person" ? r.id : "";
+                                click-opens: false;
+                                activated => {
                                     root.add(r.id);
                                     to-input.text = "";
                                 }

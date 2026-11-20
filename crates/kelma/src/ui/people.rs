@@ -30,6 +30,11 @@ fn fill_card(s: &PeopleStore<'_>, c: CardData) {
     s.set_card_presence(c.presence.into());
     s.set_card_presence_label(c.presence_label.into());
     s.set_card_work_location(c.work_location.into());
+    s.set_card_note(c.note.into());
+    s.set_card_ooo(c.ooo.into());
+    s.set_card_phone(c.phone.into());
+    s.set_card_mobile(c.mobile.into());
+    s.set_card_manager(c.manager.into());
 }
 
 fn people(v: Vec<PersonData>) -> ModelRc<PersonItem> {
@@ -105,6 +110,15 @@ impl UiHandle {
         self.store(move |s| {
             if s.get_card_open() && s.get_card().id == c.person.id.as_str() {
                 fill_card(&s, c);
+            }
+        });
+    }
+
+    /// Our own MRI: the photo at the top right opens our own card.
+    pub fn me_id(&self, mri: String) {
+        self.store(move |s| {
+            if s.get_me() != mri.as_str() {
+                s.set_me(mri.into());
             }
         });
     }

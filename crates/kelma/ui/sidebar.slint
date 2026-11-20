@@ -5,7 +5,7 @@ import { Avatar, Icon, IconButton, Pill, SectionHeader } from "widgets.slint";
 import { ChannelMenu, ItemMenu, ListStore, OptionRow, SectionHead } from "lists.slint";
 import { CommunitiesSection, TeamMenuItems } from "teams_page.slint";
 import { TeamsStore } from "teams_store.slint";
-import { PeopleStore } from "people.slint";
+import { PeopleStore, PersonHover } from "people.slint";
 import { RemindStore } from "remind.slint";
 
 component MenuItem inherits Rectangle {
@@ -52,20 +52,6 @@ component ChatItem inherits Rectangle {
             presence: root.data.presence;
             size: 32px;
             y: (parent.height - 32px) / 2;
-            // Resting on a 1:1 chat's photo opens the person's hover card.
-            avatar-hover := TouchArea {
-                clicked => { root.clicked(); }
-                // The list may reuse this row for another chat while the pointer rests on it.
-                property <string> hovered: "";
-                changed has-hover => {
-                    if self.has-hover && root.data.person != "" {
-                        self.hovered = root.data.person;
-                        PeopleStore.hover-enter(root.data.person, self.absolute-position.x, self.absolute-position.y, self.width, self.height);
-                    } else if !self.has-hover {
-                        PeopleStore.hover-leave(self.hovered);
-                    }
-                }
-            }
         }
         VerticalLayout {
             alignment: center;
@@ -109,6 +95,17 @@ component ChatItem inherits Rectangle {
     t := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+        // Resting on a 1:1 chat's photo opens the person's hover card; a click opens the chat.
+        // (Inside the row's TouchArea, which would otherwise take the pointer from the photo.)
+        if root.data.person != "": photo-hover := PersonHover {
+            x: 12px;
+            y: (parent.height - 32px) / 2;
+            width: 32px;
+            height: 32px;
+            person: root.data.person;
+            click-opens: false;
+            activated => { root.clicked(); }
+        }
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.up {
                 if root.data.channel { ListStore.command("channel-menu", root.data.id); }
