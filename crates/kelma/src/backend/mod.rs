@@ -448,8 +448,6 @@ impl Engine {
             }
             // In order with the Send that follows it.
             Cmd::SetImportant(on) => self.view.lock().unwrap().important = on,
-            // Selection and view changes run in order with the command that follows them.
-            Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             // The call window, the 1:1 ringing flows and the Calls page share the call state.
             cmd @ Cmd::Call(_) => self.in_order(cmd),
             #[cfg(feature = "calls")]
@@ -663,6 +661,8 @@ impl Engine {
             Cmd::Find(c) => Box::pin(self.find_cmd(c)).await?,
             Cmd::People(c) => self.people_cmd(c).await?,
             Cmd::Teams(c) => self.manage_cmd(c).await?,
+            // Selection and view changes: no network, so they finish within the lane's first step.
+            Cmd::Drive(c) if c.is_instant() => self.drive_instant(c),
             Cmd::Drive(c) => self.drive_cmd(c).await?,
             Cmd::Settings(c) => self.settings_cmd(c).await?,
             Cmd::Engage(c) => self.engage_cmd(c).await?,

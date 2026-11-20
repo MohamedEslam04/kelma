@@ -649,6 +649,12 @@ impl Engine {
         Ok(())
     }
 
+    /// The list's filter text (tests of the command order).
+    #[cfg(test)]
+    pub(super) fn drive_filter_for_test(&self) -> String {
+        self.drive.lock().unwrap().s.filter.clone()
+    }
+
     /// The commands that only change the view state (see `DriveCmd::is_instant`).
     pub(super) fn drive_instant(self: &Arc<Self>, cmd: DriveCmd) {
         match cmd {

@@ -151,7 +151,7 @@ mod tests {
     use super::super::{Cmd, Engine};
     use crate::backend::call::{CallCmd, FakeDriver};
     use crate::backend::calls_page::CallsCmd;
-    use crate::backend::{CalCmd, ListsCmd};
+    use crate::backend::{CalCmd, DriveCmd, ListsCmd};
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -286,6 +286,21 @@ mod tests {
             (false, false),
             "the last previews and times choices win"
         );
+    }
+
+    #[test]
+    fn a_filter_typed_right_after_a_navigation_is_kept() {
+        let rt = runtime();
+        let (e, _window) = engine();
+        // Navigating clears the filter, so the filter must not run first.
+        let mut cmds = Vec::new();
+        for i in 0..10 {
+            cmds.push(Cmd::Drive(DriveCmd::Nav("shared".into())));
+            cmds.push(Cmd::Drive(DriveCmd::Filter(format!("report {i}"))));
+        }
+        send(&rt, &e, cmds);
+        settle(|| e.drive_filter_for_test() == "report 9");
+        assert_eq!(e.drive_filter_for_test(), "report 9");
     }
 
     #[test]
