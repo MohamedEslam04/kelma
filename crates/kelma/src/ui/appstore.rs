@@ -88,6 +88,8 @@ fn strings(v: Vec<String>) -> ModelRc<SharedString> {
 fn set_rail(w: &AppWindow, d: RailData) {
     let s = w.global::<AppsStore>();
     s.set_rail(model(d.items.into_iter().map(rail_app).collect()));
+    s.set_has_temp_app(d.temp.is_some());
+    s.set_temp_app(d.temp.map(rail_app).unwrap_or_default());
     s.set_rail_collapsed(d.collapsed);
     s.set_active_app(d.active.into());
     s.set_flyout_open(d.flyout_open);

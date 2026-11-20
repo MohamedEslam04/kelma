@@ -274,7 +274,12 @@ impl Engine {
             n.loading = true;
             n.status.clear();
         });
-        let notebooks = self.src_notebooks().await;
+        let notebooks =
+            super::tasks::limited("OneNote", super::tasks::LOAD_LIMIT, self.src_notebooks()).await;
+        match &notebooks {
+            Ok(v) => tracing::info!(notebooks = v.len(), "notebooks loaded"),
+            Err(e) => tracing::warn!(err = %e, "notebooks could not be loaded"),
+        }
         let first = {
             let mut a = self.apps.lock().unwrap();
             let n = &mut a.notes;
@@ -490,7 +495,12 @@ impl Engine {
             l.loading = true;
             l.status.clear();
         });
-        let sites = self.src_sites().await;
+        let sites =
+            super::tasks::limited("SharePoint", super::tasks::LOAD_LIMIT, self.src_sites()).await;
+        match &sites {
+            Ok(v) => tracing::info!(sites = v.len(), "Lists sites loaded"),
+            Err(e) => tracing::warn!(err = %e, "Lists sites could not be loaded"),
+        }
         let first = {
             let mut a = self.apps.lock().unwrap();
             let l = &mut a.lists;

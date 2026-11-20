@@ -1481,8 +1481,12 @@ impl Engine {
                 drop(turn);
                 if let Err(e) = r {
                     tracing::warn!(%e, "could not change my status");
-                    self.ui
-                        .settings_notice(format!("Could not change your status: {e}"));
+                    let why = format!("Could not change your status: {e}");
+                    // The menu showed the picked status at once: it goes back.
+                    if matches!(cmd, SettingsCmd::SetStatus(..)) {
+                        self.ui.settings_status_failed(why.clone());
+                    }
+                    self.ui.settings_notice(why);
                 }
                 self.settings_reload(false).await;
             }

@@ -28,6 +28,24 @@ pub struct Tasks {
     loading: bool,
 }
 
+/// The longest a Planner or To Do read may take: after it the screen stops loading and says so.
+pub(super) const LOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `f`, or an error naming `what` when it takes longer than `limit`.
+pub(super) async fn limited<T>(
+    what: &str,
+    limit: std::time::Duration,
+    f: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    match tokio::time::timeout(limit, f).await {
+        Ok(r) => r,
+        Err(_) => Err(anyhow::anyhow!(
+            "{what} did not answer within {} seconds",
+            limit.as_secs()
+        )),
+    }
+}
+
 const NOT_STARTED: &str = "Not started";
 const IN_PROGRESS: &str = "In progress";
 const COMPLETED: &str = "Completed";
@@ -157,7 +175,10 @@ impl Tasks {
                 .iter()
                 .map(|p| item(format!("plan:{}", p.id), p.title.clone(), &self.nav)),
         );
-        rows.push(header("To Do"));
+        // No To Do lists (none read, or To Do failed: the status says which): no empty heading.
+        if !self.lists.is_empty() {
+            rows.push(header("To Do"));
+        }
         rows.extend(
             self.lists
                 .iter()
@@ -296,7 +317,11 @@ impl Tasks {
             summary,
             progress,
             status: if self.status.is_empty() && !self.loading && rows.is_empty() && self.loaded {
-                "No tasks here.".into()
+                if self.nav == "my" {
+                    "No tasks assigned to you.".into()
+                } else {
+                    "No tasks here.".into()
+                }
             } else {
                 self.status.clone()
             },
@@ -335,16 +360,27 @@ impl Engine {
             t.loading = true;
             t.status.clear();
         });
-        let (lists, plans) = tokio::join!(self.src_todo_lists(), self.src_plans());
+        // Each read has a limit, so the screen never stays on "Loading tasks…".
+        let (lists, plans) = tokio::join!(
+            limited("To Do", LOAD_LIMIT, self.src_todo_lists()),
+            limited("Planner", LOAD_LIMIT, self.src_plans())
+        );
         let mut problems = Vec::new();
         let lists = lists.unwrap_or_else(|e| {
+            tracing::warn!(err = %e, "To Do lists could not be read");
             problems.push(format!("To Do: {e}"));
             Vec::new()
         });
         let plans = plans.unwrap_or_else(|e| {
+            tracing::warn!(err = %e, "Planner plans could not be read");
             problems.push(format!("Planner: {e}"));
             Vec::new()
         });
+        tracing::info!(
+            lists = lists.len(),
+            plans = plans.len(),
+            "Planner and To Do read"
+        );
         let nav = {
             let mut a = self.apps.lock().unwrap();
             let t = &mut a.tasks;
@@ -376,7 +412,7 @@ impl Engine {
         // A list loaded for a place the user already left (another list was picked meanwhile)
         // is dropped: it would show under the new place's name.
         let here = |a: &super::Apps| a.tasks.nav == key;
-        let result: anyhow::Result<()> = async {
+        let load = async {
             if let Some(list) = key.strip_prefix("todo:") {
                 let tasks = self.src_todo_tasks(list).await?;
                 let mut a = self.apps.lock().unwrap();
@@ -398,9 +434,24 @@ impl Engine {
                     a.tasks.planner = tasks;
                 }
             }
-            Ok(())
+            anyhow::Ok(())
+        };
+        let result = limited("Planner or To Do", LOAD_LIMIT, load).await;
+        match &result {
+            Ok(()) => {
+                let count = {
+                    let a = self.apps.lock().unwrap();
+                    a.tasks.todo.len() + a.tasks.planner.len()
+                };
+                tracing::info!(
+                    place = %key.split(':').next().unwrap_or(key),
+                    tasks = count,
+                    "tasks loaded"
+                );
+            }
+            Err(e) => tracing::warn!(err = %e, "tasks could not be loaded"),
         }
-        .await;
+        // A newer place took over: its own load ends the loading.
         if self.apps.lock().unwrap().tasks.nav != key {
             return Ok(());
         }
@@ -616,6 +667,34 @@ mod tests {
         assert_eq!(cols, ["Not started", "In progress", "Completed"]);
         // On My tasks the place is the plan, not the bucket.
         assert!(d.tasks[0].meta.ends_with("Sprint board"));
+    }
+
+    #[tokio::test]
+    async fn a_read_that_never_answers_ends_with_an_error_instead_of_loading_forever() {
+        let r: anyhow::Result<()> = limited(
+            "Planner",
+            std::time::Duration::from_millis(20),
+            std::future::pending(),
+        )
+        .await;
+        let e = r.expect_err("the limit ends the wait");
+        assert!(e.to_string().contains("Planner did not answer"), "{e}");
+        let ok = limited("Planner", LOAD_LIMIT, async { anyhow::Ok(3) }).await;
+        assert_eq!(ok.unwrap(), 3);
+    }
+
+    #[test]
+    fn my_tasks_with_nothing_says_so_and_no_empty_to_do_heading_shows() {
+        let t = Tasks {
+            loaded: true,
+            nav: "my".into(),
+            ..Default::default()
+        };
+        let d = t.data(now_ms());
+        assert!(!d.loading);
+        assert_eq!(d.status, "No tasks assigned to you.");
+        let titles: Vec<&str> = d.nav.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, ["Planner", "My tasks"]);
     }
 
     #[test]

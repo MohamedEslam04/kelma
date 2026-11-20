@@ -207,6 +207,12 @@ struct Ctl {
     update_url: Option<String>,
     /// "When I open a chat take me to", as the engine has it.
     open_chat_at: OpenChatAt,
+    /// The status picked here with an end ("Reset status after"): `(availability, end ms)`, for
+    /// the "Until 3:45 PM" line while the service still reports that status.
+    status_until: Option<(String, i64)>,
+    /// What the menu showed before a status pick (presence, its "Until" line), put back when
+    /// the service refuses the change.
+    status_before: Option<(String, String)>,
 }
 
 type Shared = Rc<RefCell<Ctl>>;
@@ -306,6 +312,8 @@ pub fn install(
         update_auto_done: false,
         update_url: None,
         open_chat_at,
+        status_until: None,
+        status_before: None,
     }));
     CTL.with(|c| *c.borrow_mut() = Some(shared.clone()));
     {
@@ -678,6 +686,16 @@ fn config(c: &Ctl) -> Option<session::Config> {
         .ok()
 }
 
+/// "Until 3:45 PM" while `presence` is the status picked here with an end that is still ahead.
+fn status_until_line(c: &Ctl, presence: &str) -> String {
+    match &c.status_until {
+        Some((picked, end)) if picked == presence && *end > teams_proto::time::now_ms() => {
+            expiry::until_label(*end)
+        }
+        _ => String::new(),
+    }
+}
+
 fn push_profile(w: &AppWindow, c: &Ctl) {
     let g = w.global::<SettingsStore>();
     let cfg = config(c);
@@ -695,7 +713,9 @@ fn push_profile(w: &AppWindow, c: &Ctl) {
     g.set_me_name(s(name));
     g.set_me_email(s(email));
     g.set_me_status(s(d.and_then(|d| d.me_status.clone()).unwrap_or_default()));
-    g.set_me_presence(s(d.and_then(|d| d.me_presence.clone()).unwrap_or_default()));
+    let presence = d.and_then(|d| d.me_presence.clone()).unwrap_or_default();
+    g.set_me_presence_until(s(status_until_line(c, &presence)));
+    g.set_me_presence(s(presence));
     g.set_me_work_location(s(d
         .and_then(|d| d.me_work_location.as_deref())
         .map(
@@ -770,6 +790,22 @@ impl UiHandle {
             push_server(&w, &c);
             push_accounts(&w, &c);
         });
+    }
+
+    /// Teams refused a status picked in the profile menu: the menu shows what it showed before
+    /// the pick again, and the red banner says why.
+    pub fn settings_status_failed(&self, why: String) {
+        self.run(|w| {
+            let Some(shared) = ctl() else { return };
+            let mut c = shared.borrow_mut();
+            c.status_until = None;
+            if let Some((presence, until)) = c.status_before.take() {
+                let g = w.global::<SettingsStore>();
+                g.set_me_presence(s(presence));
+                g.set_me_presence_until(s(until));
+            }
+        });
+        self.banner(why);
     }
 }
 
@@ -1532,7 +1568,33 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                 "photo-remove" => SettingsCmd::RemovePhoto,
                 _ => SettingsCmd::SetWorkLocation(arg.to_string()),
             };
+            let picked = match &cmd {
+                SettingsCmd::SetStatus(a, until) if !a.is_empty() => Some((
+                    a.clone(),
+                    until.as_deref().and_then(teams_proto::time::parse_iso_ms),
+                )),
+                SettingsCmd::SetStatus(..) => Some((String::new(), None)),
+                _ => None,
+            };
             let _ = tx.send(Cmd::Settings(cmd));
+            drop(c);
+            // The menu shows the picked status at once (the service's answer and the read after
+            // it take seconds); a refusal puts the old one back (`settings_status_failed`).
+            if let Some((status, until)) = picked {
+                let mut c = shared.borrow_mut();
+                c.status_before = Some((
+                    g.get_me_presence().to_string(),
+                    g.get_me_presence_until().to_string(),
+                ));
+                c.status_until = until.map(|ms| (status.clone(), ms));
+                // A reset goes back to the automatic status, which only the service knows.
+                if !status.is_empty() {
+                    g.set_me_presence_until(s(status_until_line(&c, &status)));
+                    g.set_me_presence(s(status));
+                } else {
+                    g.set_me_presence_until(s(""));
+                }
+            }
             // The photo answers with its own notice; the status options close.
             if !name.starts_with("photo") {
                 g.set_status_open(false);

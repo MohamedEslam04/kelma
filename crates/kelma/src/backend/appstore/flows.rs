@@ -151,7 +151,7 @@ impl Engine {
             f.loading = true;
             f.status.clear();
         });
-        let result: anyhow::Result<(FlowEnvironment, Vec<Flow>)> = async {
+        let load = async {
             let env = self
                 .src_flow_environments()
                 .await?
@@ -159,9 +159,14 @@ impl Engine {
                 .max_by_key(|e| e.is_default)
                 .ok_or_else(|| anyhow::anyhow!("no Power Automate environment"))?;
             let flows = self.src_flows(&env.name).await?;
-            Ok((env, flows))
+            anyhow::Ok((env, flows))
+        };
+        let result: anyhow::Result<(FlowEnvironment, Vec<Flow>)> =
+            super::tasks::limited("Power Automate", super::tasks::LOAD_LIMIT, load).await;
+        match &result {
+            Ok((_, flows)) => tracing::info!(flows = flows.len(), "flows loaded"),
+            Err(e) => tracing::warn!(err = %e, "flows could not be loaded"),
         }
-        .await;
         let first = {
             let mut a = self.apps.lock().unwrap();
             let f = &mut a.flows;

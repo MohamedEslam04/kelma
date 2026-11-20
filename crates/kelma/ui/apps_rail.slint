@@ -117,6 +117,19 @@ export component RailApps inherits Rectangle {
                     }
                     dropped(to) => { AppsStore.command("move", a.id + "," + to); }
                 }
+                // An app opened from "…" that is not pinned shows here while it is open.
+                if AppsStore.has-temp-app && root.view == AppsStore.temp-app.view: RailEntry {
+                    label: AppsStore.temp-app.name;
+                    icon: AppsStore.temp-app.icon;
+                    has-icon: AppsStore.temp-app.has-icon;
+                    letter: AppsStore.temp-app.letter;
+                    tone: AppsStore.temp-app.color;
+                    active: true;
+                    clicked => {
+                        if SettingsStore.open { SettingsStore.close(); }
+                        AppsStore.command("open-app", AppsStore.temp-app.id);
+                    }
+                }
             }
         }
         RailEntry {
