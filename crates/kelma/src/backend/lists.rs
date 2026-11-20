@@ -939,14 +939,21 @@ impl Engine {
         let Some(l) = notify_level(level) else {
             return Ok(());
         };
+        // Shown at once, so the menu opened right after has it; put back when the service
+        // refuses, unless another choice came meanwhile.
+        let before = self
+            .lists
+            .lock()
+            .unwrap()
+            .channels
+            .get_mut(id)
+            .and_then(|c| c.notify.replace(l));
+        self.push_channel_menu(id);
         if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
-            if let Some(c) = self.lists.lock().unwrap().channels.get_mut(id) {
-                c.notify = Some(l);
-            }
-            self.push_channel_menu(id);
             return Ok(());
         }
-        self.client
+        let answer = self
+            .client
             .set_channel_notifications(
                 id,
                 ChannelNotify {
@@ -954,11 +961,16 @@ impl Engine {
                     include_replies: false,
                 },
             )
-            .await?;
-        if let Some(c) = self.lists.lock().unwrap().channels.get_mut(id) {
-            c.notify = Some(l);
+            .await;
+        if let Err(err) = answer {
+            if let Some(c) = self.lists.lock().unwrap().channels.get_mut(id)
+                && c.notify == Some(l)
+            {
+                c.notify = before;
+            }
+            self.push_channel_menu(id);
+            return Err(err.into());
         }
-        self.push_channel_menu(id);
         Ok(())
     }
 
@@ -1008,10 +1020,25 @@ impl Engine {
             id: id.to_string(),
             kind: info.kind,
         };
-        self.client
+        // Off the list at once (a second Leave or the channel menu finds it gone); back when the
+        // service refuses. The chat's messages are deleted only once the service agreed.
+        let kept = self.lists.lock().unwrap().channels.remove(id);
+        self.dirty_lists();
+        if let Err(err) = self
+            .client
             .remove_private_channel_member(&team, &r, &self.me)
-            .await?;
-        self.lists.lock().unwrap().channels.remove(id);
+            .await
+        {
+            if let Some(c) = kept {
+                self.lists
+                    .lock()
+                    .unwrap()
+                    .channels
+                    .insert(id.to_string(), c);
+            }
+            self.dirty_lists();
+            return Err(err.into());
+        }
         self.store.lock().unwrap().delete_conversation(id)?;
         self.dirty_lists();
         self.banner("You left the channel");
