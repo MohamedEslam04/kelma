@@ -796,8 +796,8 @@ fn send_button_sends_draft() {
     assert_eq!(*sent.borrow(), vec!["from button".to_string()]);
 }
 
-/// Composer toolbar buttons below the input, left to right: emoji, attach, more, GIF, apps
-/// (Send and its options are the `SendButton`).
+/// Composer toolbar buttons below the input, left to right: emoji, attach, more, GIF, voice
+/// message, apps (Send and its options are the `SendButton`).
 fn toolbar(app: &AppWindow) -> Vec<ElementHandle> {
     let input_y = composer(app).absolute_position().y;
     let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "IconButton::touch")
@@ -817,7 +817,7 @@ fn toolbar_attach_menu_offers_cloud_files_and_this_device() {
         app.on_attach_file(move || l.borrow_mut().push("file".into()));
     }
     let tb = toolbar(&app);
-    assert_eq!(tb.len(), 5, "emoji, attach, more, GIF, apps");
+    assert_eq!(tb.len(), 6, "emoji, attach, more, GIF, voice message, apps");
 
     tb[1].mock_single_click(PointerEventButton::Left);
     assert_eq!(find_label(&app, "Attach cloud files").len(), 1);
