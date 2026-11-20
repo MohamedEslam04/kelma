@@ -10,12 +10,16 @@
 | `--share=network` | Teams, Graph and OneDrive |
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | window system |
 | `--device=dri` | optional GPU renderer (`KELMA_RENDERER=femtovg`) |
-| `--socket=pulseaudio`, `--filesystem=xdg-run/pipewire-0` | audio and PipeWire for the future meeting host |
+| `--socket=pulseaudio`, `--filesystem=xdg-run/pipewire-0` | call audio, and the PipeWire streams of the Camera and ScreenCast portals |
 | `--talk-name=org.freedesktop.Notifications` | desktop notifications |
+| `--talk-name=org.kde.StatusNotifierWatcher`, `--own-name=org.kde.StatusNotifierItem-2-1` | the tray icon (the item is named after the pid, 2 in the sandbox) |
+| `--talk-name=org.freedesktop.ScreenSaver` | the screen-lock check that shows you Away while the screen is locked |
 | `--talk-name=org.freedesktop.secrets` | the refresh token is kept in the Secret Service |
 | `--filesystem=xdg-download` | saved attachments and problem reports |
 
-The file chooser, open-URI, camera and screen-cast portals need no permission.
+The file chooser, open-URI, camera and screen-cast portals need no permission. Inside the sandbox the
+portal names kelma by its Flatpak id, so the app's own registration (`register_host_app`) is
+skipped there.
 
 ## Build
 
@@ -41,4 +45,5 @@ flatpak-builder --user --install --force-clean --state-dir=/data/kelma-flatpak/s
 ```
 
 Keep the build directory outside the source tree: the manifest copies the whole repository.
-Check the metadata with `appstreamcli validate --no-net io.github.mohamedeslam04.kelma.metainfo.xml`.
+Check the metadata with `appstreamcli validate --no-net ../io.github.mohamedeslam04.kelma.metainfo.xml`
+(the desktop file, icon and metainfo are shared with the other packages, one folder up).

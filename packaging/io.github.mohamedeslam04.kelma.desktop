@@ -4,11 +4,11 @@ Name=kelma
 GenericName=Teams chat client
 Comment=Lightweight native client for Microsoft Teams chat (unofficial)
 Exec=kelma
-Icon=kelma
+Icon=io.github.mohamedeslam04.kelma
 Terminal=false
 Categories=Network;InstantMessaging;Chat;
 Keywords=teams;chat;microsoft;messaging;
-StartupWMClass=kelma
+StartupWMClass=io.github.mohamedeslam04.kelma
 Actions=ReportProblem;
 
 [Desktop Action ReportProblem]

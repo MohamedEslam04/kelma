@@ -110,8 +110,8 @@ impl Engine {
             n.appname("kelma")
                 .summary(&b.summary)
                 .body(&b.body)
-                .icon("kelma")
-                .hint(notify_rust::Hint::DesktopEntry("kelma".into()))
+                .icon(tray::APP_ID)
+                .hint(notify_rust::Hint::DesktopEntry(tray::APP_ID.into()))
                 .hint(notify_rust::Hint::Category("im.received".into()));
             if prefs.banner_photo
                 && let Some(path) = p
