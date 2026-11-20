@@ -684,7 +684,7 @@ impl Engine {
                 sender,
                 mine,
                 time: appearance::formats::local(r.compose_ms)
-                    .map(|t| t.format(appearance::formats::time_pattern()).to_string())
+                    .map(|t| appearance::formats::time_of(&t))
                     .unwrap_or_default(),
                 day: if new_day {
                     day_label(r.compose_ms)

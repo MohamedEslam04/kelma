@@ -237,9 +237,9 @@ export component EventForm inherits CalCard {
                 HorizontalLayout {
                     spacing: 8px;
                     Labeled { label: "Start date"; CalField { placeholder: "2026-12-18"; text <=> CalForm.start-date; } }
-                    if !CalForm.all-day: Labeled { label: "Start time"; width: 90px; CalField { placeholder: "09:30"; text <=> CalForm.start-time; edited(t) => { CalForm.times-edited(); } } }
+                    if !CalForm.all-day: Labeled { label: "Start time"; width: 90px; CalField { placeholder: "9:30 AM"; text <=> CalForm.start-time; edited(t) => { CalForm.times-edited(); } } }
                     Labeled { label: "End date"; CalField { placeholder: "2026-12-18"; text <=> CalForm.end-date; } }
-                    if !CalForm.all-day: Labeled { label: "End time"; width: 90px; CalField { placeholder: "10:30"; text <=> CalForm.end-time; edited(t) => { CalForm.times-edited(); } } }
+                    if !CalForm.all-day: Labeled { label: "End time"; width: 90px; CalField { placeholder: "10:30 AM"; text <=> CalForm.end-time; edited(t) => { CalForm.times-edited(); } } }
                 }
                 HorizontalLayout {
                     spacing: 16px;

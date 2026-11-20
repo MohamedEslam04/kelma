@@ -1006,7 +1006,8 @@ mod tests {
     fn the_peek_of_an_invitation_offers_answers_and_a_join() {
         let p = peek_data(&invited(json!({})), &utc);
         assert_eq!(p.title, "Planning");
-        assert_eq!(p.when, "Wed, Nov 18 · 09:00 – 10:00");
+        let c = |h: i32, m: i32| appearance::formats::clock(h * 60 + m);
+        assert_eq!(p.when, format!("Wed, Nov 18 · {} – {}", c(9, 0), c(10, 0)));
         assert_eq!(p.organizer, "Alice Chen invited you");
         assert_eq!(p.counts, "Accepted 1, Declined 1, Didn't respond 1");
         assert!(p.can_respond && p.has_join && p.has_attendees);
@@ -1048,7 +1049,11 @@ mod tests {
     fn times_read_as_a_day_all_day_or_a_span() {
         assert_eq!(
             when_label(&event(json!({})), &|_| 2 * H),
-            "Wed, Nov 18 · 11:00 – 12:00"
+            format!(
+                "Wed, Nov 18 · {} – {}",
+                appearance::formats::clock(11 * 60),
+                appearance::formats::clock(12 * 60)
+            )
         );
         let all_day = event(json!({"isAllDay": true,
             "start": {"dateTime": "2026-11-18T00:00:00.0000000", "timeZone": "UTC"},
@@ -1065,7 +1070,11 @@ mod tests {
             "end": {"dateTime": "2026-11-19T01:00:00.0000000", "timeZone": "UTC"}}));
         assert_eq!(
             when_label(&overnight, &utc),
-            "Wed, Nov 18 09:00 – Thu, Nov 19 01:00"
+            format!(
+                "Wed, Nov 18 {} – Thu, Nov 19 {}",
+                appearance::formats::clock(9 * 60),
+                appearance::formats::clock(60)
+            )
         );
     }
 
@@ -1390,7 +1399,16 @@ mod tests {
                 rows[0].response.as_str(),
                 rows[0].when.as_str()
             ),
-            ("Bob Lee", "tentative", "Thu, Nov 19 · 14:00 – 15:00")
+            (
+                "Bob Lee",
+                "tentative",
+                format!(
+                    "Thu, Nov 19 · {} – {}",
+                    appearance::formats::clock(14 * 60),
+                    appearance::formats::clock(15 * 60)
+                )
+                .as_str()
+            )
         );
         assert_eq!(
             (rows[1].name.as_str(), rows[1].response.as_str()),
@@ -1473,10 +1491,21 @@ mod tests {
              "organizerAvailability": "free", "attendeeAvailability": []}
         ]}));
         let s = suggestions(&found, &|_| 2 * H, 5);
-        assert_eq!(s[0].label, "Thu 19, 14:00 – 14:30");
+        assert_eq!(
+            s[0].label,
+            format!(
+                "Thu 19, {} – {}",
+                appearance::formats::clock(14 * 60),
+                appearance::formats::clock(14 * 60 + 30)
+            )
+        );
         assert_eq!(
             (s[0].date.as_str(), s[0].start.as_str(), s[0].end.as_str()),
-            ("2026-11-19", "14:00", "14:30")
+            (
+                "2026-11-19",
+                appearance::formats::clock(14 * 60).as_str(),
+                appearance::formats::clock(14 * 60 + 30).as_str()
+            )
         );
         assert_eq!(s[1].score, "50%");
         assert_eq!(suggestions(&found, &|_| 0, 1).len(), 1);

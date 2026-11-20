@@ -59,8 +59,8 @@ export component GeneralPage inherits VerticalLayout {
         }
         SChoiceRow {
             label: @tr("Time format");
-            hint: @tr("Used for times in the chat list, on messages and in OneDrive.");
-            options: [{v: "auto", l: @tr("Follow the language")}, {v: "h12", l: "1:30 PM"}, {v: "h24", l: "13:30"}];
+            hint: @tr("Used for every clock time: chats, the calendar, reminders, scheduled messages and OneDrive.");
+            options: [{v: "h12", l: @tr("12-hour (1:30 PM)")}, {v: "h24", l: @tr("24-hour (13:30)")}];
             value: SettingsStore.time-format;
             picked(v) => { SettingsStore.time-format = v; SettingsStore.command("time-format", v); }
         }

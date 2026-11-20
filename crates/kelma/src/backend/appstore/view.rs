@@ -349,7 +349,13 @@ pub fn day(ms: i64) -> String {
 /// A moment as `Nov 20, 14:03`.
 pub fn moment(ms: i64) -> String {
     appearance::formats::local(ms)
-        .map(|t| t.format("%b %-d, %H:%M").to_string())
+        .map(|t| {
+            format!(
+                "{}, {}",
+                t.format("%b %-d"),
+                appearance::formats::time_of(&t)
+            )
+        })
         .unwrap_or_default()
 }
 

@@ -249,7 +249,7 @@ pub fn show_focus(w: &AppWindow, until_ms: Option<i64>) {
                 } else {
                     "later"
                 },
-                t.format("%H:%M").to_string(),
+                appearance::formats::time_of(&t),
             ),
             None => ("forever", String::new()),
         },
@@ -496,6 +496,8 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     g.set_language_shown(s(appearance::effective_language(gp).english_name));
     g.set_date_format(s(st::date_slug(gp.date_format)));
     g.set_time_format(s(st::time_slug(gp.time_format)));
+    w.global::<Theme>()
+        .set_h24(gp.time_format == appearance::TimeFormat::H24);
     g.set_time_zone(s(gp.time_zone.clone().unwrap_or_default()));
     g.set_system_time_zone(s(iana_time_zone::get_timezone().unwrap_or_default()));
     g.set_startup(toggles(st::startup_rows(gp)));
@@ -510,8 +512,8 @@ fn push_local(w: &AppWindow, c: &Ctl) {
     let q = &gp.quiet_hours;
     g.set_quiet_on(q.enabled);
     g.set_quiet_days(model(q.days.to_vec()));
-    g.set_quiet_start(s(teams_proto::user_settings::format_clock(q.start_min)));
-    g.set_quiet_end(s(teams_proto::user_settings::format_clock(q.end_min)));
+    g.set_quiet_start(s(appearance::formats::clock(i32::from(q.start_min))));
+    g.set_quiet_end(s(appearance::formats::clock(i32::from(q.end_min))));
     g.set_focus_duration(s(focus_slug(gp.focus_duration)));
     g.set_keywords(model(
         gp.keyword_alerts.iter().map(|k| s(k.as_str())).collect(),
@@ -628,7 +630,7 @@ fn push_server(w: &AppWindow, c: &Ctl) {
             format!(
                 "Paused until {} {}",
                 t.format(appearance::formats::date_pattern(false)),
-                t.format(appearance::formats::time_pattern())
+                appearance::formats::time_of(&t)
             )
         })
         .unwrap_or_default()));
@@ -1342,12 +1344,12 @@ fn command(shared: &Shared, w: &AppWindow, name: &str, arg: &str) {
                         *d = !*d;
                     }
                 }
-                _ => match teams_proto::user_settings::parse_clock(arg.trim()) {
+                _ => match crate::send_options::parse_time(arg).map(|m| m as u16) {
                     Some(m) if name == "quiet-start" => q.start_min = m,
                     Some(m) => q.end_min = m,
                     None => {
                         push_local(w, &c);
-                        notice(w, "Write the time like 22:00.");
+                        notice(w, "Write the time like 10:00 PM or 22:00.");
                         return;
                     }
                 },

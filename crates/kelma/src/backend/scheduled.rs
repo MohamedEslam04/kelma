@@ -156,7 +156,7 @@ impl Engine {
         Ok(())
     }
 
-    fn push_scheduled(&self) {
+    pub(super) fn push_scheduled(&self) {
         let (list, conv, thread) = {
             let v = self.view.lock().unwrap();
             (

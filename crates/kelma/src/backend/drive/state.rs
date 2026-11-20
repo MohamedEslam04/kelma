@@ -373,7 +373,7 @@ pub fn when_label(ms: i64, now_ms: i64, off_ms: i64) -> String {
     };
     let days = (now.date_naive() - t.date_naive()).num_days();
     match days {
-        0 => t.format(appearance::formats::time_pattern()).to_string(),
+        0 => appearance::formats::time_of(&t),
         1 => "Yesterday".into(),
         _ if t.year() == now.year() => t.format("%b %-d").to_string(),
         _ => t.format("%b %-d, %Y").to_string(),
@@ -996,7 +996,12 @@ mod tests {
         assert_eq!(size_label(2048), "2 KB");
         assert_eq!(size_label(1_572_864), "1.5 MB");
         assert_eq!(size_label(3 * 1_073_741_824), "3.0 GB");
-        assert_eq!(when_label(NOW, NOW, 0).len(), 5, "HH:MM today");
+        let now = chrono::DateTime::from_timestamp_millis(NOW).unwrap();
+        assert_eq!(
+            when_label(NOW, NOW, 0),
+            appearance::formats::time_of(&now),
+            "the time today"
+        );
         assert_eq!(when_label(NOW - DAY_MS, NOW, 0), "Yesterday");
         assert_eq!(when_label(NOW - 9 * DAY_MS, NOW, 0), "Nov 9");
         assert_eq!(when_label(NOW - 400 * DAY_MS, NOW, 0), "Oct 14, 2025");

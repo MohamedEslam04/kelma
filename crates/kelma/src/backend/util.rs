@@ -89,7 +89,7 @@ fn chat_time_at(zone: Option<Tz>, now_ms: i64, ms: i64) -> String {
     };
     let days = now.date().signed_duration_since(t.date()).num_days();
     match days {
-        0 => t.format(formats::time_pattern()).to_string(),
+        0 => formats::time_of(&t),
         1 => "Yesterday".into(),
         2..=6 => t.format("%a").to_string(),
         _ if t.year() == now.year() => t.format(formats::date_pattern(false)).to_string(),

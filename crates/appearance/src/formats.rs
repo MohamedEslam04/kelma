@@ -2,20 +2,20 @@
 //! shared setting the time helpers read.
 //!
 //! The Settings page calls [`set_from`] at start and whenever the choice changes; code that
-//! writes a time or a date asks [`time_pattern`] or [`date_pattern`] for the `strftime` pattern
-//! instead of hard-coding one. `Auto` keeps what kelma showed before there was a choice (24-hour
-//! clock, month before day), whatever the interface language.
+//! writes a date asks [`date_pattern`] for the `strftime` pattern, and a clock time asks [`clock`]
+//! instead of hard-coding one: 12-hour ("4:14 PM") by default, 24-hour ("16:14") when Settings says so.
+//! `Auto` (an older config) reads as 12-hour; its dates keep the month before the day.
 //!
 //! The time zone is an IANA name; none (or a name that is not one) follows the system. [`local`]
 //! turns epoch milliseconds into the wall-clock time in the chosen zone, so every label reads the
 //! same zone.
 
 use crate::general::{DateFormat, GeneralPrefs, TimeFormat};
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Timelike, Utc};
 pub use chrono_tz::Tz;
 use std::sync::RwLock;
 
-static CHOICE: RwLock<(DateFormat, TimeFormat)> = RwLock::new((DateFormat::Auto, TimeFormat::Auto));
+static CHOICE: RwLock<(DateFormat, TimeFormat)> = RwLock::new((DateFormat::Auto, TimeFormat::H12));
 static ZONE: RwLock<Option<Tz>> = RwLock::new(None);
 
 /// Sets the formats the helpers use.
@@ -82,17 +82,73 @@ pub fn current() -> (DateFormat, TimeFormat) {
     *CHOICE.read().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The `strftime` pattern for a clock time (hours and minutes) in `format`.
-pub fn time_pattern_for(format: TimeFormat) -> &'static str {
-    match format {
-        TimeFormat::H12 => "%-I:%M %p",
-        TimeFormat::Auto | TimeFormat::H24 => "%H:%M",
+/// Whether clock times read on the 24-hour clock (`Auto` and 12-hour read on the 12-hour one).
+pub fn is_h24() -> bool {
+    current().1 == TimeFormat::H24
+}
+
+/// "AM" or "PM": ص and م when `arabic`.
+pub fn meridiem_for(pm: bool, arabic: bool) -> &'static str {
+    match (arabic, pm) {
+        (true, false) => "ص",
+        (true, true) => "م",
+        (false, false) => "AM",
+        (false, true) => "PM",
     }
 }
 
-/// The pattern for a clock time in the chosen format.
-pub fn time_pattern() -> &'static str {
-    time_pattern_for(current().1)
+/// "AM" or "PM", in the interface language: ص and م in Arabic.
+pub fn meridiem(pm: bool) -> &'static str {
+    meridiem_for(pm, crate::language::current().rtl)
+}
+
+/// A clock time for `minutes` after midnight: "4:14 PM", or "16:14" when `h24`.
+pub fn clock_for(minutes: i32, h24: bool, arabic: bool) -> String {
+    let m = minutes.rem_euclid(24 * 60);
+    let (h, min) = (m / 60, m % 60);
+    if h24 {
+        return format!("{h:02}:{min:02}");
+    }
+    let h12 = if h % 12 == 0 { 12 } else { h % 12 };
+    format!("{h12}:{min:02} {}", meridiem_for(h >= 12, arabic))
+}
+
+/// A clock time for `minutes` after midnight in the interface language: "4:14 PM", or "16:14"
+/// when `h24`.
+pub fn clock_in(minutes: i32, h24: bool) -> String {
+    clock_for(minutes, h24, crate::language::current().rtl)
+}
+
+/// [`clock_in`] in the chosen format.
+pub fn clock(minutes: i32) -> String {
+    clock_in(minutes, is_h24())
+}
+
+/// A whole hour as the time axis writes it: "4 PM", or "16:00" when `h24`; other minutes as
+/// [`clock_in`].
+pub fn hour_for(minutes: i32, h24: bool, arabic: bool) -> String {
+    let m = minutes.rem_euclid(24 * 60);
+    if h24 || m % 60 != 0 {
+        return clock_for(m, h24, arabic);
+    }
+    let h = m / 60;
+    let h12 = if h % 12 == 0 { 12 } else { h % 12 };
+    format!("{h12} {}", meridiem_for(h >= 12, arabic))
+}
+
+/// [`hour_for`] in the interface language.
+pub fn hour_in(minutes: i32, h24: bool) -> String {
+    hour_for(minutes, h24, crate::language::current().rtl)
+}
+
+/// [`hour_in`] in the chosen format.
+pub fn hour(minutes: i32) -> String {
+    hour_in(minutes, is_h24())
+}
+
+/// The clock time of a date and time, in the chosen format.
+pub fn time_of(t: &impl Timelike) -> String {
+    clock((t.hour() * 60 + t.minute()) as i32)
 }
 
 /// The `strftime` pattern for a short numeric date in `format`, with the year or without it.
@@ -125,16 +181,64 @@ mod tests {
     }
 
     #[test]
-    fn auto_keeps_the_24_hour_clock_and_month_first_dates() {
-        assert_eq!(time_pattern_for(TimeFormat::Auto), "%H:%M");
-        assert_eq!(time_pattern_for(TimeFormat::H24), "%H:%M");
+    fn auto_keeps_month_first_dates() {
         assert_eq!(date_pattern_for(DateFormat::Auto, false), "%-m/%-d");
         assert_eq!(date_pattern_for(DateFormat::Auto, true), "%-m/%-d/%y");
     }
 
     #[test]
+    fn the_clock_reads_in_both_modes() {
+        let both = |m: i32| (clock_for(m, false, false), clock_for(m, true, false));
+        let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(both(5), pair("12:05 AM", "00:05"));
+        assert_eq!(both(12 * 60), pair("12:00 PM", "12:00"));
+        assert_eq!(both(13 * 60 + 30), pair("1:30 PM", "13:30"));
+        assert_eq!(both(16 * 60 + 14), pair("4:14 PM", "16:14"));
+        assert_eq!(both(23 * 60 + 59), pair("11:59 PM", "23:59"));
+        assert_eq!(both(0), pair("12:00 AM", "00:00"));
+        assert_eq!(
+            clock_for(24 * 60 + 5, false, false),
+            "12:05 AM",
+            "wraps past midnight"
+        );
+    }
+
+    #[test]
+    fn arabic_writes_the_meridiem_in_arabic() {
+        assert_eq!(clock_for(16 * 60 + 14, false, true), "4:14 م");
+        assert_eq!(clock_for(5, false, true), "12:05 ص");
+        assert_eq!(clock_for(16 * 60 + 14, true, true), "16:14");
+    }
+
+    #[test]
+    fn the_time_axis_writes_whole_hours_short() {
+        assert_eq!(hour_for(16 * 60, false, false), "4 PM");
+        assert_eq!(hour_for(0, false, false), "12 AM");
+        assert_eq!(hour_for(12 * 60, false, false), "12 PM");
+        assert_eq!(hour_for(16 * 60, true, false), "16:00");
+        assert_eq!(hour_for(16 * 60 + 30, false, false), "4:30 PM");
+    }
+
+    #[test]
+    fn a_date_and_time_reads_as_its_clock() {
+        let _one_at_a_time = shared();
+        let t = Utc.with_ymd_and_hms(2026, 11, 19, 16, 14, 59).unwrap();
+        set(DateFormat::Auto, TimeFormat::H12);
+        assert_eq!(time_of(&t), clock_in(16 * 60 + 14, false));
+        set(DateFormat::Auto, TimeFormat::H24);
+        assert_eq!(time_of(&t), "16:14");
+        set(DateFormat::Auto, TimeFormat::Auto);
+        assert_eq!(
+            time_of(&t),
+            clock_in(16 * 60 + 14, false),
+            "Auto is 12-hour"
+        );
+        assert!(!is_h24());
+        set_from(&GeneralPrefs::default());
+    }
+
+    #[test]
     fn each_choice_has_its_own_pattern() {
-        assert_eq!(time_pattern_for(TimeFormat::H12), "%-I:%M %p");
         assert_eq!(date_pattern_for(DateFormat::Dmy, true), "%-d/%-m/%y");
         assert_eq!(date_pattern_for(DateFormat::Mdy, false), "%-m/%-d");
         assert_eq!(date_pattern_for(DateFormat::Ymd, true), "%y-%m-%d");
@@ -151,11 +255,16 @@ mod tests {
         };
         set_from(&prefs);
         assert_eq!(current(), (DateFormat::Dmy, TimeFormat::H12));
-        assert_eq!(time_pattern(), "%-I:%M %p");
+        assert!(!is_h24());
         assert_eq!(date_pattern(false), "%-d/%-m");
+        set_from(&GeneralPrefs {
+            time_format: TimeFormat::H24,
+            ..GeneralPrefs::default()
+        });
+        assert!(is_h24());
         // Put it back: other tests in this process read the shared setting.
         set_from(&GeneralPrefs::default());
-        assert_eq!(time_pattern(), "%H:%M");
+        assert!(!is_h24(), "12-hour is the default");
     }
 
     fn instant(h: u32) -> i64 {

@@ -151,12 +151,13 @@ pub enum DateFormat {
     Ymd,
 }
 
-/// 12 or 24 hour clock. `Auto` follows the language.
+/// 12 or 24 hour clock. 12-hour is the default. `Auto` is what older configs saved before
+/// there was a choice; it reads as 12-hour and Settings shows 12-hour for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TimeFormat {
-    #[default]
     Auto,
+    #[default]
     H12,
     H24,
 }
@@ -326,7 +327,7 @@ mod tests {
         let d = GeneralPrefs::default();
         assert_eq!(d.language, None);
         assert_eq!(d.date_format, DateFormat::Auto);
-        assert_eq!(d.time_format, TimeFormat::Auto);
+        assert_eq!(d.time_format, TimeFormat::H12);
         assert_eq!(d.time_zone, None);
         assert!(!d.auto_start && !d.open_in_background);
         assert!(

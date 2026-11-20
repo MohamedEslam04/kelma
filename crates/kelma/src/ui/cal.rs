@@ -686,6 +686,13 @@ pub fn wire(window: &AppWindow, tx: UnboundedSender<Cmd>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the calendar's own labels (`CalFmt.hhmm`) say for `min` while Theme.h24 is off.
+    fn hh(min: i32) -> String {
+        let h = min / 60;
+        let pm = if h % 24 < 12 { "AM" } else { "PM" };
+        format!("{}:{:02} {pm}", (h + 11) % 12 + 1, min % 60)
+    }
     use crate::AppWindow;
     use crate::backend::{Ctx, DEFAULT_PREFS, build, filter_opts, peek_data, sched_rows};
     use calendar::{Date, Event, View, Weekday, parse_events};
@@ -2048,14 +2055,17 @@ mod tests {
         );
         g.set_sched_open(true);
         let cell = |l: &str| ElementHandle::find_by_accessible_label(&app, l).count();
-        assert_eq!(cell("You 09:00 free"), 1);
-        assert_eq!(cell("You 10:00 busy"), 1);
-        assert_eq!(cell("You 10:30 busy"), 1);
-        assert_eq!(cell("You 11:00 tentative"), 1);
-        assert_eq!(cell("Alice 09:00 out of office"), 1);
-        assert_eq!(cell("Alice 09:30 working elsewhere"), 1);
+        assert_eq!(cell(&format!("You {} free", hh(9 * 60))), 1);
+        assert_eq!(cell(&format!("You {} busy", hh(10 * 60))), 1);
+        assert_eq!(cell(&format!("You {} busy", hh(10 * 60 + 30))), 1);
+        assert_eq!(cell(&format!("You {} tentative", hh(11 * 60))), 1);
+        assert_eq!(cell(&format!("Alice {} out of office", hh(9 * 60))), 1);
         assert_eq!(
-            cell("Bob 10:00 unknown"),
+            cell(&format!("Alice {} working elsewhere", hh(9 * 60 + 30))),
+            1
+        );
+        assert_eq!(
+            cell(&format!("Bob {} unknown", hh(10 * 60))),
             1,
             "an unreadable calendar is unknown"
         );
@@ -2089,13 +2099,16 @@ mod tests {
             "the form's slot is outlined"
         );
         click(
-            &ElementHandle::find_by_accessible_label(&app, "Start at 12:00")
+            &ElementHandle::find_by_accessible_label(&app, &format!("Start at {}", hh(12 * 60)))
                 .next()
                 .unwrap(),
         );
         assert_eq!(
             (g.get_start_time().to_string(), g.get_end_time().to_string()),
-            ("12:00".to_string(), "13:30".to_string())
+            (
+                appearance::formats::clock(12 * 60),
+                appearance::formats::clock(13 * 60 + 30)
+            )
         );
         assert_eq!((g.get_sel_start(), g.get_sel_end()), (720, 810));
         // A suggestion sets the day and both times.
@@ -2196,12 +2209,18 @@ mod tests {
             position: LogicalPosition::new(grab.x, grab.y + 40.),
         });
         assert!(
-            ElementHandle::find_by_accessible_label(&app, "Move to 09:45 – 10:45")
+            ElementHandle::find_by_accessible_label(
+                &app,
+                &format!("Move to {} – {}", hh(9 * 60 + 45), hh(10 * 60 + 45))
+            )
+            .next()
+            .is_some()
+                || ElementHandle::find_by_accessible_label(
+                    &app,
+                    &format!("Move to {} – {}", hh(9 * 60 + 30), hh(10 * 60 + 30))
+                )
                 .next()
-                .is_some()
-                || ElementHandle::find_by_accessible_label(&app, "Move to 09:30 – 10:30")
-                    .next()
-                    .is_some(),
+                .is_some(),
             "a ghost shows the snapped target"
         );
         let drop = LogicalPosition::new(grab.x, grab.y + 64.);

@@ -59,9 +59,9 @@ impl FormFields {
         FormFields {
             subject: String::new(),
             start_date: date.to_string(),
-            start_time: hm(start_min),
+            start_time: shown(start_min),
             end_date: end_date.to_string(),
-            end_time: hm(end_min),
+            end_time: shown(end_min),
             all_day: false,
             required: String::new(),
             optional: String::new(),
@@ -91,7 +91,10 @@ impl FormFields {
     pub fn from_event(e: &Event, body: &str, off: &dyn Fn(i64) -> i64, series: bool) -> FormFields {
         let wall = |ms: i64| {
             let s = format_iso_ms(ms + off(ms));
-            (s[..10].to_string(), s[11..16].to_string())
+            (
+                s[..10].to_string(),
+                shown(parse_hm(&s[11..16]).unwrap_or(0)),
+            )
         };
         let (sd, st) = wall(e.start_ms);
         let (mut ed, mut et) = wall(e.end_ms);
@@ -99,7 +102,7 @@ impl FormFields {
             // The form shows the last day, Graph stores the next midnight.
             let last = Date::from_ms(e.end_ms + off(e.end_ms) - 1);
             ed = last.to_string();
-            et = "00:00".into();
+            et = shown(0);
         }
         let join = |kind: ::calendar::AttendeeKind| {
             e.attendees
@@ -168,8 +171,8 @@ impl FormFields {
                 format!("{}T00:00:00", end_date.add_days(1)),
             )
         } else {
-            let st = parse_hm(&self.start_time).ok_or("The start time should look like 09:30")?;
-            let et = parse_hm(&self.end_time).ok_or("The end time should look like 10:30")?;
+            let st = parse_hm(&self.start_time).ok_or("The start time should look like 9:30 AM")?;
+            let et = parse_hm(&self.end_time).ok_or("The end time should look like 10:30 AM")?;
             (
                 format!("{start_date}T{}:00", hm(st)),
                 format!("{end_date}T{}:00", hm(et)),
@@ -326,15 +329,21 @@ fn week_index(day_of_month: u32) -> WeekIndex {
     }
 }
 
+/// `09:30`: the 24-hour form the service takes.
 pub fn hm(min: u32) -> String {
     format!("{:02}:{:02}", min / 60, min % 60)
 }
 
-/// `09:30` or `9:30` as minutes after midnight.
+/// What the form shows for `min` minutes after midnight: "9:30 AM", or "09:30" on the 24-hour
+/// clock (Settings).
+pub fn shown(min: u32) -> String {
+    appearance::formats::clock(min as i32)
+}
+
+/// A typed time as minutes after midnight: `09:30`, `9:30 pm`, `2130`, `٩:٣٠` (see
+/// `send_options::parse_time`).
 pub fn parse_hm(s: &str) -> Option<u32> {
-    let (h, m) = s.trim().split_once(':')?;
-    let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
-    (h < 24 && m < 60).then_some(h * 60 + m)
+    crate::send_options::parse_time(s).map(|m| m as u32)
 }
 
 /// `2026-12-18`, with a real calendar date.
@@ -481,7 +490,7 @@ pub fn slot_for_pick(f: &FormFields, pick_min: u32) -> (String, String, String) 
     let start_date = parse_date(&f.start_date).unwrap_or(Date::new(2000, 1, 1));
     let end = pick_min + slot_minutes(f);
     let end_date = start_date.add_days(i64::from(end / 1440));
-    (hm(pick_min), end_date.to_string(), hm(end % 1440))
+    (shown(pick_min), end_date.to_string(), shown(end % 1440))
 }
 
 /// The IANA name of the time zone chosen in Settings, else the machine's; `UTC` when it cannot
@@ -528,7 +537,7 @@ mod tests {
         let late = FormFields::blank(DEC_18, 23 * 60 + 45);
         assert_eq!(
             (late.end_date.as_str(), late.end_time.as_str()),
-            ("2026-12-19", "00:15")
+            ("2026-12-19", shown(15).as_str())
         );
     }
 
@@ -759,7 +768,11 @@ mod tests {
                 f.start_time.as_str(),
                 f.end_time.as_str()
             ),
-            ("2026-12-18", "10:00", "11:30")
+            (
+                "2026-12-18",
+                shown(10 * 60).as_str(),
+                shown(11 * 60 + 30).as_str()
+            )
         );
         assert_eq!(f.required, "Alice <alice@contoso.com>");
         assert_eq!(f.optional, "bob@contoso.com");
@@ -793,7 +806,7 @@ mod tests {
         assert_eq!(f.subject, "Planning");
         assert_eq!(f.required, "Alice <alice@contoso.com>");
         assert!(f.teams_meeting);
-        assert_eq!(f.start_time, "09:00");
+        assert_eq!(f.start_time, shown(540));
     }
 
     #[test]
@@ -813,16 +826,16 @@ mod tests {
         f.end_time = "11:30".into(); // 10:00 to 11:30, an hour and a half
         assert_eq!(
             slot_for_pick(&f, 14 * 60),
-            ("14:00".into(), "2026-12-18".into(), "15:30".into())
+            (shown(14 * 60), "2026-12-18".into(), shown(15 * 60 + 30))
         );
         assert_eq!(
             slot_for_pick(&f, 23 * 60),
-            ("23:00".into(), "2026-12-19".into(), "00:30".into())
+            (shown(23 * 60), "2026-12-19".into(), shown(30))
         );
         f.end_time = "08:00".into(); // nonsense: fall back to half an hour
         assert_eq!(
             slot_for_pick(&f, 9 * 60),
-            ("09:00".into(), "2026-12-18".into(), "09:30".into())
+            (shown(9 * 60), "2026-12-18".into(), shown(9 * 60 + 30))
         );
     }
 
