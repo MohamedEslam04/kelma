@@ -263,27 +263,50 @@ export component StoreView inherits Rectangle {
                 IconButton { y: 14px; icon: @image-url("icons/settings.svg"); tooltip: "Store settings"; active: AppsStore.store-page == "settings"; clicked => { AppsStore.command("store-settings", ""); } }
             }
         }
-        if root.browsing: Rectangle {
-            height: 40px;
-            HorizontalLayout {
-                padding-left: 20px;
-                padding-right: 16px;
-                spacing: 6px;
+        // The filters: one row, or two when the window is narrow (nothing leaves the window).
+        if root.browsing: filters := Rectangle {
+            property <bool> two-rows: self.width < 860px;
+            height: self.two-rows ? 72px : 40px;
+            VerticalLayout {
                 alignment: start;
-                Text { text: "Works in"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
-                for s in [{k: "all", l: "All"}, {k: "personal", l: "Personal"}, {k: "chat", l: "Chat"}, {k: "team", l: "Team"}, {k: "meeting", l: "Meeting"}]: KitPill {
-                    y: 7px;
-                    label: s.l;
-                    active: AppsStore.scope-filter == s.k;
-                    clicked => { AppsStore.command("store-scope", s.k); }
+                HorizontalLayout {
+                    height: 36px;
+                    padding-left: 20px;
+                    padding-right: 16px;
+                    spacing: 6px;
+                    alignment: start;
+                    Text { text: "Works in"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                    for s in [{k: "all", l: "All"}, {k: "personal", l: "Personal"}, {k: "chat", l: "Chat"}, {k: "team", l: "Team"}, {k: "meeting", l: "Meeting"}]: KitPill {
+                        y: 5px;
+                        label: s.l;
+                        active: AppsStore.scope-filter == s.k;
+                        clicked => { AppsStore.command("store-scope", s.k); }
+                    }
+                    if !filters.two-rows: HorizontalLayout {
+                        spacing: 6px;
+                        padding-left: 10px;
+                        Text { text: "Type"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                        for s in [{k: "all", l: "Apps and agents"}, {k: "apps", l: "Apps"}, {k: "agents", l: "Agents"}]: KitPill {
+                            y: 5px;
+                            label: s.l;
+                            active: AppsStore.kind-filter == s.k;
+                            clicked => { AppsStore.command("store-kind", s.k); }
+                        }
+                    }
                 }
-                Rectangle { width: 16px; }
-                Text { text: "Type"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
-                for s in [{k: "all", l: "Apps and agents"}, {k: "apps", l: "Apps"}, {k: "agents", l: "Agents"}]: KitPill {
-                    y: 7px;
-                    label: s.l;
-                    active: AppsStore.kind-filter == s.k;
-                    clicked => { AppsStore.command("store-kind", s.k); }
+                if filters.two-rows: HorizontalLayout {
+                    height: 36px;
+                    padding-left: 20px;
+                    padding-right: 16px;
+                    spacing: 6px;
+                    alignment: start;
+                    Text { text: "Type"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                    for s in [{k: "all", l: "Apps and agents"}, {k: "apps", l: "Apps"}, {k: "agents", l: "Agents"}]: KitPill {
+                        y: 5px;
+                        label: s.l;
+                        active: AppsStore.kind-filter == s.k;
+                        clicked => { AppsStore.command("store-kind", s.k); }
+                    }
                 }
             }
         }
