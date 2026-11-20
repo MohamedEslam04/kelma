@@ -168,6 +168,13 @@ export component AppWindow inherits Window {
     in-out property <bool> menu-open: false;
     in-out property <length> menu-x;
     in-out property <length> menu-y;
+    // Where the open message menu is (its size comes from the menu), and how tall the profile
+    // menu's panel is: what `pointer-pressed` counts as inside them.
+    property <length> menu-w;
+    property <length> menu-h;
+    property <length> menu-left: max(8px, min(root.menu-x, root.width - root.menu-w - 8px));
+    property <length> menu-top: max(8px, min(root.menu-y, root.height - root.menu-h - 8px));
+    property <length> profile-h;
     in-out property <Msg> menu-msg;
     // The menu was opened from the Activity preview (not the open chat).
     in-out property <bool> menu-preview: false;
@@ -388,6 +395,25 @@ export component AppWindow inherits Window {
         }
     }
 
+    // A button went down at (x, y), before the window handles it (`main.rs`,
+    // `pointer_pressed`): the message menu and the profile menu close when it is outside them,
+    // so the press then reaches what is under it (a rail entry, a chat), as in Teams. Their
+    // full-window layers only catch a press this did not see.
+    public function pointer-pressed(x: length, y: length) {
+        if root.menu-open && (x < root.menu-left || x > root.menu-left + root.menu-w || y < root.menu-top || y > root.menu-top + root.menu-h) {
+            root.menu-open = false;
+        }
+        // The profile panel: 300px wide, 8px from the right edge, 46px from the top (settings.slint).
+        root.profile-closed-by-press = false;
+        if SettingsStore.profile-open && (x < root.width - 308px || x > root.width - 8px || y < 46px || y > 46px + root.profile-h) {
+            SettingsStore.profile-open = false;
+            SettingsStore.confirm-sign-out = false;
+            root.profile-closed-by-press = true;
+        }
+    }
+    // This press closed the profile menu: on my photo it stays closed (the photo toggles it).
+    property <bool> profile-closed-by-press;
+
     if root.login-state != "ready": LoginView {
         state: root.login-state;
         user-code: root.user-code;
@@ -527,7 +553,7 @@ export component AppWindow inherits Window {
                 MoreButton { y: 9px; }
                 Avatar { initials: root.me-initials; img: SettingsStore.me-photo; has-img: SettingsStore.me-has-photo; presence: SettingsStore.me-presence; size: 30px; y: 9px;
                     // A rest shows our own card, as in Teams; a click opens the profile menu.
-                    me-photo := PersonHover { person: PeopleStore.me; click-opens: false; activated => { SettingsStore.open-profile(); } accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } }
+                    me-photo := PersonHover { person: PeopleStore.me; click-opens: false; activated => { if !root.profile-closed-by-press { SettingsStore.open-profile(); } root.profile-closed-by-press = false; } accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } }
                 }
             }
         }
@@ -1024,6 +1050,7 @@ export component AppWindow inherits Window {
                                 for m in root.messages: MessageRow {
                                     m: m;
                                     max-bubble: min(720px, msg-list.width * 0.75);
+                                    pane-top: msg-list.absolute-position.y;
                                     in-channel: root.current-is-channel && root.thread-root == "";
                                     select-mode: root.select-mode;
                                     changed y => {
@@ -1275,8 +1302,15 @@ export component AppWindow inherits Window {
             }
         }
         msg-menu := MessageMenu {
-            x: max(8px, min(root.menu-x, root.width - self.width - 8px));
-            y: max(8px, min(root.menu-y, root.height - self.height - 8px));
+            x: root.menu-left;
+            y: root.menu-top;
+            init => {
+                root.menu-w = self.width;
+                root.menu-h = self.height;
+            }
+            changed height => { root.menu-h = self.height; }
+            // Esc: the window's keys do not see it (the menu is not inside them).
+            close => { root.menu-open = false; root.focus-tick += 1; }
             mine: root.menu-msg.mine;
             saved: root.menu-msg.saved;
             translate: root.menu-msg.translate;
@@ -1682,6 +1716,8 @@ export component AppWindow inherits Window {
         z: 70;
         width: root.width;
         height: root.height;
+        init => { root.profile-h = self.panel-height; }
+        changed panel-height => { root.profile-h = self.panel-height; }
         open-saved => { SettingsStore.profile-open = false; root.navigate("chat"); FindStore.command("quick", "saved"); }
         open-shortcuts => { SettingsStore.profile-open = false; root.shortcuts-open = true; }
     }

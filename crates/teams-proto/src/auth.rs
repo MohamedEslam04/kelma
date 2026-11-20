@@ -61,6 +61,9 @@ pub struct SkypeToken {
     /// Meeting content service base URL (`regionGtms.mcpService`), e.g.
     /// `https://teams.microsoft.com/api/mcps/eu`. Absent from some answers.
     pub mcp_service: Option<String>,
+    /// The service geography (`emea`, `amer`, `apac`) named by the `regionGtms` hosts that carry
+    /// one (see [`geo_of`]), for guessing the meeting content service when it is not named.
+    pub geo: Option<String>,
     pub region: Option<String>,
 }
 
@@ -72,6 +75,7 @@ impl std::fmt::Debug for SkypeToken {
             .field("middle_tier", &self.middle_tier)
             .field("presence", &self.presence)
             .field("mcp_service", &self.mcp_service)
+            .field("geo", &self.geo)
             .field("region", &self.region)
             .finish_non_exhaustive()
     }
@@ -88,6 +92,35 @@ fn num(v: Option<&Value>) -> Option<u64> {
 
 fn s(v: Option<&Value>) -> Option<String> {
     v.and_then(Value::as_str).map(str::to_owned)
+}
+
+/// A `regionGtms` URL: a string, or (in the consumer answer) an object with `endpointUrl`.
+fn url_of(v: Option<&Value>) -> Option<String> {
+    s(v).or_else(|| s(v?.get("endpointUrl")))
+}
+
+/// The service geography named by the `regionGtms` hosts that carry one: CSA
+/// (`…/api/csa/emea`), presence (`…/ups/emea`), teams and channels (`…/api/mt/emea`), calling
+/// (`api-emea.flightproxy…`), then the chat service and AMS when their host names a geography
+/// rather than a country. The middle tier is not asked: its partition need not be where the
+/// data lives (the reference answer pairs `mt/part/amer-03` with `csa/emea` and `mcps/eu`).
+fn geo_of(gtms: Option<&Value>) -> Option<String> {
+    const KEYS: [&str; 7] = [
+        "chatSvcAggAfd",
+        "presenceUPS",
+        "teamsAndChannelsService",
+        "calling_conversationServiceUrl",
+        "chatService",
+        "chatServiceAfd",
+        "ams",
+    ];
+    const GEOS: [&str; 4] = ["emea", "amer", "noam", "apac"];
+    let g = gtms?;
+    KEYS.iter().filter_map(|k| url_of(g.get(*k))).find_map(|u| {
+        u.split(|c: char| !c.is_ascii_alphanumeric())
+            .find(|part| GEOS.contains(part))
+            .map(str::to_owned)
+    })
 }
 
 /// Parses the device-code start response.
@@ -181,7 +214,12 @@ pub fn parse_authz(body: &str) -> Result<SkypeToken> {
         .unwrap_or_else(|| FALLBACK_PRESENCE.into());
     // The middle tier's partition is not where the meetings live (an EMEA tenant can have an
     // `amer` middle tier), so the meeting content service comes from its own key.
-    let mcp_service = s(gtms.and_then(|g| g.get("mcpService"))).map(trim);
+    let mcp_service = url_of(gtms.and_then(|g| g.get("mcpService"))).map(trim);
+    if let Some(Value::Object(g)) = gtms {
+        // Key names only: the values are this account's hosts.
+        let keys: Vec<&str> = g.keys().map(String::as_str).collect();
+        tracing::debug!(?keys, "authz regionGtms");
+    }
     Ok(SkypeToken {
         token,
         expires_in_s,
@@ -189,6 +227,7 @@ pub fn parse_authz(body: &str) -> Result<SkypeToken> {
         middle_tier,
         presence,
         mcp_service,
+        geo: geo_of(gtms),
         region,
     })
 }
@@ -388,6 +427,43 @@ mod tests {
         );
         let t = parse_authz(r#"{"tokens":{"skypeToken":"S","expiresIn":100}}"#).unwrap();
         assert_eq!(t.mcp_service, None);
+        assert_eq!(t.geo, None);
+    }
+
+    /// Without `mcpService`, the geography comes from the hosts that name one, not from the
+    /// middle tier's partition (the reference answer: `amer-03` middle tier, `emea` CSA and
+    /// presence, a country code in the chat service).
+    #[test]
+    fn authz_reads_the_geography_from_the_hosts_that_carry_it() {
+        let t = parse_authz(
+            r#"{"tokens":{"skypeToken":"S","expiresIn":100},"region":"amer",
+                "regionGtms":{"chatService":"https://at.ng.msg.teams.microsoft.com",
+                "middleTier":"https://teams.microsoft.com/api/mt/part/amer-03",
+                "chatSvcAggAfd":"https://teams.microsoft.com/api/csa/emea",
+                "presenceUPS":"https://teams.microsoft.com/ups/emea"}}"#,
+        )
+        .unwrap();
+        assert_eq!(t.mcp_service, None);
+        assert_eq!(t.geo.as_deref(), Some("emea"));
+        // Calling's flight proxy host, and the consumer answer's object form.
+        let t = parse_authz(
+            r#"{"tokens":{"skypeToken":"S","expiresIn":100},
+                "regionGtms":{"calling_conversationServiceUrl":"https://api-apac.flightproxy.teams.microsoft.com/api/v2/epconv",
+                "mcpService":{"endpointUrl":"https://teams.microsoft.com/api/mcps/ap"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(t.geo.as_deref(), Some("apac"));
+        assert_eq!(
+            t.mcp_service.as_deref(),
+            Some("https://teams.microsoft.com/api/mcps/ap")
+        );
+        // A country code is not a geography.
+        let t = parse_authz(
+            r#"{"tokens":{"skypeToken":"S","expiresIn":100},
+                "regionGtms":{"chatService":"https://at.ng.msg.teams.microsoft.com"}}"#,
+        )
+        .unwrap();
+        assert_eq!(t.geo, None);
     }
 
     #[test]

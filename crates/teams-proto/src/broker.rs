@@ -48,6 +48,11 @@ pub enum Audience {
     /// `templates.teams.microsoft.com`: the provisioning service behind private channels and
     /// channel members. Its token goes to `teams.microsoft.com/fabric/…`, not to its own host.
     Templates,
+    /// The meeting content service (MCPS, Meeting Recaps): the web client's meeting artifacts
+    /// resource, an app id rather than a host, as the mautrix bridge asks for it
+    /// (`meetingContentOAuthScope`). Its token goes to `/api/mcps/` on the Teams web hosts.
+    /// UNVERIFIED for kelma's client id.
+    MeetingContent,
     /// A Teams app's own resource for app single sign-on, usually `api://<domain>/<app id>` (the
     /// `webApplicationInfo.resource` of its manifest). Build it with [`Audience::app`]. Its
     /// tokens are handed to the app (see `webhost`), never sent by kelma, so it owns no host.
@@ -95,6 +100,7 @@ impl Audience {
             Audience::Loki => "https://loki.delve.office.com".into(),
             Audience::Teams => "https://teams.microsoft.com".into(),
             Audience::Templates => "https://templates.teams.microsoft.com".into(),
+            Audience::MeetingContent => "6bc3b958-689b-49f5-9006-36d165f30e00".into(),
             Audience::App(resource) => resource.clone(),
         }
     }

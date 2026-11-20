@@ -7,8 +7,9 @@
 //!    captured web client. Each entry pairs `threadInfo` (thread id, iCalUid, subject, organizer,
 //!    start, end) with `resources` (`Recording`, `TranscriptV2`, `AISummary`, each with a
 //!    `metadata` of `driveId`, `driveItemId`, `webUrl`, `transcriptId`). UNVERIFIED here: the
-//!    capture strips the bearer, so the audience is a guess (the Teams host credentials), and the
-//!    `<geo>` of the host is derived from the middle tier's region.
+//!    capture strips the bearer; the token is the one the mautrix bridge sends there, the web
+//!    client's meeting artifacts resource ([`Audience::MeetingContent`]). The host is
+//!    `regionGtms.mcpService`, or a guess from the geography of the other `regionGtms` hosts.
 //! 2. The files in the user's OneDrive `Recordings` folder (Graph, known to work), grouped by
 //!    the name Teams gives them, `<subject>-<yyyymmdd_hhmmss>UTC-Meeting Recording.mp4`.
 //!
@@ -129,17 +130,18 @@ pub fn parse_meetings(v: &Value) -> Vec<RecapMeeting> {
     out
 }
 
-/// A guess at the MCPS host from a middle tier URL, for a skypetoken answer without
-/// `regionGtms.mcpService` (which [`Client::mcp_service`] prefers):
-/// `https://teams.microsoft.com/api/mt/part/emea-02` gives `https://teams.microsoft.com/api/mcps/eu`.
-/// The middle tier's partition need not be where the meetings live (the reference capture pairs
-/// an `amer` middle tier with an `eu` meeting service), and the region names are a guess from
-/// the one documented pair (`eu`); UNVERIFIED.
-pub fn mcps_base(middle_tier: &str) -> String {
+/// A guess at the MCPS host for a skypetoken answer without `regionGtms.mcpService` (which
+/// [`Client::mcp_service`] prefers): the geography the other `regionGtms` hosts name (`geo`,
+/// see `auth::geo_of`), else the middle tier's partition, on the middle tier's host:
+/// `emea` gives `https://teams.microsoft.com/api/mcps/eu`. The middle tier's partition need not
+/// be where the meetings live (the reference capture pairs an `amer` middle tier with an `eu`
+/// meeting service), so it is the last resort, and the names are a guess from the one
+/// documented pair (`eu`); UNVERIFIED.
+pub fn mcps_base(geo: Option<&str>, middle_tier: &str) -> String {
     let mt = middle_tier.trim_end_matches('/');
     let (host, region) = mt.split_once("/api/mt/").unwrap_or((mt, ""));
     let region = region.strip_prefix("part/").unwrap_or(region);
-    let part = region.split(['-', '/']).next().unwrap_or_default();
+    let part = geo.unwrap_or_else(|| region.split(['-', '/']).next().unwrap_or_default());
     let geo = match part {
         "emea" => "eu",
         "amer" | "noam" => "us",
@@ -366,13 +368,20 @@ pub fn notes_link(tabs: &[ChannelTab]) -> Option<String> {
 
 impl Client {
     /// Meetings that ended in the last `days` days and have a recording or transcript (MCPS,
-    /// UNVERIFIED audience). The host is [`Client::mcp_service`].
+    /// UNVERIFIED audience: the bridge's, see [`Audience::MeetingContent`]). The host is
+    /// [`Client::mcp_service`].
     pub async fn recap_meetings(&self, days: i64) -> Result<Vec<RecapMeeting>> {
         let now = crate::time::now_ms();
         let base = self.mcp_service().await;
         let url = contents_url(&base, now - days * 86_400_000, now, 50);
         let v = self
-            .json("meeting contents", Method::GET, &url, None)
+            .json_as(
+                "meeting contents",
+                &Audience::MeetingContent,
+                Method::GET,
+                &url,
+                None,
+            )
             .await?;
         Ok(parse_meetings(&v))
     }
@@ -486,16 +495,25 @@ mod tests {
     #[test]
     fn the_mcps_host_follows_the_middle_tier_region() {
         assert_eq!(
-            mcps_base("https://teams.microsoft.com/api/mt/emea-02/"),
+            mcps_base(None, "https://teams.microsoft.com/api/mt/emea-02/"),
             "https://teams.microsoft.com/api/mcps/eu"
         );
         assert_eq!(
-            mcps_base("https://teams.microsoft.com/api/mt/amer"),
+            mcps_base(None, "https://teams.microsoft.com/api/mt/amer"),
             "https://teams.microsoft.com/api/mcps/us"
         );
         // The partition form of the middle tier.
         assert_eq!(
-            mcps_base("https://teams.microsoft.com/api/mt/part/emea-03"),
+            mcps_base(None, "https://teams.microsoft.com/api/mt/part/emea-03"),
+            "https://teams.microsoft.com/api/mcps/eu"
+        );
+        // The geography of the other hosts wins over the middle tier's partition: an EMEA
+        // tenant with an `amer-03` middle tier (the live 401 went to `/mcps/us/`).
+        assert_eq!(
+            mcps_base(
+                Some("emea"),
+                "https://teams.microsoft.com/api/mt/part/amer-03"
+            ),
             "https://teams.microsoft.com/api/mcps/eu"
         );
         assert_eq!(

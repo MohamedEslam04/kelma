@@ -174,7 +174,6 @@ const APP_ID: &str = tray::APP_ID;
 
 const EMOJI_FONT: &[u8] = include_bytes!("../ui/fonts/TwemojiMozilla.ttf");
 
-/// Finds a system font file for a fontconfig pattern.
 /// The window saw a right button go up: the message under the pointer opens its "…" menu
 /// (`MessagePointer` in `message_row.slint`; its text takes the press itself).
 fn right_click_released(w: &AppWindow) {
@@ -182,6 +181,14 @@ fn right_click_released(w: &AppWindow) {
     p.set_right_clicks(p.get_right_clicks().wrapping_add(1));
 }
 
+/// A mouse button is going down at `at`, before the window handles it: the message menu and
+/// the profile menu close when it is outside them, so the press reaches what is under them
+/// (`pointer-pressed` in `app.slint`) instead of only closing the menu.
+fn pointer_pressed(w: &AppWindow, at: slint::LogicalPosition) {
+    w.invoke_pointer_pressed(at.x, at.y);
+}
+
+/// Finds a system font file for a fontconfig pattern.
 fn fc_match(pattern: &str) -> Option<std::path::PathBuf> {
     let out = std::process::Command::new("fc-match")
         .args(["-f", "%{file}", pattern])
@@ -517,13 +524,27 @@ fn main() -> anyhow::Result<()> {
 
     // Files dropped on the window become attachments. winit reports one event per file. Wayland has
     // no drop events in winit 0.30, so this only fires on X11, Windows and macOS. Right clicks are
-    // counted for the message under the pointer (`right_click_released`).
+    // counted for the message under the pointer (`right_click_released`); a press first closes
+    // the menus it is outside of (`pointer_pressed`).
     {
         use slint::winit_030::winit::event::{ElementState, MouseButton, WindowEvent};
         use slint::winit_030::{EventResult, WinitWindowAccessor};
         let tx = tx.clone();
         let weak = window.as_weak();
-        window.window().on_winit_window_event(move |_, event| {
+        let cursor = std::cell::Cell::new(slint::LogicalPosition::default());
+        window.window().on_winit_window_event(move |win, event| {
+            if let WindowEvent::CursorMoved { position, .. } = event {
+                let p = position.to_logical::<f32>(f64::from(win.scale_factor()));
+                cursor.set(slint::LogicalPosition::new(p.x, p.y));
+            }
+            if let WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            } = event
+                && let Some(w) = weak.upgrade()
+            {
+                pointer_pressed(&w, cursor.get());
+            }
             if let WindowEvent::MouseInput {
                 state: ElementState::Released,
                 button: MouseButton::Right,

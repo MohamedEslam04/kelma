@@ -83,6 +83,8 @@ export component MessageMenu inherits Rectangle {
     callback follow();
     callback edit();
     callback delete();
+    // Esc.
+    callback close();
 
     // Whether the Forward entry shows its two choices.
     property <bool> forward-open: false;
@@ -106,6 +108,7 @@ export component MessageMenu inherits Rectangle {
         init => { self.focus(); }
         key-pressed(event) => {
             if event.modifiers.control || event.modifiers.alt || event.modifiers.meta { return reject; }
+            if event.text == Key.Escape { root.close(); return accept; }
             if event.text == "r" || event.text == "R" { root.reply(); return accept; }
             if event.text == "f" || event.text == "F" { root.forward-one(); return accept; }
             if (event.text == "s" || event.text == "S") && !root.mine { root.toggle-save(); return accept; }

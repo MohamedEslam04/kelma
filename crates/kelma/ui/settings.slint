@@ -292,6 +292,8 @@ component StatusRow inherits Rectangle {
 export component ProfileMenu inherits Rectangle {
     callback open-saved();
     callback open-shortcuts();
+    // How tall the panel is (app.slint `pointer-pressed` knows its place).
+    out property <length> panel-height: panel.height;
     // Clicking outside closes it.
     TouchArea { clicked => { SettingsStore.profile-open = false; SettingsStore.confirm-sign-out = false; } }
     menu-keys := FocusScope {
