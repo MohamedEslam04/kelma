@@ -553,3 +553,114 @@ someone else's share once subscribed; that a 1:1 peer's share arrives on our sha
 done: answering an RTCP PLI on our own lines with a keyframe (webrtc-rs delivers inbound RTCP to
 the application only through an interceptor that marks it; kelma still sends a keyframe every
 2 s and on `KeyFrame=1`).
+
+## The content-sharing session: presenting in a meeting (2026-11-20, everything UNVERIFIED)
+
+Facts only from teams-lite (`NATIVE-CALLING.md` § 10.3-10.6 and its measured notes of 2026-08-06
+and 2026-09-04, `src/calling.rs`). teams-lite has **no licence file**, so no code was copied; only
+the facts below were taken.
+
+1. **A screen is a session before it is a track.** A meeting rejected a sharing section outright
+   (no mid, no label, port 0) from an endpoint that had not asked to present. The web client asks
+   first: `startScreenSharing` → `startContentSharingAsync` → `ContentSharingSession.start`, a
+   `POST` to the conversation's `addModality` link with a `ContentSharingCorrelationId` header:
+   `{"participants": {"from": <us>, "to": []}, "contentSharing": {"identifier", "subject": null,
+   "sessionState": null, "sequenceNumber": 1, "links": {"sessionUpdate":
+   <cb>/conversation/contentSharingUpdate/, "sessionEnd": <cb>/conversation/contentSharingEnd/}},
+   "links": {"addModalitySuccess", "addModalityFailure"}}`.
+2. **The grant comes on a callback.** The POST answers `{}`. The session's six links
+   (`contentSharingController`, `takeControl`, `updateSessionState`, `sync`,
+   `notificationLinks`, `leave`; some spellings prefix them with `contentSharing`) arrive on
+   `addModalitySuccess`, and on teams-lite's later runs only on `contentSharingUpdate`
+   (`addModalitySuccess` never came). The id is `contentSharingSessionId`.
+3. **Its `leave` is not the call's.** Merging the session's links into the call's would make
+   "Stop sharing" hang the call up. Giving it back: `POST <session leave>` with
+   `{"participants": {"from"}, "contentSharing": {"links": {sessionUpdate, sessionEnd}}}`.
+4. **One presenter.** Taking the session takes the role off whoever presents (their section
+   comes back at port 0); real Teams does the same and asks nobody.
+5. **Who presents.** The client reads a `contentSharing` object on a roster participant;
+   teams-lite's tenant never sent one (it read the `applicationsharing-video` stream's
+   `sendonly` direction instead). The roster's own entry shows `role: presenter` once granted.
+
+What kelma does (`calling::signaling::content_sharing`, `kelma/src/backend/call/share.rs`):
+
+- In a meeting, after the picker and before `UpdateMediaDescriptions`, Share POSTs the start body
+  to the call's `addModality` link (when the conversation names one; without it the share goes
+  out as before). A grant in the answer sends the share at once; otherwise it waits for
+  `addModalitySuccess` / `contentSharingUpdate`, and after 5 s sends it anyway.
+  `addModalityFailure` stops the capture ("The meeting didn't let you present.");
+  `contentSharingEnd` while we share stops it ("someone else is presenting now").
+- The grant's links are the deepest `links` object of the frame, kept in the share's own
+  `SharingSession`, never in the call's `Links`. Stop sharing posts the leave body to the
+  session's `leave` (also when the media restarted or the share was refused).
+- The roster's `contentSharing` object (on the participant, an endpoint or its call) marks the
+  presenter; `remote_video::presenter_mri` takes the sending share first, then that.
+
+UNVERIFIED: that kelma's conversation answer carries `addModality`; that the service accepts the
+body without a `payload` envelope (teams-lite says it refuses one); whether the grant must
+precede `UpdateMediaDescriptions` (kelma waits up to 5 s); the leave body.
+
+## Remote control (2026-11-20): what is known, what is guessed, what needs a capture
+
+"Give control" (the presenter hands mouse and keyboard to a participant) and "Request control"
+(a viewer asks for it). **The protocol is not known.** Searched: teams-lite (notes, `src/`,
+`web/`), rusty-teams (MIT: `ROADMAP.md`, `crates/calling`, `docs/research`), mautrix-teams
+(`pkg/`, `docs/`), ost (`src/`, `docs/`), and the loose captures, for `takeControl`,
+`contentSharing` session states, `RemoteControl`, `controller`, input events on the data
+channel, "give/request control".
+
+**Known (facts):**
+- The presenter's content-sharing session answer names a `takeControl` link and an
+  `updateSessionState` link (teams-lite § 10.4, from the web client's bundle). teams-lite never
+  posted to either and says nothing measured shows what they do.
+- rusty-teams' roadmap lists "Give and take control: Missing — Protocol known (main-channel data
+  channel, action codes 0-11); needs a second person and a security review". Its code has no
+  implementation, no message shape, no data id and no names for the twelve codes.
+- The `main-channel` SCTP data channel framing is known (captions, data id 3; an 11-byte header
+  with a start flag, sequence, fragments left and a source id) and kelma reads it.
+- None of the references implements control, and none has a capture of it. The Teams web client
+  may not offer "Give control" at all (Microsoft documents it for the desktop clients), which
+  would explain why browser-based captures have nothing.
+
+**Guessed (kelma's implementation, every message UNVERIFIED, `calling::remote_control`):**
+- Messages: `Request {from}`, `Grant {to}`, `Deny {to}`, `Revoke`, `Release`, and input
+  (`PointerMove {x, y}` normalized 0..1 of the shared picture, `PointerButton`, `Axis {dx, dy}`,
+  `Key {keysym}` as an X keysym), behind one trait, `ControlChannel`.
+- Transport (`NgcControlChannel`): the presenter's Grant / Deny / Revoke as `POST
+  <updateSessionState>` of its own session with `{"participants": {"from"}, "contentSharing":
+  {"sequenceNumber", "sessionState": {"controlState": granted|denied|revoked, "controller"}}}`;
+  a viewer's Request / Release as `POST <takeControl>` from the presenter's roster
+  `contentSharing.links` with `"controlAction": "request"|"release"` when the roster names one;
+  everything else, and all input, on the data channel as one frame of data id **9** (invented)
+  carrying `{"remoteControl": {"action": n, ...}}` with action codes 0-10 **invented** to fit
+  the "0-11" range (0 request, 1 grant, 2 deny, 3 revoke, 4 release, 5 move, 6/7 button
+  down/up, 8 axis, 9/10 key down/up). Incoming: `contentSharingUpdate` bodies and data-id-9
+  frames are read in both shapes.
+
+**Local half (built, independent of the wire):**
+- Give control: with `KELMA_REMOTE_CONTROL=1` Share opens ONE xdg-desktop-portal session that
+  is both RemoteDesktop and ScreenCast (`calling::video::remote_input::pick_with_control`), so
+  KDE asks once for the screen and for input. `InputInjector` maps a normalized point onto the
+  shared stream (`NotifyPointerMotionAbsolute` on its PipeWire node), and sends buttons (evdev
+  `BTN_*`), scrolling and keys (keysyms). Injection runs on its own task.
+- Safety: while someone controls our screen, any key pressed in kelma's window that is not the
+  echo of a key we injected in the last 300 ms, or Escape twice within 1 s, takes control back
+  (Revoke). Stopping the share ends control. LIMIT: Wayland gives kelma no keys pressed in other
+  windows, so the take-back keys work only while kelma has focus; the banner's Take back and the
+  desktop's own remote-control indicator always work. A global shortcut (GlobalShortcuts portal)
+  is the follow-up.
+- Request / take control: the stage's "Request control"; once granted, the stage captures the
+  pointer (a TouchArea: moves, buttons, wheel) and keys (a FocusScope) and sends them as
+  normalized events. Banners: "<name> is controlling your screen" (Take back), "You're
+  controlling <name>'s screen" (Release), "<name> wants control of your screen" (Allow / Deny);
+  the Share chevron has "Give control › <person>" and "Take back control".
+- Only in meetings (the presenter comes from the roster; a 1:1 call has none).
+
+**Needs a capture from a Teams desktop client** (new Teams on Windows or macOS, presenter and a
+viewer, with the web client's or the desktop client's network log): the request a viewer's
+"Request control" sends and where; what the presenter's "Give control" posts (`takeControl`?
+`updateSessionState`?) and its body; the session-state values the other side receives on
+`contentSharingUpdate`; whether input rides the `main-channel` data channel, its data id, the
+twelve action codes, the coordinate space (normalized, pixels, per monitor) and the key codes
+(Windows virtual keys, scancodes or keysyms); and how the presenter's client confirms or ends
+control.
