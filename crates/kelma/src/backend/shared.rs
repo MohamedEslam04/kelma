@@ -327,14 +327,21 @@ impl Engine {
         if self.offline.load(Ordering::Relaxed) {
             return;
         }
+        // The shared items and a channel's folder (team lookup, `filesFolder`, its children) do
+        // not depend on each other: asked one after the other, the channel tab waited for both.
+        let (shared, folder) = tokio::join!(self.client.shared_items(&self.me, &conv), async {
+            if is_channel {
+                self.channel_folder_items(&conv, seq).await
+            } else {
+                vec![]
+            }
+        });
         let mut remote: Vec<Item> = vec![];
-        match self.client.shared_items(&self.me, &conv).await {
+        match shared {
             Ok(list) => remote.extend(list.into_iter().map(Item::from)),
             Err(err) => tracing::warn!(%err, "shared items failed"),
         }
-        if is_channel {
-            remote.extend(self.channel_folder_items(&conv).await);
-        }
+        remote.extend(folder);
         {
             let mut f = self.find.lock().unwrap();
             if f.shared.seq != seq {
@@ -371,8 +378,9 @@ impl Engine {
         f.shared.groups.get(&team).cloned()
     }
 
-    /// The files of a channel's SharePoint folder (Graph `filesFolder`, then its children).
-    async fn channel_folder_items(self: &Arc<Self>, channel: &str) -> Vec<Item> {
+    /// The files of a channel's SharePoint folder (Graph `filesFolder`, then its children). Once
+    /// the folder is known the toolbar (New folder, New document) shows, before the listing.
+    async fn channel_folder_items(self: &Arc<Self>, channel: &str, seq: u64) -> Vec<Item> {
         let Some(team) = self
             .store
             .lock()
@@ -408,8 +416,14 @@ impl Engine {
                 return vec![];
             }
         };
-        self.find.lock().unwrap().shared.folder =
-            Some(onedrive::ItemRef::new(&folder.drive_id, &folder.item_id));
+        {
+            let mut f = self.find.lock().unwrap();
+            if f.shared.seq != seq {
+                return vec![];
+            }
+            f.shared.folder = Some(onedrive::ItemRef::new(&folder.drive_id, &folder.item_id));
+        }
+        self.push_shared();
         match onedrive::children(&self.client, &folder.drive_id, &folder.item_id, None).await {
             Ok(page) => page
                 .items

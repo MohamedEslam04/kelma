@@ -692,6 +692,50 @@ fn renaming_and_deleting_a_file_ask_first() {
     );
 }
 
+/// Deleting a folder asks about the folder, not a file.
+#[test]
+fn deleting_a_folder_asks_about_the_folder() {
+    let mut folder = shared_row("Plans", "https://x.sharepoint.com/Plans", true, true);
+    folder.ext = "DIR".into();
+    let (app, log) = files_tab(
+        vec![
+            folder,
+            shared_row(
+                "Plan.docx",
+                "https://x.sharepoint.com/Plan.docx",
+                true,
+                true,
+            ),
+        ],
+        true,
+    );
+    click(&labelled(&app, "More actions for Plans"));
+    settle();
+    click(&labelled(&app, "Delete"));
+    settle();
+    assert!(!find_label(&app, "Delete this folder?").is_empty());
+    assert!(find_label(&app, "Delete this file?").is_empty());
+    assert!(
+        !find_label(
+            &app,
+            "Plans and everything in it go to the site's recycle bin."
+        )
+        .is_empty()
+    );
+    click(&labelled(&app, "Cancel"));
+    settle();
+    assert!(log.borrow().is_empty(), "nothing deleted");
+
+    // A file is still a file.
+    click(&labelled(&app, "More actions for Plan.docx"));
+    settle();
+    click(&labelled(&app, "Delete"));
+    settle();
+    assert!(!find_label(&app, "Delete this file?").is_empty());
+    assert!(find_label(&app, "Delete this folder?").is_empty());
+    assert!(!find_label(&app, "Plan.docx goes to the site's recycle bin.").is_empty());
+}
+
 #[test]
 fn a_channel_files_tab_can_create_a_folder_and_a_document() {
     // No toolbar buttons for a chat.
