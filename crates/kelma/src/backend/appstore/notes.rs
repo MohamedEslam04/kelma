@@ -229,7 +229,11 @@ impl Engine {
                 Ok(list) => n.notebooks = list,
                 Err(e) => n.status = format!("Loading your notebooks failed: {e}"),
             }
-            n.notebooks.first().map(|b| b.id.clone())
+            // The first notebook opens, unless one was picked while the list loaded.
+            n.notebooks
+                .first()
+                .filter(|_| n.notebook.is_none())
+                .map(|b| b.id.clone())
         };
         self.notes_push();
         if let Some(id) = first {
@@ -387,7 +391,11 @@ impl Engine {
                 Ok(s) => l.sites = s,
                 Err(e) => l.status = format!("Loading your sites failed: {e}"),
             }
-            l.sites.first().map(|s| s.id.clone())
+            // The first site opens, unless one was picked while the list loaded.
+            l.sites
+                .first()
+                .filter(|_| l.site.is_none())
+                .map(|s| s.id.clone())
         };
         self.lists_push();
         if let Some(id) = first {

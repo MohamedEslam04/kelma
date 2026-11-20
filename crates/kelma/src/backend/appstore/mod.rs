@@ -33,6 +33,9 @@ pub struct Apps {
     collapsed: bool,
     flyout: bool,
     flyout_query: String,
+    /// Bumped by every Open app, so one still waiting for the installed apps does not open
+    /// after a later one.
+    open_seq: u64,
     /// The pinned app that is open on the rail.
     active: String,
     /// Icons and screenshots by URL. `None` while loading, or when the download failed.

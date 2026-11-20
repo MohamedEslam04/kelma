@@ -315,23 +315,37 @@ impl Engine {
             t.planner.clear();
             t.buckets.clear();
         });
+        // A list loaded for a place the user already left (another list was picked meanwhile)
+        // is dropped: it would show under the new place's name.
+        let here = |a: &super::Apps| a.tasks.nav == key;
         let result: anyhow::Result<()> = async {
             if let Some(list) = key.strip_prefix("todo:") {
                 let tasks = self.src_todo_tasks(list).await?;
-                self.apps.lock().unwrap().tasks.todo = tasks;
+                let mut a = self.apps.lock().unwrap();
+                if here(&*a) {
+                    a.tasks.todo = tasks;
+                }
             } else if let Some(plan) = key.strip_prefix("plan:") {
                 let (tasks, buckets) =
                     tokio::join!(self.src_planner_tasks(Some(plan)), self.src_buckets(plan));
                 let mut a = self.apps.lock().unwrap();
-                a.tasks.planner = tasks?;
-                a.tasks.buckets = buckets.unwrap_or_default();
+                if here(&*a) {
+                    a.tasks.planner = tasks?;
+                    a.tasks.buckets = buckets.unwrap_or_default();
+                }
             } else {
                 let tasks = self.src_planner_tasks(None).await?;
-                self.apps.lock().unwrap().tasks.planner = tasks;
+                let mut a = self.apps.lock().unwrap();
+                if here(&*a) {
+                    a.tasks.planner = tasks;
+                }
             }
             Ok(())
         }
         .await;
+        if self.apps.lock().unwrap().tasks.nav != key {
+            return Ok(());
+        }
         self.tasks_edit(|t| {
             t.loading = false;
             if let Err(e) = result {
