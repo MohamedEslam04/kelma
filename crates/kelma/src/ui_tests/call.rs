@@ -20,6 +20,9 @@ struct CallHarness {
     fake: FakeDriver,
     /// Every `name argument` the window sent, in order.
     log: Log,
+    /// While set, commands wait in `pending` instead of running (see `click_racing`).
+    racing: Rc<std::cell::Cell<bool>>,
+    pending: Rc<RefCell<Vec<Cmd>>>,
 }
 
 impl CallHarness {
@@ -29,15 +32,43 @@ impl CallHarness {
         h.engine.calls.set_driver(Arc::new(fake.clone()));
         crate::ui::call::wire(&h.app);
         let log = Log::default();
+        let racing = Rc::new(std::cell::Cell::new(false));
+        let pending: Rc<RefCell<Vec<Cmd>>> = Rc::default();
         let (l, run) = (log.clone(), h.runner());
+        let (r, p) = (racing.clone(), pending.clone());
         cs(&h.app).on_command(move |name, arg| {
             l.borrow_mut()
                 .push(format!("{name} {arg}").trim().to_owned());
             if let Some(c) = CallCmd::parse(&name, &arg) {
-                run(Cmd::Call(c));
+                if r.get() {
+                    p.borrow_mut().push(Cmd::Call(c));
+                } else {
+                    run(Cmd::Call(c));
+                }
             }
         });
-        CallHarness { h, fake, log }
+        CallHarness {
+            h,
+            fake,
+            log,
+            racing,
+            pending,
+        }
+    }
+
+    /// A click as the live app runs it: `Engine::dispatch` spawns every command as its own task on
+    /// a multi-thread runtime, so the commands one click sends have no order between them. The
+    /// worst case runs them last to first.
+    fn click_racing(&self, el: &ElementHandle) {
+        self.racing.set(true);
+        click(el);
+        self.racing.set(false);
+        let run = self.h.runner();
+        let mut cmds = std::mem::take(&mut *self.pending.borrow_mut());
+        cmds.reverse();
+        for c in cmds {
+            run(c);
+        }
     }
 
     /// The meeting chat header's Join, as the window shows it for a meeting chat.
@@ -934,7 +965,10 @@ fn the_survey_shows_after_a_call_that_lasted_and_not_after_a_short_one() {
     assert!(cs(&c.h.app).get_feedback_open());
     assert!(c.shows(SURVEY));
     assert!(c.shows("Had issues") && c.shows("Good"));
-    assert!(c.shows(
+    assert!(
+        c.shows("Your answer is kept on this device only. kelma doesn't send it to Microsoft.")
+    );
+    assert!(!c.shows(
         "By pressing Send feedback, your feedback will be used to improve Microsoft products and services."
     ));
     assert!(
@@ -975,6 +1009,20 @@ fn picking_had_issues_shows_the_categories_and_their_issues() {
 }
 
 #[test]
+fn the_survey_card_does_not_move_when_the_tabs_switch() {
+    // Audio lists six issues, Video and Screenshare five: the centred card used to jump.
+    let c = CallHarness::new();
+    c.long_call_ended();
+    click(&c.button("Had issues"));
+    let at = |c: &CallHarness| c.button("Send feedback").absolute_position();
+    let audio = at(&c);
+    for tab in ["Video", "Screenshare", "Audio"] {
+        click(&c.button(tab));
+        assert_eq!(at(&c), audio, "after {tab}");
+    }
+}
+
+#[test]
 fn send_feedback_waits_for_a_rating() {
     let c = CallHarness::new();
     let file = c.long_call_ended();
@@ -1009,7 +1057,10 @@ fn send_keeps_the_rating_thanks_the_user_and_closes_the_screen() {
         sent.iter().any(|s| s.starts_with("feedback issues\n")),
         "{sent:?}"
     );
-    assert_eq!(sent.last().unwrap(), "close");
+    assert!(
+        !sent.iter().any(|s| s == "close"),
+        "Send is one command that closes the screen too: {sent:?}"
+    );
 
     let kept = std::fs::read_to_string(&file).unwrap();
     assert_eq!(kept.lines().count(), 1);
@@ -1024,6 +1075,33 @@ fn send_keeps_the_rating_thanks_the_user_and_closes_the_screen() {
     );
     assert_eq!(c.h.app.get_banner(), "Thanks for your feedback");
     assert!(c.h.app.get_banner_info());
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn send_keeps_the_rating_when_the_commands_run_out_of_order() {
+    // Live run: Send closed the screen but nothing was kept, no thanks. The window sent `feedback`
+    // and `close` as two commands and the engine runs each in its own task, so `close` could win
+    // and `feedback` then found no ended screen.
+    let c = CallHarness::new();
+    let file = c.long_call_ended();
+    click(&c.button("Had issues"));
+    click(&c.button("Screenshare"));
+    click(&c.with_role(
+        "The presentation stopped unexpectedly",
+        AccessibleRole::Checkbox,
+    ));
+    c.click_racing(&c.button("Send feedback"));
+
+    assert_eq!(c.phase(), "", "the ended screen closes");
+    let kept = std::fs::read_to_string(&file).expect("the rating was kept");
+    let v: serde_json::Value = serde_json::from_str(kept.trim()).unwrap();
+    assert_eq!(v["categories"], serde_json::json!(["screenshare"]));
+    assert_eq!(
+        v["issues"],
+        serde_json::json!(["The presentation stopped unexpectedly"])
+    );
+    assert_eq!(c.h.app.get_banner(), "Thanks for your feedback");
     let _ = std::fs::remove_file(&file);
 }
 

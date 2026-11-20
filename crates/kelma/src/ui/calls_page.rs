@@ -192,6 +192,53 @@ mod tests {
     }
 
     #[test]
+    fn a_long_voicemail_transcript_stays_on_one_line_inside_its_row() {
+        let app = app();
+        app.set_view("calls".into());
+        let text = "Hello, this is a long message about the plans for next week and the \
+            things we still need to settle before the end of the month, call me back.";
+        let vm = |id: &str, name: &str| VoicemailRow {
+            id: id.into(),
+            mri: String::new(),
+            name: name.into(),
+            initials: "C".into(),
+            color: 0x123456,
+            when: "Yesterday".into(),
+            duration: "12s".into(),
+            transcript: text.into(),
+            unread: false,
+        };
+        set(
+            &app,
+            CallsData {
+                filter: "voicemail".into(),
+                voicemails: vec![vm("a", "First Caller"), vm("b", "Second Caller")],
+                ..Default::default()
+            },
+        );
+        let preview = ElementHandle::find_by_accessible_label(&app, text)
+            .next()
+            .expect("the transcript is shown");
+        assert!(
+            preview.size().height < 20.,
+            "one line: {:?}",
+            preview.size()
+        );
+        let first = ElementHandle::find_by_accessible_label(&app, "First Caller")
+            .next()
+            .unwrap();
+        let second = ElementHandle::find_by_accessible_label(&app, "Second Caller")
+            .next()
+            .unwrap();
+        let row = second.absolute_position().y - first.absolute_position().y;
+        assert!(
+            preview.absolute_position().y + preview.size().height
+                <= first.absolute_position().y + row,
+            "the first row's text ends inside the first row"
+        );
+    }
+
+    #[test]
     fn speed_dial_people_can_be_called() {
         let app = app();
         app.set_view("calls".into());

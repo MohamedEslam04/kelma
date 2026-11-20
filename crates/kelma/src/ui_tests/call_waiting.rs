@@ -4,7 +4,7 @@
 //! a sound card; the fake driver records what each call was asked.
 
 use super::*;
-use crate::backend::call::{CallCmd, Event, FakeDriver};
+use crate::backend::call::{CallCmd, CallKind, Event, FakeDriver};
 use crate::backend::call_direct::{CallCmd as DirectCmd, IncomingState, is_direct_chat};
 use crate::{CallStore, DirectCallStore};
 use i_slint_backend_testing::AccessibleRole;
@@ -262,4 +262,67 @@ fn a_third_call_is_not_offered_while_one_is_on_hold() {
     w.ring("Omar Example");
     assert!(!w.ds().get_incoming_open());
     assert_eq!(w.h.engine.incoming_call_state(), None);
+}
+
+/// Settings covers the call window and the floating card (z-order), so a call that starts while
+/// it is open must close it. Live run: the call connected but nothing showed until Settings was
+/// left.
+fn settle() {
+    for _ in 0..3 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    }
+}
+
+#[test]
+fn answering_a_call_with_settings_open_brings_the_call_to_the_front() {
+    use crate::SettingsStore;
+    let w = Waiting::new();
+    let settings = w.h.app.global::<SettingsStore>();
+    settings.invoke_show("general".into());
+    assert!(settings.get_open());
+    w.ring("Sara Example");
+    settle();
+    assert!(settings.get_open(), "a ringing call does not close it");
+    click(&w.button("Accept with audio"));
+    // What `accept_live` does once the call connects: hands it to the call window.
+    w.h.engine.calls.adopt_without_engine(
+        CallKind::Direct {
+            peer_name: "Sara Example".into(),
+            chat_id: String::new(),
+        },
+        None,
+    );
+    settle();
+    assert_eq!(w.cs().get_phase(), "connected");
+    assert!(!settings.get_open(), "Settings gave way to the call");
+    assert!(!w.cs().get_minimized(), "the call window is shown");
+}
+
+#[test]
+fn joining_a_meeting_with_settings_open_shows_the_pre_join_screen() {
+    use crate::SettingsStore;
+    let w = Waiting::new();
+    let settings = w.h.app.global::<SettingsStore>();
+    settings.invoke_show("general".into());
+    w.h.app.set_current_id(THREAD.into());
+    // Settings covers the button; a calendar Join or a link starts the same call.
+    w.cs().invoke_command("join-chat".into(), THREAD.into());
+    settle();
+    assert_eq!(w.cs().get_phase(), "prejoin");
+    assert!(!settings.get_open());
+}
+
+#[test]
+fn settings_can_be_opened_again_during_a_call() {
+    use crate::SettingsStore;
+    let w = Waiting::new();
+    w.in_meeting();
+    settle();
+    let settings = w.h.app.global::<SettingsStore>();
+    settings.invoke_show("devices".into());
+    settle();
+    assert!(settings.get_open(), "the call's later changes leave it be");
+    w.fake.emit(Event::Connected);
+    settle();
+    assert!(settings.get_open());
 }

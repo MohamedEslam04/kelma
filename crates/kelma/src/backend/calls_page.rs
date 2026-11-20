@@ -247,6 +247,29 @@ pub fn speed_move(list: &mut [SpeedDial], owner: &str, mri: &str, by: i32) {
     list.swap(mine[at], mine[to as usize]);
 }
 
+/// The one line a voicemail row shows: the first line of the transcript. The mail's own
+/// boilerplate ("You received a voice mail from ...", "Email: ...", "Set Up Voice Mail") is
+/// skipped, and so is everything after the first line (a translation, say).
+fn transcript_line(preview: &str) -> String {
+    const BOILERPLATE: [&str; 6] = [
+        "you received a voice mail",
+        "you received a voicemail",
+        "email:",
+        "e-mail:",
+        "set up voice mail",
+        "set up voicemail",
+    ];
+    preview
+        .lines()
+        .map(str::trim)
+        .find(|l| {
+            let l = l.to_lowercase();
+            !l.is_empty() && !BOILERPLATE.iter().any(|b| l.starts_with(b))
+        })
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// The voicemail rows. A voicemail names its caller by mail address, not MRI, so its row has no
 /// Call back (`mri` stays empty) until the address is resolved.
 fn voicemail_rows(v: &[Voicemail], when: impl Fn(i64) -> String) -> Vec<VoicemailRow> {
@@ -263,7 +286,7 @@ fn voicemail_rows(v: &[Voicemail], when: impl Fn(i64) -> String) -> Vec<Voicemai
             },
             when: when(m.received_ms),
             duration: duration_text(m.duration_secs),
-            transcript: m.transcript.clone(),
+            transcript: transcript_line(&m.transcript),
             unread: !m.read,
         })
         .collect()
@@ -684,5 +707,51 @@ mod tests {
         assert!(r[0].unread);
         assert_eq!(r[0].duration, "12s");
         assert_eq!(r[0].when, "t5");
+    }
+
+    #[test]
+    fn a_voicemail_row_shows_the_first_line_of_the_transcript() {
+        // The transcript, a blank line, the language, then its English translation.
+        assert_eq!(
+            transcript_line(
+                "Hi Sam, it's Lee. Please call me back about Friday.\n\nEnglish\nHi Sam, it's Lee. Please call me back about Friday."
+            ),
+            "Hi Sam, it's Lee. Please call me back about Friday."
+        );
+        assert_eq!(transcript_line("  Call me.  \r\n\r\nMore."), "Call me.");
+        assert_eq!(transcript_line(""), "");
+        assert_eq!(transcript_line("\n \n"), "");
+    }
+
+    #[test]
+    fn a_voicemail_row_drops_the_mail_boilerplate() {
+        // Only boilerplate: no transcript.
+        assert_eq!(
+            transcript_line(
+                "You received a voice mail from Pat Example (+1 555 0100).\nEmail: pat@example.com\nSet Up Voice Mail"
+            ),
+            ""
+        );
+        // Boilerplate around the transcript.
+        assert_eq!(
+            transcript_line(
+                "You received a voice mail from Pat Example.\nEmail: pat@example.com\n\nCall me.\nSet Up Voice Mail"
+            ),
+            "Call me."
+        );
+        let v = Voicemail {
+            id: "m".into(),
+            internet_message_id: None,
+            caller_name: "Pat Example".into(),
+            caller_address: "pat@example.com".into(),
+            received_ms: 1,
+            read: true,
+            duration_secs: None,
+            transcript: "Call me.\n\nEnglish\nCall me.\nSet Up Voice Mail".into(),
+        };
+        assert_eq!(
+            voicemail_rows(&[v], |_| String::new())[0].transcript,
+            "Call me."
+        );
     }
 }

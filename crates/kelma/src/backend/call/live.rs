@@ -1720,14 +1720,14 @@ impl Call {
                     Err(e) => {
                         tracing::warn!(%e, "camera not started");
                         self.camera.stop(sink).await;
-                        sink.send(Event::Error(format!("Couldn't turn on your camera: {e}")));
+                        sink.send(Event::Error(camera::open_error_text(&e.to_string())));
                     }
                 }
             }
             CameraMsg::Opened(Err(e)) => {
                 self.camera.open_failed();
                 tracing::warn!(%e, "camera not opened");
-                sink.send(Event::Error(format!("Couldn't turn on your camera: {e}")));
+                sink.send(Event::Error(camera::open_error_text(&e)));
             }
             CameraMsg::Ended => {
                 if self.camera.stop(sink).await {
