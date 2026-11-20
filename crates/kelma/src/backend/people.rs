@@ -109,6 +109,9 @@ pub(super) struct State {
     pub(super) entries: Vec<Entry>,
     /// Bumped by every search; a slow answer for an older one is dropped.
     seq: u64,
+    /// The same for @mention queries, so typing a mention and a New chat search do not drop each
+    /// other's answers.
+    mention_seq: u64,
     new_chat: NewChat,
     add_history: bool,
     add_results: Vec<Person>,
@@ -513,8 +516,8 @@ impl Engine {
         let kind = row.as_ref().map_or(ConvKind::Group, |r| r.kind);
         let seq = {
             let mut p = self.people.lock().unwrap();
-            p.seq += 1;
-            p.seq
+            p.mention_seq += 1;
+            p.mention_seq
         };
         let mut list: Vec<Entry> = Vec::new();
         let person = |mri: &str, name: String| Entry {
@@ -570,10 +573,14 @@ impl Engine {
         let wants_search = matches!(kind, ConvKind::Channel | ConvKind::Meeting)
             && !q.trim().is_empty()
             && !self.offline.load(std::sync::atomic::Ordering::Relaxed);
+        // Loading the members waits on the network: a newer query may have answered meanwhile.
+        if self.people.lock().unwrap().mention_seq != seq {
+            return Ok(());
+        }
         self.set_candidates(list.clone());
         if wants_search && let Ok(found) = self.client.search_people(&self.me, q.trim()).await {
             let p = self.people.lock().unwrap();
-            if p.seq == seq {
+            if p.mention_seq == seq {
                 for f in found {
                     if list.len() >= MENTION_LIMIT {
                         break;

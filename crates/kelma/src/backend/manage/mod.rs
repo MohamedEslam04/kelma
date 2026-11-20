@@ -228,6 +228,10 @@ pub(crate) struct State {
     tag_list: Vec<Tag>,
     names: HashMap<String, String>,
     guard: Option<Guard>,
+    /// Bumped per Discover and per member search, so a slower answer to an older query is
+    /// dropped.
+    discover_seq: u64,
+    member_seq: u64,
 }
 
 impl Default for State {
@@ -251,6 +255,8 @@ impl Default for State {
             tag_list: vec![],
             names: HashMap::new(),
             guard: Guard::from_env(),
+            discover_seq: 0,
+            member_seq: 0,
         }
     }
 }
@@ -789,12 +795,20 @@ impl Engine {
             // ---- T1.2 discover and join ----
             "discover" => {
                 let q = c.arg(0).trim().to_string();
+                let seq = self.manage_state(|s| {
+                    s.discover_seq += 1;
+                    s.discover_seq
+                });
                 let found = if q.is_empty() {
                     self.client.suggested_teams(Access::Public).await?
                 } else {
                     self.client.find_teams(&q, Access::Public, "").await?
                 };
-                self.manage_state(|s| s.discover = found);
+                self.manage_state(|s| {
+                    if s.discover_seq == seq {
+                        s.discover = found;
+                    }
+                });
             }
             "join" => {
                 let group = c.arg(0).to_string();
@@ -891,6 +905,11 @@ impl Engine {
         const PAGE: u32 = 20;
         let page = self.client.community_feed(id, PAGE, older_than).await?;
         self.manage_state(|s| {
+            // Two quick "More" ask for the same page: only the first answer extends the feed
+            // (the second finds the last post moved), and a feed switched meanwhile keeps its own.
+            if s.community != Some(id) || s.posts.last().map(|p| p.id) != older_than {
+                return;
+            }
             s.posts_more = page.len() as u32 >= PAGE;
             s.posts.extend(page);
         });
@@ -1115,12 +1134,19 @@ impl Engine {
 
     async fn manage_member_search(&self, q: &str) -> anyhow::Result<()> {
         let q = q.trim();
+        let seq = self.manage_state(|s| {
+            s.member_seq += 1;
+            s.member_seq
+        });
         if q.chars().count() < 2 {
             self.manage_state(|s| s.dialog.candidates.clear());
             return Ok(());
         }
         let found = self.client.search_people(&self.me, q).await?;
         self.manage_state(|s| {
+            if s.member_seq != seq {
+                return;
+            }
             let have: Vec<String> = s.dialog.people.iter().map(|p| p.mri.clone()).collect();
             s.dialog.candidates = found
                 .into_iter()
