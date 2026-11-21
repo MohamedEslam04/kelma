@@ -4,6 +4,8 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
+import { PeopleStore } from "people.slint";
+import { ComposerApps } from "composer_apps.slint";
 import { KindBadge } from "onedrive.slint";
 
 // One row of the Search page or a quick view.
@@ -46,6 +48,8 @@ export global FindStore {
     in-out property <bool> tab-add-open: false;
     // The installed apps the "Add a tab" dialog offers, and which kind it adds (website | app).
     in property <[ChannelTabApp]> tab-apps;
+    // The dialog was opened from a chat: the tab goes to the chat (chat-tab-add, chat-tab-add-app).
+    in-out property <bool> tab-for-chat: false;
     in-out property <string> tab-add-kind: "website";
     // The tab whose menu is open (its id, name and place), and the dialog it leads to
     // ("" | rename | remove).
@@ -922,6 +926,37 @@ export component DetailsPane inherits Rectangle {
             height: 20px;
             Text { text: root.title; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
         }
+        // Teams' "In this chat" entries: find, the pinned messages (or how to pin), and the
+        // composer's Loop components and apps.
+        VerticalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            FileMenuItem {
+                label: @tr("Find in chat");
+                clicked => {
+                    FindStore.chat-find-open = true;
+                    FindStore.chat-find-tick += 1;
+                    FindStore.command("find-open", "");
+                }
+            }
+            Text { height: 24px; text: @tr("Pinned messages"); color: Theme.fg-muted; font-size: 11px * Theme.font-scale; vertical-alignment: bottom; }
+            if PeopleStore.pinned.length == 0: Text {
+                text: @tr("Nothing is pinned. To pin a message, open its … menu and choose Pin for everyone.");
+                color: Theme.fg-subtle;
+                font-size: 12px * Theme.font-scale;
+                wrap: word-wrap;
+                accessible-role: text;
+                accessible-label: self.text;
+            }
+            for p in PeopleStore.pinned: FileMenuItem { label: p.sender + ": " + p.preview; clicked => { PeopleStore.command("pin-jump", p.id); } }
+            FileMenuItem {
+                label: @tr("Create and share content");
+                clicked => {
+                    ComposerApps.open = true;
+                    ComposerApps.command("list", "");
+                }
+            }
+        }
         HorizontalLayout {
             padding-left: 16px;
             padding-right: 16px;
@@ -974,7 +1009,7 @@ export component AddTabDialog inherits Rectangle {
         padding: 16px;
         spacing: 10px;
         Text { text: FindStore.tab-add-kind == "app" ? @tr("Add an app tab") : @tr("Add a website tab"); color: Theme.fg; font-size: 16px * Theme.font-scale; font-weight: 600; }
-        Text { text: @tr("Everyone in the channel sees the tab, and Teams posts that you added it."); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; wrap: word-wrap; }
+        Text { text: FindStore.tab-for-chat ? @tr("Everyone in the chat sees the tab. Adding tabs to chats is not tried yet in kelma, so Teams may refuse it.") : @tr("Everyone in the channel sees the tab, and Teams posts that you added it."); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 6px;
             alignment: start;
@@ -1076,9 +1111,9 @@ export component AddTabDialog inherits Rectangle {
                     enabled: root.ready;
                     clicked => {
                         if FindStore.tab-add-kind == "app" {
-                            FindStore.command("channel-tab-add-app", root.app-id + "\u{1f}" + root.tab-name);
+                            FindStore.command(FindStore.tab-for-chat ? "chat-tab-add-app" : "channel-tab-add-app", root.app-id + "\u{1f}" + root.tab-name);
                         } else {
-                            FindStore.command("channel-tab-add", root.tab-name + "\u{1f}" + root.tab-url);
+                            FindStore.command(FindStore.tab-for-chat ? "chat-tab-add" : "channel-tab-add", root.tab-name + "\u{1f}" + root.tab-url);
                         }
                         FindStore.tab-add-open = false;
                     }

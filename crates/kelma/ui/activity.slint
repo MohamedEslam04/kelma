@@ -4,6 +4,7 @@ import { Theme } from "theme.slint";
 import { ActivityRow, Msg } from "types.slint";
 import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
 import { MessageRow } from "message_row.slint";
+import { DirectCallStore } from "call_incoming.slint";
 
 component MenuEntry inherits Rectangle {
     in property <string> label;
@@ -27,6 +28,9 @@ component ActivityItem inherits Rectangle {
     in property <bool> selected;
     callback clicked();
     callback toggle-read();
+    // A missed call's inline buttons.
+    callback call-back();
+    callback open-chat();
     property <length> menu-x;
     property <length> menu-y;
     height: 76px;
@@ -39,7 +43,8 @@ component ActivityItem inherits Rectangle {
 
     HorizontalLayout {
         padding-left: 12px;
-        padding-right: 10px;
+        // Room for a missed call's Call and Chat buttons.
+        padding-right: root.data.call-mri != "" ? 130px : 10px;
         spacing: 10px;
         Rectangle {
             width: 40px;
@@ -107,6 +112,18 @@ component ActivityItem inherits Rectangle {
                 menu.show();
             }
         }
+    }
+
+    // A missed call: call back or open the chat from the row, as Teams does (above the row's
+    // own click area).
+    if root.data.call-mri != "": HorizontalLayout {
+        x: root.width - 126px;
+        y: (root.height - 26px) / 2;
+        width: 118px;
+        height: 26px;
+        spacing: 6px;
+        Pill { label: @tr("Call"); clicked => { root.call-back(); } }
+        Pill { label: @tr("Chat"); clicked => { root.open-chat(); } }
     }
 
     menu := PopupWindow {
@@ -316,6 +333,12 @@ export component ActivityView inherits Rectangle {
                                     scope.focus();
                                 }
                                 toggle-read => { root.mark(r.id, r.unread); }
+                                call-back => { DirectCallStore.command("dial-person", r.call-mri); }
+                                open-chat => {
+                                    root.selected-id = r.id;
+                                    root.select(r.id);
+                                    root.go-to();
+                                }
                             }
                         }
                         if root.items.length == 0: Text {
@@ -392,7 +415,8 @@ export component ActivityView inherits Rectangle {
                         }
                     }
 
-                    if root.preview-is-channel: Rectangle {
+                    // Reply in place: in the post's thread for a channel, in the chat otherwise.
+                    Rectangle {
                         height: 56px;
                         background: Theme.sidebar;
                         HorizontalLayout {
@@ -413,13 +437,13 @@ export component ActivityView inherits Rectangle {
                                         font-size: 13px * Theme.font-scale;
                                         vertical-alignment: center;
                                         single-line: true;
-                                        accessible-label: "Reply in thread";
+                                        accessible-label: root.preview-is-channel ? "Reply in thread" : "Reply";
                                         accepted => { root.reply-now(); }
                                     }
                                 }
                                 if reply-input.text == "": Text {
                                     x: 10px;
-                                    text: "Reply in thread";
+                                    text: root.preview-is-channel ? "Reply in thread" : "Reply";
                                     color: Theme.fg-subtle;
                                     font-size: 13px * Theme.font-scale;
                                     vertical-alignment: center;

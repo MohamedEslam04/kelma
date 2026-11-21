@@ -537,6 +537,24 @@ fn the_more_menu_has_settings_zoom_shortcuts_updates_about_and_help() {
 }
 
 #[test]
+fn the_more_menu_offers_feedback_and_the_mobile_app_as_links() {
+    let app = ready_window(None);
+    let opened = Log::default();
+    let o = opened.clone();
+    app.on_open_url(move |u| o.borrow_mut().push(u.to_string()));
+    tb(&app).set_more_open(true);
+    control(&app, "Feedback").invoke_accessible_default_action();
+    assert!(!tb(&app).get_more_open());
+    tb(&app).set_more_open(true);
+    control(&app, "Get the mobile app").invoke_accessible_default_action();
+    assert_eq!(
+        *opened.borrow(),
+        [crate::topbar::FEEDBACK_URL, crate::topbar::MOBILE_APP_URL]
+    );
+    assert!(crate::topbar::FEEDBACK_URL.ends_with("/issues"));
+}
+
+#[test]
 fn the_list_of_shortcuts_has_a_navigation_section_with_working_chords() {
     let app = ready_window(None);
     app.set_shortcuts_open(true);

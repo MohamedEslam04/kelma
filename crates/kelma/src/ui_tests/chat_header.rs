@@ -88,13 +88,19 @@ fn the_menu_has_the_teams_items_in_order() {
     assert_eq!(
         menu_items(&h.app),
         [
+            "Schedule a meeting",
+            "Share screen",
             "Mark as unread",
             "Move to section",
             "Mute",
             "Copy link",
             "Remove chat history"
-        ],
-        "no Share screen in a group chat"
+        ]
+    );
+    // Teams greys Share screen out when it can't share (here: a group chat, no call).
+    assert_eq!(
+        menu_item(&h.app, "Share screen").accessible_enabled(),
+        Some(false)
     );
 }
 

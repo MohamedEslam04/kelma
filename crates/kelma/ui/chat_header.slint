@@ -1,14 +1,17 @@
 // The chat header's "More chat options" (…) menu, as in Teams: Share screen, Mark as unread,
 // Move to section, Mute, Copy link and Remove chat history, and the confirmation of the last one.
 // Every item reuses what the chat list's item menu and the call buttons already send. When the
-// header is narrow, its participants, find, details and Schedule a meeting buttons are items here
-// (a channel's header then has this menu with those only).
+// header is narrow, its participants, find and details buttons are items here, with "Create
+// and share content" from the details pane ("In this chat").
+// A channel's header has Teams' channel items instead (see `ChannelHeaderItems`).
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
 import { ListStore } from "lists.slint";
 import { DirectCallStore } from "call_incoming.slint";
 import { PeopleStore } from "people.slint";
 import { FindStore } from "find.slint";
+import { ComposerApps } from "composer_apps.slint";
+import { ChannelHeaderItems } from "web_parity.slint";
 
 export global ChatHeaderStore {
     // The chat whose "Remove chat history" waits for confirmation, or "".
@@ -20,49 +23,54 @@ component MenuItem inherits Rectangle {
     in property <string> keys;
     in property <bool> chevron: false;
     in property <bool> danger: false;
+    in property <bool> enabled: true;
+    in property <bool> checked: false;
     callback clicked();
     height: 32px;
     border-radius: 4px;
-    background: touch.has-hover ? Theme.surface-hover : transparent;
+    background: touch.has-hover && root.enabled ? Theme.surface-hover : transparent;
     accessible-role: button;
     accessible-label: root.label;
     accessible-description: root.keys;
-    accessible-action-default => { root.clicked(); }
+    accessible-enabled: root.enabled;
+    accessible-checked: root.checked;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
     HorizontalLayout {
         padding-left: 10px;
         padding-right: 10px;
         spacing: 8px;
-        Text { text: root.label; color: root.danger ? Theme.danger : Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; accessible-role: none; }
+        Text { text: root.label; color: !root.enabled ? Theme.fg-subtle : root.danger ? Theme.danger : Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; accessible-role: none; }
+        if root.checked: Text { text: "✓"; color: Theme.accent; font-size: 13px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 0; accessible-role: none; }
         if root.keys != "": Text { text: root.keys; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 0; accessible-role: none; }
         if root.chevron: Text { text: "›"; color: Theme.fg-muted; font-size: 15px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 0; accessible-role: none; }
     }
-    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    touch := TouchArea { mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default; clicked => { if root.enabled { root.clicked(); } } }
 }
 
 // The menu itself (inside the button's popup).
 export component HeaderMenu inherits Rectangle {
     in property <string> chat-id;
     in property <bool> muted;
-    // A channel: only the header's own buttons (`extras`), none of the chat items.
+    // A channel: Teams' channel items, none of the chat items.
     in property <bool> channel: false;
     // The header's buttons that did not fit.
     in property <bool> extras: false;
     callback mark-unread();
     callback schedule-meeting();
     callback done();
-    // Share screen calls the other person, so only a 1:1 chat in a build with calls has it.
+    // Share screen calls the other person, so only a 1:1 chat in a build with calls can use it;
+    // other chats show it greyed out, as Teams does outside a call.
     property <bool> can-share: !root.channel && DirectCallStore.available && DirectCallStore.is-direct(root.chat-id);
     property <bool> can-people: !root.channel && (PeopleStore.header-group || PeopleStore.member-count > 0);
-    property <int> extra-count: root.extras ? 2 + (root.can-people ? 1 : 0) + (root.channel ? 0 : 1) : 0;
     property <string> view: "main";
-    out property <length> menu-height: (root.view == "main" ? root.extra-count + (root.channel ? 0 : 5) + (root.can-share ? 1 : 0) : ListStore.choices.length + 2) * 32px + 8px;
+    out property <length> menu-height: lay.preferred-height + 2px;
     background: Theme.surface;
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.border;
     accessible-role: groupbox;
-    accessible-label: @tr("More chat options");
-    VerticalLayout {
+    accessible-label: root.channel ? @tr("More channel options") : @tr("More chat options");
+    lay := VerticalLayout {
         padding: 4px;
         if root.view == "main" && root.extras: VerticalLayout {
             if root.can-people: MenuItem {
@@ -90,12 +98,27 @@ export component HeaderMenu inherits Rectangle {
                     root.done();
                 }
             }
-            if !root.channel: MenuItem { label: @tr("Schedule a meeting"); clicked => { root.schedule-meeting(); root.done(); } }
+            MenuItem {
+                label: @tr("Create and share content");
+                clicked => {
+                    ComposerApps.open = true;
+                    ComposerApps.command("list", "");
+                    root.done();
+                }
+            }
+        }
+        if root.view == "main" && root.channel: ChannelHeaderItems {
+            channel: root.chat-id;
+            done => { root.done(); }
+            sections => { root.view = "sections"; }
+            notify => { root.view = "notify"; }
         }
         if root.view == "main" && !root.channel: VerticalLayout {
-            if root.can-share: MenuItem {
+            MenuItem { label: @tr("Schedule a meeting"); clicked => { root.schedule-meeting(); root.done(); } }
+            MenuItem {
                 label: @tr("Share screen");
-                keys: "Ctrl+Shift+E";
+                keys: root.can-share ? "Ctrl+Shift+E" : "";
+                enabled: root.can-share;
                 clicked => {
                     DirectCallStore.command("share-screen", root.chat-id);
                     root.done();
@@ -119,6 +142,12 @@ export component HeaderMenu inherits Rectangle {
                     root.done();
                 }
             }
+        }
+        if root.view == "notify": VerticalLayout {
+            MenuItem { label: @tr("‹ Manage notifications"); clicked => { root.view = "main"; } }
+            MenuItem { label: @tr("All activity"); checked: ListStore.channel-level == "all"; clicked => { ListStore.command("channel-notify", root.chat-id + "\u{9}all"); root.done(); } }
+            MenuItem { label: @tr("Only show in the feed"); checked: ListStore.channel-level == "feed"; clicked => { ListStore.command("channel-notify", root.chat-id + "\u{9}feed"); root.done(); } }
+            MenuItem { label: @tr("Off"); checked: ListStore.channel-level == "off"; clicked => { ListStore.command("channel-notify", root.chat-id + "\u{9}off"); root.done(); } }
         }
         if root.view == "sections": VerticalLayout {
             MenuItem { label: @tr("‹ Move to section"); clicked => { root.view = "main"; } }
@@ -154,7 +183,7 @@ export component HeaderMoreButton inherits Rectangle {
     height: 32px;
     more-btn := IconButton {
         icon: @image-url("icons/more.svg");
-        tooltip: @tr("More chat options");
+        tooltip: root.channel ? @tr("More channel options") : @tr("More chat options");
         clicked => { more-popup.show(); }
     }
     more-popup := PopupWindow {

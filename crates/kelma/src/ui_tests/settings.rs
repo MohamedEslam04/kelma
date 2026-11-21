@@ -260,7 +260,7 @@ fn the_profile_menu_sets_my_status_and_work_location_through_the_engine() {
         rx.try_recv(),
         Ok(Cmd::Settings(SettingsCmd::SetStatusNote(t, None, false))) if t.is_empty()
     ));
-    press(app, "Set status");
+    press(app, "Set work location");
     press(app, "In the office");
     assert!(matches!(
         rx.try_recv(),
@@ -665,7 +665,7 @@ fn the_chats_page_sets_where_a_chat_opens_enter_to_send_receipts_and_link_previe
     }
     open_page(app, "chats");
     while rx.try_recv().is_ok() {}
-    assert_eq!(value_of(app, "Settings page"), "Chats");
+    assert_eq!(value_of(app, "Settings page"), "Chats and channels");
     assert!(checked(app, "When I open a chat take me to: Last read"));
 
     press(app, "When I open a chat take me to: Newest message");
@@ -704,8 +704,8 @@ fn find_in_settings_reaches_the_chats_page() {
     let app = &ui.app;
     open_page(app, "general");
     control(app, "Find in Settings").set_accessible_value("link preview");
-    press(app, "Result: Link previews in Chats");
-    assert_eq!(value_of(app, "Settings page"), "Chats");
+    press(app, "Result: Link previews in Chats and channels");
+    assert_eq!(value_of(app, "Settings page"), "Chats and channels");
 }
 #[test]
 fn activity_notification_settings_entry_opens_the_notifications_page() {

@@ -496,6 +496,16 @@ export component MoreMenu inherits Rectangle {
                 icon: @image-url("icons/open.svg");
                 clicked => { TopBarStore.more-open = false; TopBarStore.command("help", ""); }
             }
+            MenuItem {
+                label: @tr("Feedback");
+                icon: @image-url("icons/reply.svg");
+                clicked => { TopBarStore.more-open = false; TopBarStore.command("feedback", ""); }
+            }
+            MenuItem {
+                label: @tr("Get the mobile app");
+                icon: @image-url("icons/open.svg");
+                clicked => { TopBarStore.more-open = false; TopBarStore.command("mobile-app", ""); }
+            }
         }
     }
 }

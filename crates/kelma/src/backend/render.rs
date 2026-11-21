@@ -221,6 +221,10 @@ impl Engine {
         if filter == "drafts" {
             rows.retain(|r| drafts.contains_key(&r.id));
         }
+        // Communities show in their own section, so the Communities filter lists no chats.
+        if filter == "communities" {
+            rows.clear();
+        }
         if filter == "meetings" {
             rows.retain(|r| r.kind == ConvKind::Meeting);
         }

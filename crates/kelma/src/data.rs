@@ -301,6 +301,8 @@ pub struct ActivityData {
     pub time: String,
     pub location: String,
     pub rtl_preview: bool,
+    /// A missed call from a person: who to call back from the row ("" otherwise).
+    pub call_mri: String,
 }
 
 /// The right-hand preview of the selected Activity item.

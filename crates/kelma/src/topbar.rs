@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 
 /// Where "Help" in the "…" menu and `/help` go.
 pub const HELP_URL: &str = "https://support.microsoft.com/teams";
+/// "Feedback" in the "…" menu: kelma's own issue tracker (kelma is not Microsoft's client).
+pub const FEEDBACK_URL: &str = concat!(env!("CARGO_PKG_REPOSITORY"), "/issues");
+/// "Get the mobile app": Microsoft's Teams download page.
+pub const MOBILE_APP_URL: &str = "https://www.microsoft.com/microsoft-teams/download-app";
 
 /// Recent searches kept.
 pub const RECENT_MAX: usize = 8;

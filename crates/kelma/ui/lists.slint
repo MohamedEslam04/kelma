@@ -7,6 +7,7 @@ import { Icon, IconButton } from "widgets.slint";
 import { RemindStore } from "remind.slint";
 import { TeamsStore } from "teams_store.slint";
 import { MediaStore } from "media.slint";
+import { FlowsStore } from "apps_store.slint";
 
 // A section of the list: sections made in Teams (read from the account) and local ones.
 export struct SectionRow {
@@ -101,12 +102,14 @@ export component ItemMenu inherits Rectangle {
     callback mark-unread();
     callback leave();
     callback toggle-favorite();
+    // "Remove chat history" (the window asks first).
+    callback remove-history();
     callback done();
 
     property <string> view: "main";
-    // Every item: the base five, Favorite and Snooze; chats add Pop out chat, channels Pin and
-    // Go to team.
-    property <int> main-rows: 7 + (root.in-section ? 1 : 0) + (root.data.channel ? 2 + (ListStore.channel-private ? 1 : 0) : 1) + (root.data.group ? 1 : 0);
+    // Every item: the base five, Favorite and Snooze; chats add Pop out chat, Manage apps, Set
+    // workflows and Remove chat history, channels Pin and Go to team.
+    property <int> main-rows: 7 + (root.in-section ? 1 : 0) + (root.data.channel ? 2 + (ListStore.channel-private ? 1 : 0) : 4) + (root.data.group ? 1 : 0);
 
     background: Theme.surface;
     border-radius: 6px;
@@ -131,8 +134,12 @@ export component ItemMenu inherits Rectangle {
                 label: root.data.muted ? @tr("Unmute") : @tr("Mute");
                 clicked => { ListStore.command(root.data.muted ? "unmute" : "mute", root.data.id); root.done(); }
             }
+            // A chat's apps (no read of them is known, so the engine says so) and its Workflows.
+            if !root.data.channel: MenuRow { label: @tr("Manage apps"); clicked => { ListStore.command("manage-apps", root.data.id); root.done(); } }
+            if !root.data.channel: MenuRow { label: @tr("Set workflows"); clicked => { FlowsStore.command("flows-enter", ""); root.done(); } }
             if root.data.channel: MenuRow { label: @tr("Manage notifications"); chevron: true; clicked => { root.view = "notify"; } }
             MenuRow { label: @tr("Copy link"); clicked => { ListStore.command(root.data.channel ? "channel-link" : "copy-link", root.data.id); root.done(); } }
+            if !root.data.channel: MenuRow { label: @tr("Remove chat history"); danger: true; clicked => { root.remove-history(); root.done(); } }
             if root.data.group: MenuRow { label: @tr("Leave"); clicked => { root.leave(); root.done(); } }
             if root.data.channel: MenuRow { label: @tr("Go to team"); clicked => { ListStore.command("channel-team", root.data.id); root.done(); } }
             if root.data.channel && ListStore.channel-private: MenuRow { label: @tr("Leave channel"); danger: true; clicked => { ListStore.dialog-target = root.data.id; ListStore.dialog = "leave-channel"; root.done(); } }

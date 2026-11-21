@@ -144,6 +144,33 @@ impl Client {
         Ok(())
     }
 
+    /// Adds a website tab to a chat: Graph `POST /chats/{chat}/tabs` with the channel body.
+    /// UNVERIFIED: never sent from kelma yet (docs/protocol.md).
+    pub async fn add_chat_website_tab(&self, chat_id: &str, name: &str, url: &str) -> Result<()> {
+        let body = website_tab_body(name, url);
+        self.json(
+            "add chat tab",
+            Method::POST,
+            &chat_tabs_url(chat_id),
+            Some(&body),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Adds an installed app's tab to a chat (UNVERIFIED, as [`Client::add_chat_website_tab`]).
+    pub async fn add_chat_app_tab(&self, chat_id: &str, name: &str, app_id: &str) -> Result<()> {
+        let body = app_tab_body(name, app_id);
+        self.json(
+            "add chat app tab",
+            Method::POST,
+            &chat_tabs_url(chat_id),
+            Some(&body),
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Renames a tab (Graph "Update tab").
     pub async fn rename_channel_tab(
         &self,
@@ -178,9 +205,22 @@ impl Client {
     }
 }
 
+/// A chat's tabs on Graph: `/chats/{chat}/tabs`.
+pub fn chat_tabs_url(chat_id: &str) -> String {
+    graph_url(&["chats", chat_id, "tabs"], "")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chat_tab_goes_to_the_chats_tabs_with_the_channel_body() {
+        assert_eq!(
+            chat_tabs_url("19:abc@thread.v2"),
+            "https://graph.microsoft.com/v1.0/chats/19:abc@thread.v2/tabs"
+        );
+    }
 
     #[test]
     fn tabs_parse_without_the_files_tab_and_open_their_website() {

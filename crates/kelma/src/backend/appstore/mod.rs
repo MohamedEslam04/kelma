@@ -140,6 +140,7 @@ impl Engine {
             TasksMode(mode) => self.tasks_mode(&mode),
             TasksRefresh => self.tasks_refresh().await,
             TaskNew => self.tasks_begin_new(),
+            TaskFromMessage(text) => self.tasks_from_message(&text).await,
             TaskToggle(id) => self.tasks_toggle(&id).await,
             TaskEdit(id) => self.tasks_begin_edit(&id),
             TaskDelete(id) => self.tasks_begin_delete(&id),

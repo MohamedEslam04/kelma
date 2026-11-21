@@ -492,6 +492,23 @@ impl Engine {
 
     /// Opens the New task dialog for the open To Do list or plan.
     pub(super) fn tasks_begin_new(self: &Arc<Self>) -> anyhow::Result<()> {
+        self.tasks_begin_new_with(String::new())
+    }
+
+    /// More actions › Create a task: the New task dialog titled with the message, in the open
+    /// To Do list or plan. The Tasks app opens (and loads) first when none is open.
+    pub(super) async fn tasks_from_message(self: &Arc<Self>, text: &str) -> anyhow::Result<()> {
+        let open = {
+            let a = self.apps.lock().unwrap();
+            a.tasks.todo_list().is_some() || a.tasks.plan().is_some()
+        };
+        if !open {
+            self.tasks_enter().await?;
+        }
+        self.tasks_begin_new_with(task_title(text))
+    }
+
+    fn tasks_begin_new_with(self: &Arc<Self>, task: String) -> anyhow::Result<()> {
         let (title, ok) = {
             let a = self.apps.lock().unwrap();
             let t = &a.tasks;
@@ -504,7 +521,7 @@ impl Engine {
         }
         let mut spec = form::confirm(format!("New task in {title}"), String::new(), "Add", false);
         spec.fields = vec![
-            ("Title".into(), String::new()),
+            ("Title".into(), task),
             ("Due date (2026-11-25, optional)".into(), String::new()),
         ];
         self.form_open(Pending::TaskNew, spec, String::new());
@@ -627,10 +644,26 @@ impl Engine {
     }
 }
 
+/// A task title from a message: one line of its words, at most 255 characters (To Do's limit).
+pub(super) fn task_title(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    line.chars().take(255).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use teams_proto::planner::{parse_buckets, parse_planner_tasks, parse_plans};
+
+    #[test]
+    fn a_task_from_a_message_takes_one_line_of_its_words() {
+        assert_eq!(
+            task_title("  Ship the\n\nbuild   today "),
+            "Ship the build today"
+        );
+        assert_eq!(task_title(&"x".repeat(300)).chars().count(), 255);
+        assert_eq!(task_title(""), "");
+    }
 
     #[test]
     fn plan_board_has_a_column_per_bucket_and_my_tasks_group_by_progress() {

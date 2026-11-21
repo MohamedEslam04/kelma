@@ -372,9 +372,42 @@ fn the_item_menu_of_a_chat_has_the_teams_entries() {
             "Move to section",
             "Snooze",
             "Mute",
+            "Manage apps",
+            "Set workflows",
             "Copy link",
+            "Remove chat history",
             "Hide"
         ]
+    );
+}
+
+#[test]
+fn the_item_menu_manages_apps_honestly_opens_workflows_and_asks_before_removing_history() {
+    let h = harness();
+    let log = wire(&h);
+    let flows = Log::default();
+    let f = flows.clone();
+    h.app
+        .global::<crate::FlowsStore>()
+        .on_command(move |n, a| f.borrow_mut().push(format!("{n} {a}")));
+    open_item_menu(&h.app, "Ahmed Ali");
+    click(&menu_row(&h.app, "Manage apps"));
+    assert_eq!(
+        log.borrow().last().unwrap(),
+        &format!("manage-apps {AHMED}")
+    );
+    assert_eq!(h.app.get_banner(), crate::backend::MANAGE_APPS_NOTE);
+    open_item_menu(&h.app, "Ahmed Ali");
+    click(&menu_row(&h.app, "Set workflows"));
+    assert_eq!(*flows.borrow(), ["flows-enter "]);
+    open_item_menu(&h.app, "Ahmed Ali");
+    click(&menu_row(&h.app, "Remove chat history"));
+    assert_eq!(
+        h.app
+            .global::<crate::ChatHeaderStore>()
+            .get_remove_history(),
+        AHMED,
+        "the window's confirmation opens"
     );
 }
 
@@ -524,16 +557,17 @@ fn list_options_hide_previews_and_time_stamps_and_combine_chats_and_channels() {
     let log = wire(&h);
     let preview = "Youssef: Fixed in 2.4.1";
     assert_eq!(find_label(&h.app, preview).len(), 1, "previews are on");
-    // The "…" menu of the list carries the options.
+    // The "…" menu of the list carries the options behind "Customize view", and stays open
+    // while they are toggled.
     let more = ElementHandle::find_by_element_id(&h.app, "IconButton::touch")
         .filter(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
         .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
         .expect("list menu button");
     click(&more);
+    click(&find_label(&h.app, "Customize view")[0]);
     click(&find_label(&h.app, "Show message previews")[0]);
     assert!(!ls(&h.app).get_show_previews());
     assert!(find_label(&h.app, preview).is_empty(), "previews hidden");
-    click(&more);
     click(&find_label(&h.app, "Show time stamps")[0]);
     assert!(!ls(&h.app).get_show_times());
     // Chats and channels together: the channel rows move into the Chats section.
@@ -541,7 +575,6 @@ fn list_options_hide_previews_and_time_stamps_and_combine_chats_and_channels() {
         !h.app.get_chats_channels().iter().next().is_none(),
         "separate at first"
     );
-    click(&more);
     click(&find_label(&h.app, "Chats and channels together")[0]);
     assert!(ls(&h.app).get_combined());
     assert_eq!(h.app.get_chats_channels().row_count(), 0);

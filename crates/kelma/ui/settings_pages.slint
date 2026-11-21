@@ -6,6 +6,7 @@ import { SettingsStore, SOption } from "settings_store.slint";
 import { PeopleStore } from "people.slint";
 import { SButton, SChoice, SChoiceRow, SField, SFont, SPersonRow, SRadio, SSection, SSwitch } from "settings_widgets.slint";
 import { SnippetsSection } from "settings_snippets.slint";
+import { AppsStore } from "apps_store.slint";
 
 component Para inherits Text {
     color: Theme.fg-muted;
@@ -82,10 +83,6 @@ export component GeneralPage inherits VerticalLayout {
         }
     }
     SSection {
-        title: @tr("Translation");
-        Para { text: @tr("Translation preferences are a Teams account setting. kelma cannot change them yet."); }
-    }
-    SSection {
         title: @tr("System");
         for t in SettingsStore.startup: SSwitch {
             label: t.label;
@@ -94,6 +91,46 @@ export component GeneralPage inherits VerticalLayout {
             enabled: t.enabled;
             toggled(on) => { SettingsStore.command("startup", SettingsStore.j2(t.key, on ? "1" : "0")); }
         }
+    }
+    // What kelma cannot do yet is greyed out, below the settings that work.
+    SSection {
+        title: @tr("Translation");
+        Para { text: @tr("Translation preferences are a Teams account setting. kelma cannot change them yet, so these show Teams' choices greyed out. Translate in a message's … menu."); }
+        SChoiceRow {
+            label: @tr("Translate messages into");
+            options: [{v: "app", l: @tr("The app language")}];
+            value: "app";
+            enabled: false;
+            picked(v) => { }
+        }
+        SSwitch { label: @tr("Ask me before translating"); enabled: false; on: true; }
+        SSwitch { label: @tr("Never translate messages in these languages"); hint: @tr("Adding languages needs the same Teams setting."); enabled: false; on: false; }
+    }
+    SSection {
+        title: @tr("Spell check languages");
+        Para { text: @tr("kelma checks with the English and Arabic Hunspell dictionaries installed on this computer. Choosing up to three languages is not available yet."); }
+    }
+    SSection {
+        title: @tr("Meetings");
+        SSwitch { label: @tr("New meeting controls"); hint: @tr("kelma's call window has one set of controls."); enabled: false; on: true; }
+        SSwitch { label: @tr("Ask me to confirm when I leave a meeting"); hint: @tr("Not available in kelma yet."); enabled: false; on: false; }
+    }
+    SSection {
+        title: @tr("Out of office");
+        Para { text: @tr("Automatic replies with a start, an end and a message are an Outlook mailbox setting. kelma cannot read or schedule them yet: set them in Teams or Outlook."); }
+        SButton { label: @tr("Schedule"); enabled: false; clicked => { } }
+    }
+    SSection {
+        title: @tr("Keyboard");
+        SChoiceRow {
+            label: @tr("Keyboard shortcuts");
+            hint: @tr("kelma uses the Teams shortcuts (Ctrl+. lists them).");
+            options: [{v: "teams", l: @tr("Teams")}];
+            value: "teams";
+            enabled: false;
+            picked(v) => { }
+        }
+        SSwitch { label: @tr("Use Enter or Spacebar to show content"); hint: @tr("Not available in kelma yet."); enabled: false; on: false; }
     }
 }
 
@@ -445,6 +482,17 @@ export component AppearancePage inherits VerticalLayout {
             value: SettingsStore.theme;
             picked(v) => { SettingsStore.theme = v; SettingsStore.command("theme", v); }
         }
+        SSwitch { label: @tr("Always use dark theme for calls and meetings"); hint: @tr("kelma's call window follows the theme above. A separate call theme is not available yet."); enabled: false; on: false; }
+    }
+    SSection {
+        title: @tr("App bar");
+        SSwitch {
+            label: @tr("Show app names");
+            hint: @tr("The names under the app bar's icons (the bar's own Collapse does the same).");
+            on: !AppsStore.rail-collapsed;
+            toggled(on) => { if on == AppsStore.rail-collapsed { AppsStore.command("rail-collapse", ""); } }
+        }
+        SSwitch { label: @tr("Auto collapse app bar"); hint: @tr("Not available in kelma yet."); enabled: false; on: false; }
     }
     SSection {
         title: @tr("Accent colour");

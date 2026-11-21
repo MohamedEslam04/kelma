@@ -75,7 +75,11 @@ fn feed() -> (AppWindow, Shared, Log) {
                 let mut s = st.borrow_mut();
                 s.selected = Some(id.to_string());
                 s.set_read(&id, true);
-                s.item(&id).cloned().unwrap()
+                // (A row a test put straight into the window has no backend item.)
+                let Some(item) = s.item(&id).cloned() else {
+                    return;
+                };
+                item
             };
             push(&w, &st);
             // The backend sends a short window with the source a few rows from the top.
@@ -249,9 +253,9 @@ fn clicking_an_item_marks_it_read_and_opens_the_preview_on_the_source() {
     );
     assert!(state.borrow().selected.is_some());
 
-    // The preview exists, offers "Go to chat" and no reply box for a chat message.
+    // The preview exists, offers "Go to chat" and, as in Teams, a reply box for a chat message.
     assert_eq!(by_id(&app, "ActivityView::go").len(), 1);
-    assert_eq!(by_id(&app, "ActivityView::reply-input").len(), 0);
+    assert_eq!(by_id(&app, "ActivityView::reply-input").len(), 1);
 
     // The highlighted source row is inside the pane, near the top.
     let pane = &by_id(&app, "PreviewList::pv")[0];
@@ -394,4 +398,51 @@ fn preview_rows_take_reactions_and_open_the_message_menu() {
     }
     click(&menu_item(&app, "Copy message link"));
     assert_eq!(log.borrow().last().unwrap(), "copy-link m0");
+}
+
+#[test]
+fn a_chat_message_is_answered_in_place_from_the_preview() {
+    let (app, _state, log) = feed();
+    item_el(&app, 0).mock_single_click(PointerEventButton::Left);
+    let reply = &by_id(&app, "ActivityView::reply-input")[0];
+    assert_eq!(label(reply), "Reply", "a chat, not a thread");
+    reply.mock_single_click(PointerEventButton::Left);
+    type_text(&app, "on it");
+    enter(&app);
+    assert_eq!(log.borrow().last().unwrap(), "reply on it");
+}
+
+#[test]
+fn a_missed_call_row_offers_call_and_chat() {
+    let (app, _state, log) = feed();
+    let called = Log::default();
+    let c = called.clone();
+    app.global::<crate::DirectCallStore>()
+        .on_command(move |n, a| c.borrow_mut().push(format!("{n} {a}")));
+    let row = |id: &str, call: &str| ActivityRow {
+        id: id.into(),
+        title: "Someone called you and you missed it".into(),
+        call_mri: call.into(),
+        ..Default::default()
+    };
+    app.set_activity_items(ModelRc::new(VecModel::from(vec![
+        row("missed", "8:orgid:caller"),
+        row("other", ""),
+    ])));
+    let pills = |name: &str| -> Vec<ElementHandle> {
+        ElementHandle::find_by_element_type_name(&app, "Pill")
+            .filter(|e| label(e) == name)
+            .collect()
+    };
+    assert_eq!(pills("Call").len(), 1, "only the missed call row");
+    assert_eq!(pills("Chat").len(), 1);
+    pills("Call")[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(*called.borrow(), ["dial-person 8:orgid:caller"]);
+    assert!(
+        !log.borrow().iter().any(|l| l.starts_with("select")),
+        "Call does not open the row"
+    );
+    pills("Chat")[0].mock_single_click(PointerEventButton::Left);
+    let last: Vec<String> = log.borrow().iter().rev().take(2).cloned().collect();
+    assert_eq!(last, ["go-to", "select missed"]);
 }

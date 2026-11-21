@@ -115,7 +115,11 @@ fn a_channel_has_no_meeting_actions_in_the_plus_menu() {
     app.set_current_id("19:tech@thread.tacv2".into());
     app.set_current_is_channel(true);
     find_label(&app, "Actions and apps")[0].invoke_accessible_default_action();
-    assert!(find_label(&app, "Meet now").is_empty());
+    // (The channel header has its own Meet now button; the + menu has none.)
+    assert!(
+        ElementHandle::find_by_element_type_name(&app, "CaRow")
+            .all(|r| !label(&r).contains("Meet now"))
+    );
 }
 
 #[test]

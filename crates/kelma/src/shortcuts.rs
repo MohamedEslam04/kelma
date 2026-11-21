@@ -24,6 +24,9 @@ pub fn action(key: &str, ctrl: bool, alt: bool, shift: bool) -> &'static str {
         (false, true, true, "m") => "focus-messages",
         (true, false, true, "x") => "expand-composer",
         (false, true, true, "o") => "attach-file",
+        // The call button's Audio call and Video call (1:1 chats).
+        (false, true, true, "a") => "audio-call",
+        (false, true, true, "v") => "video-call",
         // The chat header's "More chat options" › Share screen (1:1 chats).
         (true, false, true, "e") => "share-screen",
         _ => "",
@@ -69,6 +72,8 @@ mod tests {
         assert_eq!(action("X", true, false, true), "expand-composer");
         assert_eq!(action("E", true, false, true), "share-screen");
         assert_eq!(action("O", false, true, true), "attach-file");
+        assert_eq!(action("A", false, true, true), "audio-call");
+        assert_eq!(action("v", false, true, true), "video-call");
     }
 
     #[test]
