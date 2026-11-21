@@ -100,7 +100,8 @@ mod tests {
         assert!(matches!(decode(&[]), Err(Error::Decode(_))));
     }
 
-    /// Encode with ffmpeg, decode with symphonia: the length and the tone survive.
+    /// Encode (ffmpeg, or the system encoder on Windows and macOS), decode with symphonia: the
+    /// length and the tone survive.
     #[test]
     fn an_encoded_clip_decodes_to_the_same_length_and_tone() {
         let clip = Clip::new(test_sine(440.0, 2.0, 48_000), 48_000);
@@ -115,8 +116,14 @@ mod tests {
         let back = decode(&m4a).unwrap();
         assert_eq!(back.sample_rate, 44_100);
         let difference = back.duration().as_secs_f64() - clip.duration().as_secs_f64();
-        // AAC adds a little priming and padding at the edges.
-        assert!(difference.abs() < 0.05, "length differs by {difference} s");
+        // AAC adds a little priming and padding at the edges: ffmpeg 1024 samples, AudioToolbox
+        // (macOS) 2112, which its edit list marks for players to skip and symphonia does not.
+        let slack = if cfg!(target_os = "macos") {
+            0.08
+        } else {
+            0.05
+        };
+        assert!(difference.abs() < slack, "length differs by {difference} s");
         let body = &back.samples[4410..back.samples.len() - 4410];
         let hz = test_frequency(body, back.sample_rate);
         assert!((hz - 440.0).abs() < 3.0, "{hz} Hz");

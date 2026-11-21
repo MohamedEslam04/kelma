@@ -1,4 +1,8 @@
-//! XDG autostart: `$XDG_CONFIG_HOME/autostart/kelma.desktop` (default `~/.config`).
+//! Starting at login. Linux: XDG autostart, `$XDG_CONFIG_HOME/autostart/kelma.desktop` (default
+//! `~/.config`). Windows: a `kelma` value under the per-user Run key. macOS: a LaunchAgent,
+//! `~/Library/LaunchAgents/io.github.mohamedeslam04.kelma.plist`. [`enable`], [`disable`] and
+//! [`is_enabled`] pick the one of the running system; the `*_in` functions always work on the XDG
+//! entry in a given directory.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -115,24 +119,231 @@ pub fn is_enabled_in(config_home: &Path) -> bool {
         .any(|l| matches!(l.trim(), "Hidden=true" | "X-GNOME-Autostart-enabled=false"))
 }
 
+#[cfg(not(any(windows, target_os = "macos")))]
 fn home() -> io::Result<PathBuf> {
     config_home()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no XDG_CONFIG_HOME or HOME"))
 }
 
 /// Write the autostart entry for the current user and return its path.
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn enable(exec: &str, hidden_flag: Option<&str>) -> io::Result<PathBuf> {
     enable_in(&home()?, exec, hidden_flag)
 }
 
 /// Remove the autostart entry (no error when it is already gone).
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn disable() -> io::Result<()> {
     disable_in(&home()?)
 }
 
 /// Whether the autostart entry exists and is not switched off.
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn is_enabled() -> bool {
     config_home().is_some_and(|h| is_enabled_in(&h))
+}
+
+// ---- macOS: a LaunchAgent ----
+
+/// The LaunchAgent's label (and file name without `.plist`).
+pub const LAUNCH_AGENT_LABEL: &str = crate::APP_ID;
+
+/// `text` with the five XML special characters escaped.
+fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The LaunchAgent property list that runs `exec` (with `hidden_flag`) once at login.
+pub fn launch_agent(exec: &str, hidden_flag: Option<&str>) -> String {
+    let args: String = std::iter::once(exec)
+        .chain(hidden_flag)
+        .map(|a| format!("        <string>{}</string>\n", xml_escape(a)))
+        .collect();
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{LAUNCH_AGENT_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+{args}    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
+"#
+    )
+}
+
+/// `<home>/Library/LaunchAgents/<label>.plist`.
+pub fn launch_agent_path_in(home: &Path) -> PathBuf {
+    home.join("Library/LaunchAgents")
+        .join(format!("{LAUNCH_AGENT_LABEL}.plist"))
+}
+
+pub fn launch_agent_enable_in(
+    home: &Path,
+    exec: &str,
+    hidden_flag: Option<&str>,
+) -> io::Result<PathBuf> {
+    let path = launch_agent_path_in(home);
+    let dir = path.parent().expect("agent path has a parent");
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!(".{LAUNCH_AGENT_LABEL}.plist.tmp"));
+    std::fs::write(&tmp, launch_agent(exec, hidden_flag))?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(path)
+}
+
+pub fn launch_agent_disable_in(home: &Path) -> io::Result<()> {
+    match std::fs::remove_file(launch_agent_path_in(home)) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+pub fn launch_agent_enabled_in(home: &Path) -> bool {
+    launch_agent_path_in(home).is_file()
+}
+
+#[cfg(target_os = "macos")]
+fn user_home() -> io::Result<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no HOME"))
+}
+
+/// Write the LaunchAgent for the current user and return its path.
+#[cfg(target_os = "macos")]
+pub fn enable(exec: &str, hidden_flag: Option<&str>) -> io::Result<PathBuf> {
+    launch_agent_enable_in(&user_home()?, exec, hidden_flag)
+}
+
+/// Remove the LaunchAgent (no error when it is already gone).
+#[cfg(target_os = "macos")]
+pub fn disable() -> io::Result<()> {
+    launch_agent_disable_in(&user_home()?)
+}
+
+/// Whether the LaunchAgent exists.
+#[cfg(target_os = "macos")]
+pub fn is_enabled() -> bool {
+    user_home().is_ok_and(|h| launch_agent_enabled_in(&h))
+}
+
+// ---- Windows: the Run key ----
+
+/// The per-user key whose values Windows runs at login.
+pub const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+/// The value kelma writes there.
+pub const RUN_VALUE: &str = "kelma";
+
+/// The command line stored in the Run key: the program quoted, then the flag.
+pub fn run_command(exec: &str, hidden_flag: Option<&str>) -> String {
+    match hidden_flag {
+        Some(flag) => format!("\"{exec}\" {flag}"),
+        None => format!("\"{exec}\""),
+    }
+}
+
+#[cfg(windows)]
+mod run_key {
+    use std::io;
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+    };
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+
+    fn check(status: u32) -> io::Result<()> {
+        if status == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(status as i32))
+        }
+    }
+
+    pub fn set(command: &str) -> io::Result<()> {
+        let (key, name, data) = (wide(super::RUN_KEY), wide(super::RUN_VALUE), wide(command));
+        // SAFETY: every pointer is a NUL-terminated UTF-16 string that outlives the call; the
+        // size is the data's length in bytes, terminator included.
+        check(unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                REG_SZ,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        })
+    }
+
+    pub fn delete() -> io::Result<()> {
+        let (key, name) = (wide(super::RUN_KEY), wide(super::RUN_VALUE));
+        // SAFETY: both strings are NUL-terminated and outlive the call.
+        match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) } {
+            ERROR_FILE_NOT_FOUND => Ok(()),
+            status => check(status),
+        }
+    }
+
+    pub fn exists() -> bool {
+        let (key, name) = (wide(super::RUN_KEY), wide(super::RUN_VALUE));
+        // SAFETY: a size query only (no buffer); both strings outlive the call.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        status == ERROR_SUCCESS
+    }
+}
+
+/// Add kelma to the per-user Run key. The returned path names the key, for messages.
+#[cfg(windows)]
+pub fn enable(exec: &str, hidden_flag: Option<&str>) -> io::Result<PathBuf> {
+    run_key::set(&run_command(exec, hidden_flag))?;
+    Ok(PathBuf::from(format!(
+        r"HKEY_CURRENT_USER\{RUN_KEY}\{RUN_VALUE}"
+    )))
+}
+
+/// Remove kelma from the Run key (no error when it is already gone).
+#[cfg(windows)]
+pub fn disable() -> io::Result<()> {
+    run_key::delete()
+}
+
+/// Whether the Run key starts kelma.
+#[cfg(windows)]
+pub fn is_enabled() -> bool {
+    run_key::exists()
 }
 
 #[cfg(test)]
@@ -197,6 +408,45 @@ mod tests {
         enable_in(tmp.path(), "kelma", Some("--minimized")).unwrap();
         let c = std::fs::read_to_string(entry_path_in(tmp.path())).unwrap();
         assert_eq!(field(&c, "Exec"), Some("kelma --minimized"));
+    }
+
+    #[test]
+    fn the_launch_agent_runs_the_program_hidden_at_login() {
+        let plist = launch_agent(
+            "/Applications/kelma.app/Contents/MacOS/kelma",
+            Some("--hidden"),
+        );
+        assert!(plist.contains("<string>io.github.mohamedeslam04.kelma</string>"));
+        assert!(plist.contains(
+            "<string>/Applications/kelma.app/Contents/MacOS/kelma</string>\n        <string>--hidden</string>"
+        ));
+        assert!(plist.contains("<key>RunAtLoad</key>\n    <true/>"));
+        assert!(launch_agent("/a&b/<k>", None).contains("<string>/a&amp;b/&lt;k&gt;</string>"));
+    }
+
+    #[test]
+    fn launch_agent_roundtrip_in_a_temp_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!launch_agent_enabled_in(tmp.path()));
+        let path = launch_agent_enable_in(tmp.path(), "/k", Some("--hidden")).unwrap();
+        assert_eq!(
+            path,
+            tmp.path()
+                .join("Library/LaunchAgents/io.github.mohamedeslam04.kelma.plist")
+        );
+        assert!(launch_agent_enabled_in(tmp.path()));
+        launch_agent_disable_in(tmp.path()).unwrap();
+        assert!(!launch_agent_enabled_in(tmp.path()));
+        launch_agent_disable_in(tmp.path()).unwrap();
+    }
+
+    #[test]
+    fn the_run_key_command_quotes_the_program() {
+        assert_eq!(
+            run_command(r"C:\Program Files\kelma\kelma.exe", Some("--hidden")),
+            r#""C:\Program Files\kelma\kelma.exe" --hidden"#
+        );
+        assert_eq!(run_command("k.exe", None), r#""k.exe""#);
     }
 
     #[test]

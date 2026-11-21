@@ -15,26 +15,45 @@
 //! - the overlay is above every window, so it shows in the shared picture too (the controller
 //!   sees their cursor drawn where their pointer is);
 //! - the label is laid out left to right without shaping (Arabic names show unjoined).
+//!
+//! Windows and macOS have no overlay yet (nor remote control, `super::remote_input`): only the
+//! geometry and the drawing are built there, for the tests.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
 
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont, point};
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::reexports::calloop::EventLoop;
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::reexports::calloop::channel::{self, Channel, Sender};
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::reexports::client::protocol::{wl_output, wl_shm, wl_surface};
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::shell::WaylandSurface;
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::shell::wlr_layer::{
     Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
     LayerSurfaceConfigure,
 };
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::shm::slot::SlotPool;
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
+#[cfg(target_os = "linux")]
 use smithay_client_toolkit::{
     delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm,
     registry_handlers,
@@ -467,9 +486,22 @@ fn load_font() -> Option<FontVec> {
 
 /// The controller's cursor on screen. Dropping it removes the overlay.
 pub struct ControlOverlay {
+    #[cfg(target_os = "linux")]
     tx: Sender<Cursor>,
 }
 
+#[cfg(not(target_os = "linux"))]
+impl ControlOverlay {
+    /// No overlay on this system: nothing is drawn.
+    pub fn show(_area: ShareArea, _name: &str, _photo: Option<Photo>) -> ControlOverlay {
+        tracing::info!("no control cursor overlay on this system");
+        ControlOverlay {}
+    }
+
+    pub fn cursor(&self, _c: Cursor) {}
+}
+
+#[cfg(target_os = "linux")]
 impl ControlOverlay {
     /// Shows `name`'s cursor (hidden until the first point) over `area`, on its own thread.
     /// Failing (no Wayland, no layer-shell) only logs.
@@ -494,6 +526,7 @@ impl ControlOverlay {
     }
 }
 
+#[cfg(target_os = "linux")]
 struct State {
     registry: RegistryState,
     outputs: OutputState,
@@ -510,6 +543,7 @@ struct State {
     exit: bool,
 }
 
+#[cfg(target_os = "linux")]
 impl State {
     /// Attaches the picture (or a clear one) and commits.
     fn attach(&mut self, visible: bool) {
@@ -564,6 +598,7 @@ impl State {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn run(
     area: ShareArea,
     label: String,
@@ -672,6 +707,7 @@ fn run(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 impl CompositorHandler for State {
     fn scale_factor_changed(
         &mut self,
@@ -712,6 +748,7 @@ impl CompositorHandler for State {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl OutputHandler for State {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.outputs
@@ -724,6 +761,7 @@ impl OutputHandler for State {
     fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
 }
 
+#[cfg(target_os = "linux")]
 impl LayerShellHandler for State {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface) {
         self.exit = true;
@@ -748,12 +786,14 @@ impl LayerShellHandler for State {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl ShmHandler for State {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
     }
 }
 
+#[cfg(target_os = "linux")]
 impl ProvidesRegistryState for State {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry
@@ -761,10 +801,15 @@ impl ProvidesRegistryState for State {
     registry_handlers![OutputState];
 }
 
+#[cfg(target_os = "linux")]
 delegate_compositor!(State);
+#[cfg(target_os = "linux")]
 delegate_output!(State);
+#[cfg(target_os = "linux")]
 delegate_shm!(State);
+#[cfg(target_os = "linux")]
 delegate_layer!(State);
+#[cfg(target_os = "linux")]
 delegate_registry!(State);
 
 #[cfg(test)]

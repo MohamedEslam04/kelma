@@ -6,7 +6,11 @@
 //!   the mute flag, and hands out the events (Open, ToggleMute, Quit) to poll or block on.
 //! * The same thread emits `com.canonical.Unity.LauncherEntry.Update`, which the KDE task
 //!   manager shows as a badge on the launcher ([`launcher`]).
-//! * [`autostart`] writes and removes `$XDG_CONFIG_HOME/autostart/kelma.desktop`.
+//! * [`autostart`] writes and removes `$XDG_CONFIG_HOME/autostart/kelma.desktop` (the Run key on
+//!   Windows, a LaunchAgent on macOS).
+//!
+//! Windows and macOS: the StatusNotifierItem and the launcher badge are Linux only. [`Tray::start`]
+//! there only says so ([`TrayHandle::tray_error`]); the app draws its tray icon with Slint.
 
 /// kelma's application id: the name of its desktop file and icon, its Wayland app id and X11
 /// window class, and the id it registers with the desktop portal. Reverse-DNS, because the portal
@@ -19,12 +23,17 @@ pub mod launcher;
 pub mod menu;
 pub mod screen;
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Receiver;
+#[cfg(target_os = "linux")]
+use crossbeam_channel::Sender;
+#[cfg(target_os = "linux")]
 use ksni::TrayMethods;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+#[cfg(target_os = "linux")]
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Something the user did in the tray. The app decides what it means (show the window, stop
 /// notifying, shut down).
@@ -69,6 +78,7 @@ impl Default for TrayOptions {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 enum Cmd {
     Unread(u32),
     Muted(bool),
@@ -78,7 +88,7 @@ enum Cmd {
 }
 
 /// Title shown by the host: the name, plus the count when there is one.
-fn title_text(title: &str, unread: u32) -> String {
+pub fn title_text(title: &str, unread: u32) -> String {
     match icon::badge_label(unread) {
         Some(n) => format!("{title} ({n} unread)"),
         None => title.to_string(),
@@ -86,7 +96,7 @@ fn title_text(title: &str, unread: u32) -> String {
 }
 
 /// The tooltip body: the count, or a quiet "No unread messages".
-fn tooltip_text(unread: u32, muted: bool) -> String {
+pub fn tooltip_text(unread: u32, muted: bool) -> String {
     let mut s = match unread {
         0 => "No unread messages".to_string(),
         1 => "1 unread message".to_string(),
@@ -101,6 +111,7 @@ fn tooltip_text(unread: u32, muted: bool) -> String {
     s
 }
 
+#[cfg(target_os = "linux")]
 fn to_ksni(p: icon::Pixmap) -> ksni::Icon {
     ksni::Icon {
         width: p.width as i32,
@@ -109,6 +120,7 @@ fn to_ksni(p: icon::Pixmap) -> ksni::Icon {
     }
 }
 
+#[cfg(target_os = "linux")]
 struct SniTray {
     opts: TrayOptions,
     unread: u32,
@@ -117,6 +129,7 @@ struct SniTray {
     events: Sender<TrayEvent>,
 }
 
+#[cfg(target_os = "linux")]
 impl ksni::Tray for SniTray {
     fn id(&self) -> String {
         self.opts.id.clone()
@@ -195,6 +208,7 @@ impl ksni::Tray for SniTray {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl SniTray {
     fn run(&mut self, action: menu::MenuAction) {
         let event = match action {
@@ -264,10 +278,21 @@ impl Tray {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let (ready_tx, ready_rx) = crossbeam_channel::unbounded();
         let sync_launcher = opts.sync_launcher_badge;
+        #[cfg(target_os = "linux")]
         let thread = std::thread::Builder::new()
             .name("kelma-tray".into())
             .spawn(move || worker(opts, cmd_rx, event_tx, ready_tx))
             .ok();
+        // No StatusNotifierItem here: commands go nowhere and no event ever comes.
+        #[cfg(not(target_os = "linux"))]
+        let thread = {
+            drop((opts, cmd_rx, event_tx));
+            let _ = ready_tx.send(Startup {
+                tray_error: Some(UNSUPPORTED.into()),
+                launcher_ready: false,
+            });
+            None
+        };
         let startup = ready_rx.recv().unwrap_or(Startup {
             tray_error: Some("the tray thread did not start".into()),
             launcher_ready: false,
@@ -333,6 +358,12 @@ impl TrayHandle {
     }
 }
 
+/// Why [`Tray::start`] has no icon on Windows and macOS.
+#[cfg(not(target_os = "linux"))]
+pub const UNSUPPORTED: &str =
+    "the StatusNotifierItem tray is Linux only; the app shows its own tray icon here";
+
+#[cfg(target_os = "linux")]
 fn worker(
     opts: TrayOptions,
     mut cmds: UnboundedReceiver<Cmd>,
@@ -426,6 +457,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     fn sni(muted: bool) -> (SniTray, Receiver<TrayEvent>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let t = SniTray {
@@ -438,6 +470,7 @@ mod tests {
         (t, rx)
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn menu_actions_become_events_and_mute_flips_the_checkmark() {
         use ksni::Tray as _;
@@ -461,6 +494,7 @@ mod tests {
         assert_eq!(t.menu().len(), 5);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn left_click_opens_the_window() {
         use ksni::Tray as _;
@@ -469,6 +503,7 @@ mod tests {
         assert_eq!(rx.try_recv(), Ok(TrayEvent::Open));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn overlay_only_exists_when_there_is_something_unread() {
         use ksni::Tray as _;

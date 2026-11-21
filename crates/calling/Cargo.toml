@@ -50,6 +50,11 @@ sonora = { version = "0.3.0", optional = true }
 # H.264 through Cisco's OpenH264, built from the bundled source with the C++ compiler (no system
 # openh264-devel). The camera will use the same encoder and track (`video::VideoRole`).
 openh264 = { version = "0.9.10", optional = true }
+ab_glyph = { version = "0.2.32", optional = true }
+
+# Linux only: Windows and macOS capture through GStreamer's own screen and camera sources
+# (`video::screencast`, `video::camera`) and have no remote control or control cursor yet.
+[target.'cfg(target_os = "linux")'.dependencies]
 # The ScreenCast portal (D-Bus, pure Rust; zbus 6 is already in the tree through notify-rust).
 # The PipeWire stream it hands over is read by a `gst-launch-1.0 pipewiresrc` child process, so
 # no pipewire-devel/gstreamer1-devel is needed at build time.
@@ -58,7 +63,6 @@ ashpd = { version = "0.14.1", default-features = false, features = ["tokio", "sc
 # wlr-layer-shell surface drawn in software. Both are already in the tree (smithay-clipboard and
 # sctk-adwaita); sctk without its xkbcommon feature needs only libwayland, no system xkbcommon.
 smithay-client-toolkit = { version = "0.20.0", default-features = false, features = ["calloop"], optional = true }
-ab_glyph = { version = "0.2.32", optional = true }
 
 [dev-dependencies]
 # Test certificates for the TURN-over-TLS shim (already in the tree through rtc).

@@ -73,6 +73,46 @@ that asks GitHub for the latest release once per start and never downloads anyth
 Start **kelma** from your launcher. On first start it shows a code: open the link, enter the code
 and sign in with your work account.
 
+### Windows and macOS
+
+Tagged releases (`v*`, `.github/workflows/release.yml`) build a Windows MSI and a portable zip,
+and a macOS `.dmg` for Apple Silicon and for Intel, next to a Linux tarball, AppImage, RPM and
+Flatpak. To build yourself: `cargo build --release -p kelma` with Rust and CMake (Windows: the
+MSVC build tools; macOS: the Xcode command line tools). The macOS app is ad-hoc signed, not
+notarized: open it with right click › Open the first time.
+
+## Platforms
+
+CI (`ci.yml`) runs clippy and the whole test suite on Linux, Windows (x86_64) and macOS (Apple
+Silicon and Intel) on every push. The runners have no screen, camera or microphone, so what
+needs one is only checked to build there. Daily use is on Linux (KDE Plasma, Wayland); nothing
+has been tried on real Windows or macOS hardware yet.
+
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| Chat, channels, calendar, files, search, settings | works | builds, tests pass | builds, tests pass |
+| Sign-in token storage | Secret Service (KWallet, GNOME Keyring) | Credential Manager | login Keychain |
+| Desktop notifications | works (actions, markup) | toasts with buttons | banners, no buttons |
+| Tray icon with unread badge | StatusNotifierItem + launcher badge | Slint tray icon, compile-only | Slint menu-bar icon, compile-only |
+| Start at login | XDG autostart | Run key | LaunchAgent |
+| Spell check | system Hunspell | bundled en_US and ar | bundled en_US and ar, `~/Library/Spelling` |
+| Voice messages: record, play | works | compile-only (cpal/WASAPI) | compile-only (cpal/CoreAudio) |
+| Voice messages: encode | ffmpeg | Media Foundation (tested in CI), else ffmpeg | AudioToolbox (tested in CI) |
+| Call audio | works | compile-only | compile-only |
+| Camera | Camera portal / V4L2 through GStreamer | compile-only: GStreamer `mfvideosrc`, needs the GStreamer runtime | compile-only: GStreamer `avfvideosrc`, needs the GStreamer runtime |
+| Screen sharing | ScreenCast portal through GStreamer | compile-only: main screen via `d3d11screencapturesrc`, no picker, needs GStreamer | compile-only: main screen via `avfvideosrc`, no picker, needs GStreamer |
+| Remote control of a share | RemoteDesktop portal | not yet (the call window says so) | not yet (the call window says so) |
+| Video clips | ffmpeg | needs ffmpeg installed | needs ffmpeg installed |
+| Web apps (web host) | Chromium-family browser | Edge or Chrome, compile-only | Chrome, Edge, Brave… in `/Applications`, compile-only |
+| Screen-locked presence (Away) | `org.freedesktop.ScreenSaver` | not detected | not detected |
+
+The AAC encoder: kelma is GPL-3.0-or-later and must not link fdk-aac, so Linux runs the system
+`ffmpeg`, while Windows and macOS use the encoder that comes with the system (Media Foundation is
+loaded at run time, so Windows N editions without the Media Feature Pack still start, and fall
+back to ffmpeg). GStreamer is not bundled: install the runtime from
+[gstreamer.freedesktop.org](https://gstreamer.freedesktop.org/download/) for camera and screen
+sharing on Windows and macOS (`KELMA_GST_LAUNCH` points at another `gst-launch-1.0`).
+
 ### Environment variables
 
 | Variable | Effect |

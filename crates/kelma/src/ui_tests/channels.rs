@@ -618,8 +618,16 @@ fn a_workflows_card_is_drawn_with_a_colored_band_facts_columns_and_buttons() {
 #[test]
 fn card_buttons_open_urls_in_the_browser_and_unsupported_actions_stay_disabled() {
     let (h, opened) = card_harness();
-    click(&first(&h.app, "Open run"));
-    assert_eq!(*opened.borrow(), vec!["https://example.com/run/1"]);
+    let open = first(&h.app, "Open run");
+    click(&open);
+    assert_eq!(
+        *opened.borrow(),
+        vec!["https://example.com/run/1"],
+        "button at {:?} size {:?}, window {:?}",
+        open.absolute_position(),
+        open.size(),
+        h.app.window().size()
+    );
     click(&first(&h.app, "Approve"));
     assert_eq!(opened.borrow().len(), 1, "Action.Submit does nothing here");
     let approve = first(&h.app, "Approve");

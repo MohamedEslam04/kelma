@@ -1,7 +1,9 @@
 //! Unity LauncherEntry badge: the `com.canonical.Unity.LauncherEntry.Update` signal, which the
 //! KDE task manager (and Dash to Dock, Plank, ...) show as a count on the launcher.
 
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
 use zbus::zvariant::Value;
 
 /// Desktop file id of the app, as a launcher URI. The task manager matches it to the entry.
@@ -28,6 +30,7 @@ pub fn launcher_update(app_uri: &str, count: u32) -> LauncherUpdate {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl LauncherUpdate {
     /// The signal arguments: `(s, a{sv})` with `count` (x) and `count-visible` (b).
     pub fn body(&self) -> (String, HashMap<&'static str, Value<'static>>) {
@@ -61,6 +64,7 @@ mod tests {
         assert_eq!((u.count, u.count_visible), (12, true));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn body_has_uri_and_typed_properties() {
         let (uri, props) = launcher_update(APP_URI, 7).body();

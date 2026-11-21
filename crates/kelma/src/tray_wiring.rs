@@ -1,7 +1,7 @@
 //! Tray, launcher badge and close-to-tray wiring (plans X3.3 and 9.2).
 //!
-//! The `tray` crate owns the StatusNotifierItem, the overlay badge and the launcher badge. This
-//! module starts it, turns its events into window actions, feeds it the unread total (debounced)
+//! The `tray` crate owns the StatusNotifierItem, the overlay badge and the launcher badge (Linux);
+//! on Windows and macOS `native_tray` shows Slint's tray icon instead. This module starts it, turns its events into window actions, feeds it the unread total (debounced)
 //! and decides what closing the window means. The decisions are pure helpers with unit tests.
 //!
 //! Mute is the one setting the tray exposes that the app has no setting for yet: it is kept here
@@ -10,10 +10,13 @@
 
 use crate::AppWindow;
 use slint::ComponentHandle;
+#[cfg(target_os = "linux")]
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
-use tray::{Tray, TrayEvent, TrayHandle, TrayOptions};
+use tray::TrayEvent;
+#[cfg(target_os = "linux")]
+use tray::{Tray, TrayHandle, TrayOptions};
 
 /// The unread count is sent to the tray this long after the last change.
 pub const UNREAD_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -98,6 +101,7 @@ impl<T: PartialEq + Copy> Coalescer<T> {
 // Runtime
 // ---------------------------------------------------------------------------------------------
 
+#[cfg(target_os = "linux")]
 static TRAY: OnceLock<TrayHandle> = OnceLock::new();
 static MUTED: AtomicBool = AtomicBool::new(false);
 /// Settings > General > "keep running on close" (on until Settings says otherwise).
@@ -127,7 +131,7 @@ pub fn notifications_muted() -> bool {
 /// launcher badge get the newest value once the changes settle.
 pub fn unread_changed(total: u32) {
     LAST_UNREAD.store(total, Ordering::Relaxed);
-    if TRAY.get().is_none() {
+    if !tray_running() {
         return;
     }
     let arm = UNREAD.with(|c| c.borrow_mut().push(total));
@@ -137,10 +141,46 @@ pub fn unread_changed(total: u32) {
 }
 
 fn send_unread() {
-    let next = UNREAD.with(|c| c.borrow_mut().take());
-    if let (Some(n), Some(tray)) = (next, TRAY.get()) {
+    if let Some(n) = UNREAD.with(|c| c.borrow_mut().take()) {
+        tray_set_unread(n);
+    }
+}
+
+// The tray itself: the `tray` crate's StatusNotifierItem on Linux, Slint's SystemTrayIcon
+// (`native_tray`) on Windows and macOS.
+
+#[cfg(target_os = "linux")]
+fn tray_running() -> bool {
+    TRAY.get().is_some()
+}
+
+#[cfg(target_os = "linux")]
+fn tray_set_unread(n: u32) {
+    if let Some(tray) = TRAY.get() {
         tray.set_unread(n);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn tray_set_focus(on: bool) {
+    if let Some(tray) = TRAY.get() {
+        tray.set_focus(on);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tray_running() -> bool {
+    crate::native_tray::running()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tray_set_unread(n: u32) {
+    crate::native_tray::set_unread(n);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tray_set_focus(on: bool) {
+    crate::native_tray::set_focus(on);
 }
 
 /// Focus mode on (for the duration chosen in Settings) or off, from the tray.
@@ -163,9 +203,7 @@ pub fn apply_focus(w: &AppWindow, until: Option<i64>) {
     let now = chrono::Utc::now().timestamp_millis();
     let active = quiet::focus_active(until, now);
     crate::ui::settings::show_focus(w, until.filter(|_| active));
-    if let Some(tray) = TRAY.get() {
-        tray.set_focus(active);
-    }
+    tray_set_focus(active);
     if let (true, Some(end)) = (active, until)
         && end != appearance::general::FOCUS_FOREVER
     {
@@ -214,34 +252,23 @@ fn on_tray_event(ev: TrayEvent, weak: &slint::Weak<AppWindow>) {
 /// Starts the tray, wires close-to-tray, shows the window (unless `--hidden` and the tray is up)
 /// and runs the event loop until the app quits. Replaces `window.run()`.
 pub fn run(window: &AppWindow, hidden_flag: bool) -> Result<(), slint::PlatformError> {
-    let tray = Tray::start(TrayOptions::default());
-    let registered = tray.tray_error().is_none();
-    if let Some(err) = tray.tray_error() {
-        tracing::warn!(%err, "tray icon not registered; closing the window quits");
-    }
-    let _ = TRAY.set(tray.clone());
-    // Anything that changed before the tray existed.
-    tray.set_unread(LAST_UNREAD.load(Ordering::Relaxed));
-
-    let rx = tray.events();
     let weak = window.as_weak();
-    let spawned = std::thread::Builder::new()
-        .name("kelma-tray-events".into())
-        .spawn({
-            let weak = weak.clone();
-            move || {
-                // Ends when the tray shuts down and drops its sender.
-                while let Ok(ev) = rx.recv() {
-                    let weak = weak.clone();
-                    if slint::invoke_from_event_loop(move || on_tray_event(ev, &weak)).is_err() {
-                        break;
-                    }
-                }
+    #[cfg(target_os = "linux")]
+    let (registered, tray) = start_sni(&weak);
+    #[cfg(not(target_os = "linux"))]
+    let registered = {
+        let weak = weak.clone();
+        match crate::native_tray::start(move |ev| on_tray_event(ev, &weak)) {
+            Ok(()) => {
+                crate::native_tray::set_unread(LAST_UNREAD.load(Ordering::Relaxed));
+                true
             }
-        });
-    if let Err(err) = spawned {
-        tracing::warn!(%err, "tray events are not handled");
-    }
+            Err(err) => {
+                tracing::warn!(%err, "tray icon not shown; closing the window quits");
+                false
+            }
+        }
+    };
 
     window.window().on_close_requested({
         let weak = weak.clone();
@@ -267,8 +294,45 @@ pub fn run(window: &AppWindow, hidden_flag: bool) -> Result<(), slint::PlatformE
     // `run_event_loop_until_quit` keeps going with no window shown, which close-to-tray needs.
     let result = slint::run_event_loop_until_quit();
     let _ = window.hide();
+    #[cfg(target_os = "linux")]
     tray.shutdown();
+    #[cfg(not(target_os = "linux"))]
+    crate::native_tray::shutdown();
     result
+}
+
+/// Starts the StatusNotifierItem and a thread that hands its events to the UI thread. Returns
+/// whether the icon registered, and the handle.
+#[cfg(target_os = "linux")]
+fn start_sni(weak: &slint::Weak<AppWindow>) -> (bool, TrayHandle) {
+    let tray = Tray::start(TrayOptions::default());
+    let registered = tray.tray_error().is_none();
+    if let Some(err) = tray.tray_error() {
+        tracing::warn!(%err, "tray icon not registered; closing the window quits");
+    }
+    let _ = TRAY.set(tray.clone());
+    // Anything that changed before the tray existed.
+    tray.set_unread(LAST_UNREAD.load(Ordering::Relaxed));
+
+    let rx = tray.events();
+    let spawned = std::thread::Builder::new()
+        .name("kelma-tray-events".into())
+        .spawn({
+            let weak = weak.clone();
+            move || {
+                // Ends when the tray shuts down and drops its sender.
+                while let Ok(ev) = rx.recv() {
+                    let weak = weak.clone();
+                    if slint::invoke_from_event_loop(move || on_tray_event(ev, &weak)).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+    if let Err(err) = spawned {
+        tracing::warn!(%err, "tray events are not handled");
+    }
+    (registered, tray)
 }
 
 #[cfg(test)]

@@ -63,6 +63,18 @@ type Log = Rc<RefCell<Vec<String>>>;
 
 /// The testing platform is per thread and can be set once; several windows may share it.
 fn init_platform() {
+    // Windows and macOS measure text with DejaVu Sans, like the Linux runner, so layout checks
+    // see the same widths everywhere (`ui_tests/fonts/README.md`). Before any text is laid out:
+    // Slint reads the variable once, when it builds its font collection.
+    #[cfg(not(target_os = "linux"))]
+    {
+        static FONTS: std::sync::Once = std::sync::Once::new();
+        FONTS.call_once(|| {
+            let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui_tests/fonts");
+            // SAFETY: once, before any UI test creates a window; nothing else here reads it.
+            unsafe { std::env::set_var("SLINT_FONT_PATH", dir) };
+        });
+    }
     thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if !DONE.replace(true) {
         testing::init_no_event_loop();

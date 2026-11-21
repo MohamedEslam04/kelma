@@ -15,6 +15,54 @@ use crate::{Error, Result};
 /// Frames buffered between the capture and its consumer; older ones are dropped, not queued.
 const FRAME_QUEUE: usize = 2;
 
+/// Overrides where `gst-launch-1.0` is found.
+pub const GST_LAUNCH_ENV: &str = "KELMA_GST_LAUNCH";
+
+/// The `gst-launch-1.0` to run: `$KELMA_GST_LAUNCH`, else where the official GStreamer installers
+/// put it when that is not on `PATH` (an app started from Finder or the Start menu does not see a
+/// shell's `PATH`), else the bare name, found on `PATH`.
+pub(crate) fn gst_launch() -> std::path::PathBuf {
+    if let Some(p) = std::env::var_os(GST_LAUNCH_ENV).filter(|p| !p.is_empty()) {
+        return p.into();
+    }
+    installed_gst_launch()
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| "gst-launch-1.0".into())
+}
+
+#[cfg(windows)]
+fn installed_gst_launch() -> Option<std::path::PathBuf> {
+    // The MSVC installer sets this to its root (for example `C:\gstreamer\1.0\msvc_x86_64\`).
+    [
+        "GSTREAMER_1_0_ROOT_MSVC_X86_64",
+        "GSTREAMER_1_0_ROOT_X86_64",
+    ]
+    .into_iter()
+    .find_map(std::env::var_os)
+    .map(|root| {
+        std::path::Path::new(&root)
+            .join("bin")
+            .join("gst-launch-1.0.exe")
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn installed_gst_launch() -> Option<std::path::PathBuf> {
+    [
+        "/Library/Frameworks/GStreamer.framework/Versions/1.0/bin/gst-launch-1.0",
+        "/opt/homebrew/bin/gst-launch-1.0",
+        "/usr/local/bin/gst-launch-1.0",
+    ]
+    .into_iter()
+    .map(std::path::PathBuf::from)
+    .find(|p| p.is_file())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn installed_gst_launch() -> Option<std::path::PathBuf> {
+    None
+}
+
 /// A running `gst-launch-1.0` and the frames it writes.
 pub(crate) struct GstFrames {
     pub frames: mpsc::Receiver<I420Frame>,
@@ -30,14 +78,27 @@ pub(crate) fn spawn(
     size: (u32, u32),
     what: &'static str,
 ) -> Result<GstFrames> {
-    let mut child = Command::new("gst-launch-1.0")
+    let mut command = Command::new(gst_launch());
+    // No console window flashing up next to the app on Windows.
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let mut child = command
         .args(args)
         .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| Error::Media(format!("gst-launch-1.0 (GStreamer) not started: {e}")))?;
+        .map_err(|e| {
+            Error::Media(format!(
+                "gst-launch-1.0 (GStreamer) not started: {e}. {}",
+                if cfg!(target_os = "linux") {
+                    "Install GStreamer and its PipeWire plugin."
+                } else {
+                    "Install the GStreamer runtime from gstreamer.freedesktop.org."
+                }
+            ))
+        })?;
     let mut out = child
         .stdout
         .take()

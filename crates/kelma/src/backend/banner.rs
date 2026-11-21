@@ -8,7 +8,7 @@
 
 use super::Engine;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// Summary and body of a message notification.
 #[derive(Debug, PartialEq, Eq)]
@@ -58,8 +58,9 @@ struct Caps {
     actions: bool,
 }
 
+#[cfg(target_os = "linux")]
 fn caps() -> &'static Caps {
-    static CAPS: OnceLock<Caps> = OnceLock::new();
+    static CAPS: std::sync::OnceLock<Caps> = std::sync::OnceLock::new();
     CAPS.get_or_init(|| {
         let c = notify_rust::get_capabilities().unwrap_or_default();
         Caps {
@@ -67,6 +68,16 @@ fn caps() -> &'static Caps {
             actions: c.iter().any(|x| x == "actions"),
         }
     })
+}
+
+/// Windows toasts take buttons but no markup; macOS notifications neither (as notify-rust shows
+/// them).
+#[cfg(not(target_os = "linux"))]
+fn caps() -> &'static Caps {
+    &Caps {
+        markup: false,
+        actions: cfg!(windows),
+    }
 }
 
 /// The sender's photo as a file the notification server can read (written once per person).
@@ -110,8 +121,9 @@ impl Engine {
             n.appname("kelma")
                 .summary(&b.summary)
                 .body(&b.body)
-                .icon(tray::APP_ID)
-                .hint(notify_rust::Hint::DesktopEntry(tray::APP_ID.into()))
+                .icon(tray::APP_ID);
+            #[cfg(target_os = "linux")]
+            n.hint(notify_rust::Hint::DesktopEntry(tray::APP_ID.into()))
                 .hint(notify_rust::Hint::Category("im.received".into()));
             if prefs.banner_photo
                 && let Some(path) = p

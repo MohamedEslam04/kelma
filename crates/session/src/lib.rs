@@ -538,14 +538,18 @@ pub trait TokenStore: Send + Sync {
     fn delete(&self, key: &str) -> Result<()>;
 }
 
-/// The Secret Service keyring (KWallet or GNOME Keyring).
+/// The system keyring: the Secret Service (KWallet or GNOME Keyring) on Linux, the login Keychain
+/// on macOS and the Credential Manager on Windows.
 pub struct SystemKeyring;
+
+/// One keyring entry, with no size handling.
+struct KeyringEntries;
 
 fn entry(key: &str) -> Result<keyring::Entry> {
     Ok(keyring::Entry::new(SERVICE, key)?)
 }
 
-impl TokenStore for SystemKeyring {
+impl TokenStore for KeyringEntries {
     fn get(&self, key: &str) -> Result<Option<String>> {
         match entry(key)?.get_password() {
             Ok(t) => Ok(Some(t)),
@@ -562,6 +566,105 @@ impl TokenStore for SystemKeyring {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+}
+
+/// The longest password one entry holds. The Credential Manager keeps at most 2560 bytes of
+/// UTF-16 (1280 characters), shorter than some refresh tokens; the other keyrings have no
+/// practical limit.
+#[cfg(windows)]
+const ENTRY_MAX: usize = 1200;
+#[cfg(not(windows))]
+const ENTRY_MAX: usize = usize::MAX;
+
+impl TokenStore for SystemKeyring {
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        Chunked::new(&KeyringEntries, ENTRY_MAX).get(key)
+    }
+    fn set(&self, key: &str, token: &str) -> Result<()> {
+        Chunked::new(&KeyringEntries, ENTRY_MAX).set(key, token)
+    }
+    fn delete(&self, key: &str) -> Result<()> {
+        Chunked::new(&KeyringEntries, ENTRY_MAX).delete(key)
+    }
+}
+
+/// Marks an entry whose token is split over `<key>#0`..`<key>#<n-1>`: the entry holds
+/// `kelma-chunks:<n>`. Tokens are base64url-like and never start with it.
+const CHUNKS_PREFIX: &str = "kelma-chunks:";
+
+/// A token store that splits values longer than `max` characters over several entries of
+/// `inner`. A short value is stored as is, so entries written before chunking existed still read.
+struct Chunked<'a, S: TokenStore + ?Sized> {
+    inner: &'a S,
+    max: usize,
+}
+
+impl<'a, S: TokenStore + ?Sized> Chunked<'a, S> {
+    fn new(inner: &'a S, max: usize) -> Self {
+        Chunked { inner, max }
+    }
+
+    fn part_key(key: &str, i: usize) -> String {
+        format!("{key}#{i}")
+    }
+
+    /// How many parts `key` is split over (0 when it is stored whole or not at all).
+    fn parts(&self, key: &str) -> Result<usize> {
+        Ok(self
+            .inner
+            .get(key)?
+            .and_then(|v| v.strip_prefix(CHUNKS_PREFIX)?.parse().ok())
+            .unwrap_or(0))
+    }
+
+    fn delete_parts(&self, key: &str, from: usize, to: usize) -> Result<()> {
+        (from..to).try_for_each(|i| self.inner.delete(&Self::part_key(key, i)))
+    }
+}
+
+impl<S: TokenStore + ?Sized> TokenStore for Chunked<'_, S> {
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        let Some(head) = self.inner.get(key)? else {
+            return Ok(None);
+        };
+        let Some(n) = head
+            .strip_prefix(CHUNKS_PREFIX)
+            .and_then(|n| n.parse::<usize>().ok())
+        else {
+            return Ok(Some(head));
+        };
+        let mut token = String::new();
+        for i in 0..n {
+            match self.inner.get(&Self::part_key(key, i))? {
+                Some(part) => token.push_str(&part),
+                // A part went missing: the token is unusable, as if there were none.
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(token))
+    }
+
+    fn set(&self, key: &str, token: &str) -> Result<()> {
+        let old = self.parts(key)?;
+        if token.chars().count() <= self.max {
+            self.inner.set(key, token)?;
+            return self.delete_parts(key, 0, old);
+        }
+        let chars: Vec<char> = token.chars().collect();
+        let parts: Vec<String> = chars.chunks(self.max).map(|c| c.iter().collect()).collect();
+        for (i, part) in parts.iter().enumerate() {
+            self.inner.set(&Self::part_key(key, i), part)?;
+        }
+        self.inner
+            .set(key, &format!("{CHUNKS_PREFIX}{}", parts.len()))?;
+        self.delete_parts(key, parts.len(), old)
+    }
+
+    fn delete(&self, key: &str) -> Result<()> {
+        let n = self.parts(key)?;
+        self.inner.delete(key)?;
+        self.delete_parts(key, 0, n)
     }
 }
 
@@ -718,6 +821,61 @@ pub async fn persist(c: &Config, client: &teams_proto::Client) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- tokens longer than one keyring entry holds ----
+
+    #[test]
+    fn a_short_token_is_stored_whole() {
+        let mem = MemoryStore::default();
+        let store = Chunked::new(&mem, 8);
+        store.set("me", "abc").unwrap();
+        assert_eq!(mem.keys(), ["me"]);
+        assert_eq!(store.get("me").unwrap().as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn a_long_token_is_split_and_read_back() {
+        let mem = MemoryStore::default();
+        let store = Chunked::new(&mem, 4);
+        store.set("me", "0123456789").unwrap();
+        assert_eq!(mem.keys(), ["me", "me#0", "me#1", "me#2"]);
+        assert_eq!(mem.get("me").unwrap().as_deref(), Some("kelma-chunks:3"));
+        assert_eq!(store.get("me").unwrap().as_deref(), Some("0123456789"));
+    }
+
+    #[test]
+    fn rewriting_a_token_drops_the_parts_it_no_longer_needs() {
+        let mem = MemoryStore::default();
+        let store = Chunked::new(&mem, 4);
+        store.set("me", "0123456789").unwrap();
+        store.set("me", "01234").unwrap();
+        assert_eq!(mem.keys(), ["me", "me#0", "me#1"]);
+        assert_eq!(store.get("me").unwrap().as_deref(), Some("01234"));
+        store.set("me", "ab").unwrap();
+        assert_eq!(mem.keys(), ["me"]);
+        store.delete("me").unwrap();
+        assert!(mem.keys().is_empty());
+        assert_eq!(store.get("me").unwrap(), None);
+    }
+
+    #[test]
+    fn deleting_a_split_token_removes_every_part() {
+        let mem = MemoryStore::default();
+        let store = Chunked::new(&mem, 3);
+        store.set("a@t", "abcdefg").unwrap();
+        store.set("b", "xyz").unwrap();
+        store.delete("a@t").unwrap();
+        assert_eq!(mem.keys(), ["b"]);
+    }
+
+    #[test]
+    fn a_missing_part_reads_as_no_token() {
+        let mem = MemoryStore::default();
+        let store = Chunked::new(&mem, 4);
+        store.set("me", "0123456789").unwrap();
+        mem.delete("me#1").unwrap();
+        assert_eq!(store.get("me").unwrap(), None);
+    }
 
     // ---- accounts and orgs (X2.1) ----
 

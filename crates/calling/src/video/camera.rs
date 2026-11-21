@@ -12,16 +12,22 @@
 //! Runtime needs GStreamer's PipeWire plugin (`pipewire-gstreamer` on Fedora,
 //! `gstreamer1.0-pipewire` on Debian/Ubuntu) for the portal, `gstreamer1-plugins-good`
 //! (`gstreamer1.0-plugins-good`) for V4L2 and a JPEG decoder.
+//!
+//! Windows and macOS read the system's default camera with GStreamer's own source (`mfvideosrc`,
+//! `avfvideosrc`); runtime needs the GStreamer runtime installed (gstreamer.freedesktop.org).
 
 use std::process::Stdio;
 
+#[cfg(target_os = "linux")]
 use ashpd::desktop::camera::Camera;
 use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::I420Frame;
-use crate::{Error, Result};
+#[cfg(target_os = "linux")]
+use crate::Error;
+use crate::Result;
 
 /// Where the frames come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +36,8 @@ pub enum CameraSource {
     Portal,
     /// A V4L2 device such as `/dev/video0`.
     V4l2(String),
+    /// The system's default camera through its own GStreamer source (Windows, macOS).
+    System,
 }
 
 /// How the frames come out.
@@ -81,6 +89,7 @@ impl Drop for CameraCapture {
 }
 
 /// What the portal answered.
+#[cfg(target_os = "linux")]
 enum Portal {
     /// A PipeWire remote with the cameras.
     Remote(std::os::fd::OwnedFd),
@@ -88,6 +97,7 @@ enum Portal {
     NoCamera(String),
 }
 
+#[cfg(target_os = "linux")]
 async fn portal() -> Result<Portal> {
     super::portal::ensure_registered().await;
     let camera = match Camera::new().await {
@@ -117,6 +127,12 @@ async fn portal() -> Result<Portal> {
 /// Starts the camera: through the portal, or `v4l2_device` (default `/dev/video0`) when the
 /// portal has none.
 pub async fn open(v4l2_device: Option<&str>, settings: CameraSettings) -> Result<CameraCapture> {
+    #[cfg(not(target_os = "linux"))]
+    let (source, stdin) = {
+        let _ = v4l2_device;
+        (CameraSource::System, Stdio::null())
+    };
+    #[cfg(target_os = "linux")]
     let (source, stdin) = match portal().await? {
         Portal::Remote(fd) => (CameraSource::Portal, Stdio::from(fd)),
         Portal::NoCamera(why) => {
@@ -161,6 +177,16 @@ pub fn gstreamer_args(source: &CameraSource, size: (u32, u32), fps: u32) -> Vec<
         CameraSource::V4l2(device) => {
             args.extend(["v4l2src".into(), format!("device={device}")]);
         }
+        CameraSource::System => args.push(
+            if cfg!(windows) {
+                "mfvideosrc"
+            } else if cfg!(target_os = "macos") {
+                "avfvideosrc"
+            } else {
+                "autovideosrc"
+            }
+            .into(),
+        ),
     }
     args.extend(
         [
@@ -206,6 +232,20 @@ mod tests {
     fn the_v4l2_pipeline_names_the_device_and_decodes_mjpeg() {
         let args = gstreamer_args(&CameraSource::V4l2("/dev/video2".into()), (320, 180), 10);
         assert_eq!(args[1..3], ["v4l2src", "device=/dev/video2"]);
+        assert!(args.contains(&"decodebin".to_owned()));
+    }
+
+    #[test]
+    fn the_system_camera_uses_the_platform_source() {
+        let args = gstreamer_args(&CameraSource::System, (640, 360), 15);
+        let source = if cfg!(windows) {
+            "mfvideosrc"
+        } else if cfg!(target_os = "macos") {
+            "avfvideosrc"
+        } else {
+            "autovideosrc"
+        };
+        assert_eq!(args[..2], ["-q", source]);
         assert!(args.contains(&"decodebin".to_owned()));
     }
 }

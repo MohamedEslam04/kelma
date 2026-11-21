@@ -114,14 +114,16 @@ pub async fn open(url: &str, opts: WebOptions) -> Result<WebWindow> {
     }
     // Its own process group: launchers such as /usr/bin/brave-browser are scripts that run the
     // browser as a child, so stopping only the direct child would leave the browser running.
-    let mut child = tokio::process::Command::new(&exe)
+    let mut command = tokio::process::Command::new(&exe);
+    command
         .args(browser::launch_args(&opts.profile_dir, opts.size))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .process_group(0)
-        .kill_on_drop(true)
-        .spawn()?;
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn()?;
     let pgid = child.id().ok_or(Error::Closed)?;
     let connected = tokio::time::timeout(
         opts.startup_timeout,
@@ -132,7 +134,7 @@ pub async fn open(url: &str, opts: WebOptions) -> Result<WebWindow> {
     let (cdp, events, target, session) = match connected {
         Ok(c) => c,
         Err(e) => {
-            browser::signal_group(pgid, libc::SIGKILL);
+            browser::signal_group(pgid, browser::Stop::Kill);
             return Err(e);
         }
     };
@@ -362,7 +364,7 @@ async fn watch_child(
         .await
         .is_err()
     {
-        browser::signal_group(inner.pgid, libc::SIGKILL);
+        browser::signal_group(inner.pgid, browser::Stop::Kill);
         let _ = child.wait().await;
     }
     inner.exited.store(true, Ordering::SeqCst);
@@ -415,7 +417,7 @@ async fn run_events(inner: Arc<Inner>, mut events: mpsc::UnboundedReceiver<Event
 fn stop(inner: &Inner) {
     if let Some(kill) = inner.kill.lock().unwrap().take() {
         if !inner.exited.load(Ordering::SeqCst) {
-            browser::signal_group(inner.pgid, libc::SIGTERM);
+            browser::signal_group(inner.pgid, browser::Stop::Term);
         }
         let _ = kill.send(());
     }

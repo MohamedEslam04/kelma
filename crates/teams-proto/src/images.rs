@@ -894,7 +894,7 @@ pub fn save_image(
     let ends_with_sep = target
         .as_os_str()
         .to_string_lossy()
-        .ends_with(std::path::MAIN_SEPARATOR);
+        .ends_with(std::path::is_separator);
     let (dir, file) = if target.is_dir() || ends_with_sep {
         (target.to_path_buf(), safe_filename(name))
     } else {

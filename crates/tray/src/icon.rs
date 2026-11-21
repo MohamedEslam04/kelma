@@ -10,6 +10,16 @@ pub struct Pixmap {
 }
 
 impl Pixmap {
+    /// The pixels as `[R, G, B, A]` bytes (what Slint images and most toolkits take).
+    pub fn to_rgba(&self) -> Vec<u8> {
+        self.argb
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|&[a, r, g, b]| [r, g, b, a])
+            .collect()
+    }
+
     /// `[A, R, G, B]` of the pixel at `(x, y)`.
     pub fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * self.width + x) * 4) as usize;
@@ -166,9 +176,69 @@ pub fn badge_overlay(count: u32, size: u32) -> Option<Pixmap> {
     Some(p)
 }
 
+/// The app icon with the unread badge drawn over its top-right corner, as one picture: for trays
+/// that take a single icon (Windows, macOS). Just the icon for 0.
+pub fn badged_icon(count: u32, size: u32) -> Pixmap {
+    let mut icon = app_icon(size);
+    let b = size * 5 / 8;
+    let Some(badge) = badge_overlay(count, b) else {
+        return icon;
+    };
+    let x0 = size - b;
+    for y in 0..b {
+        for x in 0..b {
+            let [sa, sr, sg, sb] = badge.pixel(x, y);
+            if sa == 0 {
+                continue;
+            }
+            let at = (((y * size) + x0 + x) * 4) as usize;
+            let dst = &mut icon.argb[at..at + 4];
+            // Straight-alpha "over".
+            let (sa, da) = (f32::from(sa) / 255.0, f32::from(dst[0]) / 255.0);
+            let oa = sa + da * (1.0 - sa);
+            let mix = |s: u8, d: u8| {
+                ((f32::from(s) * sa + f32::from(d) * da * (1.0 - sa)) / oa).round() as u8
+            };
+            let out = [
+                (oa * 255.0).round() as u8,
+                mix(sr, dst[1]),
+                mix(sg, dst[2]),
+                mix(sb, dst[3]),
+            ];
+            dst.copy_from_slice(&out);
+        }
+    }
+    icon
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rgba_reorders_each_pixel() {
+        let p = Pixmap {
+            width: 1,
+            height: 1,
+            argb: vec![255, 1, 2, 3],
+        };
+        assert_eq!(p.to_rgba(), [1, 2, 3, 255]);
+    }
+
+    #[test]
+    fn the_badged_icon_is_the_icon_with_a_red_corner() {
+        assert_eq!(badged_icon(0, 32), app_icon(32));
+        let p = badged_icon(3, 32);
+        assert_eq!(p.argb.len(), 32 * 32 * 4);
+        let corner = p.pixel(22, 1);
+        assert_eq!(corner[0], 255);
+        assert!(
+            corner[1] > corner[2] && corner[1] > corner[3],
+            "red: {corner:?}"
+        );
+        // The bottom-left of the icon is untouched.
+        assert_eq!(p.pixel(4, 28), app_icon(32).pixel(4, 28));
+    }
 
     const WHITE: [u8; 4] = [255, 255, 255, 255];
 

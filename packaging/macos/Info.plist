@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The app bundle's Info.plist. The release workflow fills in @APP_NAME@, @APP_ID@, @EXECUTABLE@
+     and @VERSION@ from its env block. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>@APP_NAME@</string>
+    <key>CFBundleExecutable</key>
+    <string>@EXECUTABLE@</string>
+    <key>CFBundleIconFile</key>
+    <string>app</string>
+    <key>CFBundleIdentifier</key>
+    <string>@APP_ID@</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>@APP_NAME@</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.social-networking</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>@APP_NAME@ uses the microphone for calls and voice messages.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>@APP_NAME@ uses the camera for video calls and video clips.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>GPL-3.0-or-later</string>
+</dict>
+</plist>

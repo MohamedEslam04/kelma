@@ -835,6 +835,8 @@ fn migrates_from_previous_schema_version() {
     s.enqueue(&item("a", "c", 1)).unwrap();
     assert!(s.draft("c").unwrap().is_some());
     assert_eq!(s.outbox_due().unwrap().len(), 1);
+    // Windows cannot remove a database that is still open.
+    drop(s);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -922,6 +924,8 @@ fn v2_database_gains_the_saved_table() {
     let s = Store::open(&path).unwrap();
     s.save_message(&saved("c", "1", 1)).unwrap();
     assert_eq!(s.saved_messages().unwrap().len(), 1);
+    // Windows cannot remove a database that is still open.
+    drop(s);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -980,6 +984,8 @@ fn v4_database_gains_the_importance_column_with_the_standard_default() {
     let due = s.outbox_due().unwrap();
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].importance, "");
+    // Windows cannot remove a database that is still open.
+    drop(s);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1044,6 +1050,8 @@ fn v5_database_gains_the_cards_column_and_keeps_its_queued_messages() {
     card.cards = Some("[]".into());
     s.enqueue(&card).unwrap();
     assert_eq!(s.outbox_due().unwrap().len(), 2);
+    // Windows cannot remove a database that is still open.
+    drop(s);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
