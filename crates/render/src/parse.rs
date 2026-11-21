@@ -1048,4 +1048,17 @@ mod tests {
             "> the original message text\nmy reply\nمرحبا team\n- x"
         );
     }
+    #[test]
+    fn adjacent_mentions_keep_the_space_between_them_in_plain_text() {
+        for gap in ["&nbsp;", " ", "\n", "\u{a0}", " \n "] {
+            let html = format!(
+                r#"<p><span itemtype="http://schema.skype.com/Mention" itemid="0">Ana Test</span>{gap}<span itemtype="http://schema.skype.com/Mention" itemid="1">Bo Test</span> hi</p>"#
+            );
+            assert_eq!(
+                plain_text(&parse_teams_html(&html)),
+                "Ana Test Bo Test hi",
+                "gap {gap:?}"
+            );
+        }
+    }
 }

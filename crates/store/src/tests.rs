@@ -1158,6 +1158,12 @@ fn plain_text_strips_markup_and_decodes_entities() {
         "one two &AB"
     );
     assert_eq!(fts::plain_text("<b>wo</b>rd <i>x</i>"), "word x");
+    for gap in ["&nbsp;", " ", "\n"] {
+        let html = format!(
+            r#"<p><span itemtype="http://schema.skype.com/Mention" itemid="0">Ana Test</span>{gap}<span itemtype="http://schema.skype.com/Mention" itemid="1">Bo Test</span> hi</p>"#
+        );
+        assert_eq!(fts::plain_text(&html), "Ana Test Bo Test hi", "gap {gap:?}");
+    }
     assert_eq!(
         fts::plain_text("<style>p { color: red }</style>hi <SCRIPT>x()</SCRIPT>there"),
         "hi there"

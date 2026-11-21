@@ -133,24 +133,36 @@ fn s(v: &Value, k: &str) -> String {
         .to_string()
 }
 
-/// Strips highlight markup (`<c0>…</c0>`) and decodes the entities the service escapes.
+/// Strips the markup of a hit's summary and decodes the entities the service escapes.
+/// Highlight tags (`<c0>…</c0>`) vanish without a trace; any other tag (a mention's `<span>` or
+/// `<at>`, a `<p>`) is a word boundary, so two adjacent mentions stay two words. Whitespace runs
+/// collapse to one space.
 pub fn plain_snippet(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut in_tag = false;
-    for c in text.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' if in_tag => in_tag = false,
-            c if !in_tag => out.push(c),
-            _ => {}
+    let mut rest = text;
+    while let Some(i) = rest.find('<') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i + 1..];
+        let end = rest.find('>').unwrap_or(rest.len());
+        let name = rest[..end].trim_start_matches('/');
+        let highlight = name
+            .strip_prefix('c')
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        if !highlight {
+            out.push(' ');
         }
+        rest = rest.get(end + 1..).unwrap_or("");
     }
-    out.replace("&amp;", "&")
+    out.push_str(rest);
+    out.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
-        .replace('\u{a0}', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Parses the answer to a `Message` query. Rows without a conversation are dropped.
@@ -284,6 +296,21 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snippets_keep_the_space_between_adjacent_mentions() {
+        for gap in ["&nbsp;", " ", "\n", "\u{a0}"] {
+            let html = format!(
+                r#"<p><span itemtype="http://schema.skype.com/Mention" itemid="0">Ana Test</span>{gap}<span itemtype="http://schema.skype.com/Mention" itemid="1">Bo Test</span> <c0>hi</c0></p>"#
+            );
+            assert_eq!(plain_snippet(&html), "Ana Test Bo Test hi", "gap {gap:?}");
+        }
+        // Mentions with no whitespace at all in the markup are still two words.
+        assert_eq!(
+            plain_snippet(r#"<at id="0">Ana Test</at><at id="1">Bo Test</at> hi"#),
+            "Ana Test Bo Test hi"
+        );
+    }
 
     fn result(conv_ref: &str, parent: &str, summary: &str) -> Value {
         json!({
