@@ -576,7 +576,9 @@ pub fn recording_item_url(
     item_id: Option<&str>,
     web_url: Option<&str>,
 ) -> Option<String> {
-    let given = |s: Option<&str>| s.map(str::trim).filter(|s| !s.is_empty());
+    fn given(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
     match (given(drive_id), given(item_id)) {
         (Some(d), Some(i)) => Some(graph_url(&["drives", d, "items", i], RECORDING_SELECT)),
         _ => given(web_url)
