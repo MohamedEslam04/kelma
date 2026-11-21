@@ -102,6 +102,17 @@ pub struct VoiceData {
     pub failed: bool,
 }
 
+/// A video clip of a chat row, drawn as a card with its first picture and a play button.
+#[derive(Clone)]
+pub struct VideoClipData {
+    /// The media object id (`local-…` for a clip still being sent).
+    pub key: String,
+    /// The AMS `views/video` URL.
+    pub url: String,
+    pub duration_ms: i32,
+    pub thumb: Option<Pixels>,
+}
+
 #[derive(Clone)]
 pub struct ReactData {
     pub key: String,
@@ -174,6 +185,7 @@ pub struct MsgData {
     pub urls: Vec<String>,
     pub loops: Vec<LoopData>,
     pub voices: Vec<VoiceData>,
+    pub videos: Vec<VideoClipData>,
 }
 
 /// A person, or a team, channel or "everyone" entry, in a people list.

@@ -111,6 +111,8 @@ pub(super) fn row_from_outbox(item: &OutboxItem, me: &str, my_name: &str) -> Mes
         OutboxKind::File => render::text_to_teams_html(&format!("📎 {}", payload_name(item))),
         // The voice card, pointing at the local recording: the pending row already plays.
         OutboxKind::Voice => item.html.clone(),
+        // The clip tag, pointing at the local recording: the pending row already plays it.
+        OutboxKind::VideoClip => item.html.clone(),
         // The typed text, then a line for each card (the real card is drawn from the echo).
         OutboxKind::Card => {
             let mut html = item.html.clone();
@@ -410,6 +412,32 @@ impl Engine {
                     .send_voice_as(target, &id, duration_ms, &self.my_name, cmid)
                     .await
             }
+            // A video clip: the MP4 goes to the media service, then a message with its video
+            // tag. UNVERIFIED (docs/protocol.md, Video clips): a refusal leaves the row failed,
+            // with Retry and Delete, and says so.
+            OutboxKind::VideoClip => {
+                let (name, data) = read_payload(item)?;
+                let clip = teams_proto::video_clip::split_video(&item.html)
+                    .and_then(|(_, clips)| clips.into_iter().next());
+                let (duration_ms, size) =
+                    clip.map_or((0, (0, 0)), |c| (c.duration_ms, (c.width, c.height)));
+                let sent = async {
+                    let id = self.client.upload_video_clip(chat, &name, data).await?;
+                    self.client
+                        .send_video_clip_as(target, &id, size, duration_ms, &self.my_name, cmid)
+                        .await
+                }
+                .await;
+                if let Err(err) = &sent
+                    && matches!(Outcome::of(err), Outcome::Rejected(_))
+                {
+                    self.ui.info(
+                        "The video clip couldn't be sent: Teams didn't accept it. Sending clips isn't confirmed to work yet."
+                            .into(),
+                    );
+                }
+                sent
+            }
         }
     }
 
@@ -432,6 +460,7 @@ impl Engine {
                 OutboxKind::Card if plain.trim().is_empty() => "You: 🗂 Card".to_owned(),
                 OutboxKind::Card => format!("You: {plain}"),
                 OutboxKind::Voice => "You: 🎤 Voice message".to_owned(),
+                OutboxKind::VideoClip => "You: 🎬 Video clip".to_owned(),
                 _ => format!("You: 📎 {}", payload_name(item)),
             };
             let _ = st.touch_conversation(&chat, now_ms(), &preview, false);

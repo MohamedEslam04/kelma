@@ -68,6 +68,10 @@ export struct LinkCard { url: string, title: string, description: string, domain
 // `peaks` is its waveform (placeholder bars until the recording has been fetched).
 export struct VoiceItem { key: string, url: string, duration-ms: int, peaks: [float], unplayed: bool, failed: bool }
 
+// A video clip in a chat row (ui/video_clip.slint): `url` is its AMS video view, `thumb` its first
+// picture when known.
+export struct VideoClipItem { key: string, url: string, duration-ms: int, thumb: image, has-thumb: bool }
+
 export struct Msg {
     id: string,
     sender: string,
@@ -115,6 +119,7 @@ export struct Msg {
     urls: [string],        // the links in the text (menu: Open link, Copy link)
     loops: [LoopCard],     // Loop components, drawn as cards
     voices: [VoiceItem],   // voice messages, drawn as players
+    videos: [VideoClipItem], // video clips, drawn as cards
 }
 
 // A person (or, for the @mention picker, a team, channel or "Everyone" entry) in a people list.

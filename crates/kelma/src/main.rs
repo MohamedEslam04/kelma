@@ -10,6 +10,7 @@ mod external;
 mod find_data;
 mod language;
 mod lists_data;
+mod loop_compose;
 mod markdown;
 mod media_data;
 mod mention;
@@ -411,6 +412,8 @@ fn main() -> anyhow::Result<()> {
     ui::calls_page::install(&window, tx.clone());
     ui::install_composer_apps(&window, tx.clone());
     ui::install_voice(&window, tx.clone());
+    ui::install_clip(&window, tx.clone());
+    loop_compose::wire(&window, tx.clone());
     {
         let tx = tx.clone();
         window.global::<FindStore>().on_command(move |name, arg| {

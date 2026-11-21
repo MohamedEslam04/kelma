@@ -113,7 +113,7 @@ impl Client {
 
     /// Creates an AMS object of `kind` that `conversation_id` may read, writes `data` to its
     /// `content` slot and returns its id.
-    async fn upload_object(
+    pub(crate) async fn upload_object(
         &self,
         conversation_id: &str,
         filename: &str,

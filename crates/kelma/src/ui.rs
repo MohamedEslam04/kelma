@@ -5,6 +5,7 @@ pub use appstore::wire as install_apps;
 #[cfg(test)]
 pub use cal::read_form as read_form_for_test;
 pub use cal::wire as install_calendar;
+pub use clip::{ClipView, wire as install_clip};
 pub use composer_apps::wire as install_composer_apps;
 pub use voice::{PlayerView, RecorderView, wire as install_voice};
 
@@ -14,7 +15,7 @@ use crate::data::{
 use crate::reactions;
 use crate::{
     AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard,
-    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow, VoiceItem,
+    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow, VideoClipItem, VoiceItem,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -30,6 +31,7 @@ pub(crate) mod call_direct;
 #[cfg(feature = "calls")]
 pub(crate) mod calls_page;
 mod channels;
+mod clip;
 mod composer_apps;
 pub(crate) mod drive;
 mod engage;
@@ -219,6 +221,21 @@ fn msg(m: MsgData) -> Msg {
                 })
                 .collect(),
         ),
+        videos: model(
+            m.videos
+                .into_iter()
+                .map(|c| {
+                    let (thumb, has_thumb) = img(&c.thumb);
+                    VideoClipItem {
+                        key: c.key.into(),
+                        url: c.url.into(),
+                        duration_ms: c.duration_ms,
+                        thumb,
+                        has_thumb,
+                    }
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -247,6 +264,7 @@ fn picker_model(query: &str) -> ModelRc<EmojiItem> {
 
 /// Wires what the UI thread answers by itself, without the engine: the "More reactions" search.
 pub fn install_local(window: &AppWindow) {
+    crate::loop_compose::install_local(window);
     palette::wire(window);
     window.set_picker_items(picker_model(""));
     let weak = window.as_weak();

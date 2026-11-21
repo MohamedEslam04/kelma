@@ -68,6 +68,7 @@ pub(super) fn store_lane(cmd: &Cmd) -> Option<&'static str> {
         Cmd::Apps(_) => "apps",
         Cmd::Remind(_) => "remind",
         Cmd::Voice(_) => "voice",
+        Cmd::Clip(_) => "clip",
         Cmd::ComposerApps(_) => "composer-apps",
         _ => return None,
     })
