@@ -133,16 +133,21 @@ export component SkeletonMessages inherits Rectangle {
 }
 
 // A small arc turning while a button or an inline action works. Still with reduced motion.
-export component Spinner inherits Image {
+export component Spinner inherits Rectangle {
     in property <length> size: 14px;
     in property <color> tint: Theme.fg-muted;
-    source: @image-url("icons/spinner.svg");
     width: root.size;
     height: root.size;
-    colorize: root.tint;
-    image-fit: contain;
-    transform-rotation: Motion.running ? mod(animation-tick() / 1ms, 900) / 900 * 360deg : 0deg;
     accessible-role: none;
+    // (A transform is not applied to a component's root element, so the arc is a child.)
+    Image {
+        source: @image-url("icons/spinner.svg");
+        width: root.size;
+        height: root.size;
+        colorize: root.tint;
+        image-fit: contain;
+        transform-rotation: Motion.running ? mod(animation-tick() / 1ms, 900) / 900 * 360deg : 0deg;
+    }
 }
 
 // A picture that shows a soft placeholder until it is `loaded`, then fades in (150 ms).

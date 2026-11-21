@@ -408,7 +408,7 @@ impl UiHandle {
 
     /// Who is typing in the open chat, and in which chats (dots on their rows).
     pub fn typing(&self, names: Vec<String>, chats: Vec<String>) {
-        self.run(move |w| motion::set_typing(w, &names, &chats));
+        self.run(move |w| motion::set_typing(&w, &names, &chats));
     }
 
     pub fn loading_older(&self, on: bool) {
