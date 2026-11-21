@@ -149,6 +149,9 @@ component HitItem inherits Rectangle {
     callback clicked();
     callback secondary();
     in property <string> secondary-label;
+    // The pointer is on the person's photo, which sits above the row's TouchArea: the row keeps
+    // its highlight.
+    property <bool> photo-over;
     height: (root.data.section != "" ? 30px : 0px) + 74px;
     VerticalLayout {
         if root.data.section != "": Text {
@@ -162,7 +165,7 @@ component HitItem inherits Rectangle {
         row := Rectangle {
             height: 74px;
             border-radius: 4px;
-            background: touch.has-hover ? Theme.surface-hover : transparent;
+            background: touch.has-hover || (root.photo-over && root.data.person != "") ? Theme.surface-hover : transparent;
             accessible-role: list-item;
             accessible-label: root.data.title;
             accessible-description: root.data.snippet-plain + " · " + root.data.subtitle;
@@ -210,6 +213,7 @@ component HitItem inherits Rectangle {
                 height: 36px;
                 person: root.data.person;
                 click-opens: false;
+                over <=> root.photo-over;
                 activated => { root.clicked(); }
             }
             // After the row's own TouchArea, so it gets its clicks.

@@ -34,9 +34,12 @@ component ActivityItem inherits Rectangle {
     callback open-chat();
     property <length> menu-x;
     property <length> menu-y;
+    // The pointer is on the actor's photo, which sits above the row's TouchArea: the row keeps
+    // its highlight.
+    property <bool> photo-over;
     height: 76px;
     border-radius: 4px;
-    background: root.selected ? Theme.selected : (touch.has-hover ? Theme.surface-hover : transparent);
+    background: root.selected ? Theme.selected : (touch.has-hover || (root.photo-over && root.data.person != "") ? Theme.surface-hover : transparent);
     accessible-role: list-item;
     accessible-label: root.data.title + (root.data.unread ? ", unread" : "");
     accessible-item-selected: root.selected;
@@ -124,6 +127,7 @@ component ActivityItem inherits Rectangle {
         height: 36px;
         person: root.data.person;
         click-opens: false;
+        over <=> root.photo-over;
         activated => { root.clicked(); }
     }
 
