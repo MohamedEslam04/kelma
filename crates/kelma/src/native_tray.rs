@@ -2,17 +2,17 @@
 //! with the same icon, unread badge, tooltip and menu as the Linux StatusNotifierItem (`tray`).
 //! It lives on the UI thread; `tray_wiring` calls in here instead of the `tray` crate's handle.
 
-use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::rc::Rc;
 use tray::TrayEvent;
 
 slint::slint! {
+    #[edition = "1.19"]
     export component KelmaTray inherits SystemTrayIcon {
         in property <image> picture;
         in property <string> tip;
-        in-out property <bool> muted;
-        in-out property <bool> focus;
+        in-out property <bool> mute-checked;
+        in-out property <bool> focus-checked;
         callback open();
         callback toggle-mute();
         callback toggle-focus();
@@ -28,13 +28,13 @@ slint::slint! {
             MenuItem {
                 title: "Mute notifications";
                 checkable: true;
-                checked <=> root.muted;
+                checked <=> root.mute-checked;
                 activated => { root.toggle-mute(); }
             }
             MenuItem {
                 title: "Focus mode";
                 checkable: true;
-                checked <=> root.focus;
+                checked <=> root.focus-checked;
                 activated => { root.toggle-focus(); }
             }
             MenuSeparator { }
@@ -73,8 +73,8 @@ fn picture(unread: u32) -> slint::Image {
 fn refresh(s: &State) {
     s.ui.set_picture(picture(s.unread));
     s.ui.set_tip(tray::tooltip_text(s.unread, s.muted).into());
-    s.ui.set_muted(s.muted);
-    s.ui.set_focus(s.focus);
+    s.ui.set_mute_checked(s.muted);
+    s.ui.set_focus_checked(s.focus);
 }
 
 /// Flips a checkmark kept here (the source of truth, whatever the menu did with its own state)
