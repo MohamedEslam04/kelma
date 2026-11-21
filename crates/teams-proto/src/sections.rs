@@ -5,7 +5,7 @@
 //! (checked live 2026-11-19). The write calls (create, rename, move an item, remove, delete,
 //! reorder) use the same URL with `POST`, `PUT /{id}`, `DELETE` and `PATCH`; the Teams web client
 //! defines them (`teams/users/me/conversationFolders`) but their bodies are built server side
-//! of its GraphQL layer, so kelma does not send them: sections it creates stay local. See
+//! of its GraphQL layer, so IronTeams does not send them: sections it creates stay local. See
 //! `docs/protocol.md`, "Chat list sections".
 
 use crate::client::Client;

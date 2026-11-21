@@ -1,7 +1,7 @@
 //! Microsoft Lists (SharePoint lists) through Graph `/sites/{id}/lists`.
 //!
 //! Sites are found through the teams the user joined (`/groups/{id}/sites/root`). Items come with
-//! their `fields` expanded. Kelma adds and edits items (`create_item_request`,
+//! their `fields` expanded. IronTeams adds and edits items (`create_item_request`,
 //! `update_item_request`); it never deletes one.
 
 use crate::client::Client;
@@ -162,7 +162,7 @@ pub fn field_text(v: &Value) -> String {
 }
 
 impl Column {
-    /// Whether the new and edit forms offer this column: a plain value kelma can type
+    /// Whether the new and edit forms offer this column: a plain value IronTeams can type
     /// (text, number, choice, yes/no, date) that the user may change.
     pub fn is_editable(&self) -> bool {
         !self.hidden

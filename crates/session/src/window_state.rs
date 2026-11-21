@@ -1,6 +1,6 @@
 //! Window state: size, position, the last open chat and the collapsed sidebar sections.
 //!
-//! Stored as `window-state.json` in the config dir (next to `config.json`, so `KELMA_HOME`
+//! Stored as `window-state.json` in the config dir (next to `config.json`, so `IRONTEAMS_HOME`
 //! applies), separate from [`crate::Config`] so a GUI crash or a rewrite never touches account
 //! data. Nothing here is secret, but the conversation id is still kept out of `Debug` output and
 //! this module never logs.

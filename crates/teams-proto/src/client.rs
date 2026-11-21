@@ -121,7 +121,7 @@ fn refresh_due(expires_at: SystemTime, now: SystemTime) -> bool {
 
 /// True when `url` is an https URL on the host of `aud`. Loki also runs per region, as
 /// `nam.loki.delve.office.com`, and takes the same token. App tokens are for the app, not for
-/// kelma's own requests, so an app audience owns nothing.
+/// IronTeams's own requests, so an app audience owns nothing.
 fn audience_owns(aud: &Audience, url: &Url) -> bool {
     if matches!(aud, Audience::App(_)) {
         return false;

@@ -1,23 +1,23 @@
-// kelma web host: injected before the page's own scripts (Page.addScriptToEvaluateOnNewDocument).
-// __kelmaBridge and __kelmaTeams are CDP bindings (Runtime.addBinding): calling one sends its
-// string argument to kelma as Runtime.bindingCalled.
+// ironteams web host: injected before the page's own scripts (Page.addScriptToEvaluateOnNewDocument).
+// __ironteamsBridge and __ironteamsTeams are CDP bindings (Runtime.addBinding): calling one sends its
+// string argument to ironteams as Runtime.bindingCalled.
 (function () {
   "use strict";
-  if (window.top !== window || window.kelma) return;
+  if (window.top !== window || window.ironteams) return;
   function binding(name) {
     var f = window[name];
-    if (typeof f !== "function") throw new Error("kelma host binding " + name + " is missing");
+    if (typeof f !== "function") throw new Error("ironteams host binding " + name + " is missing");
     return f;
   }
   var pending = new Map();
   var next = 1;
-  // Generic bridge: window.kelma.invoke(payload) -> Promise of kelma's answer.
-  window.kelma = {
+  // Generic bridge: window.ironteams.invoke(payload) -> Promise of ironteams's answer.
+  window.ironteams = {
     invoke: function (payload) {
       var id = next++;
       return new Promise(function (resolve, reject) {
         pending.set(id, { resolve: resolve, reject: reject });
-        binding("__kelmaBridge")(
+        binding("__ironteamsBridge")(
           JSON.stringify({ id: id, payload: payload === undefined ? null : payload })
         );
       });
@@ -32,24 +32,24 @@
   };
   // TeamsJS: a top-level page has no parent window, so teams-js uses the "frameless" native
   // interface. Replies come back through window.onNativeMessage, which teams-js installs.
-  if (window.__kelmaShim === true) {
+  if (window.__ironteamsShim === true) {
     window.nativeInterface = {
       framelessPostMessage: function (message) {
-        binding("__kelmaTeams")(String(message));
+        binding("__ironteamsTeams")(String(message));
       },
     };
   }
-  // Device permissions: window.__kelmaGranted lists what the user granted this app (manifest
+  // Device permissions: window.__ironteamsGranted lists what the user granted this app (manifest
   // spellings). Everything else is refused here, before the browser is asked. The list is
   // read once and removed so the page cannot see it or change it.
-  if (Array.isArray(window.__kelmaGranted)) {
-    var granted = window.__kelmaGranted.slice();
-    delete window.__kelmaGranted;
+  if (Array.isArray(window.__ironteamsGranted)) {
+    var granted = window.__ironteamsGranted.slice();
+    delete window.__ironteamsGranted;
     var has = function (name) {
       return granted.indexOf(name) >= 0;
     };
     var refuse = function (what, name) {
-      var message = "kelma: the app has not been granted the " + what + " permission";
+      var message = "IronTeams: the app has not been granted the " + what + " permission";
       if (typeof DOMException === "function") return new DOMException(message, name);
       var e = new Error(message);
       e.name = name;
@@ -135,8 +135,8 @@
       override(nav, "requestMIDIAccess", rejecting("midi", "SecurityError"));
     }
   }
-  if (typeof window.__kelmaTitle === "string") {
-    var title = window.__kelmaTitle;
+  if (typeof window.__ironteamsTitle === "string") {
+    var title = window.__ironteamsTitle;
     document.addEventListener("DOMContentLoaded", function () {
       document.title = title;
     });

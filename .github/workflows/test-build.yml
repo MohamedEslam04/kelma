@@ -1,7 +1,7 @@
-# A quick kelma binary for trying a branch on the desktop, where the GUI crate needs more memory
+# A quick ironteams binary for trying a branch on the desktop, where the GUI crate needs more memory
 # than the machine has. Push the branch as ci/build-<name> (it must contain this file); the run
-# reuses the dependency cache of the CI `check` job, builds the debug `kelma` binary and uploads it
-# as the `kelma-bin` artifact. Fetch it with `gh run download <run> -n kelma-bin`.
+# reuses the dependency cache of the CI `check` job, builds the debug `ironteams` binary and uploads it
+# as the `ironteams-bin` artifact. Fetch it with `gh run download <run> -n ironteams-bin`.
 name: Test build
 
 on:
@@ -34,10 +34,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
-      - run: cargo build -p kelma --bin kelma
-      - run: strip target/debug/kelma
+      - run: cargo build -p ironteams --bin ironteams
+      - run: strip target/debug/ironteams
       - uses: actions/upload-artifact@v6
         with:
-          name: kelma-bin
-          path: target/debug/kelma
+          name: ironteams-bin
+          path: target/debug/ironteams
           retention-days: 3

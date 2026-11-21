@@ -66,7 +66,7 @@ pub fn to_ics(events: &[Event], now_ms: i64) -> String {
     let mut out = String::new();
     push(&mut out, "BEGIN:VCALENDAR".into());
     push(&mut out, "VERSION:2.0".into());
-    push(&mut out, "PRODID:-//kelma//calendar//EN".into());
+    push(&mut out, "PRODID:-//ironteams//calendar//EN".into());
     push(&mut out, "CALSCALE:GREGORIAN".into());
     for e in events.iter().filter(|e| !e.is_cancelled) {
         push(&mut out, "BEGIN:VEVENT".into());

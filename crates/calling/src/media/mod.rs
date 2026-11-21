@@ -100,7 +100,7 @@ pub enum VideoLayout {
     /// join and mautrix-teams' openapi (`TeamsSdp`, mid 11 before a renegotiation) show.
     #[default]
     WebClient,
-    /// The camera, the sharing line, then the gallery: kelma's first join layout (refused live
+    /// The camera, the sharing line, then the gallery: IronTeams's first join layout (refused live
     /// 2026-11-20 with the join that declared no video), kept to try against the other.
     SharingSecond,
 }
@@ -312,8 +312,8 @@ impl MediaSession {
             TrackLocalStaticSample::new(
                 Instant::now(),
                 MediaStreamTrack::new(
-                    format!("kelma-{ssrc:08x}"),
-                    "kelma-audio".to_owned(),
+                    format!("ironteams-{ssrc:08x}"),
+                    "ironteams-audio".to_owned(),
                     "main-audio".to_owned(),
                     RtpCodecKind::Audio,
                     vec![RTCRtpEncodingParameters {
@@ -687,7 +687,7 @@ impl VideoSender {
                 Instant::now(),
                 MediaStreamTrack::new(
                     role.label().to_owned(),
-                    format!("kelma-{ssrc:08x}"),
+                    format!("ironteams-{ssrc:08x}"),
                     role.label().to_owned(),
                     RtpCodecKind::Video,
                     vec![RTCRtpEncodingParameters {

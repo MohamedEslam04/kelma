@@ -26,10 +26,10 @@ pub fn default_output_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// `kelma-report-YYYYMMDD-HHMMSS.tar.gz`.
+/// `ironteams-report-YYYYMMDD-HHMMSS.tar.gz`.
 pub fn default_file_name() -> String {
     format!(
-        "kelma-report-{}.tar.gz",
+        "ironteams-report-{}.tar.gz",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
     )
 }
@@ -128,19 +128,23 @@ pub fn write_bundle(
         header.set_size(data.len() as u64);
         header.set_mode(0o600);
         header.set_mtime(now);
-        tar.append_data(&mut header, format!("kelma-report/{name}"), data.as_slice())?;
+        tar.append_data(
+            &mut header,
+            format!("ironteams-report/{name}"),
+            data.as_slice(),
+        )?;
     }
     tar.into_inner()?.finish()?.flush()?;
     Ok(out.to_path_buf())
 }
 
-const README: &str = "kelma problem report\n\
+const README: &str = "IronTeams problem report\n\
 \n\
-This file was written on your computer by kelma. Nothing was uploaded and kelma never sends it\n\
+This file was written on your computer by IronTeams. Nothing was uploaded and IronTeams never sends it\n\
 anywhere. Read it before you attach it to a bug report.\n\
 \n\
 Contents:\n\
-  system.txt   kelma version, OS, desktop session and KELMA_* settings\n\
+  system.txt   IronTeams version, OS, desktop session and IRONTEAMS_* settings\n\
   config.json  the non-secret config (your id, name and endpoint id are removed)\n\
   logs/        log files, if any (see below)\n\
 \n\
@@ -151,8 +155,8 @@ Tokens, cookies, e-mail addresses, MRIs (8:orgid:...), conversation ids, GUIDs (
 ids), tenant domains and home-directory user names were replaced with placeholders such as\n\
 <email> and <guid>. Redaction is automatic and cannot catch everything, so skim the logs.\n\
 \n\
-To capture a log, run kelma as: KELMA_LOG=kelma=debug,teams_proto=info kelma 2> kelma.log\n\
-and pass it with: kelma-cli diag --log kelma.log\n";
+To capture a log, run ironteams as: IRONTEAMS_LOG=ironteams=debug,teams_proto=info ironteams 2> ironteams.log\n\
+and pass it with: ironteams-cli diag --log ironteams.log\n";
 
 fn system_info(app_version: &str) -> String {
     let os = fs::read_to_string("/etc/os-release")
@@ -167,20 +171,20 @@ fn system_info(app_version: &str) -> String {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "unknown".into());
     let mut out = format!(
-        "kelma {app_version}\nos {os}\nkernel {kernel}\narch {}\n",
+        "ironteams {app_version}\nos {os}\nkernel {kernel}\narch {}\n",
         std::env::consts::ARCH
     );
     // Values that are safe and useful.
     for var in [
         "XDG_CURRENT_DESKTOP",
         "XDG_SESSION_TYPE",
-        "KELMA_RENDERER",
-        "KELMA_LOG",
+        "IRONTEAMS_RENDERER",
+        "IRONTEAMS_LOG",
         "LANG",
     ] {
         out.push_str(&format!(
             "{var}={}\n",
-            std::env::var(var).unwrap_or_else(|_| "(unset)".into())
+            compat::var(var).unwrap_or_else(|_| "(unset)".into())
         ));
     }
     // Only whether these are set, never their value.
@@ -188,10 +192,10 @@ fn system_info(app_version: &str) -> String {
         "WAYLAND_DISPLAY",
         "DISPLAY",
         "FLATPAK_ID",
-        "KELMA_HOME",
-        "KELMA_DEMO",
+        "IRONTEAMS_HOME",
+        "IRONTEAMS_DEMO",
     ] {
-        let state = if std::env::var_os(var).is_some() {
+        let state = if compat::var_os(var).is_some() {
             "set"
         } else {
             "unset"
@@ -235,7 +239,7 @@ mod tests {
     const GUID: &str = "0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0";
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kelma-diag-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ironteams-diag-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -286,14 +290,17 @@ mod tests {
         assert_eq!(written, out);
         let entries = read_bundle(&out);
         let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
-        assert!(names.contains(&"kelma-report/README.txt"), "{names:?}");
-        assert!(names.contains(&"kelma-report/system.txt"));
-        assert!(names.contains(&"kelma-report/config.json"));
+        assert!(names.contains(&"ironteams-report/README.txt"), "{names:?}");
+        assert!(names.contains(&"ironteams-report/system.txt"));
+        assert!(names.contains(&"ironteams-report/config.json"));
         assert!(
-            names.contains(&"kelma-report/logs/0-extra.log"),
+            names.contains(&"ironteams-report/logs/0-extra.log"),
             "{names:?}"
         );
-        assert!(names.contains(&"kelma-report/logs/1-app.log"), "{names:?}");
+        assert!(
+            names.contains(&"ironteams-report/logs/1-app.log"),
+            "{names:?}"
+        );
         assert!(
             !names.iter().any(|n| n.contains("sqlite")),
             "the cache must not be bundled"
@@ -309,7 +316,7 @@ mod tests {
         ] {
             assert!(!all.contains(secret), "{secret} leaked");
         }
-        assert!(all.contains("kelma 9.9.9"));
+        assert!(all.contains("ironteams 9.9.9"));
         assert!(all.contains("INFO ok"));
         let config = &entries
             .iter()
@@ -333,7 +340,7 @@ mod tests {
         let names: Vec<String> = read_bundle(&out).into_iter().map(|(n, _)| n).collect();
         assert_eq!(
             names,
-            ["kelma-report/README.txt", "kelma-report/system.txt"]
+            ["ironteams-report/README.txt", "ironteams-report/system.txt"]
         );
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -371,8 +378,8 @@ mod tests {
     #[test]
     fn system_info_has_version_and_no_home_values() {
         let s = system_info("1.2.3");
-        assert!(s.starts_with("kelma 1.2.3\n"));
-        assert!(s.contains("KELMA_HOME is "));
+        assert!(s.starts_with("ironteams 1.2.3\n"));
+        assert!(s.contains("IRONTEAMS_HOME is "));
         assert!(!s.contains(&std::env::var("HOME").unwrap_or_else(|_| "/nonexistent".into())));
     }
 
@@ -417,7 +424,7 @@ mod tests {
     fn default_names() {
         let n = default_file_name();
         assert!(
-            n.starts_with("kelma-report-") && n.ends_with(".tar.gz"),
+            n.starts_with("ironteams-report-") && n.ends_with(".tar.gz"),
             "{n}"
         );
     }

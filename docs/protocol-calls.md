@@ -5,17 +5,17 @@ webrtc-rs, Opus). This page records what was **measured against the live service
 else in the crate comes from the references in `docs/research/open-source.md` §3.15 and is still
 unverified.
 
-Test rig: kelma, signed in with a work account, joins a "Meet now" meeting hosted by a personal
+Test rig: IronTeams, signed in with a work account, joins a "Meet now" meeting hosted by a personal
 (Teams free) account. The tenant blocks 1:1 calls to personal accounts, but it allows joining
-their meetings. Command: `kelma-cli call join --secs 60 --out <wav> --dump <dir>`.
+their meetings. Command: `ironteams-cli call join --secs 60 --out <wav> --dump <dir>`.
 
 ## Verified (2026-11-18)
 
 1. **Discovery.**
-   - authz `regionGtms` names the conversation service, e.g. `api-noam.flightproxy.teams.microsoft.com`. kelma reads it with its own authz POST.
+   - authz `regionGtms` names the conversation service, e.g. `api-noam.flightproxy.teams.microsoft.com`. IronTeams reads it with its own authz POST.
    - `trap/tokens` returns one TURN credential that is valid for 604800 s.
 2. **Calling trouter.**
-   - A trouter connection of kelma's own registers `NextGenCalling` with `DesktopNgc_2.5:SkypeNgc` on `<surl>NGCallManagerWin` and is accepted.
+   - A trouter connection of IronTeams's own registers `NextGenCalling` with `DesktopNgc_2.5:SkypeNgc` on `<surl>NGCallManagerWin` and is accepted.
    - Call callbacks arrive on that connection.
 3. **Join target.**
    - The CSA chat entry of the meeting (`chatType: meeting`, `productContext: TFL`) carries `activeMeetup` while the call runs, plus `meetingInformation`.
@@ -31,34 +31,34 @@ their meetings. Command: `kelma-cli call join --secs 60 --out <wav> --dump <dir>
      - one audio section, ten `main-video` gallery sections, one `applicationsharing-video` section and an `x-data` section, each with its own `ice-ufrag`
      - profile `RTP/AVP`
      - Opus at payload type **102**; 111 is SIREN here
-   - Answering it on the connected peer connection leaves kelma mute: webrtc-rs adds a new `recvonly` transceiver. kelma answers it on a **fresh** `MediaSession`, as audio only, with port-0 stubs for every other section, and closes the old one.
+   - Answering it on the connected peer connection leaves IronTeams mute: webrtc-rs adds a new `recvonly` transceiver. IronTeams answers it on a **fresh** `MediaSession`, as audio only, with port-0 stubs for every other section, and closes the old one.
 6. **Two-way audio.**
-   - A 440 Hz tone sent by kelma was heard in the meeting.
+   - A 440 Hz tone sent by IronTeams was heard in the meeting.
    - The organizer's voice was received and decoded: 1046 packets, about 21 s, confirmed by ear.
    - webrtc-rs's DTLS-SRTP works with the Teams media server.
    - Leaving through the `leave` link ends the call cleanly.
 7. **Real devices.**
    - Same run shape with `--mic --speaker`: the laptop's built-in mic through cpal/ALSA (PipeWire), output to Bluetooth earbuds (A2DP).
-   - The organizer heard kelma's mic, and kelma played the organizer's voice: 4510 packets sent over 90 s, 1466 received, no underruns or errors.
-   - With the phone (organizer) near the laptop, its speaker leaked into the laptop mic and came back distorted. kelma has no echo cancellation yet.
+   - The organizer heard IronTeams's mic, and IronTeams played the organizer's voice: 4510 packets sent over 90 s, 1466 received, no underruns or errors.
+   - With the phone (organizer) near the laptop, its speaker leaked into the laptop mic and came back distorted. IronTeams has no echo cancellation yet.
 8. **TURN.**
    - Every trap relay gateway answers the first, unauthenticated Allocate with `300 Try Alternate`. The answer carries `ALTERNATE-SERVER`, `REALM=rtcmedia` and a `NONCE`.
    - The alternate address answers `401` and then allocates with the `trap/tokens` credentials: one hop.
-   - webrtc-rs does not follow the 300: it signs a retry to the same gateway and fails. So kelma probes first (`relay::resolve_ice_servers`) and gives webrtc-rs the alternate's `turn:<ip>:3478?transport=udp`.
-   - Gateways that resolve in DNS: `gateway-{eu,us,in,world}.az.relay.teams.cloud.microsoft`. kelma maps the authz region to one of them.
+   - webrtc-rs does not follow the 300: it signs a retry to the same gateway and fails. So IronTeams probes first (`relay::resolve_ice_servers`) and gives webrtc-rs the alternate's `turn:<ip>:3478?transport=udp`.
+   - Gateways that resolve in DNS: `gateway-{eu,us,in,world}.az.relay.teams.cloud.microsoft`. IronTeams maps the authz region to one of them.
    - A relay-only run (`--relay-only`: only `typ relay` candidates) reached Connected in the lobby and in the meeting.
 9. **Echo cancellation.**
    - `calling::audio` runs AEC3, noise suppression and AGC2 through `sonora` (a pure-Rust port of WebRTC's audio processing) on the mic path. The far-end reference is tapped from the playback device callback.
-   - Live check: the far end, on earbuds in another room, heard no echo of themselves while kelma played them on the laptop speaker into the laptop mic.
+   - Live check: the far end, on earbuds in another room, heard no echo of themselves while IronTeams played them on the laptop speaker into the laptop mic.
    - With `--no-aec` the echo came back.
-   - Two endpoints in the same room still howl, as they do with the official clients: kelma cancels only its own playback.
+   - Two endpoints in the same room still howl, as they do with the official clients: IronTeams cancels only its own playback.
 10. **Remote tracks.**
    - Teams' SDP names no SSRCs, only `a=x-ssrc-range`, so a remote track can arrive with an unknown kind.
    - Every track must be drained. Otherwise webrtc-rs's queue fills and the packets are dropped.
 
 ## Live 2026-11-19: invitation without offer; offerer path unverified until next live test
 
-A 1:1 call from a Teams web guest to the work account reached kelma: the toast showed, and
+A 1:1 call from a Teams web guest to the work account reached ironteams: the toast showed, and
 Accept failed with "the call carries no media offer". The ring's shape (no values recorded):
 
 - push url `<surl>NGCallManagerWin`
@@ -68,26 +68,26 @@ Accept failed with "the call carries no media offer". The ring's shape (no value
   - `links`: `attach`, `progress`, `reject` (on the call controller's `forked` leg),
     `udpTransport` (`udp://…`) and `mediaAnswer: "cc://ma"`, a placeholder, not a URL
   - `mediaContent: null`, `udpKey: null`, `replaces: null`, `clientEndpointCapabilities`
-  - no `callModalities` (kelma assumes audio)
+  - no `callModalities` (IronTeams assumes audio)
 - `conversationInvitation`: `conversationController`, `isMultiParty`, `isBroadcast`
 - `debugContent`: `callId`, `participantId`, `callStartTime`, `ProcessingCallControllerInstance`,
   `ecsEtag`, `potentialCallNotificationSent`
 - `groupContext: null`; no `groupChat`
 
-Second live test (same day, GUI Accept, `KELMA_CALL_DUMP`), shape only:
+Second live test (same day, GUI Accept, `IRONTEAMS_CALL_DUMP`), shape only:
 
-- No SDP was exchanged: kelma dumped none, so its answer stopped at or before the attach.
-- Callbacks reached kelma's attached session: `call/progress` with `status: forwarded` and
+- No SDP was exchanged: IronTeams dumped none, so its answer stopped at or before the attach.
+- Callbacks reached IronTeams's attached session: `call/progress` with `status: forwarded` and
   `forwardingDestinationType: voicemail`; then `call/end` from a `voicemail` endpoint with
   `callEnd {code: 1000, subCode: 7106, phrase: SdpParsingFailure, resultCategories:
   [UnexpectedServerError]}`; then `conversation/conversationEnd` (`subCode` 5002, "all
   participants left") carrying the same 7106 as `callControllerTransactionEnd`.
 - Reading: the ring went to voicemail unanswered, and the voicemail leg failed on SDP. No SDP of
-  kelma's reached the service, so 7106 says nothing about kelma's SDP. The bodies kelma sent
+  IronTeams's reached the service, so 7106 says nothing about IronTeams's SDP. The bodies IronTeams sent
   were not recorded; they are now.
 
-What kelma does now (`calling::incoming`, used by the GUI accept and by
-`kelma-cli call listen --accept-audio`; the mode is `KELMA_CALL_NO_OFFER` in the GUI and
+What IronTeams does now (`calling::incoming`, used by the GUI accept and by
+`ironteams-cli call listen --accept-audio`; the mode is `IRONTEAMS_CALL_NO_OFFER` in the GUI and
 `--no-offer` in the CLI):
 
 1. **`fetch`** (default). `attach` with `requireMediaContent: true`, bounded to 15 s. An offer in the
@@ -108,7 +108,7 @@ What kelma does now (`calling::incoming`, used by the GUI accept and by
 Every offer of ours is built and labelled as `call dial`'s, which the service took live:
 `application/sdp-ngc-1.0`, plain SDP text, `requiredFeatures: nonByPass`, our `mediaLegId`.
 
-`--ring-only` prints whether the attach answer carried an offer. `KELMA_CALL_DUMP=<dir>` makes the
+`--ring-only` prints whether the attach answer carried an offer. `IRONTEAMS_CALL_DUMP=<dir>` makes the
 GUI write every raw calling push, every request it sends to the conversation service with its
 answer (`ngc-<op>.json`), each step of an answer (`step.txt`), every SDP envelope as received
 before decoding (`*-blob.txt`) and every SDP (`.sdp`). `call listen --dump` writes the same. All
@@ -116,7 +116,7 @@ hold real ids and addresses: keep them out of the repo.
 
 ## Live captions, recording and transcription (research, 2026-11-19)
 
-Nothing in this section was run live by kelma. Everything is from the references below, read at
+Nothing in this section was run live by ironteams. Everything is from the references below, read at
 these commits: rusty-teams `21da0e2` (MIT), eisbaw/ost `0892144` (MIT), mautrix-teams `e1d3018`
 (AGPL, facts only, no code copied). Code: `calling::signaling::recorder` (bodies, roster, state,
 flow) and `calling::captions` (caption framing and text).
@@ -169,7 +169,7 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
 
    - Recording file name: `<title>-<YYYYMMDD_HHMMSS>-Meeting Recording`.
    - ost sends `participantSkypeToken: ""` and `spokenLanguage: en-us`. rusty-teams sends the real
-     token and `""`. kelma follows rusty-teams.
+     token and `""`. IronTeams follows rusty-teams.
    - rusty-teams retries a stop that the recorder answers while it "still settles".
 4. **Caption preference.** rusty-teams also sends `PUT updateEndpointMetadata`
    `{participants.from, endpointMetadata {holographicCapabilities: 3, transcriptionPrefs
@@ -186,7 +186,7 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
   .consentActivelyRequired` is true. Each attendee then publishes `consentToRecording` or
   `denyConsentToRecording` (`POST publishState`, user level, `content: "{}"`).
   - Source: rusty-teams `recording.rs` `consent_body`.
-  - kelma does not publish consent yet. It shows Teams' notice ("Recording has started. By
+  - IronTeams does not publish consent yet. It shows Teams' notice ("Recording has started. By
     attending this meeting, you consent to being included.") when the state turns on.
 
 ### Caption text
@@ -206,7 +206,7 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
 - Sources: rusty-teams `data_channel.rs`, `captions.rs` `parse_caption_message`, `call/mod.rs`
   (`DATA_CHANNEL_LABEL = "main-channel"`, `CAPTIONS_DATA_ID`). rusty-teams' ROADMAP says this
   works live with speech from guests.
-- **In kelma (2026-11-19, not run live yet).** A meeting's media session
+- **In IronTeams (2026-11-19, not run live yet).** A meeting's media session
   (`MediaOptions::data_channel`) opens `main-channel` itself, ordered and announced in-band
   (DCEP), as rusty-teams does (`call/peer_sdp.rs` `open_data_channel`, `DataChannelInit::default()`:
   no fixed stream id). It also reads any channel the media server opens. `media/sdp.rs` maps the
@@ -225,7 +225,7 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
     A result without `displayName` takes the roster's name for its `userId`.
 - **Live (2026-11-20), meeting join.** The media server accepted the `x-data` line (port 3478,
   `a=label:data`, mid 12, inside `a=group:BUNDLE`) and answered `a=setup:passive` with no
-  `a=sctp-port`. So kelma is the DTLS client. The log, at the default `warn` level, shows one
+  `a=sctp-port`. So IronTeams is the DTLS client. The log, at the default `warn` level, shows one
   `rtc_sctp::endpoint: refusing first packet due to empty server_config` right after the DTLS
   handshake, and no caption text arrived.
   - What the warning means (rtc 0.21.1 `transport/sctp/mod.rs` `start`, rtc-sctp
@@ -235,34 +235,34 @@ Teams web's More › "Record and transcribe" › Start recording / Start transcr
     by our own tag, so the server's INIT is refused. No `SettingEngine` option changes this.
   - That alone does not keep the channel shut: the association comes up when the server
     answers our INIT, as RFC 4960 §5.2.1 requires while its own INIT is out
-    (`tests/media_data_channel.rs` covers kelma's side with these roles). The server did not
+    (`tests/media_data_channel.rs` covers IronTeams's side with these roles). The server did not
     send its INIT again in the next three minutes (a retransmit would log the warning again),
     which suggests it did answer ours.
   - The `warn` log cannot show whether `main-channel` opened. Next run:
-    `KELMA_LOG=warn,calling=info,rtc::peer_connection::handler::sctp=debug,rtc_sctp=debug`.
+    `IRONTEAMS_LOG=warn,calling=info,rtc::peer_connection::handler::sctp=debug,rtc_sctp=debug`.
     A working channel logs `association_handle … is connected`, then
     `calling::media: data channel open label=main-channel`.
-  - If the server never answers our INIT, kelma must accept the server's: either patch rtc-sctp
+  - If the server never answers our INIT, IronTeams must accept the server's: either patch rtc-sctp
     so an INIT that collides with our own goes to our association (the association already
-    handles INIT in COOKIE-WAIT), or offer `a=setup:passive` so kelma is the DTLS (and SCTP)
+    handles INIT in COOKIE-WAIT), or offer `a=setup:passive` so IronTeams is the DTLS (and SCTP)
     server. The second changes DTLS for audio too.
 
 ### UNVERIFIED
 
-- Whether kelma's refresh token can mint a token for the recorder resource
+- Whether IronTeams's refresh token can mint a token for the recorder resource
   (`Audience::App("4580fd1d-…")`, scope `<resource>/.default`). rusty-teams gets one in the web
   page with the Teams client, ost with its own OAuth.
 - The shape of `addParticipantFailure`, and of a command's error answer when policy refuses.
-  kelma reads the first `{code, subCode, phrase}`, else an error `message`, and shows it as the
+  IronTeams reads the first `{code, subCode, phrase}`, else an error `message`, and shows it as the
   banner text.
 - Whether a 1:1 call (no meeting) accepts the bot. rusty-teams adds it threadless with
   `addParticipant`. Captions may need a meeting.
 - Whether the web client sends the `updateEndpointMetadata` preference. Only rusty-teams does;
-  kelma sends it after each captions start and stop, as rusty-teams does.
-- The data channel as kelma opens it: whether webrtc-rs's SCTP association comes up with the
+  IronTeams sends it after each captions start and stop, as rusty-teams does.
+- The data channel as IronTeams opens it: whether webrtc-rs's SCTP association comes up with the
   media server's (the `x-data` line is accepted, see "Live (2026-11-20)" above), and whether it
   needs our own `main-channel` or opens its own.
-- Whether a caption's `userId` is a full MRI (`8:orgid:<id>`) or the bare id: kelma looks up
+- Whether a caption's `userId` is a full MRI (`8:orgid:<id>`) or the bare id: IronTeams looks up
   both.
 
 ## 1:1 call controls: add a person, hold, transfer (built 2026-11-19, UNVERIFIED live)
@@ -275,7 +275,7 @@ Where the links come from (live 1:1 dump, names only):
 
 - the attach answer's `additionalActionResponses[].output` carries the conversation controller
   and the conversation's `links` (`addParticipant`, `addParticipantAndModality`, `admit`, ...).
-  kelma keeps the controller and the two add links; it does not take the conversation's `leave`,
+  IronTeams keeps the controller and the two add links; it does not take the conversation's `leave`,
   so a 1:1 call still hangs up on its leg (`DELETE callLeg`).
 - the acceptance acknowledgement's links carry `hold`, `transfer`, `replacement`,
   `retargetCompletion`, `startOutgoingNegotiation`, `callLeg` and `mediaRenegotiation`.
@@ -291,19 +291,19 @@ Where the links come from (live 1:1 dump, names only):
      no capture shows it.
    - rusty-teams `organizer.rs` `add_participants_body` (MIT): the same fields plus
      `displayName`. For a 1:1 call rusty-teams first creates a group chat and posts to
-     `addParticipantAndModality` with `groupChat: {threadId, messageId: null}`; kelma does not
+     `addParticipantAndModality` with `groupChat: {threadId, messageId: null}`; IronTeams does not
      create that chat yet. If the plain add is refused, that is the next shape to try.
    - The answer comes on `conversation/addParticipantSuccess` or `addParticipantFailure`
-     (the GUI shows an error on failure). The move to a conference is the service's: kelma
+     (the GUI shows an error on failure). The move to a conference is the service's: IronTeams
      answers its re-offer as it answers the lobby's (a fresh media session when ICE restarts).
      rusty-teams instead re-offers on a new peer connection itself and waits for
-     `retargetCompletion`; kelma does not.
+     `retargetCompletion`; IronTeams does not.
 2. **Hold / Resume** (UNVERIFIED). A re-offer on the same peer connection, `POST
    mediaRenegotiation` with `{mediaNegotiation: {callModalities, sender, links {mediaAnswer,
    rejection}, mediaContent {blob, contentType, mediaLegId, requiredFeatures: nonByPass,
    newOffer: false}}}`. To hold, every media line of our offer says `a=inactive`; to resume, the
    offer is sent as the session makes it. The answer (inline or on `call/mediaAnswer/`) is applied
-   with our own directions mirrored back, so the local media never stops; kelma stops sending
+   with our own directions mirrored back, so the local media never stops; IronTeams stops sending
    and playing audio itself while on hold. A media answer that names `mediaAcknowledgement` is
    acknowledged with an empty POST.
    - rusty-teams (MIT): `hold.rs` `all_inactive` / `keep_media_running`, `call/peer_sdp.rs`
@@ -313,8 +313,8 @@ Where the links come from (live 1:1 dump, names only):
    - Teams on the web (live, 2026-11-19, network log only): opening Transfer puts the call on
      hold; Resume showed only a media answer acknowledgement
      (`.../cc/v1/mediaAnswers/<id>/<n>/t/<n>/acknowledge`), no separate hold or resume URL.
-   - Neither reference posts to the acknowledgement's `hold` link; kelma does not either.
-   - A refused re-offer leaves webrtc-rs with a pending local offer (kelma cannot roll it back
+   - Neither reference posts to the acknowledgement's `hold` link; IronTeams does not either.
+   - A refused re-offer leaves webrtc-rs with a pending local offer (IronTeams cannot roll it back
      outside `crates/calling/src/media`); the GUI puts the hold state back and shows an error.
 3. **Transfer now** (blind; UNVERIFIED). `POST transfer` (the acknowledgement's link):
    `{callTransfer: {target: {id: <MRI>}, transferor: {details: {id, endpointId, participantId,
@@ -322,7 +322,7 @@ Where the links come from (live 1:1 dump, names only):
    (our `call/` callbacks), replacementDetails: null, disableForwardingAndUnanswered: false,
    transferContext: null}}`.
    - rusty-teams `transfer.rs` `transfer_body` and `completion` (MIT).
-   - `call/transferCompletion` with `code` 0 or 2xx means done: kelma ends the call ("You
+   - `call/transferCompletion` with `code` 0 or 2xx means done: IronTeams ends the call ("You
      transferred the call to ...") and still ends its leg. Any other code keeps the call on hold
      with an error.
    - The GUI opens Transfer with the call on hold, as Teams on the web does. Consult first (a
@@ -348,13 +348,13 @@ code was copied from either.
    VBSS transport or protocol on the wire the web client uses; "applicationsharing" names the
    line. The session level of a media server's SDP announces it with
    `a=x-mediabw:applicationsharing-video send=8100;recv=8100` (rusty-teams fixture
-   `teams_answer.sdp`; kelma's own live re-offer, fixture `teams_meeting_full_reoffer.sdp`).
+   `teams_answer.sdp`; IronTeams's own live re-offer, fixture `teams_meeting_full_reoffer.sdp`).
 2. **Codec.** H.264, `packetization-mode=1`. The media server's answer to a client offer names
    `H264/90000` with `profile-level-id=42C01E;packetization-mode=1;max-mbps=108000;max-fs=3600;
    max-br=2000;max-fps=3000`, `rtx` (apt) and AV1 as an alternative, `b=AS:2400`,
    `a=x-source-streamid:212` and its own `a=x-ssrc-range` (rusty-teams `teams_answer.sdp`). The
    media server's own re-offer lists `X-H264UC`, `H264` (107, `profile-level-id=42C02A`), `H265v2`,
-   `x-ulpfecuc`, `VP8` and `rtx` on the sharing line (kelma live re-offer). The web client offers
+   `x-ulpfecuc`, `VP8` and `rtx` on the sharing line (IronTeams live re-offer). The web client offers
    the sharing line with H.264 `profile-level-id=64001f` and screen limits
    `max-fs=8160;max-mbps=135000;max-fps=1500` and `a=x-signaling-fb:* x-message app send:src
    recv:src,vc` (rusty-teams `teams_offer.sdp`; `video_layout.rs` `SCREEN_REQUEST`). A
@@ -372,7 +372,7 @@ code was copied from either.
    sends the same body with `direction: sendrecv` (`video_layout.rs` `MediaDescription`).
    The link arrives in the acceptance's or `call/mediaAcknowledgement/` callback's `links`; the
    client also publishes its own `updateMediaDescriptions` and `controlVideoStreaming` callback
-   links in its acceptance (mautrix-teams `calls.go` `acceptanceLinks`; kelma already does).
+   links in its acceptance (mautrix-teams `calls.go` `acceptanceLinks`; IronTeams already does).
 4. **Meetings: who shares.** The enterprise web client also POSTs `updateParticipantProperties`
    on the conversation with `propertyBag.screenSharerAttributes {sequenceNumber, value {source:
    1}}` (202; the consumer client did not; mautrix-teams openapi). Roster endpoints list
@@ -401,10 +401,10 @@ code was copied from either.
    audio transport (`teamsmedia/sdp.go` `answerSDP`). rusty-teams rewrites the directions of the
    answers it gets so its own sending is not stopped (`hold.rs` `keep_media_running`).
 
-What kelma does with this (`calling::video`, `calling::media`, `calling::signaling::video`,
-`kelma/src/backend/call/share.rs`):
+What IronTeams does with this (`calling::video`, `calling::media`, `calling::signaling::video`,
+`ironteams/src/backend/call/share.rs`):
 
-- **Opt-in**: the sharing line is offered only with `KELMA_SCREEN_SHARE=1`, so the audio-only
+- **Opt-in**: the sharing line is offered only with `IRONTEAMS_SCREEN_SHARE=1`, so the audio-only
   offer verified above stays the default until a live run confirms the media servers take it.
 - A `MediaSession` built with `MediaOptions::video = [VideoRole::ApplicationSharing]` registers
   H.264 (`packetization-mode=1`, constrained baseline as `42c01f` at payload type 107 and
@@ -434,7 +434,7 @@ What kelma does with this (`calling::video`, `calling::media`, `calling::signali
   `cargo run -p calling --example screencast -- 5 /tmp/share.h264`, then `ffprobe` the file.
 
 UNVERIFIED (each needs a live run with the official client watching): that the media server
-accepts kelma's join offer with a sharing line but no `main-video` line; that a browser peer of a
+accepts IronTeams's join offer with a sharing line but no `main-video` line; that a browser peer of a
 1:1 call binds our `42c01f` track when it answers `42e01f`; that a sharing line
 answered `recvonly` can then be flipped to sending by `UpdateMediaDescriptions`; that the media
 server forwards a share without `updateParticipantProperties`; whether `controlVideoStreaming`
@@ -489,15 +489,15 @@ Sources, facts only, as for screen sharing: rusty-teams (`video_layout.rs`, `ros
    "Video"]` and answers the main-video line `sendrecv` (rusty-teams `call/mod.rs`);
    mautrix-teams accepts with `["Audio"]` and turns video on afterwards with a re-offer.
 
-What kelma does with this (`calling::video::{camera, receive}`, `kelma/src/backend/call/camera.rs`):
+What IronTeams does with this (`calling::video::{camera, receive}`, `ironteams/src/backend/call/camera.rs`):
 
-- **Opt-in**: the main-video line is offered only with `KELMA_CAMERA=1` (like
-  `KELMA_SCREEN_SHARE=1`), first among the video lines, so it is mid 1. Without it the Camera
+- **Opt-in**: the main-video line is offered only with `IRONTEAMS_CAMERA=1` (like
+  `IRONTEAMS_SCREEN_SHARE=1`), first among the video lines, so it is mid 1. Without it the Camera
   buttons stay disabled.
 - Capture: the Camera portal (`ashpd` `desktop::camera`: `IsCameraPresent`, `AccessCamera`,
   `OpenPipeWireRemote`); a `gst-launch-1.0 pipewiresrc fd=0` child with no node named reads the
   first camera on that remote. When the portal is missing or sees no camera, `v4l2src` reads
-  `KELMA_CAMERA_DEVICE`, else the camera chosen in Settings > Devices, else `/dev/video0`. A
+  `IRONTEAMS_CAMERA_DEVICE`, else the camera chosen in Settings > Devices, else `/dev/video0`. A
   refused portal request is an error, not a V4L2 fallback. `decodebin` handles MJPEG cameras;
   frames are I420 640x360 (letterboxed) at 15 fps, encoded by OpenH264 in camera mode at
   600 kbit/s, a keyframe every 2 s or on `KeyFrame=1`.
@@ -514,7 +514,7 @@ What kelma does with this (`calling::video::{camera, receive}`, `kelma/src/backe
 - "Accept with video" answers with audio (as mautrix-teams) and turns the camera on once the call
   runs. The pre-join Camera switch does the same for a meeting join.
 
-UNVERIFIED (each needs a live run): that a meeting's media server accepts kelma's join offer with
+UNVERIFIED (each needs a live run): that a meeting's media server accepts IronTeams's join offer with
 one sendrecv main-video line and no gallery lines; whether `applyChannelParameters`
 `maxVideoSendCapabilities` must precede `;v_2`; that the media server forwards our camera without
 it; that `pipewiresrc` with no node picks a portal camera (and which one when there are several);
@@ -547,8 +547,8 @@ nothing here ran against a live call yet.
 4. **1:1 calls** need no subscription: the other side's camera comes on the main-video line and
    its share on the sharing line after its re-offer with `ScreenSharer`.
 
-What kelma does (`calling::signaling::{roster, video}`, `calling::media`,
-`kelma/src/backend/call/remote_video.rs`):
+What IronTeams does (`calling::signaling::{roster, video}`, `calling::media`,
+`ironteams/src/backend/call/remote_video.rs`):
 
 - Every remote video packet carries the mid of its line (webrtc-rs's receiver for the track,
   looked up in the peer connection's transceivers). One OpenH264 decoder per line: the sharing
@@ -556,11 +556,11 @@ What kelma does (`calling::signaling::{roster, video}`, `calling::media`,
   subscribed to (`VideoSlot::Gallery`), anything else in the other person's tile as before. A
   line quiet for 10 s is cleared.
 - A meeting join offers nine receive-only `main-video` lines after the video lines when
-  `KELMA_CAMERA=1` (`MediaOptions::receive_slots`); `from_teams_with` keeps that many main-video
+  `IRONTEAMS_CAMERA=1` (`MediaOptions::receive_slots`); `from_teams_with` keeps that many main-video
   sections of the answer. A media server's re-offer (lobby admission) is answered without them.
 - A join that offers video lines is laid out as the web client's (camera mid 1, gallery 2-10,
-  sharing mid 11; `KELMA_MEETING_VIDEO_LAYOUT=sharing-second` puts the sharing line at mid 2,
-  kelma's first layout), every video line states `a=x-signaling-fb:* x-message app send:src
+  sharing mid 11; `IRONTEAMS_MEETING_VIDEO_LAYOUT=sharing-second` puts the sharing line at mid 2,
+  IronTeams's first layout), every video line states `a=x-signaling-fb:* x-message app send:src
   recv:src,vc` and an `a=x-ssrc-range` (`1-1` when it sends nothing). The join declares
   `callModalities: ["Audio"]` and no `mediaDescriptions`: a join that declared only `Audio` kept
   audio up but had every video line answered with port 0, and a join that declared the lines
@@ -568,34 +568,34 @@ What kelma does (`calling::signaling::{roster, video}`, `calling::media`,
   `applyChannelParameters` `sendSideBWSeed`) was taken (201) and ended within 1.5 s by a
   `conversationEnd` and `callEnd` of 410, subCode 301999, "InvalidFinalAnswerMediaDescriptions"
   (both live 2026-11-20, the second on `b1d38a7`; the offer had 13 lines, data at mid 12).
-- UNVERIFIED, opt-in with `KELMA_MEETING_VIDEO_DESCRIBE=1`: the join names `ScreenViewer` and
+- UNVERIFIED, opt-in with `IRONTEAMS_MEETING_VIDEO_DESCRIBE=1`: the join names `ScreenViewer` and
   declares only its send-capable video lines (`sendrecv`/`sendonly` in the offer: camera mid 1,
   sharing mid 11), each `recvonly`, plus the bandwidth seed; a receive-only gallery line is never
   named, and with no send-capable line the list is empty. Why: the web client's captured join
   names mids 1-6 and 11, exactly the lines its SDP offers `sendrecv`, and never its `recvonly`
   7-10 (mautrix-teams openapi `TeamsSdp`, `MediaDescriptions` "the send-capable m-lines");
   rusty-teams joins with `descriptions: []`; mautrix-teams names every video mid, but offers
-  every video line `sendrecv`. kelma's refused join named nine `recvonly` gallery lines. Certain:
+  every video line `sendrecv`. IronTeams's refused join named nine `recvonly` gallery lines. Certain:
   the phrase names the join's media descriptions, the only body change. Guessed: that the
   receive-only lines are what made them invalid. Not yet run live: the new offer (layout,
   `x-signaling-fb`, `1-1` ranges, all from the same commit) joined without descriptions; the last
-  good join had kelma's earlier offer.
+  good join had IronTeams's earlier offer.
 - A meeting may switch only the lines its join declared (`calling::signaling::bodies::
   declared_video_mids`, kept on the call): after the default join (no `mediaDescriptions`)
   Share and Camera stay disabled ("Sharing/Video isn't available in meetings yet") and no
   `UpdateMediaDescriptions` is ever posted, whatever ports the answer gave the lines. With
-  `KELMA_MEETING_VIDEO_DESCRIBE=1` the update names only the declared lines (camera mid 1,
+  `IRONTEAMS_MEETING_VIDEO_DESCRIBE=1` the update names only the declared lines (camera mid 1,
   sharing mid 11) that are also live, as the web client's updates name only its send-capable
   mids, with a call-wide `requestId` (UNVERIFIED live). A declared line the media server answered
   with port 0 is never named either ("Sharing/Video isn't available in this meeting").
-- **Live 2026-11-20 (binary `89dbf86`, `KELMA_CAMERA=1 KELMA_SCREEN_SHARE=1`), why.** The
+- **Live 2026-11-20 (binary `89dbf86`, `IRONTEAMS_CAMERA=1 IRONTEAMS_SCREEN_SHARE=1`), why.** The
   default join (`callModalities: ["Audio"]`, no `mediaDescriptions`) had its video lines answered
   live (`remote video lines slots=9 share=true`), so the old gate (port liveness) enabled Share.
   Sharing posted `UpdateMediaDescriptions` naming mids 1-10 `recvonly` and 11 `sendonly`
   (`applicationsharing-video`, tag `;ss_1`, `requestId` 2): 400, subCode 10146, media
-  controller `operationFailure` 1047 "Invalid MediaDescriptions". About 0.2 s later, before kelma
+  controller `operationFailure` 1047 "Invalid MediaDescriptions". About 0.2 s later, before IronTeams
   sent anything else, `call/end` came: 410, subCode 301999, "InvalidUpdatedMediaDescriptions"
-  (`clientError`, `MidCallFailure`). kelma's `contentSharingLeave` went out after that (0.5 s)
+  (`clientError`, `MidCallFailure`). IronTeams's `contentSharingLeave` went out after that (0.5 s)
   and was 404 ("could not be resolved"): the 400 itself ends the call, not a follow-up of ours.
   So a refused update is unrecoverable; the only safe path is never to send one the join did not
   set up. (A failed update still stops the share locally with the error banner.)
@@ -604,20 +604,20 @@ What kelma does (`calling::signaling::{roster, video}`, `calling::media`,
   subscribed in order through one queue (`sequenceNumber` rising per call), on the
   `applyChannelParameters` link, else `{callLeg}/applyChannelParameters`.
 - Someone else's share (roster) is subscribed on our sharing line (needs
-  `KELMA_SCREEN_SHARE=1`), and named: the call window's View menu enables "Focus on content",
+  `IRONTEAMS_SCREEN_SHARE=1`), and named: the call window's View menu enables "Focus on content",
   switches to it when a share starts (and back to the gallery when it ends) and shows
   "<name> is presenting". In a 1:1 call the share's first picture does the same, named after the
   call.
 
 UNVERIFIED (each needs a live run): that the media server accepts the nine receive-only lines in
-kelma's join offer; that the answer carries `x-source-streamid` on them; that
+IronTeams's join offer; that the answer carries `x-source-streamid` on them; that
 `applyChannelParameters` is among the call leg's links (or the `callLeg` fallback works); that
 the server sends on a slot after the subscription and that webrtc-rs reports it on that line's
 receiver (Teams names no SSRCs); whether a subscription must precede the first keyframe or
 answer a `controlVideoStreaming`; that the sharing line, which is also our sending line, receives
 someone else's share once subscribed; that a 1:1 peer's share arrives on our sharing line. Not
 done: answering an RTCP PLI on our own lines with a keyframe (webrtc-rs delivers inbound RTCP to
-the application only through an interceptor that marks it; kelma still sends a keyframe every
+the application only through an interceptor that marks it; IronTeams still sends a keyframe every
 2 s and on `KeyFrame=1`).
 
 ## The content-sharing session: presenting in a meeting (2026-11-20, everything UNVERIFIED)
@@ -648,7 +648,7 @@ the facts below were taken.
    teams-lite's tenant never sent one (it read the `applicationsharing-video` stream's
    `sendonly` direction instead). The roster's own entry shows `role: presenter` once granted.
 
-What kelma does (`calling::signaling::content_sharing`, `kelma/src/backend/call/share.rs`):
+What IronTeams does (`calling::signaling::content_sharing`, `ironteams/src/backend/call/share.rs`):
 
 - In a meeting, after the picker and before `UpdateMediaDescriptions`, Share POSTs the start body
   to the call's `addModality` link (when the conversation names one; without it the share goes
@@ -662,9 +662,9 @@ What kelma does (`calling::signaling::content_sharing`, `kelma/src/backend/call/
 - The roster's `contentSharing` object (on the participant, an endpoint or its call) marks the
   presenter; `remote_video::presenter_mri` takes the sending share first, then that.
 
-UNVERIFIED: that kelma's conversation answer carries `addModality`; that the service accepts the
+UNVERIFIED: that IronTeams's conversation answer carries `addModality`; that the service accepts the
 body without a `payload` envelope (teams-lite says it refuses one); whether the grant must
-precede `UpdateMediaDescriptions` (kelma waits up to 5 s); the leave body.
+precede `UpdateMediaDescriptions` (IronTeams waits up to 5 s); the leave body.
 
 ## Remote control (2026-11-20): what is known, what is guessed, what needs a capture
 
@@ -683,12 +683,12 @@ channel, "give/request control".
   channel, action codes 0-11); needs a second person and a security review". Its code has no
   implementation, no message shape, no data id and no names for the twelve codes.
 - The `main-channel` SCTP data channel framing is known (captions, data id 3; an 11-byte header
-  with a start flag, sequence, fragments left and a source id) and kelma reads it.
+  with a start flag, sequence, fragments left and a source id) and IronTeams reads it.
 - None of the references implements control, and none has a capture of it. The Teams web client
   may not offer "Give control" at all (Microsoft documents it for the desktop clients), which
   would explain why browser-based captures have nothing.
 
-**Guessed (kelma's implementation, every message UNVERIFIED, `calling::remote_control`):**
+**Guessed (IronTeams's implementation, every message UNVERIFIED, `calling::remote_control`):**
 - Messages: `Request {from}`, `Grant {to}`, `Deny {to}`, `Revoke`, `Release`, and input
   (`PointerMove {x, y}` normalized 0..1 of the shared picture, `PointerButton`, `Axis {dx, dy}`,
   `Key {keysym}` as an X keysym), behind one trait, `ControlChannel`.
@@ -704,7 +704,7 @@ channel, "give/request control".
   frames are read in both shapes.
 
 **Local half (built, independent of the wire):**
-- Share never asks for control, as Teams (regardless of `KELMA_REMOTE_CONTROL`): it is always
+- Share never asks for control, as Teams (regardless of `IRONTEAMS_REMOTE_CONTROL`): it is always
   the plain ScreenCast picker (`screencast::pick`, `ShareKind::Any` = monitor or window, one
   source, cursor embedded). Input consent is asked LATER, when control is granted ("Give
   control" or Allow on a viewer's request; `Machine::needs_input_consent`), once per share:
@@ -717,7 +717,7 @@ channel, "give/request control".
   picture itself; a monitor inside a bigger stream (KDE hands the whole desktop when it shows no
   picker) is offset by the difference of the two stream positions; anything else (a window in a
   bigger stream) is refused, so no click lands where the viewer can't see. If the user declines
-  the dialog the grant is not made ("kelma needs permission to control your screen") and a
+  the dialog the grant is not made ("IronTeams needs permission to control your screen") and a
   viewer's request is denied. The session ends with the share. `InputInjector` sends buttons
   (evdev `BTN_*`), scrolling and keys (keysyms). Injection runs on its own task.
   UNVERIFIED live (KDE Plasma Wayland, two monitors): whether KDE shows its picker for the
@@ -748,10 +748,10 @@ channel, "give/request control".
   lands on whatever covers that spot. Without layer-shell (GNOME) there is no drawn cursor,
   logged. The overlay also shows in the shared picture. The label is not shaped (Arabic names
   show unjoined).
-- Safety: while someone controls our screen, any key pressed in kelma's window that is not the
+- Safety: while someone controls our screen, any key pressed in IronTeams's window that is not the
   echo of a key we injected in the last 300 ms, or Escape twice within 1 s, takes control back
-  (Revoke). Stopping the share ends control. LIMIT: Wayland gives kelma no keys pressed in other
-  windows, so the take-back keys work only while kelma has focus; the banner's Take back and the
+  (Revoke). Stopping the share ends control. LIMIT: Wayland gives IronTeams no keys pressed in other
+  windows, so the take-back keys work only while IronTeams has focus; the banner's Take back and the
   desktop's own remote-control indicator always work. A global shortcut (GlobalShortcuts portal)
   is the follow-up.
 - Request / take control: the stage's "Request control"; once granted, the stage captures the

@@ -281,6 +281,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "compat",
  "directories",
  "futures-util",
  "serde",
@@ -909,6 +910,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "bytes",
+ "compat",
  "cpal",
  "flate2",
  "futures-util",
@@ -1162,6 +1164,15 @@ checksum = "4356eba6976435498d05a311ee9fc486da3bc81c200d3f0d7dd9703b41913f92"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "compat"
+version = "0.0.0"
+dependencies = [
+ "directories",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -1634,6 +1645,7 @@ name = "diag"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "compat",
  "directories",
  "flate2",
  "regex",
@@ -3462,6 +3474,75 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
+name = "ironteams"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "appearance",
+ "apps",
+ "arboard",
+ "calendar",
+ "calling",
+ "chrono",
+ "compat",
+ "devices",
+ "diag",
+ "emoji",
+ "futures-util",
+ "i-slint-backend-testing",
+ "iana-time-zone",
+ "image",
+ "notify-rust",
+ "onedrive",
+ "open",
+ "preview",
+ "render",
+ "reqwest",
+ "rfd",
+ "serde",
+ "serde_json",
+ "session",
+ "slint",
+ "slint-build",
+ "spellbook",
+ "store",
+ "teams-proto",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tray",
+ "voice",
+ "webhost",
+]
+
+[[package]]
+name = "ironteams-cli"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "appearance",
+ "apps",
+ "calendar",
+ "calling",
+ "compat",
+ "devices",
+ "diag",
+ "futures-util",
+ "onedrive",
+ "preview",
+ "render",
+ "reqwest",
+ "serde_json",
+ "session",
+ "teams-proto",
+ "tokio",
+ "tracing-subscriber",
+ "tray",
+ "url",
+ "webhost",
+]
+
+[[package]]
 name = "is-docker"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3572,73 +3653,6 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "kelma"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "appearance",
- "apps",
- "arboard",
- "calendar",
- "calling",
- "chrono",
- "devices",
- "diag",
- "emoji",
- "futures-util",
- "i-slint-backend-testing",
- "iana-time-zone",
- "image",
- "notify-rust",
- "onedrive",
- "open",
- "preview",
- "render",
- "reqwest",
- "rfd",
- "serde",
- "serde_json",
- "session",
- "slint",
- "slint-build",
- "spellbook",
- "store",
- "teams-proto",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tray",
- "voice",
- "webhost",
-]
-
-[[package]]
-name = "kelma-cli"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "appearance",
- "apps",
- "calendar",
- "calling",
- "devices",
- "diag",
- "futures-util",
- "onedrive",
- "preview",
- "render",
- "reqwest",
- "serde_json",
- "session",
- "teams-proto",
- "tokio",
- "tracing-subscriber",
- "tray",
- "url",
- "webhost",
 ]
 
 [[package]]
@@ -6581,6 +6595,7 @@ dependencies = [
 name = "session"
 version = "0.0.0"
 dependencies = [
+ "compat",
  "directories",
  "keyring",
  "serde",
@@ -8119,6 +8134,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voice"
 version = "0.0.0"
 dependencies = [
+ "compat",
  "devices",
  "symphonia",
  "thiserror 2.0.21",
@@ -8424,6 +8440,7 @@ dependencies = [
 name = "webhost"
 version = "0.0.0"
 dependencies = [
+ "compat",
  "futures-util",
  "libc",
  "serde_json",

@@ -1,8 +1,8 @@
-pkgbase = kelma-git
-	pkgdesc = Lightweight native client for Microsoft Teams chat (unofficial)
+pkgbase = ironteams-git
+	pkgdesc = An unofficial native Microsoft Teams client written in Rust
 	pkgver = r0.0000000
 	pkgrel = 1
-	url = https://github.com/MohamedEslam04/kelma
+	url = https://github.com/MohamedEslam04/teams-in-rust
 	arch = x86_64
 	arch = aarch64
 	license = GPL-3.0-or-later
@@ -30,11 +30,11 @@ pkgbase = kelma-git
 	optdepends = gst-plugin-pipewire: screen sharing in calls (with gstreamer and gst-plugins-base)
 	optdepends = gst-plugins-good: camera video in calls (V4L2 and MJPEG cameras)
 	optdepends = ffmpeg: recording voice messages (encodes them to AAC)
-	provides = kelma
-	conflicts = kelma
+	provides = ironteams
+	conflicts = ironteams
 	options = !lto
 	options = !debug
-	source = kelma::git+https://github.com/MohamedEslam04/kelma.git
+	source = ironteams::git+https://github.com/MohamedEslam04/teams-in-rust.git
 	sha256sums = SKIP
 
-pkgname = kelma-git
+pkgname = ironteams-git

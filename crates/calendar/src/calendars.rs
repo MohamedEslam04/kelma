@@ -310,8 +310,8 @@ mod tests {
     #[test]
     fn create_body_keeps_known_colors_only() {
         assert_eq!(
-            create_calendar_body("kelma-test", "lightblue"),
-            json!({"name": "kelma-test", "color": "lightBlue"})
+            create_calendar_body("ironteams-test", "lightblue"),
+            json!({"name": "ironteams-test", "color": "lightBlue"})
         );
         assert_eq!(create_calendar_body("x", "purple")["color"], "auto");
     }

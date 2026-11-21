@@ -5,9 +5,9 @@
 //! cargo test -p webhost --test live -- --ignored --test-threads=1
 //! ```
 //!
-//! - `KELMA_BROWSER`: browser to use (default: first Chromium-family browser on PATH)
-//! - `KELMA_WEBHOST_TEST_PROFILE`: profile directory (default: a temporary directory)
-//! - `KELMA_TEAMSJS`: path to `@microsoft/teams-js`'s `dist/umd/MicrosoftTeams.min.js`; without
+//! - `IRONTEAMS_BROWSER`: browser to use (default: first Chromium-family browser on PATH)
+//! - `IRONTEAMS_WEBHOST_TEST_PROFILE`: profile directory (default: a temporary directory)
+//! - `IRONTEAMS_TEAMSJS`: path to `@microsoft/teams-js`'s `dist/umd/MicrosoftTeams.min.js`; without
 //!   it the page uses a small client that speaks the same wire protocol.
 //!
 //! The pages are served from 127.0.0.1 and need no sign-in.
@@ -71,7 +71,7 @@ const MINI_TEAMS_JS: &str = r#"
 
 const PAGE: &str = r#"<!doctype html><meta charset="utf-8"><title>webhost live</title>
 <script src="/teams.js"></script>
-<p>kelma web host live check</p>
+<p>ironteams web host live check</p>
 <script>
 window.lastTheme = null;
 window.results = (async () => {
@@ -82,7 +82,7 @@ window.results = (async () => {
   const token = await microsoftTeams.authentication.getAuthToken({ resources: ["api://127.0.0.1/test"] })
     .then(t => "minted:" + t, e => "refused: " + String(e && e.message || e));
   microsoftTeams.app.notifySuccess();
-  const echo = await window.kelma.invoke({ ping: 1 });
+  const echo = await window.ironteams.invoke({ ping: 1 });
   return {
     host: ctx.app.host.name, clientType: ctx.app.host.clientType,
     frameContext: ctx.page.frameContext, locale: ctx.app.locale, theme: ctx.app.theme,
@@ -122,7 +122,7 @@ async fn serve(teams_js: String) -> String {
 }
 
 fn profile() -> (std::path::PathBuf, Option<tempfile::TempDir>) {
-    match std::env::var_os("KELMA_WEBHOST_TEST_PROFILE") {
+    match compat::var_os("IRONTEAMS_WEBHOST_TEST_PROFILE") {
         Some(p) => (p.into(), None),
         None => {
             let d = tempfile::tempdir().unwrap();
@@ -136,7 +136,7 @@ fn options(
     tokens: Arc<std::sync::Mutex<Vec<TokenRequest>>>,
 ) -> WebOptions {
     let mut opts = WebOptions::new(profile);
-    opts.title = Some("kelma web host live check".into());
+    opts.title = Some("ironteams web host live check".into());
     opts.size = Some((900, 650));
     opts.shim = Some(ShimConfig {
         context: HostContext {
@@ -176,8 +176,8 @@ async fn poll(win: &webhost::WebWindow, js: &str, want: &Value) -> Value {
 #[tokio::test]
 #[ignore = "opens a browser window"]
 async fn shim_answers_teams_js_and_the_bridge_round_trips() {
-    let teams_js = match std::env::var("KELMA_TEAMSJS") {
-        Ok(p) => std::fs::read_to_string(p).expect("read KELMA_TEAMSJS"),
+    let teams_js = match compat::var("IRONTEAMS_TEAMSJS") {
+        Ok(p) => std::fs::read_to_string(p).expect("read IRONTEAMS_TEAMSJS"),
         Err(_) => MINI_TEAMS_JS.to_string(),
     };
     let base = serve(teams_js).await;
@@ -237,8 +237,13 @@ async fn shim_answers_teams_js_and_the_bridge_round_trips() {
         json!("contrast")
     );
 
-    let title = poll(&win, "document.title", &json!("kelma web host live check")).await;
-    assert_eq!(title, "kelma web host live check");
+    let title = poll(
+        &win,
+        "document.title",
+        &json!("ironteams web host live check"),
+    )
+    .await;
+    assert_eq!(title, "ironteams web host live check");
 
     tokio::time::timeout(Duration::from_secs(10), win.close())
         .await

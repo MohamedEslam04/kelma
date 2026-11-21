@@ -93,7 +93,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
      CREATE INDEX idx_outbox_conv ON outbox(conversation_id, created_ms);",
     // v3: messages saved with "Save this message".
     //
-    // The server list (`48:saved`) is not available for every tenant, so kelma keeps its own
+    // The server list (`48:saved`) is not available for every tenant, so IronTeams keeps its own
     // list. The sender and a text preview are copied so a Saved view needs no join and still
     // works after the message scrolls out of the cache.
     "CREATE TABLE saved_messages (

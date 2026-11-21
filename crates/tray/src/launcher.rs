@@ -8,8 +8,8 @@ use zbus::zvariant::Value;
 
 /// Desktop file id of the app, as a launcher URI. The task manager matches it to the entry.
 /// The launcher URI of [`crate::APP_ID`]'s desktop file.
-pub const APP_URI: &str = "application://io.github.mohamedeslam04.kelma.desktop";
-pub const OBJECT_PATH: &str = "/com/canonical/unity/launcherentry/kelma";
+pub const APP_URI: &str = "application://io.github.mohamedeslam04.ironteams.desktop";
+pub const OBJECT_PATH: &str = "/com/canonical/unity/launcherentry/ironteams";
 pub const INTERFACE: &str = "com.canonical.Unity.LauncherEntry";
 pub const SIGNAL: &str = "Update";
 
@@ -68,7 +68,10 @@ mod tests {
     #[test]
     fn body_has_uri_and_typed_properties() {
         let (uri, props) = launcher_update(APP_URI, 7).body();
-        assert_eq!(uri, "application://io.github.mohamedeslam04.kelma.desktop");
+        assert_eq!(
+            uri,
+            "application://io.github.mohamedeslam04.ironteams.desktop"
+        );
         assert_eq!(props.len(), 2);
         assert_eq!(props["count"], Value::I64(7));
         assert_eq!(props["count-visible"], Value::Bool(true));

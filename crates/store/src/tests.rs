@@ -532,7 +532,7 @@ fn schema_version_and_indexes() {
 }
 
 fn temp_db_dir(tag: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("kelma-store-test-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("ironteams-store-test-{tag}-{}", std::process::id()))
 }
 
 #[test]
@@ -1511,7 +1511,7 @@ fn indexing_5000_messages_stays_cheap() {
 #[test]
 fn system_event_messages_are_not_search_hits() {
     let s = Store::open_in_memory().unwrap();
-    s.upsert_message(&html_msg("1", "c", 10, "<p>kelma follow test</p>"))
+    s.upsert_message(&html_msg("1", "c", 10, "<p>IronTeams follow test</p>"))
         .unwrap();
     for (id, kind) in [
         ("2", "ThreadActivity/TopicUpdate"),
@@ -1524,10 +1524,10 @@ fn system_event_messages_are_not_search_hits() {
                 id,
                 "c",
                 20,
-                r#"{"topic":"kelma renamed","user":"8:orgid:x"}"#,
+                r#"{"topic":"IronTeams renamed","user":"8:orgid:x"}"#,
             )
         })
         .unwrap();
     }
-    assert_eq!(find(&s, "kelma"), ["1"]);
+    assert_eq!(find(&s, "IronTeams"), ["1"]);
 }

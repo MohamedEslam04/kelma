@@ -26,7 +26,7 @@ pub enum MenuEntry {
 pub fn menu_model(muted: bool, focus: bool) -> Vec<MenuEntry> {
     vec![
         MenuEntry::Item {
-            label: "Open kelma",
+            label: "Open IronTeams",
             icon: "window-new",
             checked: None,
             action: MenuAction::Open,
@@ -64,7 +64,7 @@ mod tests {
         assert!(matches!(
             &m[0],
             MenuEntry::Item {
-                label: "Open kelma",
+                label: "Open IronTeams",
                 action: MenuAction::Open,
                 checked: None,
                 ..

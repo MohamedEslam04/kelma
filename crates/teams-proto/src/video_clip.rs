@@ -8,7 +8,7 @@
 //! object in `amsreferences`. That is what the mautrix-teams bridge sends for a video, and the
 //! tag is what its parser reads back from Teams; the native Teams "video clip" may use another
 //! shape (a `card.video` card, a `VideoMsg` preview image), which is why this stays UNVERIFIED
-//! until `kelma-cli ams-meta` is run on a clip Teams itself sent.
+//! until `ironteams-cli ams-meta` is run on a clip Teams itself sent.
 //!
 //! Receiving: a clip is either such a `<video>` tag or a `card.video` card, which
 //! [`crate::cards::attachments_html`] writes as a "🎬 Video" label and a `kelma-media:` link.
@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 
 /// AMS object type of a video clip. UNVERIFIED: taken from the mautrix-teams bridge
 /// (`sharing/videototranscode` makes AMS prepare the `video` and `thumbnail` views); not yet
-/// confirmed against the metadata of a clip Teams sent (`kelma-cli ams-meta`).
+/// confirmed against the metadata of a clip Teams sent (`ironteams-cli ams-meta`).
 pub const VIDEO_OBJECT_TYPE: &str = "sharing/videototranscode";
 /// Content slot a video object's bytes are written to. UNVERIFIED, as [`VIDEO_OBJECT_TYPE`].
 pub const VIDEO_CONTENT: &str = "original";

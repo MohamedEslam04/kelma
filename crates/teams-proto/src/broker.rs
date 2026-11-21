@@ -1,6 +1,6 @@
 //! Auth broker: one place that mints and caches an access token per audience.
 //!
-//! Every Microsoft 365 service kelma talks to accepts a bearer token minted from the same refresh
+//! Every Microsoft 365 service IronTeams talks to accepts a bearer token minted from the same refresh
 //! token for its own resource. [`Audience`] names those resources and [`TokenCache`] keeps one
 //! token per audience with a wall-clock expiry, so a token is minted lazily on first use and
 //! again only shortly before it expires. The refresh token that comes back from each mint is
@@ -51,11 +51,11 @@ pub enum Audience {
     /// The meeting content service (MCPS, Meeting Recaps): the web client's meeting artifacts
     /// resource, an app id rather than a host, as the mautrix bridge asks for it
     /// (`meetingContentOAuthScope`). Its token goes to `/api/mcps/` on the Teams web hosts.
-    /// UNVERIFIED for kelma's client id.
+    /// UNVERIFIED for IronTeams's client id.
     MeetingContent,
     /// A Teams app's own resource for app single sign-on, usually `api://<domain>/<app id>` (the
     /// `webApplicationInfo.resource` of its manifest). Build it with [`Audience::app`]. Its
-    /// tokens are handed to the app (see `webhost`), never sent by kelma, so it owns no host.
+    /// tokens are handed to the app (see `webhost`), never sent by IronTeams, so it owns no host.
     App(String),
 }
 

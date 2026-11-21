@@ -4,7 +4,7 @@
 //! `GET /me/planner/tasks`, `/me/planner/plans`, `/groups/{id}/planner/plans`,
 //! `/planner/plans/{id}/{tasks,buckets}`, `/me/todo/lists` and `/me/todo/lists/{id}/tasks`.
 //! The `tasks.office.com` audience mints a token, but its API paths are undocumented and every
-//! probe answered 404 or 503, so kelma does not use it. Premium plans are not reachable here.
+//! probe answered 404 or 503, so IronTeams does not use it. Premium plans are not reachable here.
 
 use crate::client::Client;
 use crate::error::Result;

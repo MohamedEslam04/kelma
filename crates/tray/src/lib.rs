@@ -1,4 +1,4 @@
-//! kelma tray: a StatusNotifierItem tray icon with an unread badge, the Unity launcher badge
+//! IronTeams tray: a StatusNotifierItem tray icon with an unread badge, the Unity launcher badge
 //! and XDG autostart.
 //!
 //! * [`Tray::start`] runs the tray on its own thread (a private single-threaded runtime), so it
@@ -6,16 +6,16 @@
 //!   the mute flag, and hands out the events (Open, ToggleMute, Quit) to poll or block on.
 //! * The same thread emits `com.canonical.Unity.LauncherEntry.Update`, which the KDE task
 //!   manager shows as a badge on the launcher ([`launcher`]).
-//! * [`autostart`] writes and removes `$XDG_CONFIG_HOME/autostart/kelma.desktop` (the Run key on
+//! * [`autostart`] writes and removes `$XDG_CONFIG_HOME/autostart/ironteams.desktop` (the Run key on
 //!   Windows, a LaunchAgent on macOS).
 //!
 //! Windows and macOS: the StatusNotifierItem and the launcher badge are Linux only. [`Tray::start`]
 //! there only says so ([`TrayHandle::tray_error`]); the app draws its tray icon with Slint.
 
-/// kelma's application id: the name of its desktop file and icon, its Wayland app id and X11
+/// IronTeams's application id: the name of its desktop file and icon, its Wayland app id and X11
 /// window class, and the id it registers with the desktop portal. Reverse-DNS, because the portal
 /// and Flatpak take nothing else.
-pub const APP_ID: &str = "io.github.mohamedeslam04.kelma";
+pub const APP_ID: &str = "io.github.mohamedeslam04.ironteams";
 
 pub mod autostart;
 pub mod icon;
@@ -68,8 +68,8 @@ pub struct TrayOptions {
 impl Default for TrayOptions {
     fn default() -> Self {
         Self {
-            id: "kelma".into(),
-            title: "kelma".into(),
+            id: "ironteams".into(),
+            title: "IronTeams".into(),
             icon_name: APP_ID.into(),
             launcher_uri: launcher::APP_URI.into(),
             muted: false,
@@ -280,7 +280,7 @@ impl Tray {
         let sync_launcher = opts.sync_launcher_badge;
         #[cfg(target_os = "linux")]
         let thread = std::thread::Builder::new()
-            .name("kelma-tray".into())
+            .name("ironteams-tray".into())
             .spawn(move || worker(opts, cmd_rx, event_tx, ready_tx))
             .ok();
         // No StatusNotifierItem here: commands go nowhere and no event ever comes.
@@ -444,9 +444,9 @@ mod tests {
 
     #[test]
     fn title_and_tooltip_show_the_count() {
-        assert_eq!(title_text("kelma", 0), "kelma");
-        assert_eq!(title_text("kelma", 3), "kelma (3 unread)");
-        assert_eq!(title_text("kelma", 250), "kelma (99+ unread)");
+        assert_eq!(title_text("IronTeams", 0), "IronTeams");
+        assert_eq!(title_text("IronTeams", 3), "IronTeams (3 unread)");
+        assert_eq!(title_text("IronTeams", 250), "IronTeams (99+ unread)");
         assert_eq!(tooltip_text(0, false), "No unread messages");
         assert_eq!(tooltip_text(1, false), "1 unread message");
         assert_eq!(tooltip_text(12, false), "12 unread messages");

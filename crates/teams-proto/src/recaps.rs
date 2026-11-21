@@ -1,11 +1,11 @@
 //! Meeting Recaps (plans/meeting-recaps.md R1): past meetings that have a recording or a
 //! transcript, and what the user can read of them without an AI license.
 //!
-//! kelma's screen lists meetings from the calendar and reads each meeting's chat: the recording
+//! IronTeams's screen lists meetings from the calendar and reads each meeting's chat: the recording
 //! and transcript messages it carries are parsed by [`parse_recording_message`] and
 //! [`parse_transcript_message`]. The sources below only complete that.
 //!
-//! Sources, in the order kelma tries them:
+//! Sources, in the order IronTeams tries them:
 //! 1. The meeting content service (MCPS), `GET <mcps>/user/meetings/contents?top=&startDateTime=
 //!    &endDateTime=&includeTypes=Recording,TranscriptV2`, documented by the mautrix OpenAPI from a
 //!    captured web client. Each entry pairs `threadInfo` (thread id, iCalUid, subject, organizer,

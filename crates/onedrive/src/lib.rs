@@ -1,4 +1,4 @@
-//! OneDrive and SharePoint files for kelma: browse, act, share and the recycle bin.
+//! OneDrive and SharePoint files for ironteams: browse, act, share and the recycle bin.
 //!
 //! Everything is an async function on `&teams_proto::Client`. Graph calls carry the Graph
 //! audience's bearer and the recycle bin carries the user's `-my.sharepoint.com` bearer, both

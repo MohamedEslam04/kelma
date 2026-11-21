@@ -1,4 +1,4 @@
-//! H.264 as kelma sends it: Annex-B access units (start codes between NAL units), constrained
+//! H.264 as IronTeams sends it: Annex-B access units (start codes between NAL units), constrained
 //! baseline, `packetization-mode=1`. webrtc-rs's H.264 payloader reads Annex-B and writes the RTP
 //! (single NAL units, STAP-A for SPS/PPS, FU-A for large slices).
 
@@ -38,15 +38,15 @@ pub fn is_keyframe(stream: &[u8]) -> bool {
     split_annexb(stream).iter().any(|u| nal_type(u) == Some(5))
 }
 
-/// The H.264 payload types and `profile-level-id`s kelma registers, in order of preference.
+/// The H.264 payload types and `profile-level-id`s IronTeams registers, in order of preference.
 /// webrtc-rs pairs H.264 codecs by `packetization-mode` and the first two bytes of
 /// `profile-level-id` only, so both constrained-baseline spellings are needed: the media servers
-/// offer and answer `42C0..` (payload type 107, kelma's live re-offer and rusty-teams'
+/// offer and answer `42C0..` (payload type 107, IronTeams's live re-offer and rusty-teams'
 /// `teams_answer.sdp`), browsers `42e0..`. Level 3.1 (`1f`) covers 1080p at 15 frames a second
 /// of screen content.
 pub const PAYLOADS: [(u8, &str); 2] = [(107, "42c01f"), (108, "42e01f")];
 
-/// The `a=fmtp` of a kelma H.264 line with `profile_level_id`.
+/// The `a=fmtp` of a IronTeams H.264 line with `profile_level_id`.
 pub fn fmtp(profile_level_id: &str) -> String {
     format!("level-asymmetry-allowed=1;packetization-mode=1;profile-level-id={profile_level_id}")
 }

@@ -669,7 +669,7 @@ fn run(
         &qh,
         surface,
         Layer::Overlay,
-        Some("kelma-control-cursor"),
+        Some("ironteams-control-cursor"),
         Some(output),
     );
     layer.set_anchor(Anchor::TOP | Anchor::LEFT);

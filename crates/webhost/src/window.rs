@@ -17,16 +17,16 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 /// Answers `authentication.getAuthToken`: `Ok(access token)` or `Err(reason shown to the app)`.
-/// kelma's UI plugs `teams_proto`'s auth broker in here. It is only called for requests that
+/// IronTeams's UI plugs `teams_proto`'s auth broker in here. It is only called for requests that
 /// passed [`shim::check_token_request`], so `resources` holds exactly the one resource to mint.
 pub type TokenCallback =
     Arc<dyn Fn(TokenRequest) -> BoxFuture<std::result::Result<String, String>> + Send + Sync>;
 
-/// Answers `window.kelma.invoke(payload)` calls from the page.
+/// Answers `window.ironteams.invoke(payload)` calls from the page.
 pub type BridgeHandler =
     Arc<dyn Fn(BridgeCall) -> BoxFuture<std::result::Result<Value, String>> + Send + Sync>;
 
-/// One `window.kelma.invoke(payload)` call.
+/// One `window.ironteams.invoke(payload)` call.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BridgeCall {
     pub payload: Value,
@@ -44,9 +44,9 @@ pub struct WebOptions {
     /// The browser profile. Sign-ins and cookies persist here, separate from the user's own
     /// browser profile. See [`default_profile_dir`].
     pub profile_dir: PathBuf,
-    /// Browser executable; `None` searches `$KELMA_BROWSER`, then [`browser::CANDIDATES`].
+    /// Browser executable; `None` searches `$IRONTEAMS_BROWSER`, then [`browser::CANDIDATES`].
     pub browser: Option<PathBuf>,
-    /// TeamsJS host shim; `None` opens a plain page (the `window.kelma` bridge still works).
+    /// TeamsJS host shim; `None` opens a plain page (the `window.ironteams` bridge still works).
     pub shim: Option<ShimConfig>,
     /// Token callback for the shim. Without one, `getAuthToken` fails.
     pub token: Option<TokenCallback>,
@@ -68,7 +68,7 @@ impl WebOptions {
     }
 }
 
-/// The host profile under kelma's data directory.
+/// The host profile under IronTeams's data directory.
 pub fn default_profile_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("webhost-profile")
 }
@@ -445,7 +445,7 @@ async fn on_binding(inner: Arc<Inner>, name: String, payload: String, origin: St
                 Err(reason)
             }
             (Some(cb), Ok(request)) => cb(request).await,
-            (None, Ok(_)) => Err("kelma has no token provider for this window".into()),
+            (None, Ok(_)) => Err("IronTeams has no token provider for this window".into()),
         };
         shim::deliver_js(&shim::token_response(&to, result))
     } else if name == shim::BRIDGE_BINDING {
@@ -455,7 +455,7 @@ async fn on_binding(inner: Arc<Inner>, name: String, payload: String, origin: St
         let handler = inner.bridge.lock().unwrap().clone();
         let result = match handler {
             Some(h) => h(BridgeCall { payload, origin }).await,
-            None => Err("kelma has no handler for window.kelma.invoke".into()),
+            None => Err("IronTeams has no handler for window.ironteams.invoke".into()),
         };
         shim::bridge_reply_js(id, &result)
     } else {
@@ -494,7 +494,7 @@ impl WebWindow {
         evaluate(&self.inner, js).await
     }
 
-    /// Sets the handler for `window.kelma.invoke(payload)` calls, replacing any earlier one.
+    /// Sets the handler for `window.ironteams.invoke(payload)` calls, replacing any earlier one.
     pub fn on_message(&self, handler: BridgeHandler) {
         *self.inner.bridge.lock().unwrap() = Some(handler);
     }
@@ -581,8 +581,8 @@ mod tests {
     #[test]
     fn default_profile_dir_is_under_the_data_dir() {
         assert_eq!(
-            default_profile_dir(Path::new("/home/u/.local/share/kelma")),
-            PathBuf::from("/home/u/.local/share/kelma/webhost-profile")
+            default_profile_dir(Path::new("/home/u/.local/share/ironteams")),
+            PathBuf::from("/home/u/.local/share/ironteams/webhost-profile")
         );
     }
 }

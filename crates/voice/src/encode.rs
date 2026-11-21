@@ -1,11 +1,11 @@
 //! Encoding a recording to the format Teams voice messages use: AAC-LC, mono, 44.1 kHz in an
 //! MP4 container (`.m4a`, brand mp42).
 //!
-//! kelma is GPL-3.0-or-later, so it must not link fdk-aac (GPL-incompatible license). On Linux
+//! IronTeams is GPL-3.0-or-later, so it must not link fdk-aac (GPL-incompatible license). On Linux
 //! the system `ffmpeg` does the encoding as a child process instead: raw samples go in on
 //! stdin, the file comes out of a temporary path because MP4 needs a seekable output. Windows and
 //! macOS use the system's own AAC encoder (`native_aac`: Media Foundation, AudioToolbox), so they
-//! need no ffmpeg; `KELMA_FFMPEG` still picks ffmpeg there, and ffmpeg is the fallback when the
+//! need no ffmpeg; `IRONTEAMS_FFMPEG` still picks ffmpeg there, and ffmpeg is the fallback when the
 //! system encoder fails.
 
 use crate::{Clip, Error, Result};
@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Environment variable that names the `ffmpeg` program to run instead of the one on `PATH`.
-const FFMPEG_ENV: &str = "KELMA_FFMPEG";
+const FFMPEG_ENV: &str = "IRONTEAMS_FFMPEG";
 
 /// Bit rate of the AAC stream; plenty for speech, small to upload.
 const BIT_RATE: &str = "64k";
@@ -26,14 +26,14 @@ const BIT_RATE: &str = "64k";
 const OUTPUT_RATE: &str = "44100";
 
 /// Encode `clip` as AAC-LC mono in an MP4 container. Linux needs `ffmpeg`:
-/// [`Error::EncoderMissing`] when it cannot be found (set `KELMA_FFMPEG` to point at it).
+/// [`Error::EncoderMissing`] when it cannot be found (set `IRONTEAMS_FFMPEG` to point at it).
 pub fn encode_m4a(clip: &Clip) -> Result<Vec<u8>> {
     #[cfg(any(windows, target_os = "macos"))]
-    if std::env::var_os(FFMPEG_ENV).is_none() {
+    if compat::var_os(FFMPEG_ENV).is_none() {
         match encode_native(clip) {
             Ok(bytes) => return Ok(bytes),
             Err(e) if ffmpeg_runs() => {
-                eprintln!("kelma voice: the system AAC encoder failed ({e}); trying ffmpeg");
+                eprintln!("ironteams voice: the system AAC encoder failed ({e}); trying ffmpeg");
             }
             Err(e) => return Err(e),
         }
@@ -65,10 +65,10 @@ pub fn encoder_available() -> bool {
     ffmpeg_runs()
 }
 
-/// The ffmpeg to run: `KELMA_FFMPEG`, else one shipped next to the executable (`ffmpeg.exe` beside
-/// `kelma.exe`, or in the macOS app's `Contents/MacOS`), else `ffmpeg` from `PATH`.
+/// The ffmpeg to run: `IRONTEAMS_FFMPEG`, else one shipped next to the executable (`ffmpeg.exe` beside
+/// `ironteams.exe`, or in the macOS app's `Contents/MacOS`), else `ffmpeg` from `PATH`.
 pub fn ffmpeg_program() -> std::ffi::OsString {
-    if let Some(p) = std::env::var_os(FFMPEG_ENV) {
+    if let Some(p) = compat::var_os(FFMPEG_ENV) {
         return p;
     }
     let name = if cfg!(windows) {
@@ -209,7 +209,7 @@ impl TempFile {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos());
         let name = format!(
-            "kelma-voice-{}-{}-{nanos}.m4a",
+            "ironteams-voice-{}-{}-{nanos}.m4a",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
         );
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn a_missing_encoder_is_reported_as_such() {
         let clip = Clip::new(vec![0.1; 4800], 48_000);
-        let result = encode_with(OsStr::new("kelma-no-such-ffmpeg"), &clip);
+        let result = encode_with(OsStr::new("ironteams-no-such-ffmpeg"), &clip);
         assert!(matches!(result, Err(Error::EncoderMissing)), "{result:?}");
     }
 

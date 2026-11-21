@@ -1,6 +1,6 @@
-//! Starting at login. Linux: XDG autostart, `$XDG_CONFIG_HOME/autostart/kelma.desktop` (default
-//! `~/.config`). Windows: a `kelma` value under the per-user Run key. macOS: a LaunchAgent,
-//! `~/Library/LaunchAgents/io.github.mohamedeslam04.kelma.plist`. [`enable`], [`disable`] and
+//! Starting at login. Linux: XDG autostart, `$XDG_CONFIG_HOME/autostart/ironteams.desktop` (default
+//! `~/.config`). Windows: a `ironteams` value under the per-user Run key. macOS: a LaunchAgent,
+//! `~/Library/LaunchAgents/io.github.mohamedeslam04.ironteams.plist`. [`enable`], [`disable`] and
 //! [`is_enabled`] pick the one of the running system; the `*_in` functions always work on the XDG
 //! entry in a given directory.
 
@@ -8,11 +8,14 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// File name of the autostart entry.
-pub const FILE_NAME: &str = "kelma.desktop";
+pub const FILE_NAME: &str = "ironteams.desktop";
+/// The autostart file of the app before the rename from kelma. Enabling autostart removes it
+/// (its `Exec` runs a program that no longer exists) and disabling it does too.
+const LEGACY_FILE_NAME: &str = "kelma.desktop";
 
 /// The desktop entry the app ships; the autostart file reuses its descriptive fields.
 const PACKAGED_ENTRY: &str =
-    include_str!("../../../packaging/io.github.mohamedeslam04.kelma.desktop");
+    include_str!("../../../packaging/io.github.mohamedeslam04.ironteams.desktop");
 
 /// Content of the autostart entry running `exec`, with `hidden_flag` (for example `--hidden`)
 /// appended so the window stays in the tray at login.
@@ -87,9 +90,21 @@ pub fn config_home() -> Option<PathBuf> {
     }
 }
 
-/// `<config_home>/autostart/kelma.desktop` for an explicit config home.
+/// `<config_home>/autostart/ironteams.desktop` for an explicit config home.
 pub fn entry_path_in(config_home: &Path) -> PathBuf {
     config_home.join("autostart").join(FILE_NAME)
+}
+
+/// Removes the pre-rename autostart entry, if there is one.
+fn remove_legacy_entry_in(config_home: &Path) -> io::Result<()> {
+    remove_if_present(&config_home.join("autostart").join(LEGACY_FILE_NAME))
+}
+
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
 }
 
 pub fn enable_in(config_home: &Path, exec: &str, hidden_flag: Option<&str>) -> io::Result<PathBuf> {
@@ -100,14 +115,13 @@ pub fn enable_in(config_home: &Path, exec: &str, hidden_flag: Option<&str>) -> i
     let tmp = dir.join(format!(".{FILE_NAME}.tmp"));
     std::fs::write(&tmp, desktop_entry(exec, hidden_flag))?;
     std::fs::rename(&tmp, &path)?;
+    remove_legacy_entry_in(config_home)?;
     Ok(path)
 }
 
 pub fn disable_in(config_home: &Path) -> io::Result<()> {
-    match std::fs::remove_file(entry_path_in(config_home)) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
+    remove_legacy_entry_in(config_home)?;
+    remove_if_present(&entry_path_in(config_home))
 }
 
 pub fn is_enabled_in(config_home: &Path) -> bool {
@@ -190,6 +204,14 @@ pub fn launch_agent(exec: &str, hidden_flag: Option<&str>) -> String {
     )
 }
 
+/// The LaunchAgent's label before the rename from kelma.
+const LEGACY_LAUNCH_AGENT_LABEL: &str = "io.github.mohamedeslam04.kelma";
+
+fn legacy_launch_agent_path_in(home: &Path) -> PathBuf {
+    home.join("Library/LaunchAgents")
+        .join(format!("{LEGACY_LAUNCH_AGENT_LABEL}.plist"))
+}
+
 /// `<home>/Library/LaunchAgents/<label>.plist`.
 pub fn launch_agent_path_in(home: &Path) -> PathBuf {
     home.join("Library/LaunchAgents")
@@ -207,14 +229,13 @@ pub fn launch_agent_enable_in(
     let tmp = dir.join(format!(".{LAUNCH_AGENT_LABEL}.plist.tmp"));
     std::fs::write(&tmp, launch_agent(exec, hidden_flag))?;
     std::fs::rename(&tmp, &path)?;
+    remove_if_present(&legacy_launch_agent_path_in(home))?;
     Ok(path)
 }
 
 pub fn launch_agent_disable_in(home: &Path) -> io::Result<()> {
-    match std::fs::remove_file(launch_agent_path_in(home)) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
+    remove_if_present(&legacy_launch_agent_path_in(home))?;
+    remove_if_present(&launch_agent_path_in(home))
 }
 
 pub fn launch_agent_enabled_in(home: &Path) -> bool {
@@ -251,8 +272,11 @@ pub fn is_enabled() -> bool {
 
 /// The per-user key whose values Windows runs at login.
 pub const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-/// The value kelma writes there.
-pub const RUN_VALUE: &str = "kelma";
+/// The value IronTeams writes there.
+pub const RUN_VALUE: &str = "ironteams";
+/// The value of the app before the rename from kelma; enabling or disabling removes it.
+#[cfg(windows)]
+const LEGACY_RUN_VALUE: &str = "kelma";
 
 /// The command line stored in the Run key: the program quoted, then the flag.
 pub fn run_command(exec: &str, hidden_flag: Option<&str>) -> String {
@@ -283,6 +307,8 @@ mod run_key {
     }
 
     pub fn set(command: &str) -> io::Result<()> {
+        // The pre-rename value would start a program that no longer exists.
+        delete_value(super::LEGACY_RUN_VALUE)?;
         let (key, name, data) = (wide(super::RUN_KEY), wide(super::RUN_VALUE), wide(command));
         // SAFETY: every pointer is a NUL-terminated UTF-16 string that outlives the call; the
         // size is the data's length in bytes, terminator included.
@@ -299,7 +325,12 @@ mod run_key {
     }
 
     pub fn delete() -> io::Result<()> {
-        let (key, name) = (wide(super::RUN_KEY), wide(super::RUN_VALUE));
+        delete_value(super::LEGACY_RUN_VALUE)?;
+        delete_value(super::RUN_VALUE)
+    }
+
+    fn delete_value(value: &str) -> io::Result<()> {
+        let (key, name) = (wide(super::RUN_KEY), wide(value));
         // SAFETY: both strings are NUL-terminated and outlive the call.
         match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) } {
             ERROR_FILE_NOT_FOUND => Ok(()),
@@ -325,7 +356,7 @@ mod run_key {
     }
 }
 
-/// Add kelma to the per-user Run key. The returned path names the key, for messages.
+/// Add IronTeams to the per-user Run key. The returned path names the key, for messages.
 #[cfg(windows)]
 pub fn enable(exec: &str, hidden_flag: Option<&str>) -> io::Result<PathBuf> {
     run_key::set(&run_command(exec, hidden_flag))?;
@@ -334,13 +365,13 @@ pub fn enable(exec: &str, hidden_flag: Option<&str>) -> io::Result<PathBuf> {
     )))
 }
 
-/// Remove kelma from the Run key (no error when it is already gone).
+/// Remove IronTeams from the Run key (no error when it is already gone).
 #[cfg(windows)]
 pub fn disable() -> io::Result<()> {
     run_key::delete()
 }
 
-/// Whether the Run key starts kelma.
+/// Whether the Run key starts ironteams.
 #[cfg(windows)]
 pub fn is_enabled() -> bool {
     run_key::exists()
@@ -358,30 +389,33 @@ mod tests {
 
     #[test]
     fn entry_reuses_packaged_fields_and_adds_autostart_keys() {
-        let c = desktop_entry("kelma", Some("--hidden"));
+        let c = desktop_entry("ironteams", Some("--hidden"));
         assert!(c.starts_with("[Desktop Entry]\n"));
         assert_eq!(field(&c, "Type"), Some("Application"));
-        assert_eq!(field(&c, "Name"), Some("kelma"));
+        assert_eq!(field(&c, "Name"), Some("IronTeams"));
         assert_eq!(field(&c, "Icon"), Some(crate::APP_ID));
         assert_eq!(field(&c, "StartupWMClass"), Some(crate::APP_ID));
         assert_eq!(field(&c, "Terminal"), Some("false"));
-        assert_eq!(field(&c, "Exec"), Some("kelma --hidden"));
+        assert_eq!(field(&c, "Exec"), Some("ironteams --hidden"));
         assert_eq!(field(&c, "X-GNOME-Autostart-enabled"), Some("true"));
     }
 
     #[test]
     fn entry_drops_actions_which_autostart_does_not_need() {
-        let c = desktop_entry("kelma", None);
+        let c = desktop_entry("ironteams", None);
         assert!(!c.contains("[Desktop Action"));
         assert!(field(&c, "Actions").is_none());
         assert_eq!(c.matches("Exec=").count(), 1);
-        assert_eq!(field(&c, "Exec"), Some("kelma"));
+        assert_eq!(field(&c, "Exec"), Some("ironteams"));
     }
 
     #[test]
     fn exec_path_with_spaces_and_specials_is_quoted() {
-        let c = desktop_entry("/opt/my apps/kelma", Some("--hidden"));
-        assert_eq!(field(&c, "Exec"), Some("\"/opt/my apps/kelma\" --hidden"));
+        let c = desktop_entry("/opt/my apps/ironteams", Some("--hidden"));
+        assert_eq!(
+            field(&c, "Exec"),
+            Some("\"/opt/my apps/ironteams\" --hidden")
+        );
         let c = desktop_entry("/opt/k$elma", None);
         assert_eq!(field(&c, "Exec"), Some("\"/opt/k\\\\$elma\""));
     }
@@ -390,11 +424,14 @@ mod tests {
     fn enable_disable_roundtrip_in_a_temp_dir() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(!is_enabled_in(tmp.path()));
-        let path = enable_in(tmp.path(), "/usr/bin/kelma", Some("--hidden")).unwrap();
-        assert_eq!(path, tmp.path().join("autostart/kelma.desktop"));
+        let path = enable_in(tmp.path(), "/usr/bin/ironteams", Some("--hidden")).unwrap();
+        assert_eq!(path, tmp.path().join("autostart/ironteams.desktop"));
         assert!(is_enabled_in(tmp.path()));
         let written = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(written, desktop_entry("/usr/bin/kelma", Some("--hidden")));
+        assert_eq!(
+            written,
+            desktop_entry("/usr/bin/ironteams", Some("--hidden"))
+        );
         disable_in(tmp.path()).unwrap();
         assert!(!is_enabled_in(tmp.path()));
         assert!(!path.exists());
@@ -404,21 +441,61 @@ mod tests {
     #[test]
     fn enable_twice_overwrites() {
         let tmp = tempfile::tempdir().unwrap();
-        enable_in(tmp.path(), "kelma", None).unwrap();
-        enable_in(tmp.path(), "kelma", Some("--minimized")).unwrap();
+        enable_in(tmp.path(), "ironteams", None).unwrap();
+        enable_in(tmp.path(), "ironteams", Some("--minimized")).unwrap();
         let c = std::fs::read_to_string(entry_path_in(tmp.path())).unwrap();
-        assert_eq!(field(&c, "Exec"), Some("kelma --minimized"));
+        assert_eq!(field(&c, "Exec"), Some("ironteams --minimized"));
+    }
+
+    fn write_legacy_entry(config_home: &Path) -> PathBuf {
+        let legacy = config_home.join("autostart").join(LEGACY_FILE_NAME);
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "[Desktop Entry]\nExec=kelma --hidden\n").unwrap();
+        legacy
+    }
+
+    #[test]
+    fn enabling_removes_the_entry_the_old_name_left() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = write_legacy_entry(tmp.path());
+        let path = enable_in(tmp.path(), "ironteams", None).unwrap();
+        assert!(path.exists());
+        assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn disabling_removes_both_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = write_legacy_entry(tmp.path());
+        let path = enable_in(tmp.path(), "ironteams", None).unwrap();
+        write_legacy_entry(tmp.path());
+        disable_in(tmp.path()).unwrap();
+        assert!(!path.exists() && !legacy.exists());
+    }
+
+    #[test]
+    fn the_launch_agent_of_the_old_name_is_removed_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = legacy_launch_agent_path_in(tmp.path());
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "<plist/>").unwrap();
+        launch_agent_enable_in(tmp.path(), "/k", None).unwrap();
+        assert!(!legacy.exists());
+        assert!(launch_agent_enabled_in(tmp.path()));
+        std::fs::write(&legacy, "<plist/>").unwrap();
+        launch_agent_disable_in(tmp.path()).unwrap();
+        assert!(!legacy.exists() && !launch_agent_enabled_in(tmp.path()));
     }
 
     #[test]
     fn the_launch_agent_runs_the_program_hidden_at_login() {
         let plist = launch_agent(
-            "/Applications/kelma.app/Contents/MacOS/kelma",
+            "/Applications/ironteams.app/Contents/MacOS/ironteams",
             Some("--hidden"),
         );
-        assert!(plist.contains("<string>io.github.mohamedeslam04.kelma</string>"));
+        assert!(plist.contains("<string>io.github.mohamedeslam04.ironteams</string>"));
         assert!(plist.contains(
-            "<string>/Applications/kelma.app/Contents/MacOS/kelma</string>\n        <string>--hidden</string>"
+            "<string>/Applications/ironteams.app/Contents/MacOS/ironteams</string>\n        <string>--hidden</string>"
         ));
         assert!(plist.contains("<key>RunAtLoad</key>\n    <true/>"));
         assert!(launch_agent("/a&b/<k>", None).contains("<string>/a&amp;b/&lt;k&gt;</string>"));
@@ -432,7 +509,7 @@ mod tests {
         assert_eq!(
             path,
             tmp.path()
-                .join("Library/LaunchAgents/io.github.mohamedeslam04.kelma.plist")
+                .join("Library/LaunchAgents/io.github.mohamedeslam04.ironteams.plist")
         );
         assert!(launch_agent_enabled_in(tmp.path()));
         launch_agent_disable_in(tmp.path()).unwrap();
@@ -443,8 +520,11 @@ mod tests {
     #[test]
     fn the_run_key_command_quotes_the_program() {
         assert_eq!(
-            run_command(r"C:\Program Files\kelma\kelma.exe", Some("--hidden")),
-            r#""C:\Program Files\kelma\kelma.exe" --hidden"#
+            run_command(
+                r"C:\Program Files\ironteams\ironteams.exe",
+                Some("--hidden")
+            ),
+            r#""C:\Program Files\ironteams\ironteams.exe" --hidden"#
         );
         assert_eq!(run_command("k.exe", None), r#""k.exe""#);
     }
@@ -452,7 +532,7 @@ mod tests {
     #[test]
     fn switched_off_entry_is_not_enabled() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = enable_in(tmp.path(), "kelma", None).unwrap();
+        let path = enable_in(tmp.path(), "ironteams", None).unwrap();
         let off = std::fs::read_to_string(&path).unwrap().replace(
             "X-GNOME-Autostart-enabled=true",
             "X-GNOME-Autostart-enabled=false",

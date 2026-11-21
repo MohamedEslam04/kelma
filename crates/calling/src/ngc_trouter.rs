@@ -1,4 +1,4 @@
-//! kelma's own trouter connection for calling, registered only as `NextGenCalling`.
+//! IronTeams's own trouter connection for calling, registered only as `NextGenCalling`.
 //!
 //! Call invitations are pushed to `<surl>NGCallManagerWin`; the callbacks of a call in progress
 //! arrive under `<surl>callAgent/...`, URLs we publish ourselves (see

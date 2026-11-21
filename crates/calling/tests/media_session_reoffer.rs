@@ -1,4 +1,4 @@
-//! A 1:1 call kelma answered with the camera and sharing lines, then re-offered (hold, camera,
+//! A 1:1 call IronTeams answered with the camera and sharing lines, then re-offered (hold, camera,
 //! share): the re-offer must keep the negotiated m-lines, in order, with their mids, kinds and
 //! labels, the declined `x-data` line included. Offline (host candidates only); the caller's offer
 //! is synthetic, shaped like a browser's (Teams web).

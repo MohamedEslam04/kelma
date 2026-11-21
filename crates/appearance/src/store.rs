@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Same app name `session` uses for `directories::ProjectDirs`.
-const APP: &str = "kelma";
+const APP: &str = "ironteams";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -18,12 +18,13 @@ pub enum Error {
     Encode(#[from] serde_json::Error),
 }
 
-/// The app config directory (`~/.config/kelma`). `KELMA_HOME` overrides it, exactly as
+/// The app config directory (`~/.config/ironteams`). `IRONTEAMS_HOME` overrides it, exactly as
 /// `session::Paths` does, so tests and the other crates agree on the location.
 pub fn config_dir() -> Result<PathBuf, Error> {
-    if let Ok(home) = std::env::var("KELMA_HOME") {
+    if let Ok(home) = compat::var("IRONTEAMS_HOME") {
         return Ok(PathBuf::from(home).join("config"));
     }
+    compat::migrate_legacy_dirs();
     let d = directories::ProjectDirs::from("", "", APP).ok_or(Error::NoHome)?;
     Ok(d.config_dir().to_path_buf())
 }

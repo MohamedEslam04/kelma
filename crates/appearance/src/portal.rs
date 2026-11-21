@@ -127,7 +127,7 @@ pub fn parse_accent(v: &Value<'_>) -> Option<Rgb> {
     Rgb::from_unit(f(r)?, f(g)?, f(b)?)
 }
 
-/// Turns one portal setting into a change, or `None` for keys kelma does not use.
+/// Turns one portal setting into a change, or `None` for keys IronTeams does not use.
 pub fn parse_change(namespace: &str, key: &str, value: &Value<'_>) -> Option<PortalChange> {
     match (namespace, key) {
         (NS_APPEARANCE, KEY_COLOR_SCHEME) => {
@@ -234,7 +234,7 @@ pub async fn read() -> Result<Option<PortalSettings>, PortalError> {
 }
 
 /// Subscribes to `SettingChanged`. `Ok(None)` if there is no session bus. The stream yields only
-/// changes to keys kelma uses; call [`read`] first for the starting state.
+/// changes to keys IronTeams uses; call [`read`] first for the starting state.
 pub async fn watch() -> Result<Option<PortalStream>, PortalError> {
     let Some(conn) = connect().await? else {
         return Ok(None);

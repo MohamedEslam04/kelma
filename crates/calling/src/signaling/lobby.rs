@@ -7,7 +7,7 @@
 //! `organizer.rs` `admit_body` and `signaling.rs` `admit` (MIT, exercised live there); mautrix-teams
 //! `calls.go` `decideLobby` (AGPL, facts only), which names the callbacks `admitSuccess` and
 //! `admitFailure` where rusty-teams names them `admitParticipantSuccess`/`admitParticipantFailure`.
-//! UNVERIFIED live in kelma: the callback names follow rusty-teams.
+//! UNVERIFIED live in ironteams: the callback names follow rusty-teams.
 //!
 //! **Admit all** is one `admit` per person waiting. The conversation also has an `admitAll` link,
 //! but its body is not captured anywhere, and rusty-teams found that the service's `admitAll`

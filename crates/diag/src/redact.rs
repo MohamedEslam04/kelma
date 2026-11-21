@@ -254,14 +254,14 @@ mod tests {
 
     #[test]
     fn home_directory_user() {
-        let out = redact("open /home/alice/.config/kelma/config.json");
+        let out = redact("open /home/alice/.config/ironteams/config.json");
         assert!(!out.contains("alice"), "{out}");
-        assert!(out.contains("/.config/kelma/config.json"));
+        assert!(out.contains("/.config/ironteams/config.json"));
     }
 
     #[test]
     fn harmless_text_is_untouched() {
-        let s = "INFO kelma: connected in 120 ms, status=200 code 403 grant_type=x";
+        let s = "INFO ironteams: connected in 120 ms, status=200 code 403 grant_type=x";
         assert_eq!(redact(s), s);
     }
 

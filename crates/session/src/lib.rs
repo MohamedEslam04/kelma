@@ -1,7 +1,7 @@
-//! Session persistence for kelma.
+//! Session persistence for ironteams.
 //!
 //! - The refresh token (the only long-lived secret) lives in the system keyring via the
-//!   Secret Service API (KWallet or GNOME Keyring). It is never written to disk by kelma.
+//!   Secret Service API (KWallet or GNOME Keyring). It is never written to disk by ironteams.
 //! - Non-secret settings (tenant, endpoint id) live in `config.json` in the config dir.
 //! - Several accounts can be signed in. [`Config::accounts`] lists them and the legacy
 //!   `account`/`tenant`/`epid`/`self_mri`/`display_name` fields always mirror the active one, so
@@ -16,7 +16,10 @@ use std::sync::Mutex;
 
 pub mod window_state;
 
-const SERVICE: &str = "kelma";
+const SERVICE: &str = "ironteams";
+/// The keyring service before the rename from kelma. Entries found there are moved to
+/// [`SERVICE`] when they are read.
+const LEGACY_SERVICE: &str = "kelma";
 
 /// One writer at a time for `config.json` inside this process: every read-modify-write of the
 /// file ([`Paths::update_config`], [`Paths::save_app_prefs`]) holds it.
@@ -440,7 +443,7 @@ impl Config {
     }
 }
 
-/// Standard directories for kelma.
+/// Standard directories for ironteams.
 pub struct Paths {
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
@@ -448,10 +451,10 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// XDG directories (`~/.config/kelma`, `~/.local/share/kelma`, `~/.cache/kelma`).
-    /// `KELMA_HOME` overrides all three (used by tests).
+    /// XDG directories (`~/.config/ironteams`, `~/.local/share/ironteams`, `~/.cache/ironteams`).
+    /// `IRONTEAMS_HOME` overrides all three (used by tests).
     pub fn new() -> Result<Paths> {
-        if let Ok(home) = std::env::var("KELMA_HOME") {
+        if let Ok(home) = compat::var("IRONTEAMS_HOME") {
             let h = PathBuf::from(home);
             return Ok(Paths {
                 config_dir: h.join("config"),
@@ -459,6 +462,7 @@ impl Paths {
                 cache_dir: h.join("cache"),
             });
         }
+        compat::migrate_legacy_dirs();
         let d = directories::ProjectDirs::from("", "", SERVICE).ok_or(Error::NoHome)?;
         Ok(Paths {
             config_dir: d.config_dir().to_path_buf(),
@@ -542,30 +546,72 @@ pub trait TokenStore: Send + Sync {
 /// on macOS and the Credential Manager on Windows.
 pub struct SystemKeyring;
 
-/// One keyring entry, with no size handling.
-struct KeyringEntries;
+/// The entries of one keyring service, with no size handling.
+struct ServiceEntries(&'static str);
 
-fn entry(key: &str) -> Result<keyring::Entry> {
-    Ok(keyring::Entry::new(SERVICE, key)?)
-}
-
-impl TokenStore for KeyringEntries {
+impl TokenStore for ServiceEntries {
     fn get(&self, key: &str) -> Result<Option<String>> {
-        match entry(key)?.get_password() {
+        match keyring::Entry::new(self.0, key)?.get_password() {
             Ok(t) => Ok(Some(t)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
     fn set(&self, key: &str, token: &str) -> Result<()> {
-        entry(key)?.set_password(token)?;
+        keyring::Entry::new(self.0, key)?.set_password(token)?;
         Ok(())
     }
     fn delete(&self, key: &str) -> Result<()> {
-        match entry(key)?.delete_credential() {
+        match keyring::Entry::new(self.0, key)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+}
+
+/// Entries kept under a service `old` that is no longer written: a read that finds nothing in
+/// `new` looks in `old`, copies what it finds to `new` and deletes it from `old`, so a sign-in
+/// made before the rename from kelma survives it. Writes go to `new` only; a delete removes
+/// both. Failures on `old` never fail a read: it is as if there were no old entry.
+struct Migrating<'a> {
+    new: &'a dyn TokenStore,
+    old: &'a dyn TokenStore,
+}
+
+impl TokenStore for Migrating<'_> {
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        if let Some(t) = self.new.get(key)? {
+            return Ok(Some(t));
+        }
+        let Ok(Some(t)) = self.old.get(key) else {
+            return Ok(None);
+        };
+        // Only drop the old entry once the new one is safely written.
+        if self.new.set(key, &t).is_ok() {
+            let _ = self.old.delete(key);
+        }
+        Ok(Some(t))
+    }
+    fn set(&self, key: &str, token: &str) -> Result<()> {
+        self.new.set(key, token)?;
+        // A stale old entry would only come back after a sign-out.
+        let _ = self.old.delete(key);
+        Ok(())
+    }
+    fn delete(&self, key: &str) -> Result<()> {
+        self.new.delete(key)?;
+        let _ = self.old.delete(key);
+        Ok(())
+    }
+}
+
+/// The keyring entries of the app, with the ones of the old service migrated on read.
+fn keyring_entries() -> Migrating<'static> {
+    static NEW: ServiceEntries = ServiceEntries(SERVICE);
+    static OLD: ServiceEntries = ServiceEntries(LEGACY_SERVICE);
+    Migrating {
+        new: &NEW,
+        old: &OLD,
     }
 }
 
@@ -579,19 +625,29 @@ const ENTRY_MAX: usize = usize::MAX;
 
 impl TokenStore for SystemKeyring {
     fn get(&self, key: &str) -> Result<Option<String>> {
-        Chunked::new(&KeyringEntries, ENTRY_MAX).get(key)
+        Chunked::new(&keyring_entries(), ENTRY_MAX).get(key)
     }
     fn set(&self, key: &str, token: &str) -> Result<()> {
-        Chunked::new(&KeyringEntries, ENTRY_MAX).set(key, token)
+        Chunked::new(&keyring_entries(), ENTRY_MAX).set(key, token)
     }
     fn delete(&self, key: &str) -> Result<()> {
-        Chunked::new(&KeyringEntries, ENTRY_MAX).delete(key)
+        Chunked::new(&keyring_entries(), ENTRY_MAX).delete(key)
     }
 }
 
 /// Marks an entry whose token is split over `<key>#0`..`<key>#<n-1>`: the entry holds
-/// `kelma-chunks:<n>`. Tokens are base64url-like and never start with it.
-const CHUNKS_PREFIX: &str = "kelma-chunks:";
+/// `ironteams-chunks:<n>` (`kelma-chunks:<n>` before the rename, still read). Tokens are
+/// base64url-like and never start with either.
+const CHUNKS_PREFIX: &str = "ironteams-chunks:";
+const LEGACY_CHUNKS_PREFIX: &str = "kelma-chunks:";
+
+/// The part count of a chunk head, whichever prefix it was written with.
+fn chunk_count(head: &str) -> Option<usize> {
+    head.strip_prefix(CHUNKS_PREFIX)
+        .or_else(|| head.strip_prefix(LEGACY_CHUNKS_PREFIX))?
+        .parse()
+        .ok()
+}
 
 /// A token store that splits values longer than `max` characters over several entries of
 /// `inner`. A short value is stored as is, so entries written before chunking existed still read.
@@ -614,7 +670,7 @@ impl<'a, S: TokenStore + ?Sized> Chunked<'a, S> {
         Ok(self
             .inner
             .get(key)?
-            .and_then(|v| v.strip_prefix(CHUNKS_PREFIX)?.parse().ok())
+            .and_then(|v| chunk_count(&v))
             .unwrap_or(0))
     }
 
@@ -628,10 +684,7 @@ impl<S: TokenStore + ?Sized> TokenStore for Chunked<'_, S> {
         let Some(head) = self.inner.get(key)? else {
             return Ok(None);
         };
-        let Some(n) = head
-            .strip_prefix(CHUNKS_PREFIX)
-            .and_then(|n| n.parse::<usize>().ok())
-        else {
+        let Some(n) = chunk_count(&head) else {
             return Ok(Some(head));
         };
         let mut token = String::new();
@@ -839,7 +892,10 @@ mod tests {
         let store = Chunked::new(&mem, 4);
         store.set("me", "0123456789").unwrap();
         assert_eq!(mem.keys(), ["me", "me#0", "me#1", "me#2"]);
-        assert_eq!(mem.get("me").unwrap().as_deref(), Some("kelma-chunks:3"));
+        assert_eq!(
+            mem.get("me").unwrap().as_deref(),
+            Some("ironteams-chunks:3")
+        );
         assert_eq!(store.get("me").unwrap().as_deref(), Some("0123456789"));
     }
 
@@ -875,6 +931,98 @@ mod tests {
         store.set("me", "0123456789").unwrap();
         mem.delete("me#1").unwrap();
         assert_eq!(store.get("me").unwrap(), None);
+    }
+
+    // ---- the rename from kelma ----
+
+    #[test]
+    fn a_chunk_head_with_either_prefix_reads_back() {
+        for head in ["kelma-chunks:2", "ironteams-chunks:2"] {
+            let mem = MemoryStore::default();
+            mem.set("me", head).unwrap();
+            mem.set("me#0", "ab").unwrap();
+            mem.set("me#1", "cd").unwrap();
+            assert_eq!(
+                Chunked::new(&mem, 2).get("me").unwrap().as_deref(),
+                Some("abcd")
+            );
+        }
+    }
+
+    #[test]
+    fn rewriting_an_old_chunked_token_drops_its_parts() {
+        let mem = MemoryStore::default();
+        mem.set("me", "kelma-chunks:3").unwrap();
+        for i in 0..3 {
+            mem.set(&format!("me#{i}"), "xx").unwrap();
+        }
+        Chunked::new(&mem, 8).set("me", "short").unwrap();
+        assert_eq!(mem.keys(), ["me"]);
+    }
+
+    #[test]
+    fn a_sign_in_under_the_old_service_moves_to_the_new_one_on_read() {
+        let (new, old) = (MemoryStore::default(), MemoryStore::default());
+        old.set("default", "rt-old").unwrap();
+        let m = Migrating {
+            new: &new,
+            old: &old,
+        };
+        assert_eq!(m.get("default").unwrap().as_deref(), Some("rt-old"));
+        assert_eq!(new.get("default").unwrap().as_deref(), Some("rt-old"));
+        assert!(old.keys().is_empty());
+        // The second read comes from the new service.
+        assert_eq!(m.get("default").unwrap().as_deref(), Some("rt-old"));
+    }
+
+    #[test]
+    fn the_new_service_wins_over_a_stale_old_entry() {
+        let (new, old) = (MemoryStore::default(), MemoryStore::default());
+        new.set("default", "rt-new").unwrap();
+        old.set("default", "rt-old").unwrap();
+        let m = Migrating {
+            new: &new,
+            old: &old,
+        };
+        assert_eq!(m.get("default").unwrap().as_deref(), Some("rt-new"));
+        assert_eq!(old.get("default").unwrap().as_deref(), Some("rt-old"));
+    }
+
+    #[test]
+    fn nothing_anywhere_reads_as_no_token_and_writes_go_to_the_new_service() {
+        let (new, old) = (MemoryStore::default(), MemoryStore::default());
+        let m = Migrating {
+            new: &new,
+            old: &old,
+        };
+        assert_eq!(m.get("default").unwrap(), None);
+        old.set("default", "stale").unwrap();
+        m.set("default", "rt").unwrap();
+        assert_eq!(new.get("default").unwrap().as_deref(), Some("rt"));
+        assert!(old.keys().is_empty());
+        m.delete("default").unwrap();
+        assert!(new.keys().is_empty());
+    }
+
+    #[test]
+    fn an_old_chunked_token_migrates_part_by_part_and_reads_whole() {
+        let (new, old) = (MemoryStore::default(), MemoryStore::default());
+        old.set("me", "kelma-chunks:2").unwrap();
+        old.set("me#0", "ab").unwrap();
+        old.set("me#1", "cd").unwrap();
+        let m = Migrating {
+            new: &new,
+            old: &old,
+        };
+        assert_eq!(
+            Chunked::new(&m, 2).get("me").unwrap().as_deref(),
+            Some("abcd")
+        );
+        assert!(old.keys().is_empty());
+        assert_eq!(new.keys(), ["me", "me#0", "me#1"]);
+        // Deleting through the wrapper clears every part.
+        Chunked::new(&m, 2).delete("me").unwrap();
+        assert!(new.keys().is_empty());
     }
 
     // ---- accounts and orgs (X2.1) ----
@@ -915,7 +1063,8 @@ mod tests {
 
     #[test]
     fn load_config_of_an_old_file_migrates_in_memory_and_leaves_the_file_alone() {
-        let dir = std::env::temp_dir().join(format!("kelma-session-mig-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ironteams-session-mig-{}", std::process::id()));
         let p = Paths {
             config_dir: dir.join("config"),
             data_dir: dir.join("data"),
@@ -993,7 +1142,8 @@ mod tests {
 
     #[test]
     fn save_config_syncs_legacy_field_edits_into_the_active_account() {
-        let dir = std::env::temp_dir().join(format!("kelma-session-sync-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ironteams-session-sync-{}", std::process::id()));
         let p = Paths {
             config_dir: dir.join("config"),
             data_dir: dir.join("data"),
@@ -1138,7 +1288,8 @@ mod tests {
 
     #[test]
     fn config_roundtrip_and_default_epid() {
-        let dir = std::env::temp_dir().join(format!("kelma-session-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ironteams-session-test-{}", std::process::id()));
         let p = Paths {
             config_dir: dir.join("config"),
             data_dir: dir.join("data"),

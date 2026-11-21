@@ -2,7 +2,7 @@
 //!
 //! The portal (D-Bus, through `ashpd`) shows the desktop's own picker (on KDE Plasma, KWin's) and
 //! hands back a PipeWire node and a file descriptor for a PipeWire connection restricted to it.
-//! Reading PipeWire in-process needs libpipewire's development files at build time, so kelma
+//! Reading PipeWire in-process needs libpipewire's development files at build time, so IronTeams
 //! starts `gst-launch-1.0` instead: `pipewiresrc` reads the node through the portal's descriptor
 //! (the child's stdin), GStreamer converts and scales to I420 at a fixed size and rate, and the
 //! frames come back on the child's stdout. Runtime needs GStreamer's PipeWire plugin

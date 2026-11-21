@@ -179,7 +179,7 @@ pub enum PinChange {
 
 /// The pin, unpin or reorder request (`pinUnpinApp`): the web client posts the whole new pinned
 /// list as `[{appId, appBarOrder}]` to `beta/users/apps/pinned`. Taken from the web client's
-/// code and never sent live: kelma only prints it (dry run).
+/// code and never sent live: IronTeams only prints it (dry run).
 pub fn pin_request(base: &str, apps: &InstalledApps, change: &PinChange) -> Request {
     let mut ids: Vec<String> = apps.app_bar().iter().map(|(e, _)| e.id.clone()).collect();
     match change {

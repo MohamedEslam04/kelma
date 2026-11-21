@@ -10,7 +10,7 @@
 //!   message goes over HTTP and which over the data channel.
 //!
 //! Everything is behind [`ControlChannel`], so the guesses can be replaced by the captured
-//! format in one place. kelma turns the feature on only with `KELMA_REMOTE_CONTROL=1`.
+//! format in one place. IronTeams turns the feature on only with `IRONTEAMS_REMOTE_CONTROL=1`.
 
 use crate::Result;
 use crate::error::Error;

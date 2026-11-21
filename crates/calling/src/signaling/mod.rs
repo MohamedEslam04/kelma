@@ -121,7 +121,7 @@ pub struct NgcResponse {
 }
 
 /// One request to the conversation service and what came back, for `--dump` /
-/// `KELMA_CALL_DUMP`. The bodies hold real ids and SDPs with addresses: keep them local.
+/// `IRONTEAMS_CALL_DUMP`. The bodies hold real ids and SDPs with addresses: keep them local.
 #[derive(Debug)]
 pub struct Exchange<'a> {
     pub op: &'a str,

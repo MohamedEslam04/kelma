@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=IronTeams
+GenericName=Teams chat client
+Comment=An unofficial native Microsoft Teams client written in Rust
+Exec=ironteams
+Icon=io.github.mohamedeslam04.ironteams
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=teams;chat;microsoft;messaging;
+StartupWMClass=io.github.mohamedeslam04.ironteams
+Actions=ReportProblem;
+
+[Desktop Action ReportProblem]
+Name=Report a problem
+Exec=ironteams --report-problem

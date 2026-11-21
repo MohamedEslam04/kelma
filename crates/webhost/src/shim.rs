@@ -15,12 +15,12 @@
 use serde_json::{Value, json};
 
 /// Name of the CDP binding the shim posts teams-js messages to.
-pub const TEAMS_BINDING: &str = "__kelmaTeams";
-/// Name of the CDP binding behind `window.kelma.invoke`.
-pub const BRIDGE_BINDING: &str = "__kelmaBridge";
+pub const TEAMS_BINDING: &str = "__ironteamsTeams";
+/// Name of the CDP binding behind `window.ironteams.invoke`.
+pub const BRIDGE_BINDING: &str = "__ironteamsBridge";
 
-/// Injected into every document before its own scripts run. It defines `window.kelma.invoke`
-/// (the generic bridge) and, when `window.__kelmaShim` is set first, `window.nativeInterface`.
+/// Injected into every document before its own scripts run. It defines `window.ironteams.invoke`
+/// (the generic bridge) and, when `window.__ironteamsShim` is set first, `window.nativeInterface`.
 pub const SHIM_JS: &str = include_str!("shim.js");
 
 /// The `clientSupportedSDKVersion` the host reports in the `initialize` reply.
@@ -369,7 +369,7 @@ pub fn handle(cfg: &ShimConfig, raw: &str, origin: &str) -> Handled {
             event: Some(AppEvent::Unsupported(other.to_string())),
             ..reply(json!([{
                 "errorCode": NOT_SUPPORTED,
-                "message": format!("{other} is not supported by kelma"),
+                "message": format!("{other} is not supported by IronTeams"),
             }]))
         },
     }
@@ -444,7 +444,7 @@ pub fn check_token_request(
         && !tenant.is_empty()
         && !t.eq_ignore_ascii_case(tenant)
     {
-        return Err(format!("kelma cannot get tokens for tenant {t}"));
+        return Err(format!("IronTeams cannot get tokens for tenant {t}"));
     }
     let resource = match (&cfg.sso_resource, req.resources.as_slice()) {
         (Some(own), []) => own.clone(),
@@ -452,7 +452,7 @@ pub fn check_token_request(
         (Some(own), _) => return Err(format!("this app can only get a token for {own}")),
         (None, [asked]) => asked.clone(),
         (None, []) => return Err("no resource: the app has no webApplicationInfo.resource".into()),
-        (None, _) => return Err("kelma gets a token for one resource at a time".into()),
+        (None, _) => return Err("IronTeams gets a token for one resource at a time".into()),
     };
     let (host, port) = app_resource_authority(&resource)?;
     let page = url::Url::parse(&req.origin)
@@ -510,7 +510,7 @@ fn app_resource_authority(resource: &str) -> Result<(String, Option<u16>), Strin
     }
     if app_id.is_empty() || app_id.ends_with('/') {
         return Err(format!(
-            "{resource} has no domain, so kelma cannot tell which page it belongs to"
+            "{resource} has no domain, so IronTeams cannot tell which page it belongs to"
         ));
     }
     Ok((host, u.port()))
@@ -566,7 +566,7 @@ pub fn token_failure_reason(error: &str) -> String {
     {
         "resourceRequiresConsent"
     } else {
-        return format!("kelma could not get a token: {error}");
+        return format!("IronTeams could not get a token: {error}");
     };
     reason.to_string()
 }
@@ -615,7 +615,7 @@ pub fn expand_url(template: &str, ctx: &HostContext) -> String {
     out
 }
 
-/// A `window.kelma.invoke(payload)` call: `(call id, payload)`.
+/// A `window.ironteams.invoke(payload)` call: `(call id, payload)`.
 pub fn parse_bridge(raw: &str) -> Option<(u64, Value)> {
     let v: Value = serde_json::from_str(raw).ok()?;
     Some((v["id"].as_u64()?, v["payload"].clone()))
@@ -627,7 +627,7 @@ pub fn bridge_reply_js(id: u64, result: &Result<Value, String>) -> String {
         Ok(v) => (true, v.clone()),
         Err(e) => (false, json!(e)),
     };
-    format!("window.kelma&&window.kelma.__settle({id},{ok},{value})")
+    format!("window.ironteams&&window.ironteams.__settle({id},{ok},{value})")
 }
 
 /// The script injected into every new document.
@@ -638,7 +638,7 @@ pub fn bridge_reply_js(id: u64, result: &Result<Value, String>) -> String {
 pub fn injected_script(shim: bool, title: Option<&str>, granted: Option<&[String]>) -> String {
     let mut s = String::new();
     if shim {
-        s.push_str("window.__kelmaShim=true;");
+        s.push_str("window.__ironteamsShim=true;");
     }
     if let Some(granted) = granted {
         let names: Vec<&str> = Capability::ALL
@@ -646,10 +646,10 @@ pub fn injected_script(shim: bool, title: Option<&str>, granted: Option<&[String
             .filter(|c| allows(granted, *c))
             .map(Capability::name)
             .collect();
-        s.push_str(&format!("window.__kelmaGranted={};", json!(names)));
+        s.push_str(&format!("window.__ironteamsGranted={};", json!(names)));
     }
     if let Some(t) = title {
-        s.push_str(&format!("window.__kelmaTitle={};", json!(t)));
+        s.push_str(&format!("window.__ironteamsTitle={};", json!(t)));
     }
     s.push_str(SHIM_JS);
     s
@@ -1219,12 +1219,12 @@ mod tests {
         let ok = bridge_reply_js(4, &Ok(json!({"pong": 1})));
         assert_eq!(
             ok,
-            r#"window.kelma&&window.kelma.__settle(4,true,{"pong":1})"#
+            r#"window.ironteams&&window.ironteams.__settle(4,true,{"pong":1})"#
         );
         let err = bridge_reply_js(5, &Err("boom".into()));
         assert_eq!(
             err,
-            r#"window.kelma&&window.kelma.__settle(5,false,"boom")"#
+            r#"window.ironteams&&window.ironteams.__settle(5,false,"boom")"#
         );
     }
 
@@ -1377,12 +1377,12 @@ mod tests {
         let s = injected_script(true, None, Some(&g));
         // Canonical names only, set before the shim runs.
         assert!(s.starts_with(
-            r#"window.__kelmaShim=true;window.__kelmaGranted=["media","geolocation"];"#
+            r#"window.__ironteamsShim=true;window.__ironteamsGranted=["media","geolocation"];"#
         ));
         let none = injected_script(true, None, Some(&[]));
-        assert!(none.contains("window.__kelmaGranted=[];"));
+        assert!(none.contains("window.__ironteamsGranted=[];"));
         // No list, no enforcement (a plain page).
-        assert!(!injected_script(false, None, None).contains("__kelmaGranted="));
+        assert!(!injected_script(false, None, None).contains("__ironteamsGranted="));
     }
 
     /// Runs the shim in node against a stub browser and returns what the script printed.
@@ -1393,8 +1393,8 @@ mod tests {
             r#"
             globalThis.window = globalThis;
             window.top = window;
-            window.__kelmaTeams = function () {{}};
-            window.__kelmaBridge = function () {{}};
+            window.__ironteamsTeams = function () {{}};
+            window.__ironteamsBridge = function () {{}};
             const calls = [];
             const media = {{
               getUserMedia: () => {{ calls.push("getUserMedia"); return Promise.resolve("stream"); }},
@@ -1498,12 +1498,12 @@ mod tests {
     #[test]
     fn injected_script_enables_the_shim_and_title_only_when_asked() {
         let with = injected_script(true, Some("Polly \"app\""), None);
-        assert!(with.starts_with("window.__kelmaShim=true;"));
-        assert!(with.contains(r#"window.__kelmaTitle="Polly \"app\"";"#));
+        assert!(with.starts_with("window.__ironteamsShim=true;"));
+        assert!(with.contains(r#"window.__ironteamsTitle="Polly \"app\"";"#));
         assert!(with.contains(SHIM_JS));
         let without = injected_script(false, None, None);
-        assert!(!without.contains("__kelmaShim=true"));
-        assert!(!without.contains("__kelmaTitle="));
+        assert!(!without.contains("__ironteamsShim=true"));
+        assert!(!without.contains("__ironteamsTitle="));
         assert!(without.contains(SHIM_JS));
     }
 }

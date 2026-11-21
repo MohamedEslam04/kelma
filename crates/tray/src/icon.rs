@@ -1,5 +1,5 @@
 //! Tray icon and unread badge as ARGB32 pixmaps (StatusNotifierItem `IconPixmap` and
-//! `OverlayIconPixmap`), drawn in code from the same shapes as `packaging/io.github.mohamedeslam04.kelma.svg`.
+//! `OverlayIconPixmap`), drawn in code from the same shapes as `packaging/io.github.mohamedeslam04.ironteams.svg`.
 
 /// An ARGB32 image, one pixel as the bytes `[A, R, G, B]`, not premultiplied.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,7 +65,7 @@ fn in_capsule(x: f32, y: f32, (x0, x1, cy): (f32, f32, f32), r: f32) -> bool {
     (x - cx).powi(2) + (y - cy).powi(2) <= r * r
 }
 
-/// The colour of `packaging/io.github.mohamedeslam04.kelma.svg` at a point of its 128 x 128 canvas.
+/// The colour of `packaging/io.github.mohamedeslam04.ironteams.svg` at a point of its 128 x 128 canvas.
 fn svg_color(x: f32, y: f32) -> [u8; 4] {
     if !in_round_rect(x, y, (0.0, 0.0, 128.0, 128.0), 28.0) {
         return CLEAR;
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(
             p.pixel(10, 10),
             [255, 0x5b, 0x5f, 0xc7],
-            "square is kelma purple"
+            "square is IronTeams purple"
         );
         assert_eq!(p.pixel(80, 40), WHITE, "bubble is white");
         assert_eq!(

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mohamedeslam04.ironteams</id>
+  <name>IronTeams</name>
+  <summary>An unofficial native Microsoft Teams client written in Rust</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.mohamedeslam04">
+    <name>IronTeams contributors</name>
+  </developer>
+  <description>
+    <p>
+      IronTeams is a small, fast Linux client for Microsoft Teams chat, channels, activity, calendar
+      and files. It is built with Rust and Slint and does not embed a browser.
+    </p>
+    <p>
+      It is not affiliated with or endorsed by Microsoft. IronTeams collects no telemetry: the
+      "Report a problem" action writes a local, redacted file and never uploads it.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.mohamedeslam04.ironteams.desktop</launchable>
+  <url type="homepage">https://github.com/MohamedEslam04/teams-in-rust</url>
+  <url type="bugtracker">https://github.com/MohamedEslam04/teams-in-rust/issues</url>
+  <categories>
+    <category>Network</category>
+    <category>InstantMessaging</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>ironteams</binary>
+  </provides>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Chats, channels and activity in the dark theme (demo data)</caption>
+      <image type="source">https://raw.githubusercontent.com/MohamedEslam04/teams-in-rust/main/docs/screenshots/appearance-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The light theme</caption>
+      <image type="source">https://raw.githubusercontent.com/MohamedEslam04/teams-in-rust/main/docs/screenshots/appearance-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The interface at 150% text size</caption>
+      <image type="source">https://raw.githubusercontent.com/MohamedEslam04/teams-in-rust/main/docs/screenshots/appearance-150.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.1.0" date="2026-11-19"/>
+  </releases>
+</component>

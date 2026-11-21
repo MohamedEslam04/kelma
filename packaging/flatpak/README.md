@@ -1,6 +1,6 @@
 # Flatpak
 
-`io.github.mohamedeslam04.kelma.yml` builds kelma against the Freedesktop 26.08 runtime with the
+`io.github.mohamedeslam04.ironteams.yml` builds IronTeams against the Freedesktop 26.08 runtime with the
 `rust-stable` SDK extension.
 
 ## Permissions
@@ -9,7 +9,7 @@
 |---|---|
 | `--share=network` | Teams, Graph and OneDrive |
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | window system |
-| `--device=dri` | optional GPU renderer (`KELMA_RENDERER=femtovg`) |
+| `--device=dri` | optional GPU renderer (`IRONTEAMS_RENDERER=femtovg`) |
 | `--socket=pulseaudio`, `--filesystem=xdg-run/pipewire-0` | call audio, and the PipeWire streams of the Camera and ScreenCast portals |
 | `--talk-name=org.freedesktop.Notifications` | desktop notifications |
 | `--talk-name=org.kde.StatusNotifierWatcher`, `--own-name=org.kde.StatusNotifierItem-2-1` | the tray icon (the item is named after the pid, 2 in the sandbox) |
@@ -18,7 +18,7 @@
 | `--filesystem=xdg-download` | saved attachments and problem reports |
 
 The file chooser, open-URI, camera and screen-cast portals need no permission. Inside the sandbox the
-portal names kelma by its Flatpak id, so the app's own registration (`register_host_app`) is
+portal names IronTeams by its Flatpak id, so the app's own registration (`register_host_app`) is
 skipped there.
 
 ## Known gaps
@@ -37,8 +37,8 @@ The sandbox has no network during the build, so the crates are vendored from `Ca
 `rust-stable` extension when they are missing.
 
 ```sh
-packaging/flatpak/build.sh /data/kelma-flatpak --install   # work dir on a disk with free space
-flatpak run io.github.mohamedeslam04.kelma
+packaging/flatpak/build.sh /data/ironteams-flatpak --install   # work dir on a disk with free space
+flatpak run io.github.mohamedeslam04.ironteams
 ```
 
 By hand, from this folder:
@@ -47,10 +47,10 @@ By hand, from this folder:
 flatpak install flathub org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08 \
   org.freedesktop.Sdk.Extension.rust-stable//26.08
 python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json
-flatpak-builder --user --install --force-clean --state-dir=/data/kelma-flatpak/state \
-  /data/kelma-flatpak/build-dir io.github.mohamedeslam04.kelma.yml
+flatpak-builder --user --install --force-clean --state-dir=/data/ironteams-flatpak/state \
+  /data/ironteams-flatpak/build-dir io.github.mohamedeslam04.ironteams.yml
 ```
 
 Keep the build directory outside the source tree: the manifest copies the whole repository.
-Check the metadata with `appstreamcli validate --no-net ../io.github.mohamedeslam04.kelma.metainfo.xml`
+Check the metadata with `appstreamcli validate --no-net ../io.github.mohamedeslam04.ironteams.metainfo.xml`
 (the desktop file, icon and metainfo are shared with the other packages, one folder up).

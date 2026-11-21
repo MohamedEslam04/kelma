@@ -96,7 +96,7 @@ impl Client {
     }
 
     /// Downloads a team's picture (JPEG/PNG bytes). UNVERIFIED: read from the reference API
-    /// description (`fetchTeamPicture`), not yet sent by kelma to any account.
+    /// description (`fetchTeamPicture`), not yet sent by IronTeams to any account.
     pub async fn team_picture(
         &self,
         self_mri: &str,

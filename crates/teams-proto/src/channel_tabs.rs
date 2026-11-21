@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 /// The Teams app behind a website tab.
 pub const WEBSITE_APP: &str = "com.microsoft.teamspace.tab.web";
-/// Apps whose tab kelma already shows as its own header tab.
+/// Apps whose tab IronTeams already shows as its own header tab.
 const BUILT_IN: &[&str] = &[
     "com.microsoft.teamspace.tab.files.sharepoint",
     "com.microsoft.teamspace.tab.wiki",
@@ -39,7 +39,7 @@ fn s(v: &Value, p: &str) -> String {
         .to_string()
 }
 
-/// Parses the tab list, leaving out the tabs kelma shows itself (Files, the old wiki).
+/// Parses the tab list, leaving out the tabs IronTeams shows itself (Files, the old wiki).
 pub fn parse_tabs(v: &Value) -> Vec<ChannelTab> {
     v.get("value")
         .and_then(Value::as_array)
@@ -95,7 +95,7 @@ pub fn rename_tab_body(name: &str) -> Value {
 
 /// The body that adds a tab of an installed app, without a configuration. UNVERIFIED: Graph
 /// documents that apps whose tab needs setup are added unconfigured and set up in Teams, but
-/// kelma has not sent this to a tenant.
+/// IronTeams has not sent this to a tenant.
 pub fn app_tab_body(name: &str, app_id: &str) -> Value {
     json!({
         "displayName": name,
@@ -145,7 +145,7 @@ impl Client {
     }
 
     /// Adds a website tab to a chat: Graph `POST /chats/{chat}/tabs` with the channel body.
-    /// UNVERIFIED: never sent from kelma yet (docs/protocol.md).
+    /// UNVERIFIED: never sent from IronTeams yet (docs/protocol.md).
     pub async fn add_chat_website_tab(&self, chat_id: &str, name: &str, url: &str) -> Result<()> {
         let body = website_tab_body(name, url);
         self.json(

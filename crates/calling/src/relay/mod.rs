@@ -4,7 +4,7 @@
 //! the IC3 bearer answers `{tokens:[{realm, username, password}], expires}` (rusty-teams
 //! `crates/calling/src/relay.rs`, MIT; teams-lite `NATIVE-CALLING.md` §2.6). The TURN hosts are
 //! not in the answer: the web client reads them from a `relayConfig` (`Relay.Turn.fqdns`, ports)
-//! that kelma has not found yet, and rusty-teams uses `gateway-<geo>.az.relay.teams.cloud.microsoft`
+//! that IronTeams has not found yet, and rusty-teams uses `gateway-<geo>.az.relay.teams.cloud.microsoft`
 //! on udp 3478 and tcp/tls 443. Those gateways answer Allocate with `300 Try Alternate`, which
 //! webrtc-rs does not follow, so [`resolve_ice_servers`] follows it first ([`allocate`]) and names
 //! the relay that allocates by its address. Where UDP is blocked, [`resolve_tls_ice_servers`] finds

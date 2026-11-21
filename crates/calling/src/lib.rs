@@ -1,4 +1,4 @@
-//! Native Teams calling for kelma (plans/meetings.md M5, plans/calls.md K3.2).
+//! Native Teams calling for IronTeams (plans/meetings.md M5, plans/calls.md K3.2).
 //!
 //! Layers, bottom up:
 //! - [`ngc_trouter`]: a trouter connection of our own registered as `NextGenCalling`, which is
@@ -13,7 +13,7 @@
 //! - [`audio`]: microphone/speaker I/O and the Opus codec.
 //! - [`video`]: video we send (screen share; the camera later): frames, H.264, the portal.
 //! - [`history`]: call history from the `48:calllogs` system thread.
-//! - [`emergency`]: emergency short codes kelma refuses to dial.
+//! - [`emergency`]: emergency short codes IronTeams refuses to dial.
 //! - [`captions`]: live caption text from the media data channel.
 //! - [`voicemail`]: voicemails, which are Exchange mail read through Graph.
 //!
