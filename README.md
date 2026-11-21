@@ -190,6 +190,9 @@ cargo run -p ironteams-cli -- login | chats | teams | read <id> | send <id> <tex
 | `crates/emoji` | Emoji table, search, shortcodes and skin tones |
 
 [`docs/protocol.md`](docs/protocol.md) documents every endpoint and what has been verified.
+[`docs/mcp.md`](docs/mcp.md) explains `ironteams-cli mcp`, an MCP server that lets Claude Code or Claude
+Desktop read your chats and calendar and draft replies you approve. It is not in release builds (`--features mcp`)
+and is off until you allow an account.
 The ADRs in [`docs/adr/`](docs/adr/) explain the toolkit, the web host and the composer choices.
 
 Parallel builds on a small machine: run cargo through `flock /tmp/ironteams-build.lock cargo …` so only one
