@@ -4,7 +4,8 @@
 //! The sharing line is negotiated by default; `IRONTEAMS_SCREEN_SHARE=0` is the kill switch that
 //! goes back to the audio-only offer. Not yet confirmed against every media server. Then:
 //! - a meeting flips the line with `UpdateMediaDescriptions` (no renegotiation), only when its
-//!   join declared the line (`IRONTEAMS_MEETING_VIDEO_DESCRIBE=1`; never after the default join);
+//!   join declared the line (the default; not with `IRONTEAMS_MEETING_VIDEO_DESCRIBE=0` or after
+//!   the media servers refused the lines and the join was redone audio only, see `fallback`);
 //! - a 1:1 call sends a re-offer with `ScreenSharer` on the other side's `mediaRenegotiation`.
 //!
 //! The camera will reuse this path with `VideoRole::MainVideo` and a camera frame source.
@@ -438,7 +439,11 @@ pub async fn tell_meeting(
     with.0.insert("updateMediaDescriptions".into(), url);
     let tag = negotiation_tag(s, role, sending);
     ngc.update_media_descriptions(s, &with, lines, &tag, request_id)
-        .await?;
+        .await
+        .inspect_err(|e| {
+            // The service ends the call after refusing one; the join is redone audio only.
+            tracing::info!(%e, sending, "the meeting refused UpdateMediaDescriptions");
+        })?;
     Ok(())
 }
 
@@ -717,7 +722,7 @@ mod tests {
         media.close().await.unwrap();
     }
 
-    /// A join that declared its send-capable lines (`IRONTEAMS_MEETING_VIDEO_DESCRIBE=1`) may switch
+    /// A join that declared its send-capable lines (the default for meetings) may switch
     /// them, and its update names only the lines it declared (as the web client's names only its
     /// send-capable mids), never another live line.
     #[tokio::test]

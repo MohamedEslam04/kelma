@@ -767,6 +767,19 @@ fn a_refused_recording_shows_the_services_reason() {
 }
 
 #[test]
+fn the_audio_only_rejoin_says_so_in_a_dismissable_note() {
+    use crate::backend::call::fallback::NOTE;
+    let c = CallHarness::new();
+    c.connected();
+    c.fake.emit(Event::Notice(NOTE.into()));
+    assert!(c.shows("Video isn't working in this meeting yet, so you joined with audio."));
+    // A note, not an error: no red bar.
+    assert_eq!(cs(&c.h.app).get_error(), "");
+    click(&c.button("Dismiss notice"));
+    assert!(!c.shows(NOTE));
+}
+
+#[test]
 fn live_captions_show_the_speaker_and_the_text_at_the_bottom() {
     let c = CallHarness::new();
     c.connected();

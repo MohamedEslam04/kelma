@@ -30,6 +30,8 @@ mod bots;
 #[cfg(feature = "calls")]
 pub(crate) mod camera;
 #[cfg(feature = "calls")]
+pub(crate) mod fallback;
+#[cfg(feature = "calls")]
 pub(crate) mod live;
 #[cfg(feature = "calls")]
 pub(crate) mod remote_control;
@@ -263,6 +265,9 @@ pub enum Event {
         mode: &'static str,
         name: String,
     },
+    /// A calm note on the call (the blue bar; dismissable): something the call did for the user.
+    #[cfg(any(test, feature = "calls"))]
+    Notice(String),
     /// Something went wrong; the call may go on.
     Error(String),
     /// The call is over, and why.
@@ -764,6 +769,8 @@ impl CallModel {
                 let m = replace(&mut self.control_mode, mode.to_owned());
                 return replace(&mut self.control_name, name) || m;
             }
+            #[cfg(any(test, feature = "calls"))]
+            Event::Notice(text) => return replace(&mut self.notice, text),
             Event::Error(e) => return replace(&mut self.error, e),
             Event::Ended(reason) => {
                 self.end(reason, now);
@@ -2910,6 +2917,19 @@ mod tests {
         m.apply(Event::Recording(true), t0);
         m.leave(t0);
         assert!(!m.recording && m.notice.is_empty());
+    }
+
+    #[test]
+    fn a_call_notice_shows_until_dismissed_or_the_call_ends() {
+        let t0 = Instant::now();
+        let mut m = ready();
+        m.joining();
+        assert!(m.apply(Event::Notice("Joined with audio.".into()), t0));
+        assert_eq!(m.notice, "Joined with audio.");
+        assert!(m.error.is_empty(), "not an error");
+        assert!(!m.apply(Event::Notice("Joined with audio.".into()), t0));
+        m.leave(t0);
+        assert!(m.notice.is_empty());
     }
 
     #[test]
