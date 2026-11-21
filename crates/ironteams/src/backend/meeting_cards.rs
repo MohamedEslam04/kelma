@@ -208,7 +208,7 @@ pub(crate) fn plan(rows: &[&MessageRow]) -> Plan {
     let mut calls: Vec<(String, Vec<(&MessageRow, &CallEvent)>)> = Vec::new();
     for (r, e) in &events {
         if let MeetingEvent::Call(c) = e {
-            let key = call_key(*r, c);
+            let key = call_key(r, c);
             match calls.iter_mut().find(|(k, _)| *k == key) {
                 Some((_, list)) => list.push((*r, c)),
                 None => calls.push((key, vec![(*r, c)])),
@@ -434,15 +434,13 @@ pub(crate) mod tests {
 
     #[test]
     fn a_failed_recording_says_so() {
-        let rows = vec![row(
+        let failed = row(
             "r1",
             0,
             "RichText/Media_CallRecording",
             &recording("Failure", "Recording"),
-        )];
-        let card = plan(&rows.iter().collect::<Vec<_>>())["r1"]
-            .clone()
-            .unwrap();
+        );
+        let card = plan(&[&failed])["r1"].clone().unwrap();
         assert_eq!(card.state, "failed");
         assert_eq!(card.detail, "Recording failed");
     }
