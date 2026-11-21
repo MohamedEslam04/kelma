@@ -13,13 +13,14 @@
 //! otherwise the camera chosen in Settings > Devices, else `/dev/video0`.
 
 use super::share;
-use super::{EventSink, VideoSlot};
+use super::{Device, EventSink, VideoSlot};
 use calling::media::MediaSession;
 use calling::signaling::video::{negotiation_tag, parse_sender_controls, video_modalities};
 use calling::signaling::{CallSession, NgcClient};
-use calling::video::camera::{CameraCapture, CameraSettings, open};
+use calling::video::camera::{CameraCapture, CameraChoice, CameraSettings, open_choice};
+use calling::video::effects;
 use calling::video::h264::{EncoderSettings, H264Encoder};
-use calling::video::{VideoRole, i420_to_rgb, pump, step_for, tap};
+use calling::video::{I420Frame, RgbFrame, VideoRole, i420_to_rgb, pump, step_for, tap};
 use calling::{Links, SdpBlob};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
@@ -65,6 +66,124 @@ pub(crate) fn v4l2_device() -> Option<String> {
     });
     let cameras = devices::cameras().unwrap_or_default();
     device_for(&cameras, chosen.as_deref())
+}
+
+/// The camera chosen in the pickers (Settings' devices): a camera's bus on Linux, its name on
+/// Windows and macOS; `None` for the default.
+fn saved_camera() -> Option<String> {
+    let dir = session::Paths::new().ok()?.config_dir;
+    crate::backend::settings::Local::load(&dir).devices.camera
+}
+
+/// What to open for camera `id` ([`list`]'s ids; `None` the default), and the V4L2 device for when
+/// the portal has no camera.
+pub(crate) fn chosen(id: Option<&str>) -> (CameraChoice, Option<String>) {
+    #[cfg(target_os = "linux")]
+    let choice = id
+        .and_then(|bus| {
+            devices::cameras()
+                .unwrap_or_default()
+                .into_iter()
+                .find(|c| c.bus == bus)
+        })
+        .map_or(CameraChoice::Default, |c| CameraChoice::V4l2(c.path));
+    #[cfg(not(target_os = "linux"))]
+    let choice = id
+        .and_then(|name| {
+            calling::video::camera::system_cameras()
+                .into_iter()
+                .find(|c| c.name == name)
+        })
+        .map_or(CameraChoice::Default, |c| CameraChoice::Device(c.source));
+    (choice, v4l2_device())
+}
+
+/// The cameras the pickers list: the default first, then each camera found (V4L2 on Linux,
+/// GStreamer's device monitor on Windows and macOS), and the position of `chosen`.
+pub(crate) fn list(chosen: Option<&str>) -> (Vec<Device>, usize) {
+    let mut list = vec![Device {
+        id: None,
+        name: super::DEFAULT_CAMERA.into(),
+    }];
+    #[cfg(target_os = "linux")]
+    list.extend(
+        devices::cameras()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| Device {
+                id: Some(c.bus),
+                name: c.name,
+            }),
+    );
+    #[cfg(not(target_os = "linux"))]
+    list.extend(
+        calling::video::camera::system_cameras()
+            .into_iter()
+            .map(|c| Device {
+                id: Some(c.name.clone()),
+                name: c.name,
+            }),
+    );
+    let at = chosen
+        .and_then(|id| list.iter().position(|d| d.id.as_deref() == Some(id)))
+        .unwrap_or(0);
+    (list, at)
+}
+
+/// Our picture as a self-view draws it: at most `max_width` wide, mirrored when `mirror` ("Mirror
+/// my video"). The video we send is never mirrored.
+pub fn self_view(frame: &I420Frame, max_width: usize, mirror: bool) -> RgbFrame {
+    i420_to_rgb(frame, step_for(frame.width, max_width), mirror)
+}
+
+/// The pre-join preview is drawn this wide at most (the camera's 640).
+const PREVIEW_WIDTH: usize = 640;
+pub const PREVIEW_STARTING: &str = "Starting your camera…";
+pub const PREVIEW_STOPPED: &str = "Your camera stopped.";
+
+/// The pre-join preview: the camera through the effects, drawn in the preview box. Dropping it
+/// stops the capture, and the camera goes off.
+pub struct Preview(tokio::task::JoinHandle<()>);
+
+impl Drop for Preview {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Starts the pre-join preview of camera `camera` ([`list`]'s ids). The portal may ask the user
+/// first; until a picture comes the box says why there is none. `None` outside the runtime.
+pub fn preview(sink: EventSink, camera: Option<String>) -> Option<Preview> {
+    let rt = tokio::runtime::Handle::try_current().ok()?;
+    Some(Preview(rt.spawn(async move {
+        sink.preview_status(PREVIEW_STARTING);
+        let (choice, fallback) = tokio::task::spawn_blocking(move || chosen(camera.as_deref()))
+            .await
+            .unwrap_or_default();
+        let mut capture =
+            match open_choice(&choice, fallback.as_deref(), CameraSettings::default()).await {
+                Ok(c) => c,
+                Err(e) => {
+                    let e = e.to_string();
+                    tracing::info!(%e, "no camera preview");
+                    sink.preview_status(&open_error_text(&e));
+                    return;
+                }
+            };
+        let mirror = sink.mirror();
+        let mut frames = effects::process(capture.take_frames(), sink.effects());
+        let mut first = true;
+        while let Some(f) = frames.recv().await {
+            if std::mem::take(&mut first) {
+                sink.preview_status("");
+            }
+            let rgb = self_view(&f, PREVIEW_WIDTH, mirror.load(Ordering::Relaxed));
+            sink.video(VideoSlot::Preview, Some(rgb));
+        }
+        capture.stop().await;
+        sink.video(VideoSlot::Preview, None);
+        sink.preview_status(PREVIEW_STOPPED);
+    })))
 }
 
 /// What the red bar says when the camera did not open: `e` is the media error (logged in full).
@@ -117,11 +236,11 @@ impl Camera {
         self.opening = true;
         let tx = tx.clone();
         tokio::spawn(async move {
-            let device = tokio::task::spawn_blocking(v4l2_device)
-                .await
-                .ok()
-                .flatten();
-            let r = open(device.as_deref(), CameraSettings::default())
+            let (choice, fallback) =
+                tokio::task::spawn_blocking(|| chosen(saved_camera().as_deref()))
+                    .await
+                    .unwrap_or_default();
+            let r = open_choice(&choice, fallback.as_deref(), CameraSettings::default())
                 .await
                 .map(Box::new)
                 .map_err(|e| e.to_string());
@@ -129,8 +248,9 @@ impl Camera {
         });
     }
 
-    /// Starts sending `capture` on `media`'s main-video line and drawing our self-view. The
-    /// service is told by the caller.
+    /// Starts sending `capture` on `media`'s main-video line, through the video effects, and
+    /// drawing our self-view (mirrored as the user chose; what we send never is). The service is
+    /// told by the caller.
     pub fn start(
         &mut self,
         mut capture: CameraCapture,
@@ -144,11 +264,13 @@ impl Camera {
             .ok_or("this call has no video line")?;
         let encoder = H264Encoder::new(EncoderSettings::camera()).map_err(|e| e.to_string())?;
         let view = sink.clone();
+        let mirror = sink.mirror();
         let mut n = 0u32;
-        let frames = tap(capture.take_frames(), move |f| {
+        let frames = effects::process(capture.take_frames(), sink.effects());
+        let frames = tap(frames, move |f| {
             n = n.wrapping_add(1);
             if n.is_multiple_of(SELF_VIEW_EVERY) {
-                let rgb = i420_to_rgb(f, step_for(f.width, SELF_VIEW_WIDTH), true);
+                let rgb = self_view(f, SELF_VIEW_WIDTH, mirror.load(Ordering::Relaxed));
                 view.video(VideoSlot::SelfView, Some(rgb));
             }
         });
@@ -289,6 +411,33 @@ mod tests {
         );
         assert_eq!(device_for(&list, None).as_deref(), Some("/dev/video0"));
         assert_eq!(device_for(&[], Some("usb-2")), None);
+    }
+
+    #[test]
+    fn the_mirror_flips_the_self_view_and_never_the_frame() {
+        // White on the left half, black on the right.
+        let (w, h) = (8, 2);
+        let mut data = vec![128u8; I420Frame::len_for(w, h)];
+        for (i, y) in data[..w * h].iter_mut().enumerate() {
+            *y = if i % w < w / 2 { 235 } else { 16 };
+        }
+        let frame = I420Frame::new(w, h, data).unwrap();
+        let sent = frame.clone();
+        let mirrored = self_view(&frame, 640, true);
+        let plain = self_view(&frame, 640, false);
+        assert_eq!(mirrored.data[0], 0, "the right half shows on the left");
+        assert_eq!(plain.data[0], 255);
+        assert_eq!(&mirrored.data[..3], &plain.data[(w - 1) * 3..w * 3]);
+        assert_eq!(frame, sent, "the frame itself is untouched");
+        assert_eq!(self_view(&frame, 4, true).width, 4, "scaled to fit");
+    }
+
+    #[test]
+    fn the_camera_list_starts_with_the_default() {
+        let (list, at) = list(Some("not-plugged-in"));
+        assert_eq!(list[0].id, None);
+        assert_eq!(list[0].name, super::super::DEFAULT_CAMERA);
+        assert_eq!(at, 0, "a camera that is gone falls back to the default");
     }
 
     #[test]

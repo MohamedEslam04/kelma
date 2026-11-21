@@ -108,7 +108,7 @@ fn width_for(slot: VideoSlot) -> usize {
     match slot {
         VideoSlot::Content => CONTENT_WIDTH,
         VideoSlot::Gallery(_) => TILE_WIDTH,
-        VideoSlot::Remote | VideoSlot::SelfView => REMOTE_WIDTH,
+        VideoSlot::Remote | VideoSlot::SelfView | VideoSlot::Preview => REMOTE_WIDTH,
     }
 }
 

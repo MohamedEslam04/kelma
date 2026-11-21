@@ -1,8 +1,11 @@
 // The pre-join screen: the meeting, who joins, camera and mic, the audio devices, Join now.
 import { Theme } from "theme.slint";
-import { Avatar, Icon } from "widgets.slint";
+import { Icon } from "widgets.slint";
 import { CallStore } from "call_store.slint";
 import { CallButton, CallAction, DeviceSettings } from "call_widgets.slint";
+import { VideoPreview } from "video_preview.slint";
+import { VideoEffectsPanel } from "video_effects.slint";
+import { VideoFxStore } from "video_fx_store.slint";
 
 // The pre-join microphone switch.
 component MicSwitch inherits Rectangle {
@@ -74,25 +77,7 @@ export component PreJoin inherits Rectangle {
                     font-weight: 600;
                     wrap: word-wrap;
                 }
-                Rectangle {
-                    height: 220px;
-                    border-radius: Theme.radius;
-                    background: Theme.rail;
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 10px;
-                        HorizontalLayout {
-                            alignment: center;
-                            Avatar { initials: CallStore.my-initials; size: 72px; }
-                        }
-                        Text {
-                            text: CallStore.prejoin-camera ? "Your camera turns on when you join" : "Your camera is off";
-                            color: Theme.fg-subtle;
-                            font-size: 12px * Theme.font-scale;
-                            horizontal-alignment: center;
-                        }
-                    }
-                }
+                VideoPreview { }
                 Text {
                     text: "Join as " + CallStore.my-name;
                     color: Theme.fg;
@@ -135,5 +120,11 @@ export component PreJoin inherits Rectangle {
                 }
             }
         }
+    }
+    // The effects panel, at the right (over the column when the window is narrow).
+    if VideoFxStore.open: VideoEffectsPanel {
+        width: min(340px, root.width);
+        x: root.width - self.width;
+        height: root.height;
     }
 }

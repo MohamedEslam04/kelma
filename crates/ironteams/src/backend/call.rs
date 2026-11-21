@@ -37,6 +37,7 @@ pub(crate) mod remote_control;
 pub(crate) mod remote_video;
 #[cfg(feature = "calls")]
 pub(crate) mod share;
+pub(crate) mod video_fx;
 
 /// What kind of call the window shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -406,6 +407,8 @@ pub struct Found {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoSlot {
     SelfView,
+    /// Our camera on the pre-join screen.
+    Preview,
     Remote,
     Content,
     Gallery(usize),
@@ -455,14 +458,21 @@ pub struct Device {
     pub name: String,
 }
 
-/// Microphones and speakers, each with the one to use first.
+/// Microphones, speakers and cameras, each with the one to use first.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Devices {
     pub mics: Vec<Device>,
     pub speakers: Vec<Device>,
     pub mic: usize,
     pub speaker: usize,
+    /// "Default camera" (`id: None`) first, then the cameras found: a camera's bus on Linux, its
+    /// name on Windows and macOS.
+    pub cameras: Vec<Device>,
+    pub camera: usize,
 }
+
+/// The first camera choice: the portal's (Linux) or the system's.
+pub const DEFAULT_CAMERA: &str = "Default camera";
 
 impl Devices {
     fn or_default(mut self) -> Self {
@@ -474,8 +484,15 @@ impl Devices {
                 });
             }
         }
+        if self.cameras.is_empty() {
+            self.cameras.push(Device {
+                id: None,
+                name: DEFAULT_CAMERA.into(),
+            });
+        }
         self.mic = self.mic.min(self.mics.len() - 1);
         self.speaker = self.speaker.min(self.speakers.len() - 1);
+        self.camera = self.camera.min(self.cameras.len() - 1);
         self
     }
 }
@@ -489,7 +506,18 @@ pub trait CallDriver: Send + Sync {
     fn devices(&self) -> Devices;
     /// Starts joining. Events go to `sink`; the handle takes the controls.
     fn join(&self, target: JoinTarget, opts: JoinOptions, sink: EventSink) -> Box<dyn CallHandle>;
+    /// Starts the pre-join preview of camera `camera` (an id from [`Devices::cameras`]; `None` the
+    /// default): pictures to `sink` as [`VideoSlot::Preview`]. Dropping what it returns stops it
+    /// and lets go of the camera.
+    #[cfg(feature = "calls")]
+    fn preview(&self, _sink: EventSink, _camera: Option<String>) -> Option<Preview> {
+        None
+    }
 }
+
+/// A running pre-join preview; dropping it stops the camera.
+#[cfg(feature = "calls")]
+pub type Preview = Box<dyn std::any::Any + Send>;
 
 /// A running call's control side. Dropping it is the same as [`Control::Leave`].
 pub trait CallHandle: Send + Sync {
@@ -544,6 +572,8 @@ pub struct CallData {
     pub mic: usize,
     pub speakers: Vec<String>,
     pub speaker: usize,
+    pub cameras: Vec<String>,
+    pub camera: usize,
     pub held: bool,
     pub found: Vec<Found>,
     /// A short status under the invite box ("Calling Ada…").
@@ -1025,6 +1055,20 @@ impl CallModel {
         })
     }
 
+    /// Picks a camera. True when the choice changed (it applies the next time the camera opens).
+    pub fn pick_camera(&mut self, index: usize) -> bool {
+        if index >= self.devices.cameras.len() || self.devices.camera == index {
+            return false;
+        }
+        self.devices.camera = index;
+        true
+    }
+
+    /// The chosen camera's id (`None`: the default).
+    pub fn camera_id(&self) -> Option<String> {
+        self.devices.cameras.get(self.devices.camera)?.id.clone()
+    }
+
     pub fn data(&self, now: Instant) -> CallData {
         let elapsed = match (self.phase, self.connected_at, self.duration) {
             (Phase::Ended, _, Some(d)) => d,
@@ -1099,6 +1143,13 @@ impl CallModel {
                 .map(|d| d.name.clone())
                 .collect(),
             speaker: self.devices.speaker,
+            cameras: self
+                .devices
+                .cameras
+                .iter()
+                .map(|d| d.name.clone())
+                .collect(),
+            camera: self.devices.camera,
             held: self.held,
             found: self.found.clone(),
             invite_status: self.invite_status.clone(),
@@ -1212,10 +1263,17 @@ pub enum CallCmd {
     Admit(String),
     /// The People panel's "Admit all".
     AdmitAll,
+    /// The camera picker (an index into [`Devices::cameras`]).
+    CameraDevice(usize),
+    /// The Video effects panel.
+    Fx(video_fx::FxCmd),
 }
 
 impl CallCmd {
     pub fn parse(name: &str, arg: &str) -> Option<CallCmd> {
+        if name.starts_with("fx-") {
+            return video_fx::FxCmd::parse(name, arg).map(CallCmd::Fx);
+        }
         Some(match name {
             "join-chat" if is_meeting_chat(arg) => CallCmd::JoinChat(arg.into()),
             "join-now" => CallCmd::JoinNow,
@@ -1233,6 +1291,7 @@ impl CallCmd {
             "share" => CallCmd::ToggleShare,
             "camera" => CallCmd::ToggleCamera,
             "prejoin-camera" => CallCmd::PrejoinCamera(arg == "on"),
+            "camera-device" => CallCmd::CameraDevice(arg.parse().ok()?),
             "leave" => CallCmd::Leave,
             "close" => CallCmd::Close,
             "feedback" => CallCmd::Feedback(Feedback::parse(arg)?),
@@ -1289,6 +1348,34 @@ impl EventSink {
         }
     }
 
+    /// The video effects the camera applies to what it sends (the Video effects panel's).
+    #[cfg(feature = "calls")]
+    pub fn effects(&self) -> Arc<calling::video::effects::EffectsControl> {
+        match self.shared.upgrade() {
+            Some(s) => s.fx.lock().unwrap().control(),
+            None => calling::video::effects::EffectsControl::new(Default::default()),
+        }
+    }
+
+    /// Whether our self-view is drawn mirrored ("Mirror my video"), read for every picture.
+    #[cfg(feature = "calls")]
+    pub fn mirror(&self) -> Arc<AtomicBool> {
+        match self.shared.upgrade() {
+            Some(s) => s.fx.lock().unwrap().mirror(),
+            None => Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    /// Why the pre-join preview shows no picture yet ("" once it does).
+    #[cfg(feature = "calls")]
+    pub fn preview_status(&self, text: &str) {
+        if let Some(s) = self.shared.upgrade()
+            && s.generation.load(Ordering::SeqCst) == self.generation
+        {
+            s.ui.preview_status(text.to_owned());
+        }
+    }
+
     /// A person's profile photo, when one is known ([`CallManager::set_photos`]).
     #[cfg(feature = "calls")]
     pub fn photo(&self, mri: &str) -> Option<Pixels> {
@@ -1332,10 +1419,21 @@ struct Shared {
     photos: Mutex<Option<PhotoLookup>>,
     /// Where the call-quality ratings go; none: IronTeams's data dir (and nowhere in tests).
     feedback_file: Mutex<Option<std::path::PathBuf>>,
+    /// The Video effects panel's choices, which every camera picture goes through.
+    #[cfg(feature = "calls")]
+    fx: Mutex<video_fx::VideoFx>,
+    /// The pre-join preview while it runs, and the camera it shows.
+    #[cfg(feature = "calls")]
+    preview: Mutex<Option<(Option<String>, Preview)>>,
+    /// This, for the preview's sink.
+    #[cfg(feature = "calls")]
+    me: Weak<Shared>,
 }
 
 impl Shared {
     fn push(&self) {
+        #[cfg(feature = "calls")]
+        self.sync_preview();
         let mut d = self.model.lock().unwrap().data(Instant::now());
         if let Some(h) = self.held.lock().unwrap().as_ref() {
             d.held_name = h.model.held_title();
@@ -1345,6 +1443,72 @@ impl Shared {
             .map(|f| photos(&d.people, |m| f(m)))
             .unwrap_or_default();
         self.ui.call_state(d, found);
+    }
+
+    /// Runs the pre-join preview while the pre-join screen shows with the camera switch on, of
+    /// the camera chosen; stops it (the camera goes off) otherwise.
+    #[cfg(feature = "calls")]
+    fn sync_preview(&self) {
+        let wanted = {
+            let m = self.model.lock().unwrap();
+            (m.phase == Phase::PreJoin && m.prejoin_camera).then(|| m.camera_id())
+        };
+        let mut preview = self.preview.lock().unwrap();
+        if preview.as_ref().map(|(camera, _)| camera) == wanted.as_ref() {
+            return;
+        }
+        if preview.take().is_some() {
+            self.ui.call_video(VideoSlot::Preview, None);
+            self.ui.preview_status(String::new());
+        }
+        if let Some(camera) = wanted {
+            let sink = EventSink {
+                shared: self.me.clone(),
+                generation: self.generation.load(Ordering::SeqCst),
+            };
+            let driver = self.driver.lock().unwrap().clone();
+            if let Some(p) = driver.preview(sink, camera.clone()) {
+                *preview = Some((camera, p));
+            }
+        }
+    }
+
+    /// The Video effects panel's choice; the panel shows it.
+    #[cfg(feature = "calls")]
+    fn fx_command(&self, c: video_fx::FxCmd) {
+        let view = {
+            let mut fx = self.fx.lock().unwrap();
+            fx.apply(&c);
+            fx.view()
+        };
+        self.ui.video_fx(view);
+    }
+
+    /// The panel's state, for the window to show.
+    #[cfg(feature = "calls")]
+    fn push_fx(&self) {
+        let view = self.fx.lock().unwrap().view();
+        self.ui.video_fx(view);
+    }
+
+    /// Keeps the camera picked (`None`: the default) in Settings' devices, where the camera reads
+    /// it when it opens.
+    #[cfg(feature = "calls")]
+    fn camera_chosen(&self, id: Option<String>) {
+        let Some(dir) = self
+            .fx
+            .lock()
+            .unwrap()
+            .dir()
+            .map(std::path::Path::to_path_buf)
+        else {
+            return;
+        };
+        let mut local = super::settings::Local::load(&dir);
+        local.devices.camera = id;
+        if let Err(e) = local.save_devices() {
+            tracing::warn!(error = %e, "the camera choice was not saved");
+        }
     }
 
     /// A new call's generation, which becomes the shown one.
@@ -1616,8 +1780,13 @@ impl CallManager {
         let driver: Arc<dyn CallDriver> = Arc::new(Unavailable);
         #[cfg(not(feature = "calls"))]
         let _ = client;
+        // Tests keep the effects in memory only.
+        #[cfg(all(feature = "calls", not(test)))]
+        let config_dir = session::Paths::new().ok().map(|p| p.config_dir);
+        #[cfg(all(feature = "calls", test))]
+        let config_dir = None;
         CallManager {
-            shared: Arc::new(Shared {
+            shared: Arc::new_cyclic(|_me| Shared {
                 model: Mutex::new(CallModel {
                     my_name,
                     ..Default::default()
@@ -1631,6 +1800,12 @@ impl CallManager {
                 ui,
                 photos: Mutex::new(None),
                 feedback_file: Mutex::new(None),
+                #[cfg(feature = "calls")]
+                fx: Mutex::new(video_fx::VideoFx::load(config_dir)),
+                #[cfg(feature = "calls")]
+                preview: Mutex::new(None),
+                #[cfg(feature = "calls")]
+                me: _me.clone(),
             }),
             #[cfg(feature = "calls")]
             hub,
@@ -1724,7 +1899,28 @@ impl CallManager {
             chat_id,
             devices,
         );
+        #[cfg(feature = "calls")]
+        self.shared.push_fx();
         self.shared.push();
+    }
+
+    /// What the camera applies to what it sends (tests).
+    #[cfg(all(test, feature = "calls"))]
+    pub fn effects(&self) -> calling::video::effects::Effects {
+        (*self.shared.fx.lock().unwrap().control().get()).clone()
+    }
+
+    /// "Add new" in the Video effects panel: the picture at `path` becomes a background.
+    #[cfg(feature = "calls")]
+    pub fn add_background(&self, path: &std::path::Path) {
+        let r = self.shared.fx.lock().unwrap().add_background(path);
+        if let Err(e) = r {
+            tracing::warn!(error = %e, "the picture was not added as a background");
+            self.shared
+                .ui
+                .info("That picture can't be used as a background.".into());
+        }
+        self.shared.push_fx();
     }
 
     /// Pre-join "Join now".
@@ -1836,6 +2032,27 @@ impl CallManager {
                 CallCmd::Control(a) => m.remote_control(a),
                 CallCmd::Admit(mri) => m.admit(&mri),
                 CallCmd::AdmitAll => m.admit_all(),
+                CallCmd::CameraDevice(i) => {
+                    let changed = m.pick_camera(i);
+                    let id = m.camera_id();
+                    drop(m);
+                    #[cfg(feature = "calls")]
+                    if changed {
+                        self.shared.camera_chosen(id);
+                    }
+                    #[cfg(not(feature = "calls"))]
+                    let _ = (changed, id);
+                    self.shared.push();
+                    return;
+                }
+                CallCmd::Fx(c) => {
+                    drop(m);
+                    #[cfg(feature = "calls")]
+                    self.shared.fx_command(c);
+                    #[cfg(not(feature = "calls"))]
+                    let _ = c;
+                    return;
+                }
                 CallCmd::EndHeld => {
                     let shown_on_hold = m.held;
                     drop(m);
@@ -2096,6 +2313,22 @@ impl Engine {
                     .prejoin(title, JoinTarget::Chat(thread.clone()), thread);
             }
             CallCmd::Find(q) => return Ok(self.call_find(&q)),
+            #[cfg(all(feature = "calls", not(test)))]
+            CallCmd::Fx(video_fx::FxCmd::AddBackground) => {
+                let e = self.clone();
+                return Ok(in_order::rest(async move {
+                    let file = rfd::AsyncFileDialog::new()
+                        .add_filter("Pictures", &["jpg", "jpeg", "png", "webp"])
+                        .pick_file()
+                        .await;
+                    if let Some(file) = file {
+                        let path = file.path().to_path_buf();
+                        let calls = e.calls.clone();
+                        tokio::task::spawn_blocking(move || calls.add_background(&path)).await?;
+                    }
+                    Ok(())
+                }));
+            }
             other => self.calls.command(other),
         }
         Ok(None)
@@ -2175,6 +2408,11 @@ pub struct FakeDriver {
     sink: Arc<Mutex<Option<EventSink>>>,
     /// Demo script: `Some(delayed)` plays connecting, lobby (when delayed) and connected.
     script: Option<bool>,
+    /// The pre-join preview: `on <camera>` and `off`, and where its pictures go while it runs.
+    #[cfg(feature = "calls")]
+    previews: Arc<Mutex<Vec<String>>>,
+    #[cfg(feature = "calls")]
+    preview_sink: Arc<Mutex<Option<EventSink>>>,
 }
 
 impl FakeDriver {
@@ -2217,6 +2455,29 @@ impl FakeDriver {
         self.log.lock().unwrap().clone()
     }
 
+    /// The pre-join previews started (`on <camera>`) and stopped (`off`).
+    #[cfg(all(test, feature = "calls"))]
+    pub fn previews(&self) -> Vec<String> {
+        self.previews.lock().unwrap().clone()
+    }
+
+    /// A camera picture for the running preview, through the effects and the mirror as the live
+    /// camera's are. False when no preview runs.
+    #[cfg(all(test, feature = "calls"))]
+    pub fn preview_frame(&self, frame: &calling::video::I420Frame) -> bool {
+        let Some(sink) = self.preview_sink.lock().unwrap().clone() else {
+            return false;
+        };
+        let mut frame = frame.clone();
+        calling::video::effects::Processor::new(sink.effects()).apply(&mut frame);
+        let mirror = sink.mirror().load(Ordering::Relaxed);
+        sink.video(
+            VideoSlot::Preview,
+            Some(camera::self_view(&frame, usize::MAX, mirror)),
+        );
+        true
+    }
+
     fn demo_people(name: &str) -> Vec<Person> {
         let p = |n: &str, muted, hand, lobby, role: &str| Person {
             name: n.into(),
@@ -2240,6 +2501,21 @@ impl FakeDriver {
             p("Omar Farouk", false, false, false, "attendee"),
             p("Guest (external)", false, false, true, ""),
         ]
+    }
+}
+
+/// The fake's running preview: stopping it is logged.
+#[cfg(feature = "calls")]
+struct FakePreview {
+    previews: Arc<Mutex<Vec<String>>>,
+    sink: Arc<Mutex<Option<EventSink>>>,
+}
+
+#[cfg(feature = "calls")]
+impl Drop for FakePreview {
+    fn drop(&mut self) {
+        self.sink.lock().unwrap().take();
+        self.previews.lock().unwrap().push("off".into());
     }
 }
 
@@ -2314,7 +2590,29 @@ impl CallDriver for FakeDriver {
             ],
             mic: 0,
             speaker: 0,
+            cameras: vec![
+                Device {
+                    id: None,
+                    name: DEFAULT_CAMERA.into(),
+                },
+                d("cam-builtin", "Integrated Camera"),
+                d("cam-usb", "USB Webcam"),
+            ],
+            camera: 0,
         }
+    }
+
+    #[cfg(feature = "calls")]
+    fn preview(&self, sink: EventSink, camera: Option<String>) -> Option<Preview> {
+        self.previews
+            .lock()
+            .unwrap()
+            .push(format!("on {}", camera.as_deref().unwrap_or("default")));
+        *self.preview_sink.lock().unwrap() = Some(sink);
+        Some(Box::new(FakePreview {
+            previews: self.previews.clone(),
+            sink: self.preview_sink.clone(),
+        }))
     }
 
     fn join(&self, target: JoinTarget, opts: JoinOptions, sink: EventSink) -> Box<dyn CallHandle> {

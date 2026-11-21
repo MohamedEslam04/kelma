@@ -3,6 +3,7 @@
 import { Theme } from "theme.slint";
 import { Icon } from "widgets.slint";
 import { CallStore } from "call_store.slint";
+import { VideoFxStore } from "video_fx_store.slint";
 
 // An icon over a label. A disabled one is drawn faded, does nothing when clicked and its tooltip
 // says why.
@@ -195,8 +196,8 @@ export component DevicePicker inherits VerticalLayout {
     }
 }
 
-// The microphone and speaker pickers, as the More panel, the mic dropdown and the pre-join screen
-// show them. `prefix` keeps each place's dropdowns apart.
+// The microphone, speaker and camera pickers, as the More panel, the mic dropdown (no camera) and
+// the pre-join screen show them. `prefix` keeps each place's dropdowns apart.
 export component DeviceSettings inherits VerticalLayout {
     in property <string> prefix;
     spacing: 12px;
@@ -213,5 +214,13 @@ export component DeviceSettings inherits VerticalLayout {
         options: CallStore.speakers;
         current: CallStore.speaker;
         picked(i) => { CallStore.command("speaker", "" + i); }
+    }
+    // The camera, where video is chosen (not the mic button's audio dropdown).
+    if root.prefix != "card": DevicePicker {
+        caption: "Camera";
+        key: root.prefix + "-camera";
+        options: VideoFxStore.cameras;
+        current: VideoFxStore.camera;
+        picked(i) => { CallStore.command("camera-device", "" + i); }
     }
 }
