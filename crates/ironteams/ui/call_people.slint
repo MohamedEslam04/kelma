@@ -70,6 +70,13 @@ component PersonRow inherits Rectangle {
                 overflow: elide;
             }
         }
+        if root.p.reaction != "": Text {
+            text: root.p.reaction;
+            font-size: 18px;
+            vertical-alignment: center;
+            accessible-role: text;
+            accessible-label: root.p.name + "'s reaction: " + root.p.reaction-name;
+        }
         if root.p.hand: Icon {
             source: @image-url("icons/hand.svg");
             tint: Theme.accent;
@@ -316,6 +323,14 @@ export component MorePanel inherits Rectangle {
                 tip: "Gallery, speaker or focus on content";
                 active: CallStore.menu == "view";
                 clicked => { CallStore.menu = CallStore.menu == "view" ? "" : "view"; }
+            }
+            CallButton {
+                icon: @image-url("icons/emoji.svg");
+                label: "React";
+                enabled: CallStore.phase == "connected";
+                tip: CallStore.phase == "connected" ? "Send a reaction" : "Reactions work once you're in the meeting";
+                active: CallStore.menu == "react";
+                clicked => { CallStore.menu = CallStore.menu == "react" ? "" : "react"; }
             }
         }
         if root.fold && CallStore.kind == "direct": HorizontalLayout {

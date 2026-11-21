@@ -17,6 +17,8 @@
 //!   `removeState` follow: the reaction floats and goes. Facts: rusty-teams
 //!   `crates/calling/src/reaction.rs` `reaction_message` and `signaling.rs` `send_reaction` (MIT);
 //!   no other reference sends one. UNVERIFIED live (no meetings tonight).
+//!   Other people's reactions come the same way, as our `conversation/receiveMessage` callback
+//!   ([`parse_reactions`]; rusty-teams `parse_reactions`, also UNVERIFIED live).
 //!
 //! Each operation goes to the conversation's link of the same name, else to
 //! `<controller>/<name>` (mautrix-teams addresses them that way).
@@ -158,6 +160,48 @@ pub fn reaction_request(
         control_url(links, controller, "sendMessage"),
         reaction_body(s, reaction, &id(), &id()),
     )
+}
+
+/// A reaction someone sent, from a `conversation/receiveMessage` callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceivedReaction {
+    /// Who sent it (`from.id` of the item, else of the message).
+    pub mri: String,
+    pub reaction: Reaction,
+}
+
+/// The reactions a `conversation/receiveMessage` callback carries: the `Reaction` items of its
+/// `messageContent`, or the body itself when it is one item. Other item types, unknown reaction
+/// names and items with no sender are skipped.
+///
+/// UNVERIFIED live: the shape mirrors what [`reaction_body`] sends (rusty-teams
+/// `reaction.rs` `parse_reactions` reads it the same way); no capture of a received reaction
+/// exists yet. The live driver logs every `receiveMessage` body at debug level to confirm it.
+pub fn parse_reactions(body: &Value) -> Vec<ReceivedReaction> {
+    let items: Vec<&Value> = match body["messageContent"].as_array() {
+        Some(items) => items.iter().collect(),
+        None => vec![body],
+    };
+    let mut found = Vec::new();
+    for item in items.into_iter().filter(|i| i["type"] == "Reaction") {
+        let Some(mri) = item["from"]["id"]
+            .as_str()
+            .or_else(|| body["from"]["id"].as_str())
+            .filter(|m| !m.is_empty())
+        else {
+            continue;
+        };
+        let values = item["payload"]["values"].as_array().into_iter().flatten();
+        found.extend(
+            values
+                .filter_map(|v| Reaction::parse(v["name"].as_str()?))
+                .map(|reaction| ReceivedReaction {
+                    mri: mri.to_owned(),
+                    reaction,
+                }),
+        );
+    }
+    found
 }
 
 /// What `publishState` answered for a raised hand.
@@ -335,6 +379,59 @@ mod tests {
         );
         let (url, _) = reaction_request(&s, &links, CONTROLLER, Reaction::Like);
         assert_eq!(url, "https://conv.example.invalid/send");
+    }
+
+    #[test]
+    fn a_received_reaction_is_read_back_from_what_we_send() {
+        let s = session();
+        let sent = reaction_body(&s, Reaction::Laugh, "op-1", "val-1");
+        assert_eq!(
+            parse_reactions(&sent),
+            [ReceivedReaction {
+                mri: s.me.mri.clone(),
+                reaction: Reaction::Laugh,
+            }]
+        );
+    }
+
+    #[test]
+    fn received_reactions_skip_other_items_unknown_names_and_no_sender() {
+        let body = json!({
+            "from": {"id": "8:orgid:00000000-0000-0000-0000-0000000000a1"},
+            "messageContent": [
+                {"type": "Reaction", "payload": {"values": [{"name": "heart"}, {"name": "fire"}]}},
+                {"type": "Typing", "payload": {"values": [{"name": "like"}]}},
+                {
+                    "type": "Reaction",
+                    "from": {"id": "8:orgid:00000000-0000-0000-0000-0000000000a2"},
+                    "payload": {"values": [{"name": "applause", "count": 1}]},
+                },
+            ],
+        });
+        let got = parse_reactions(&body);
+        assert_eq!(
+            got,
+            [
+                ReceivedReaction {
+                    mri: "8:orgid:00000000-0000-0000-0000-0000000000a1".into(),
+                    reaction: Reaction::Heart,
+                },
+                ReceivedReaction {
+                    mri: "8:orgid:00000000-0000-0000-0000-0000000000a2".into(),
+                    reaction: Reaction::Applause,
+                },
+            ]
+        );
+        // One item on its own, as the body.
+        let one = json!({
+            "type": "Reaction",
+            "from": {"id": "8:orgid:00000000-0000-0000-0000-0000000000a3"},
+            "payload": {"values": [{"name": "surprised"}]},
+        });
+        assert_eq!(parse_reactions(&one)[0].reaction, Reaction::Surprised);
+        let nobody = json!({"type": "Reaction", "payload": {"values": [{"name": "like"}]}});
+        assert!(parse_reactions(&nobody).is_empty());
+        assert!(parse_reactions(&json!({"messageContent": []})).is_empty());
     }
 
     #[test]

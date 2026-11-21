@@ -684,6 +684,27 @@ impl NgcClient {
             .map(|_| true)
     }
 
+    /// Sends a live reaction everyone in the meeting sees float up (`sendMessage`; see
+    /// [`controls`]). UNVERIFIED live: the service's answer is logged at debug level, so a live
+    /// run shows whether it took the reaction.
+    pub async fn send_reaction(
+        &self,
+        s: &CallSession,
+        links: &Links,
+        controller: &str,
+        reaction: controls::Reaction,
+    ) -> Result<()> {
+        let (url, body) = controls::reaction_request(s, links, controller, reaction);
+        let r = self.post("send_message", s, &url, &body).await?;
+        tracing::debug!(
+            reaction = reaction.wire_name(),
+            status = r.status,
+            answer = %r.body,
+            "reaction sent"
+        );
+        Ok(())
+    }
+
     /// Rings `mri` into the call (`addParticipant`; see [`call_ops`]). The outcome comes on the
     /// `conversation/addParticipantSuccess` or `addParticipantFailure` callback.
     pub async fn add_participant(

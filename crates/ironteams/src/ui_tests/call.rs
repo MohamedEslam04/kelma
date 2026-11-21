@@ -388,7 +388,6 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
     let c = CallHarness::new();
     c.connected();
     for (label, why) in [
-        ("React", "Reactions aren't available yet"),
         // A meeting can't switch its video lines yet (live 2026-11-20: the update was refused
         // and the meeting ended), so it says so rather than "in this call".
         ("Camera", "Video isn't available in meetings yet"),
@@ -403,6 +402,173 @@ fn unavailable_controls_are_shown_disabled_and_say_why() {
     assert_eq!(c.button("Chat").accessible_enabled(), Some(true));
     assert_eq!(c.sent().len(), 2, "only join-chat and join-now were sent");
     assert_eq!(c.fake.calls().len(), 1);
+}
+
+/// The live reactions the React menu offers, as their buttons are labelled.
+const REACTION_BUTTONS: [&str; 5] = [
+    "Like reaction",
+    "Heart reaction",
+    "Laugh reaction",
+    "Surprised reaction",
+    "Applause reaction",
+];
+
+fn reactions_sent(c: &CallHarness) -> Vec<String> {
+    c.fake
+        .calls()
+        .into_iter()
+        .filter(|l| l.starts_with("react "))
+        .collect()
+}
+
+#[test]
+fn react_opens_its_menu_and_a_pick_sends_it_closes_the_menu_and_floats_it() {
+    let c = CallHarness::new();
+    c.connected();
+    assert!(!c.shows("Heart reaction"), "the menu starts closed");
+    let react = c.button("React");
+    assert_eq!(react.accessible_enabled(), Some(true));
+    click(&react);
+    assert_eq!(cs(&c.h.app).get_menu(), "react");
+    for label in REACTION_BUTTONS {
+        assert!(c.shows(label), "{label}");
+    }
+    click(&c.button("Heart reaction"));
+    assert_eq!(cs(&c.h.app).get_menu(), "", "a pick closes the menu");
+    assert!(
+        c.sent().iter().any(|s| s == "react heart"),
+        "{:?}",
+        c.sent()
+    );
+    assert_eq!(reactions_sent(&c), ["react heart"]);
+    assert!(c.shows("You reacted Heart"), "ours floats at once");
+
+    // One a second: a second pick right away is not sent.
+    click(&c.button("React"));
+    click(&c.button("Like reaction"));
+    assert_eq!(reactions_sent(&c), ["react heart"], "throttled");
+    c.h.engine
+        .calls
+        .backdate_reactions(std::time::Duration::from_secs(1));
+    click(&c.button("React"));
+    click(&c.button("Like reaction"));
+    assert_eq!(reactions_sent(&c), ["react heart", "react like"]);
+}
+
+#[test]
+fn react_waits_until_the_call_is_connected() {
+    let c = CallHarness::new();
+    c.open_prejoin();
+    click(&c.button("Join now"));
+    c.fake.emit(Event::Lobby);
+    let react = c.button("React");
+    assert_eq!(react.accessible_enabled(), Some(false));
+    assert_eq!(
+        react.accessible_description().unwrap(),
+        "Reactions work once you're in the meeting"
+    );
+    click(&react);
+    assert_eq!(cs(&c.h.app).get_menu(), "");
+}
+
+fn ada_in_the_call(c: &CallHarness) {
+    let p = |mri: &str, name: &str, me| Person {
+        mri: mri.into(),
+        name: name.into(),
+        me,
+        ..Default::default()
+    };
+    c.fake.emit(Event::Roster(vec![
+        p("8:orgid:me", "Me", true),
+        p("8:orgid:ada", "Ada Lovelace", false),
+    ]));
+}
+
+/// Where a floating reaction is now (its top edge).
+fn float_y(c: &CallHarness, label: &str) -> f32 {
+    c.with_role(label, AccessibleRole::Text)
+        .absolute_position()
+        .y
+}
+
+#[test]
+fn an_incoming_reaction_rises_with_the_name_and_goes_once_it_expires() {
+    use slint::Model;
+    let c = CallHarness::new();
+    c.connected();
+    ada_in_the_call(&c);
+    c.fake.emit(Event::Reaction {
+        mri: "8:orgid:ada".into(),
+        name: "applause",
+    });
+    let float = "Ada Lovelace reacted Applause";
+    let badge = "Ada Lovelace's reaction: Applause";
+    assert!(c.shows(float));
+    assert!(c.shows(badge), "on her tile");
+    click(&c.button("People"));
+    assert!(c.all(badge).len() >= 2, "on her tile and her People row");
+    assert_eq!(cs(&c.h.app).get_reactions().row_count(), 1);
+
+    let start = float_y(&c, float);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(1000));
+    assert!(float_y(&c, float) < start - 20., "it rises");
+    // 2.5 s in, the window no longer shows it...
+    testing::mock_elapsed_time(std::time::Duration::from_millis(1600));
+    assert!(!c.shows(float), "faded out and gone");
+    // ...and the call drops it, with the badges.
+    c.h.engine
+        .calls
+        .backdate_reactions(std::time::Duration::from_secs(3));
+    assert_eq!(cs(&c.h.app).get_reactions().row_count(), 0);
+    assert!(!c.shows(badge));
+}
+
+#[test]
+fn with_reduced_motion_a_reaction_stands_still_for_two_seconds() {
+    let c = CallHarness::new();
+    c.h.app.global::<crate::Theme>().set_reduced_motion(true);
+    c.connected();
+    ada_in_the_call(&c);
+    c.fake.emit(Event::Reaction {
+        mri: "8:orgid:ada".into(),
+        name: "laugh",
+    });
+    let float = "Ada Lovelace reacted Laugh";
+    let start = float_y(&c, float);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(1500));
+    assert_eq!(float_y(&c, float), start, "it does not move");
+    testing::mock_elapsed_time(std::time::Duration::from_millis(600));
+    assert!(!c.shows(float), "gone after 2 s");
+}
+
+#[test]
+fn our_own_reaction_echoed_back_floats_once() {
+    let c = CallHarness::new();
+    c.connected();
+    ada_in_the_call(&c);
+    click(&c.button("React"));
+    click(&c.button("Surprised reaction"));
+    c.fake.emit(Event::Reaction {
+        mri: "8:orgid:me".into(),
+        name: "surprised",
+    });
+    assert_eq!(c.all("You reacted Surprised").len(), 1);
+    assert!(c.shows("Me's reaction: Surprised"), "on our tile");
+}
+
+#[test]
+fn a_narrow_window_reacts_from_the_more_panel() {
+    use super::responsive::{WIDTHS, assert_fits, resize};
+    let width = WIDTHS[WIDTHS.len() - 1];
+    let c = CallHarness::new();
+    resize(&c.h.app, width);
+    c.connected();
+    click(&c.button("More"));
+    click(&c.button("React"));
+    assert_eq!(cs(&c.h.app).get_menu(), "react");
+    assert_fits(&c.h.app, width, "the React menu");
+    click(&c.button("Applause reaction"));
+    assert_eq!(reactions_sent(&c), ["react applause"]);
 }
 
 #[test]

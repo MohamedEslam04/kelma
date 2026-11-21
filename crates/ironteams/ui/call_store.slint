@@ -8,6 +8,9 @@ export struct CallPerson {
     initials: string,
     muted: bool,
     hand: bool,
+    // Their live reaction floating now (its emoji and name), "" for none.
+    reaction: string,
+    reaction-name: string,
     // Waiting in the lobby.
     lobby: bool,
     // Us.
@@ -29,6 +32,20 @@ export struct CallPerson {
 export struct CallVideo {
     frame: image,
     shown: bool,
+}
+
+// One live reaction floating up the stage (call_reactions.slint).
+export struct CallReaction {
+    // Rising per call: the window keeps a reaction's place while others come and go.
+    id: int,
+    emoji: string,
+    // Like | Heart | Laugh | Surprised | Applause.
+    name: string,
+    // Who sent it, "You" for us.
+    who: string,
+    mine: bool,
+    // Where it rises across the stage, 0..1 (slightly random).
+    lane: float,
 }
 
 // One live caption: who speaks and what they said.
@@ -134,9 +151,12 @@ export global CallStore {
     in property <[CallFound]> found;
     // A short status under the invite box ("Calling Ada…").
     in property <string> invite-status;
+    // The live reactions floating up the stage, oldest first. One model for the whole call
+    // (`ui/call.rs` updates its rows), so a reaction keeps rising while others come and go.
+    in property <[CallReaction]> reactions;
     // The side panel: "" | people | more.
     in-out property <string> panel;
-    // The open dropdown or card: "" | devices | view | transfer | a device picker's key.
+    // The open dropdown or card: "" | devices | view | react | transfer | a device picker's key.
     in-out property <string> menu;
     // The call shrinks to a floating bar while the meeting chat is open.
     in-out property <bool> minimized;
@@ -144,7 +164,8 @@ export global CallStore {
     in-out property <length> mini-dx;
     in-out property <length> mini-dy;
     // (name, argument): feedback (good | issues, then one `category=issue` line per box ticked),
-    // join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand,
+    // join-chat, join-now, cancel, prejoin-mic, mic, speaker, mute, hand, react (like | heart |
+    // laugh | surprised | applause),
     // hold, transfer-open, find (query), invite (MRI), transfer (MRI), share, camera,
     // prejoin-camera, leave, close, rejoin, dismiss-error, captions (on|off), recording
     // (start|stop), transcription (start|stop), dismiss-notice, resume, end-held,
