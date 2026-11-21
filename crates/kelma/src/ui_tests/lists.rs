@@ -116,6 +116,11 @@ fn harness() -> Harness {
     // The Quick views start collapsed: these tests click rows by position, and an item menu that
     // opens over the section below would cover the next row.
     h.app.global::<crate::QuickViewsStore>().set_open(false);
+    // Tall enough that the Teams and channels rows are on screen below the chats and the Quick
+    // views header, short enough that a chat's item menu opens upwards and does not cover them.
+    h.app
+        .window()
+        .set_size(slint::LogicalSize::new(1200., 900.));
     // Render the list once so the rows exist.
     h.runner()(Cmd::SetFilter("all".into()));
     h
