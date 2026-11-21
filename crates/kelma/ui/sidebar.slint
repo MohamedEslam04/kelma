@@ -22,6 +22,45 @@ component MenuItem inherits Rectangle {
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
+// A round avatar drawing a glyph instead of initials (group and meeting chats).
+component GlyphAvatar inherits Rectangle {
+    in property <image> icon;
+    in property <color> tone;
+    in property <color> tint;
+    width: 32px;
+    height: 32px;
+    border-radius: 16px;
+    background: root.tone;
+    accessible-role: image;
+    Icon { source: root.icon; width: 18px; height: 18px; tint: root.tint; }
+}
+
+// "See all" / "Show less" under the Meetings section.
+component MoreRow inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+    height: 28px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Text {
+        x: 54px;
+        y: 0px;
+        width: parent.width - 64px;
+        height: parent.height;
+        text: root.label;
+        color: Theme.accent;
+        font-size: 12px * Theme.font-scale;
+        vertical-alignment: center;
+        horizontal-alignment: Theme.start-align;
+        overflow: elide;
+        accessible-role: none;
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
 component ChatItem inherits Rectangle {
     in property <ChatRow> data;
     in property <bool> selected;
@@ -226,45 +265,6 @@ component ChatItem inherits Rectangle {
             done => { item-menu.close(); }
         }
     }
-}
-
-// A round avatar drawing a glyph instead of initials (group and meeting chats).
-component GlyphAvatar inherits Rectangle {
-    in property <image> icon;
-    in property <color> tone;
-    in property <color> tint;
-    width: 32px;
-    height: 32px;
-    border-radius: 16px;
-    background: root.tone;
-    accessible-role: image;
-    Icon { source: root.icon; width: 18px; height: 18px; tint: root.tint; }
-}
-
-// "See all" / "Show less" under the Meetings section.
-component MoreRow inherits Rectangle {
-    in property <string> label;
-    callback clicked();
-    height: 28px;
-    border-radius: 4px;
-    background: touch.has-hover ? Theme.surface-hover : transparent;
-    accessible-role: button;
-    accessible-label: root.label;
-    accessible-action-default => { root.clicked(); }
-    Text {
-        x: 54px;
-        y: 0px;
-        width: parent.width - 64px;
-        height: parent.height;
-        text: root.label;
-        color: Theme.accent;
-        font-size: 12px * Theme.font-scale;
-        vertical-alignment: center;
-        horizontal-alignment: Theme.start-align;
-        overflow: elide;
-        accessible-role: none;
-    }
-    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
 // The row of the chat being started in the New chat pane: "New message", selected.
