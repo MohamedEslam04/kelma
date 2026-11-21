@@ -225,6 +225,9 @@ component DropRow inherits Rectangle {
     callback clicked();
     property <length> head: root.data.section != "" ? 24px : 0px;
     property <length> body: root.data.kind == "message" ? 52px : 36px;
+    // The pointer is on the person's photo, which sits above the row's TouchArea: the row keeps
+    // its highlight.
+    property <bool> photo-over;
     height: root.head + root.body;
     VerticalLayout {
         if root.data.section != "": HorizontalLayout {
@@ -242,7 +245,7 @@ component DropRow inherits Rectangle {
         Rectangle {
             height: root.body;
             border-radius: 4px;
-            background: root.chosen || touch.has-hover ? Theme.surface-hover : transparent;
+            background: root.chosen || touch.has-hover || (root.photo-over && root.data.kind == "person" && root.data.person != "") ? Theme.surface-hover : transparent;
             accessible-role: list-item;
             accessible-label: root.data.title;
             accessible-description: root.data.kind == "message" ? root.data.snippet-plain + " · " + root.data.subtitle + " · " + root.data.time : root.data.subtitle;
@@ -362,6 +365,7 @@ component DropRow inherits Rectangle {
                 height: 24px;
                 person: root.data.person;
                 click-opens: false;
+                over <=> root.photo-over;
                 activated => { root.clicked(); }
             }
         }

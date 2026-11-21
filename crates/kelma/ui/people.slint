@@ -118,6 +118,9 @@ export component PersonHover inherits TouchArea {
     in property <string> person;
     in property <bool> click-opens: true;
     callback activated();
+    // Whether the pointer is on this area. A row binds it two-way (`over <=> root.photo-over`)
+    // to keep its own highlight under its photo, which sits above the row's TouchArea.
+    in-out property <bool> over;
     // A list may reuse this row for someone else while the pointer rests on it: the leave names
     // the person the pointer came to.
     property <string> hovered: "";
@@ -130,6 +133,7 @@ export component PersonHover inherits TouchArea {
         }
     }
     changed has-hover => {
+        root.over = root.has-hover;
         if root.has-hover && root.person != "" {
             root.hovered = root.person;
             PeopleStore.hover-enter(root.person, root.absolute-position.x, root.absolute-position.y, root.width, root.height);

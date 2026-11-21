@@ -98,6 +98,20 @@ export component Avatar inherits Rectangle {
     }
 }
 
+// A round avatar drawing a glyph instead of initials (group and meeting chats).
+export component GlyphAvatar inherits Rectangle {
+    in property <image> icon;
+    in property <color> tone;
+    in property <color> tint;
+    in property <length> size: 32px;
+    width: size;
+    height: size;
+    border-radius: size / 2;
+    background: root.tone;
+    accessible-role: image;
+    Icon { source: root.icon; width: root.size * 0.56; height: root.size * 0.56; tint: root.tint; }
+}
+
 export component Pill inherits Rectangle {
     in property <string> label;
     in property <bool> active;

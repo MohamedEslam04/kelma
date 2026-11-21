@@ -263,10 +263,62 @@ pub(super) fn system_text(m: &MessageRow) -> Option<String> {
     }
 }
 
+/// A chat list title that is never empty. Teams sends no topic for most group chats and no name
+/// for the General channel, and a stored title may be blank. A group falls back to its members'
+/// names (the first four), a channel to its own name and then "General".
+pub(super) fn row_title(kind: ConvKind, title: &str, names: &[String], channel: &str) -> String {
+    if !title.trim().is_empty() {
+        return title.to_string();
+    }
+    let members = || {
+        names
+            .iter()
+            .filter(|n| !n.trim().is_empty())
+            .take(4)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let fallback = |joined: String, none: &str| {
+        if joined.is_empty() {
+            none.into()
+        } else {
+            joined
+        }
+    };
+    match kind {
+        ConvKind::Channel if !channel.trim().is_empty() => channel.to_string(),
+        ConvKind::Channel => "General".into(),
+        ConvKind::Group => fallback(members(), "Group chat"),
+        ConvKind::Meeting => fallback(members(), "Meeting"),
+        ConvKind::Notes => "Notes".into(),
+        ConvKind::OneOnOne => fallback(members(), "Chat"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn a_blank_group_title_falls_back_to_the_members_then_to_group_chat() {
+        let names = ["Ann".to_string(), " ".into(), "Bo".into(), "Cy".into()];
+        assert_eq!(row_title(ConvKind::Group, "", &names, ""), "Ann, Bo, Cy");
+        assert_eq!(row_title(ConvKind::Group, "  ", &names, ""), "Ann, Bo, Cy");
+        assert_eq!(row_title(ConvKind::Group, "", &[], ""), "Group chat");
+        assert_eq!(
+            row_title(ConvKind::Group, "Planning", &names, ""),
+            "Planning"
+        );
+    }
+
+    #[test]
+    fn a_blank_channel_title_falls_back_to_its_name_then_to_general() {
+        assert_eq!(row_title(ConvKind::Channel, "", &[], "Roadmap"), "Roadmap");
+        assert_eq!(row_title(ConvKind::Channel, " ", &[], ""), "General");
+        assert_eq!(row_title(ConvKind::Channel, "Ops", &[], "Roadmap"), "Ops");
+    }
 
     #[test]
     fn an_unanswered_request_says_so_and_other_errors_keep_their_text() {

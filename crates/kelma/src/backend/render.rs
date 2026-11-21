@@ -174,6 +174,17 @@ impl Engine {
         None
     }
 
+    /// The names of a chat's other members, as far as they are known.
+    fn member_names(&self, conv_id: &str) -> Vec<String> {
+        let members = self.members_known(conv_id).unwrap_or_default();
+        let st = self.store.lock().unwrap();
+        members
+            .iter()
+            .filter(|m| **m != self.me)
+            .filter_map(|m| st.user(m).ok().flatten().map(|u| u.display_name))
+            .collect()
+    }
+
     pub(super) fn other_member(&self, conv_id: &str) -> Option<String> {
         one_on_one_members(conv_id)
             .into_iter()
@@ -274,10 +285,17 @@ impl Engine {
             // A channel shows its own name; its team goes on the second line, as in Teams.
             // A meeting chat with a generic title ("Meet now") says which day it was.
             let generic_meeting = r.kind == ConvKind::Meeting && is_generic_meeting(&r.title);
-            let title = match r.kind {
-                ConvKind::Meeting if r.title.trim().is_empty() => "Meeting".to_string(),
-                _ => r.title.clone(),
+            // Never empty: a group falls back to its members, a channel to its name or "General".
+            let names = match r.kind {
+                ConvKind::Group if r.title.trim().is_empty() => self.member_names(&r.id),
+                _ => Vec::new(),
             };
+            let title = row_title(
+                r.kind,
+                &r.title,
+                &names,
+                chan.as_ref().map_or("", |c| c.name.as_str()),
+            );
             let line = match (&r.kind, &r.team_name, draft) {
                 (ConvKind::Channel, Some(t), None) => Some(second_line(t, &r.last_preview)),
                 (ConvKind::Meeting, _, None) if generic_meeting => {
@@ -469,6 +487,16 @@ impl Engine {
             color: color_for(&id),
             avatar: avatar_mri.and_then(|m| self.avatar(&m)),
             is_channel: kind == ConvKind::Channel,
+            // Not known before the chat is stored: the header keeps the initials.
+            kind: match (&row, kind) {
+                (None, _) => "",
+                (_, ConvKind::OneOnOne) => "chat",
+                (_, ConvKind::Notes) => "notes",
+                (_, ConvKind::Group) => "group",
+                (_, ConvKind::Meeting) => "meeting",
+                (_, ConvKind::Channel) => "channel",
+            }
+            .into(),
             thread_root: thread.unwrap_or_default(),
             muted: self.is_muted(&id),
             id,

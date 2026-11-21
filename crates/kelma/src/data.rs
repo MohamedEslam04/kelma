@@ -292,6 +292,8 @@ pub struct HeaderData {
     pub color: u32,
     pub avatar: Option<Pixels>,
     pub is_channel: bool,
+    /// The kind of conversation: "chat", "notes", "group", "meeting" or "channel".
+    pub kind: String,
     pub thread_root: String,
     /// Notifications are off for this chat ("More chat options" offers Unmute).
     pub muted: bool,

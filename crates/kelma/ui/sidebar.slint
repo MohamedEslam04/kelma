@@ -1,7 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ChatRow, TeamRow } from "types.slint";
-import { Avatar, Icon, IconButton, Pill, SectionHeader } from "widgets.slint";
+import { Avatar, GlyphAvatar, Icon, IconButton, Pill, SectionHeader } from "widgets.slint";
 import { ChannelMenu, ItemMenu, ListStore, OptionRow, SectionHead } from "lists.slint";
 import { CommunitiesSection, TeamMenuItems } from "teams_page.slint";
 import { TeamsStore } from "teams_store.slint";
@@ -20,19 +20,6 @@ component MenuItem inherits Rectangle {
     background: touch.has-hover ? Theme.surface-hover : transparent;
     Text { x: 10px; text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
-}
-
-// A round avatar drawing a glyph instead of initials (group and meeting chats).
-component GlyphAvatar inherits Rectangle {
-    in property <image> icon;
-    in property <color> tone;
-    in property <color> tint;
-    width: 32px;
-    height: 32px;
-    border-radius: 16px;
-    background: root.tone;
-    accessible-role: image;
-    Icon { source: root.icon; width: 18px; height: 18px; tint: root.tint; }
 }
 
 // "See all" / "Show less" under the Meetings section.

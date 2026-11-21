@@ -3,7 +3,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ActivityRow, ChatRow, ComposerEmoji, EmojiItem, Msg, PendingAttachment, Recipient, TeamRow } from "types.slint";
-import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
+import { Avatar, GlyphAvatar, Icon, IconButton, Pill } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { MessageRow } from "message_row.slint";
 export { MessagePointer } from "message_row.slint";
@@ -160,6 +160,11 @@ export component AppWindow inherits Window {
     in property <color> current-color: Theme.accent-strong;
     in property <image> current-avatar;
     in property <bool> current-has-avatar;
+    // The kind of the open chat ("group", "meeting", "chat", "notes" or "channel").
+    in property <string> current-kind;
+    // The header draws a glyph instead of initials, as the chat list does: a calendar for a
+    // meeting chat, the people for a group chat without a picture.
+    property <string> header-glyph: root.current-kind == "meeting" ? "meeting" : (root.current-kind == "group" && !root.current-has-avatar ? "group" : "");
     // The other person of an open 1:1 chat ("" otherwise) and their availability.
     in property <string> current-person;
     in property <string> current-presence;
@@ -881,7 +886,23 @@ export component AppWindow inherits Window {
                                 clicked => { root.pane-list = true; }
                             }
                             if root.thread-root != "": IconButton { icon: @image-url("icons/back.svg"); y: 14px; clicked => { root.close-thread(); } }
-                            Avatar {
+                            if root.header-glyph == "meeting": GlyphAvatar {
+                                y: 12px;
+                                size: 36px;
+                                icon: @image-url("icons/calendar.svg");
+                                tone: Theme.accent.transparentize(0.8);
+                                tint: Theme.accent;
+                                accessible-label: @tr("Meeting chat");
+                            }
+                            if root.header-glyph == "group": GlyphAvatar {
+                                y: 12px;
+                                size: 36px;
+                                icon: @image-url("icons/people.svg");
+                                tone: Theme.surface-hover;
+                                tint: Theme.fg-muted;
+                                accessible-label: @tr("Group chat");
+                            }
+                            if root.header-glyph == "": Avatar {
                                 y: 12px;
                                 initials: root.current-initials;
                                 tone: root.current-color;

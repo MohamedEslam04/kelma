@@ -581,6 +581,7 @@ impl UiHandle {
             w.set_current_avatar(avatar);
             w.set_current_has_avatar(has);
             w.set_current_is_channel(h.is_channel);
+            w.set_current_kind(h.kind.into());
             w.set_current_muted(h.muted);
             w.set_current_person(h.person.into());
             w.set_current_presence(h.presence.into());
