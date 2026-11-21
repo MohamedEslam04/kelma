@@ -21,6 +21,7 @@ fn hit(d: HitData) -> HitRow {
         color: rgb(d.color),
         avatar,
         has_avatar,
+        person: d.person.into(),
         rtl: d.rtl,
     }
 }

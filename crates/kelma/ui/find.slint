@@ -4,7 +4,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
-import { PeopleStore } from "people.slint";
+import { PeopleStore, PersonHover } from "people.slint";
 import { ComposerApps } from "composer_apps.slint";
 import { KindBadge } from "onedrive.slint";
 
@@ -22,6 +22,8 @@ export struct HitRow {
     color: color,
     avatar: image,
     has-avatar: bool,
+    // The person the photo shows ("" when none), for the hover card.
+    person: string,
     rtl: bool,
 }
 
@@ -200,6 +202,16 @@ component HitItem inherits Rectangle {
                 if root.secondary-label != "": Rectangle { width: 82px; horizontal-stretch: 0; }
             }
             touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+            // The photo opens its person's card on hover; a click still opens the result.
+            if root.data.person != "": photo-hover := PersonHover {
+                x: 12px;
+                y: (parent.height - 36px) / 2;
+                width: 36px;
+                height: 36px;
+                person: root.data.person;
+                click-opens: false;
+                activated => { root.clicked(); }
+            }
             // After the row's own TouchArea, so it gets its clicks.
             if root.secondary-label != "": Rectangle {
                 x: parent.width - self.width - 12px;

@@ -147,9 +147,11 @@ export component VoicePlayer inherits Rectangle {
                 }
             }
         }
-        if root.active: VerticalLayout {
+        // The chip's room is always kept, so the bubble does not widen when playback starts.
+        VerticalLayout {
+            width: 38px;
             alignment: center;
-            Rectangle {
+            if root.active: Rectangle {
                 width: 38px;
                 height: 22px;
                 border-radius: 11px;

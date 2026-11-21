@@ -173,7 +173,7 @@ export component MessageMenu inherits Rectangle {
         if root.translation-open: MenuItem { label: @tr("Translation settings"); indent: true; clicked => { root.translation-settings(); } }
         if !root.mine: MenuItem { label: @tr("Report this message"); icon: @image-url("icons/info.svg"); clicked => { root.report(); } }
         // Teams' "More actions ›": a task from the message (To Do, through the Tasks app).
-        MenuItem { label: @tr("More actions"); icon: @image-url("icons/app.svg"); chevron: true; clicked => { root.actions-open = !root.actions-open; } }
+        MenuItem { label: @tr("More actions"); icon: @image-url("icons/more.svg"); chevron: true; clicked => { root.actions-open = !root.actions-open; } }
         if root.actions-open: MenuItem { label: @tr("Create a task"); indent: true; clicked => { root.create-task(); } }
         if root.mine && !root.preview: MenuItem { label: @tr("Edit"); icon: @image-url("icons/edit.svg"); clicked => { root.edit(); } }
         if root.mine && !root.preview: MenuItem { label: @tr("Delete"); icon: @image-url("icons/trash.svg"); danger: true; clicked => { root.delete(); } }

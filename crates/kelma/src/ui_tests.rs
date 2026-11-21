@@ -35,6 +35,7 @@ mod drive;
 mod engage;
 mod find;
 mod first_click;
+mod fix_ui;
 mod format;
 mod format_live;
 mod global_search;

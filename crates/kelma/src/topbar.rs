@@ -631,6 +631,7 @@ mod tests {
             initials: "SH".into(),
             color: 2,
             avatar: None,
+            person: String::new(),
             rtl,
         }
     }
