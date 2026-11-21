@@ -324,6 +324,7 @@ pub(crate) fn restore_quick_views(w: &AppWindow, s: &WindowState) {
 fn capture(w: &AppWindow) {
     let obs = observe(w.window());
     let chat = w.get_current_id();
+    let channel = w.get_last_channel_id();
     let list = sidebar_width_to_save(w.get_sidebar_width());
     with_shared(|s| {
         if let Some(o) = obs {
@@ -334,6 +335,10 @@ fn capture(w: &AppWindow) {
         // An empty id means "nothing open yet" (start, sign-in): keep the remembered chat.
         if !chat.is_empty() {
             s.state.set_last_chat(Some(chat.as_str()));
+        }
+        // The Teams page opens this channel again (see `navigate` in app.slint).
+        if !channel.is_empty() {
+            s.state.set_last_channel(Some(channel.as_str()));
         }
     });
 }
@@ -429,6 +434,7 @@ pub fn install(
     };
     let plan = restore_plan(&state);
     let last_chat = state.last_chat.clone();
+    let last_channel = state.last_channel.clone();
     let sidebar = state.sidebar_width;
     if persist {
         restore_quick_views(window, &state);
@@ -445,6 +451,9 @@ pub fn install(
         return Vec::new();
     }
     apply_restore(window.window(), &plan);
+    if let Some(id) = last_channel {
+        window.set_last_channel_id(id.into());
+    }
     if let Some(w) = sidebar_width_to_restore(sidebar) {
         window.set_sidebar_width(w);
     }

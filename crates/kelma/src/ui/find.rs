@@ -41,6 +41,9 @@ fn shared_rows(v: Vec<SharedData>) -> ModelRc<SharedRow> {
                 url: s.url.into(),
                 editable: s.editable,
                 sharepoint: s.sharepoint,
+                icon: s.icon.into(),
+                busy: s.busy.into(),
+                highlight: s.highlight,
             })
             .collect(),
     )
@@ -157,12 +160,18 @@ impl UiHandle {
     }
 
     /// Whether the Files tab shows New folder and New document (a channel with a files folder),
-    /// and a short message from the last file action ("" for none).
-    pub fn shared_tools(&self, can_create: bool, note: String) {
+    /// and a short message from the last file action ("" for none; `error`: it failed).
+    pub fn shared_tools(&self, can_create: bool, note: String, error: bool) {
         self.find_store(move |s| {
             s.set_shared_can_create(can_create);
             s.set_shared_note(note.into());
+            s.set_shared_note_error(error);
         });
+    }
+
+    /// Switches the Files tab's filter pill (a new folder or document shows under Files).
+    pub fn shared_filter(&self, filter: &'static str) {
+        self.find_store(move |s| s.set_shared_filter(filter.into()));
     }
 
     /// The Shared tab rows (filtered), the recent five of the details pane and the loading flag.

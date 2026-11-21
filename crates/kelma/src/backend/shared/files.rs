@@ -54,8 +54,50 @@ impl Engine {
     }
 
     fn shared_note(&self, note: impl Into<String>) {
-        self.find.lock().unwrap().shared.note = note.into();
+        {
+            let mut f = self.find.lock().unwrap();
+            f.shared.note = note.into();
+            f.shared.note_error = false;
+        }
         self.push_shared();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_shared_created(self: &Arc<Self>, made: DriveItem) {
+        self.shared_show_created(made);
+    }
+
+    /// A note saying an action failed, drawn in red.
+    fn shared_error(&self, note: impl Into<String>) {
+        {
+            let mut f = self.find.lock().unwrap();
+            f.shared.note = note.into();
+            f.shared.note_error = true;
+        }
+        self.push_shared();
+    }
+
+    /// A folder or document was made: it shows at once under the Files filter, highlighted for
+    /// a moment, before the list is read again.
+    pub(in crate::backend) fn shared_show_created(self: &Arc<Self>, made: DriveItem) {
+        let url = self.find.lock().unwrap().shared.add_created(made);
+        self.ui.shared_filter("files");
+        self.push_shared();
+        let e = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(super::HIGHLIGHT_MS)).await;
+            let cleared = {
+                let mut f = e.find.lock().unwrap();
+                let mine = f.shared.highlight == url;
+                if mine {
+                    f.shared.highlight.clear();
+                }
+                mine
+            };
+            if cleared {
+                e.push_shared();
+            }
+        });
     }
 
     /// The item behind a row, or a note saying why there is none.
@@ -79,7 +121,7 @@ impl Engine {
     pub(in crate::backend) fn shared_copy_link(&self, url: &str) {
         match arboard::Clipboard::new().and_then(|mut c| c.set_text(url.to_string())) {
             Ok(()) => self.shared_note("Link copied"),
-            Err(err) => self.shared_note(format!("Couldn't copy the link: {err}")),
+            Err(err) => self.shared_error(format!("Couldn't copy the link: {err}")),
         }
     }
 
@@ -113,7 +155,7 @@ impl Engine {
         .await;
         match result {
             Ok(()) => self.shared_note(format!("Downloaded {}", item.name)),
-            Err(err) => self.shared_note(format!("Couldn't download {}: {err}", item.name)),
+            Err(err) => self.shared_error(format!("Couldn't download {}: {err}", item.name)),
         }
     }
 
@@ -139,10 +181,10 @@ impl Engine {
                 Ok(()) => {
                     self.shared_note("Link for people in your organization copied");
                 }
-                Err(err) => self.shared_note(format!("Couldn't copy the link: {err}")),
+                Err(err) => self.shared_error(format!("Couldn't copy the link: {err}")),
             },
-            Ok(None) => self.shared_note("Teams made no link for this file."),
-            Err(err) => self.shared_note(format!("Couldn't create a link: {err}")),
+            Ok(None) => self.shared_error("Teams made no link for this file."),
+            Err(err) => self.shared_error(format!("Couldn't create a link: {err}")),
         }
     }
 
@@ -161,12 +203,19 @@ impl Engine {
         if name == item.name || !self.shared_online() {
             return;
         }
-        match ops::rename(&self.client, &ItemRef::own(&item), &name).await {
-            Ok(_) => {
-                self.shared_note(format!("Renamed to {name}"));
-                self.load_shared().await;
-            }
-            Err(err) => self.shared_note(format!("Couldn't rename {}: {err}", item.name)),
+        // The new name shows at once; the old one comes back if the server refuses.
+        self.find.lock().unwrap().shared.rename_now(url, &name);
+        self.shared_note(format!("Renaming to {name}…"));
+        let result = ops::rename(&self.client, &ItemRef::own(&item), &name).await;
+        let failed = result.as_ref().err().map(|e| e.to_string());
+        self.find
+            .lock()
+            .unwrap()
+            .shared
+            .rename_done(url, result.map_err(|_| item.name.clone()));
+        match failed {
+            None => self.shared_note(format!("Renamed to {name}")),
+            Some(err) => self.shared_error(format!("Couldn't rename {}: {err}", item.name)),
         }
     }
 
@@ -178,18 +227,19 @@ impl Engine {
         if !self.shared_online() {
             return;
         }
-        match ops::delete(&self.client, &ItemRef::own(&item)).await {
-            Ok(()) => {
-                self.find
-                    .lock()
-                    .unwrap()
-                    .shared
-                    .items
-                    .retain(|i| i.url != item.web_url);
-                self.shared_note(format!("Deleted {} (in the recycle bin)", item.name));
-                self.load_shared().await;
-            }
-            Err(err) => self.shared_note(format!("Couldn't delete {}: {err}", item.name)),
+        // The row dims with "Deleting…" at once; it goes when the server answers, or comes
+        // back with the error.
+        self.find.lock().unwrap().shared.set_busy(url, "Deleting…");
+        self.push_shared();
+        let result = ops::delete(&self.client, &ItemRef::own(&item)).await;
+        self.find
+            .lock()
+            .unwrap()
+            .shared
+            .delete_done(url, result.is_ok());
+        match result {
+            Ok(()) => self.shared_note(format!("Deleted {} (in the recycle bin)", item.name)),
+            Err(err) => self.shared_error(format!("Couldn't delete {}: {err}", item.name)),
         }
     }
 
@@ -214,12 +264,14 @@ impl Engine {
         if !self.shared_online() {
             return;
         }
+        self.shared_note(format!("Creating the folder {name}…"));
         match ops::create_folder(&self.client, &parent, &name).await {
-            Ok(_) => {
+            Ok(made) => {
+                self.shared_show_created(made);
                 self.shared_note(format!("Created the folder {name}"));
                 self.load_shared().await;
             }
-            Err(err) => self.shared_note(format!("Couldn't create the folder: {err}")),
+            Err(err) => self.shared_error(format!("Couldn't create the folder: {err}")),
         }
     }
 
@@ -236,10 +288,12 @@ impl Engine {
         }
         match ops::create_office_doc(&self.client, &parent, kind, None).await {
             Ok(made) => {
-                self.shared_note(format!("Created {}", made.name));
+                let name = made.name.clone();
+                self.shared_show_created(made);
+                self.shared_note(format!("Created {name}"));
                 self.load_shared().await;
             }
-            Err(err) => self.shared_note(format!("Couldn't create the document: {err}")),
+            Err(err) => self.shared_error(format!("Couldn't create the document: {err}")),
         }
     }
 }

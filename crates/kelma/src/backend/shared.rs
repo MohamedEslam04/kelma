@@ -28,6 +28,8 @@ pub(super) struct Item {
     url: String,
     /// The SharePoint drive item, for the files of a channel's folder (row actions need it).
     drive: Option<onedrive::DriveItem>,
+    /// What is being done to the row while the server answers ("Deleting…"), or "".
+    busy: &'static str,
 }
 
 impl From<SharedItem> for Item {
@@ -40,6 +42,27 @@ impl From<SharedItem> for Item {
             shared_ms: i.shared_ms,
             url: i.url,
             drive: None,
+            busy: "",
+        }
+    }
+}
+
+impl Item {
+    /// A file or folder of a channel's SharePoint folder.
+    fn from_drive(i: onedrive::DriveItem) -> Item {
+        Item {
+            kind: SharedKind::File,
+            ext: if i.is_folder {
+                "DIR".into()
+            } else {
+                ext_of(&i.name)
+            },
+            name: i.name.clone(),
+            shared_by: i.modified_by.clone(),
+            shared_ms: i.modified_ms,
+            url: i.web_url.clone(),
+            drive: Some(i),
+            busy: "",
         }
     }
 }
@@ -64,6 +87,79 @@ pub(super) struct State {
     pub(super) folder: Option<onedrive::ItemRef>,
     /// What the last file action did or why it failed, shown over the list.
     note: String,
+    /// `note` says an action failed (drawn in red).
+    note_error: bool,
+    /// The row just created, highlighted for a moment.
+    highlight: String,
+}
+
+/// How long a created row stays highlighted.
+const HIGHLIGHT_MS: u64 = 2500;
+
+impl State {
+    fn item_mut(&mut self, url: &str) -> Option<&mut Item> {
+        self.items.iter_mut().find(|i| i.url == url)
+    }
+
+    /// An action on a row started: the row dims with `label` until the server answers.
+    fn set_busy(&mut self, url: &str, label: &'static str) {
+        if let Some(i) = self.item_mut(url) {
+            i.busy = label;
+        }
+    }
+
+    /// The server answered a delete: the row goes, or comes back as it was.
+    fn delete_done(&mut self, url: &str, ok: bool) {
+        if ok {
+            self.items.retain(|i| i.url != url);
+        } else {
+            self.set_busy(url, "");
+        }
+    }
+
+    /// Rename: the row shows the new name at once. Returns the old one.
+    fn rename_now(&mut self, url: &str, name: &str) -> Option<String> {
+        let i = self.item_mut(url)?;
+        let old = std::mem::replace(&mut i.name, name.to_string());
+        if !i.ext.is_empty() && i.ext != "DIR" {
+            i.ext = ext_of(name);
+        }
+        Some(old)
+    }
+
+    /// The server answered a rename: the row takes the renamed item (its address can change
+    /// with the name), or its old name back.
+    fn rename_done(&mut self, url: &str, result: Result<onedrive::DriveItem, String>) {
+        let Some(pos) = self.items.iter().position(|i| i.url == url) else {
+            return;
+        };
+        match result {
+            Ok(made) => self.items[pos] = Item::from_drive(made),
+            Err(old) => {
+                let i = &mut self.items[pos];
+                i.ext = if i.ext == "DIR" {
+                    i.ext.clone()
+                } else {
+                    ext_of(&old)
+                };
+                i.name = old;
+            }
+        }
+    }
+
+    /// A folder or document was created: it shows first, under the Files filter (the list may
+    /// be long and on another filter), and is highlighted. Returns its address.
+    fn add_created(&mut self, made: onedrive::DriveItem) -> String {
+        let mut item = Item::from_drive(made);
+        item.shared_ms = item.shared_ms.max(teams_proto::time::now_ms());
+        let url = item.url.clone();
+        self.items.retain(|i| i.url != url);
+        self.items.insert(0, item);
+        self.filter = "files".into();
+        self.keyword.clear();
+        self.highlight = url.clone();
+        url
+    }
 }
 
 /// `Nov 18, 2026`.
@@ -144,6 +240,7 @@ fn items_from_cache(rows: &[MessageRow]) -> Vec<Item> {
                     shared_ms: m.compose_ms,
                     url: url.to_string(),
                     drive: None,
+                    busy: "",
                 });
             }
         }
@@ -157,6 +254,7 @@ fn items_from_cache(rows: &[MessageRow]) -> Vec<Item> {
                     shared_ms: m.compose_ms,
                     url,
                     drive: None,
+                    busy: "",
                 });
             }
         }
@@ -190,8 +288,28 @@ fn visible(items: &[Item], filter: &str, keyword: &str) -> Vec<Item> {
         .collect()
 }
 
-fn data(i: &Item) -> SharedData {
+/// The icon of a row: `folder`, a document kind (`word`, `excel`, `powerpoint`, `pdf`, `image`,
+/// `archive`, ...; see `drive::state::FileKind`) or `link`.
+fn icon_of(i: &Item) -> &'static str {
+    if i.kind == SharedKind::Link {
+        return "link";
+    }
+    let item = match &i.drive {
+        Some(d) => d.clone(),
+        None => onedrive::DriveItem {
+            name: format!("f.{}", i.ext.to_lowercase()),
+            is_folder: i.ext == "DIR",
+            ..Default::default()
+        },
+    };
+    super::drive::state::FileKind::of(&item).as_str()
+}
+
+fn data(i: &Item, highlight: &str) -> SharedData {
     SharedData {
+        icon: icon_of(i),
+        busy: i.busy.to_string(),
+        highlight: !highlight.is_empty() && i.url == highlight,
         kind: match i.kind {
             SharedKind::File => "file",
             SharedKind::Link => "link",
@@ -218,6 +336,8 @@ impl Engine {
             s.filter = "recent".into();
             s.folder = None;
             s.note.clear();
+            s.note_error = false;
+            s.highlight.clear();
             s.tab_open = false;
             s.seq += 1;
             s.details_open
@@ -275,22 +395,27 @@ impl Engine {
     }
 
     fn push_shared(&self) {
-        let (rows, recent, loading, can_create, note) = {
+        let (rows, recent, loading, can_create, note, error) = {
             let f = self.find.lock().unwrap();
             let s = &f.shared;
             (
                 visible(&s.items, &s.filter, &s.keyword)
                     .iter()
-                    .map(data)
+                    .map(|i| data(i, &s.highlight))
                     .collect(),
-                s.items.iter().take(RECENT).map(data).collect(),
+                s.items
+                    .iter()
+                    .take(RECENT)
+                    .map(|i| data(i, &s.highlight))
+                    .collect(),
                 s.loading,
                 s.folder.is_some(),
                 s.note.clone(),
+                s.note_error,
             )
         };
         self.ui.shared(rows, recent, loading);
-        self.ui.shared_tools(can_create, note);
+        self.ui.shared_tools(can_create, note, error);
     }
 
     /// Fills the list: the cache at once, then the server.
@@ -322,7 +447,13 @@ impl Engine {
             .unwrap()
             .messages_before(&conv, None, CACHE_SCAN)
             .unwrap_or_default();
-        self.find.lock().unwrap().shared.items = items_from_cache(&rows);
+        // A reload (after New folder, Rename, ...) keeps the rows it shows until the server
+        // answers: they used to drop to the cached ones, so a folder just made vanished for the
+        // whole round trip.
+        merge_items(
+            &mut self.find.lock().unwrap().shared.items,
+            items_from_cache(&rows),
+        );
         self.push_shared();
         if self.offline.load(Ordering::Relaxed) {
             return;
@@ -347,8 +478,11 @@ impl Engine {
             if f.shared.seq != seq {
                 return;
             }
-            // The server list leads, the cache fills in what it does not know.
-            let cached = std::mem::take(&mut f.shared.items);
+            // The server list leads, the cache fills in what it does not know. A row of the folder
+            // the server no longer lists is gone, except the one just made (a listing can lag).
+            let mut cached = std::mem::take(&mut f.shared.items);
+            let made = f.shared.highlight.clone();
+            cached.retain(|i| i.drive.is_none() || i.url == made);
             f.shared.items = remote;
             merge_items(&mut f.shared.items, cached);
             f.shared.loading = false;
@@ -366,7 +500,9 @@ impl Engine {
             .ok()
             .flatten()
             .and_then(|c| c.team_id)?;
-        let known = self.find.lock().unwrap().shared.groups.get(&team).cloned();
+        let looked_up = self.find.lock().unwrap().shared.groups.get(&team).cloned();
+        // The aggregator's team list (read at start) knows it too: no Graph team list then.
+        let known = looked_up.or_else(|| self.lists_channel_group(channel));
         if known.is_some() {
             return known;
         }
@@ -381,33 +517,8 @@ impl Engine {
     /// The files of a channel's SharePoint folder (Graph `filesFolder`, then its children). Once
     /// the folder is known the toolbar (New folder, New document) shows, before the listing.
     async fn channel_folder_items(self: &Arc<Self>, channel: &str, seq: u64) -> Vec<Item> {
-        let Some(team) = self
-            .store
-            .lock()
-            .unwrap()
-            .conversation(channel)
-            .ok()
-            .flatten()
-            .and_then(|c| c.team_id)
-        else {
+        let Some(group) = self.channel_group(channel).await else {
             return vec![];
-        };
-        let known = self.find.lock().unwrap().shared.groups.get(&team).cloned();
-        let group = match known {
-            Some(g) => g,
-            None => {
-                let Ok(teams) = self.client.teams_and_channels().await else {
-                    return vec![];
-                };
-                let mut f = self.find.lock().unwrap();
-                for t in &teams {
-                    f.shared.groups.insert(t.id.clone(), t.group_id.clone());
-                }
-                match f.shared.groups.get(&team) {
-                    Some(g) => g.clone(),
-                    None => return vec![],
-                }
-            }
         };
         let folder = match self.client.channel_files_folder(&group, channel).await {
             Ok(f) => f,
@@ -425,23 +536,7 @@ impl Engine {
         }
         self.push_shared();
         match onedrive::children(&self.client, &folder.drive_id, &folder.item_id, None).await {
-            Ok(page) => page
-                .items
-                .into_iter()
-                .map(|i| Item {
-                    kind: SharedKind::File,
-                    ext: if i.is_folder {
-                        "DIR".into()
-                    } else {
-                        ext_of(&i.name)
-                    },
-                    name: i.name.clone(),
-                    shared_by: i.modified_by.clone(),
-                    shared_ms: i.modified_ms,
-                    url: i.web_url.clone(),
-                    drive: Some(i),
-                })
-                .collect(),
+            Ok(page) => page.items.into_iter().map(Item::from_drive).collect(),
             Err(err) => {
                 tracing::warn!(%err, "channel files failed");
                 vec![]
@@ -528,6 +623,7 @@ mod tests {
                 shared_ms: 3,
                 url: "u1".into(),
                 drive: None,
+                busy: "",
             },
             Item {
                 kind: SharedKind::Link,
@@ -537,6 +633,7 @@ mod tests {
                 shared_ms: 2,
                 url: "u2".into(),
                 drive: None,
+                busy: "",
             },
         ];
         assert_eq!(visible(&items, "recent", "").len(), 2);
@@ -560,6 +657,7 @@ mod tests {
             shared_ms: ms,
             url: url.into(),
             drive: None,
+            busy: "",
         };
         let mut items = vec![a("u1", 1)];
         merge_items(&mut items, vec![a("u1", 9), a("u2", 5)]);
@@ -574,5 +672,129 @@ mod tests {
         assert_eq!(ext_of("report.final.docx"), "DOCX");
         assert_eq!(ext_of("README"), "FILE");
         assert_eq!(ext_of("a.verylongext"), "FILE");
+    }
+
+    fn drive(name: &str, url: &str, folder: bool) -> onedrive::DriveItem {
+        onedrive::DriveItem {
+            name: name.into(),
+            web_url: url.into(),
+            is_folder: folder,
+            modified_ms: 5,
+            ..Default::default()
+        }
+    }
+
+    fn state(items: Vec<onedrive::DriveItem>) -> State {
+        State {
+            items: items.into_iter().map(Item::from_drive).collect(),
+            filter: "recent".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_delete_dims_the_row_at_once_then_drops_it_or_brings_it_back() {
+        let mut s = state(vec![drive("a.docx", "u1", false), drive("b", "u2", true)]);
+        s.set_busy("u1", "Deleting…");
+        assert_eq!(s.items[0].busy, "Deleting…");
+        assert_eq!(data(&s.items[0], "").busy, "Deleting…");
+        s.delete_done("u1", false);
+        assert_eq!(s.items.len(), 2, "a failed delete keeps the row");
+        assert_eq!(s.items[0].busy, "");
+        s.set_busy("u1", "Deleting…");
+        s.delete_done("u1", true);
+        assert_eq!(
+            s.items.iter().map(|i| i.url.as_str()).collect::<Vec<_>>(),
+            ["u2"]
+        );
+    }
+
+    #[test]
+    fn a_rename_shows_the_new_name_at_once_and_the_old_one_if_it_fails() {
+        let mut s = state(vec![drive("Plan.docx", "u1", false)]);
+        assert_eq!(
+            s.rename_now("u1", "Plan.xlsx").as_deref(),
+            Some("Plan.docx")
+        );
+        assert_eq!(
+            (s.items[0].name.as_str(), s.items[0].ext.as_str()),
+            ("Plan.xlsx", "XLSX")
+        );
+        s.rename_done("u1", Err("Plan.docx".into()));
+        assert_eq!(
+            (s.items[0].name.as_str(), s.items[0].ext.as_str()),
+            ("Plan.docx", "DOCX")
+        );
+        // The server's item replaces the row (its address follows the name).
+        s.rename_now("u1", "Plan v2.docx");
+        s.rename_done("u1", Ok(drive("Plan v2.docx", "u1-v2", false)));
+        assert_eq!(s.items[0].url, "u1-v2");
+        assert_eq!(s.items[0].name, "Plan v2.docx");
+        assert!(s.items[0].drive.is_some());
+    }
+
+    #[test]
+    fn a_created_item_comes_first_under_files_and_is_highlighted() {
+        let mut s = state(vec![drive("old.docx", "u1", false)]);
+        // A file shared later than the folder is made still comes after it.
+        s.items.insert(
+            0,
+            Item::from(SharedItem {
+                kind: SharedKind::File,
+                name: "Wiki.docx".into(),
+                url: "u9".into(),
+                extension: "docx".into(),
+                shared_by: "Sara".into(),
+                shared_by_mri: String::new(),
+                shared_ms: i64::MAX,
+                message_id: String::new(),
+            }),
+        );
+        s.keyword = "zzz".into();
+        let url = s.add_created(drive("Plans", "u2", true));
+        assert_eq!(url, "u2");
+        assert_eq!(s.filter, "files");
+        assert_eq!(s.highlight, "u2");
+        let rows = visible(&s.items, &s.filter, &s.keyword);
+        assert_eq!(rows[0].name, "Plans", "first, and not hidden by a keyword");
+        assert!(data(&rows[0], &s.highlight).highlight);
+        assert!(!data(&rows[1], &s.highlight).highlight);
+    }
+
+    #[test]
+    fn rows_get_a_folder_icon_or_a_document_kind() {
+        let s = state(vec![
+            drive("Plans", "u0", true),
+            drive("a.docx", "u1", false),
+            drive("b.XLSX", "u2", false),
+            drive("c.pptx", "u3", false),
+            drive("d.pdf", "u4", false),
+            drive("e.png", "u5", false),
+            drive("f.zip", "u6", false),
+            drive("g.weird", "u7", false),
+        ]);
+        let icons: Vec<_> = s.items.iter().map(icon_of).collect();
+        assert_eq!(
+            icons,
+            [
+                "folder",
+                "word",
+                "excel",
+                "powerpoint",
+                "pdf",
+                "image",
+                "archive",
+                "other"
+            ]
+        );
+        assert_eq!(s.items[0].ext, "DIR");
+        // A file shared in a message has no drive item: its extension decides.
+        let shared = items_from_cache(&[msg(
+            "1",
+            1,
+            "<p>x</p>",
+            r#"[{"name":"notes.pptx","url":"https://x/n.pptx","type":"pptx"}]"#,
+        )]);
+        assert_eq!(icon_of(&shared[0]), "powerpoint");
     }
 }
