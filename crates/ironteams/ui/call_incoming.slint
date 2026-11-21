@@ -2,7 +2,7 @@
 // sits in the bottom-right corner of the window, like Teams' call notification: the caller's
 // avatar and name, "Incoming call" or "Incoming video call", and Accept with video, Accept with
 // audio and Decline. Accept with video answers with audio and turns the camera on once the call
-// runs (only in builds that negotiate camera video, IRONTEAMS_CAMERA=1; else it answers with audio).
+// runs (unless camera video is switched off with IRONTEAMS_CAMERA=0; then it answers with audio).
 // A call that rings while another runs (call waiting) offers Hold and accept, End and accept and
 // Decline.
 import { Theme } from "theme.slint";

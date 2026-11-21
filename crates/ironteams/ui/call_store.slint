@@ -23,6 +23,9 @@ export struct CallPerson {
     video: bool,
     // The meeting gallery slot showing their camera, 1-based (CallStore.slot-videos); 0: none.
     gallery-slot: int,
+    // "External" or "Guest" for someone outside our organization ("" for a colleague): shown as
+    // "(External)" after their name in People, the lobby and the tiles.
+    badge: string,
 }
 
 // One meeting gallery slot's picture.
@@ -59,7 +62,7 @@ export global CallStore {
     // The call negotiated a screen-sharing line (Share works), and we are sharing.
     in property <bool> can-share;
     in property <bool> sharing;
-    // This build negotiates camera video (IRONTEAMS_CAMERA=1); the call negotiated a main-video line
+    // Camera video is on (the default; IRONTEAMS_CAMERA=0 switches it off); the call negotiated a main-video line
     // (Camera works); the camera is on.
     in property <bool> camera-available;
     in property <bool> can-camera;
@@ -159,6 +162,11 @@ export global CallStore {
     // Someone else shares a screen: the roster says so, or its picture came.
     public pure function content-shared() -> bool {
         return presenter != "" || has-content;
+    }
+
+    // A person's name, followed by "(External)" or "(Guest)" when they are outside our organization.
+    public pure function tagged-name(p: CallPerson) -> string {
+        return p.badge == "" ? p.name : p.name + " (" + p.badge + ")";
     }
 
     public pure function in-call-phase() -> bool {

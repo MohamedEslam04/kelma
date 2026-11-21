@@ -40,7 +40,7 @@ component PersonRow inherits Rectangle {
     in property <CallPerson> p;
     height: 44px;
     accessible-role: list-item;
-    accessible-label: root.p.name;
+    accessible-label: CallStore.tagged-name(root.p);
     accessible-description: (root.p.lobby ? "In lobby" : root.p.muted ? "Muted" : "Unmuted")
         + (root.p.hand ? ", hand raised" : "")
         + (root.p.role != "" ? ", " + root.p.role : "");
@@ -58,7 +58,7 @@ component PersonRow inherits Rectangle {
             alignment: center;
             horizontal-stretch: 1;
             Text {
-                text: root.p.name + (root.p.me ? " (You)" : "");
+                text: CallStore.tagged-name(root.p) + (root.p.me ? " (You)" : "");
                 color: Theme.fg;
                 font-size: 13px * Theme.font-scale;
                 overflow: elide;
@@ -78,7 +78,7 @@ component PersonRow inherits Rectangle {
         if root.p.lobby && CallStore.can-admit: VerticalLayout {
             alignment: center;
             RowButton {
-                label: "Admit " + root.p.name;
+                label: "Admit " + CallStore.tagged-name(root.p);
                 shown: "Admit";
                 clicked => { CallStore.command("admit", root.p.id); }
             }

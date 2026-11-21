@@ -223,7 +223,7 @@ pub fn is_direct_chat(id: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallCmd {
     /// Accept the ringing call; `video` when "Accept with video" was pressed (the camera starts
-    /// once the call runs, with `IRONTEAMS_CAMERA=1`).
+    /// once the call runs, unless `IRONTEAMS_CAMERA=0`).
     Accept {
         video: bool,
     },
@@ -610,7 +610,8 @@ impl Engine {
             IncomingState::Accepting => self.refresh_incoming(id),
             IncomingState::Connected => {
                 self.ui.call_incoming(CallView::default());
-                if video {
+                // Only with the camera switched off (`IRONTEAMS_CAMERA=0`).
+                if video && !call::camera::wanted() {
                     self.ui
                         .banner("Video isn't available yet: the call is audio only.".into());
                 }

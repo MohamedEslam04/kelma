@@ -96,7 +96,11 @@ fn accept_with_video_answers_with_audio_and_says_so() {
     click(&video);
     assert_eq!(h.engine.call_log(), ["accept audio (video asked)"]);
     assert!(!cs(&h.app).get_incoming_open());
-    assert!(h.app.get_banner().contains("audio only"));
+    // The camera is on by default: only the kill switch (`IRONTEAMS_CAMERA=0`) says audio only.
+    assert_eq!(
+        h.app.get_banner().contains("audio only"),
+        !crate::backend::call::camera::wanted()
+    );
 }
 
 #[test]

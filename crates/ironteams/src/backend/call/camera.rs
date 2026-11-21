@@ -2,9 +2,9 @@
 //! call's `main-video` line, our self-view, and telling the service (see
 //! `docs/protocol-calls.md`, Camera video). The other side's video is `remote_video`'s.
 //!
-//! The main-video line is negotiated only when `IRONTEAMS_CAMERA=1` (until a live run confirms the
-//! media servers accept it, the verified audio-only offer stays the default), the same opt-in as
-//! `IRONTEAMS_SCREEN_SHARE=1` for the sharing line. Then:
+//! The main-video line is negotiated by default; `IRONTEAMS_CAMERA=0` is the kill switch that goes
+//! back to the audio-only offer (like `IRONTEAMS_SCREEN_SHARE=0` for the sharing line). Not yet
+//! confirmed against every media server. Then:
 //! - a meeting flips the line with `UpdateMediaDescriptions` (`sendrecv` with `v_2` on,
 //!   `recvonly` with `v_1` off);
 //! - a 1:1 call sends a re-offer with `Video` among the `callModalities`.
@@ -31,13 +31,13 @@ const SELF_VIEW_WIDTH: usize = 320;
 /// One self-view picture every this many camera frames (15 fps camera, 7.5 fps self-view).
 const SELF_VIEW_EVERY: u32 = 2;
 
-/// Whether calls negotiate the main-video line (`IRONTEAMS_CAMERA` set to anything but `0`).
+/// Whether calls negotiate the main-video line: on unless `IRONTEAMS_CAMERA=0`.
 pub fn wanted() -> bool {
     env_on(compat::var_os("IRONTEAMS_CAMERA").as_deref())
 }
 
 fn env_on(v: Option<&std::ffi::OsStr>) -> bool {
-    v.is_some_and(|v| !v.is_empty() && v != "0")
+    v.is_none_or(|v| v != "0")
 }
 
 /// "Accept with video" on the incoming-call toast: the next adopted call starts the camera.
@@ -71,6 +71,8 @@ pub(crate) fn v4l2_device() -> Option<String> {
 pub fn open_error_text(e: &str) -> String {
     if e.contains("camera access refused") {
         "Camera access wasn't allowed.".into()
+    } else if share::gstreamer_missing(e) {
+        "Your camera needs GStreamer, which isn't installed on this computer.".into()
     } else {
         "Couldn't turn on your camera.".into()
     }
@@ -269,11 +271,11 @@ mod tests {
     }
 
     #[test]
-    fn the_camera_is_opt_in_until_verified_live() {
-        assert!(!env_on(None));
-        assert!(!env_on(Some("0".as_ref())));
-        assert!(!env_on(Some("".as_ref())));
+    fn the_camera_is_on_unless_switched_off() {
+        assert!(env_on(None));
+        assert!(env_on(Some("".as_ref())));
         assert!(env_on(Some("1".as_ref())));
+        assert!(!env_on(Some("0".as_ref())));
     }
 
     #[test]
@@ -306,16 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn accept_with_video_is_read_once() {
-        // Without IRONTEAMS_CAMERA the flag never sets.
-        if wanted() {
-            return;
-        }
-        accept_with_video(true);
-        assert!(!take_accept_with_video());
-    }
-
-    #[test]
     fn a_refused_camera_says_so_plainly() {
         assert_eq!(
             open_error_text("media: camera access refused: Portal request was cancelled"),
@@ -323,7 +315,18 @@ mod tests {
         );
         let other = open_error_text("media: Camera portal: no such device");
         assert_eq!(other, "Couldn't turn on your camera.");
-        for t in ["Camera access wasn't allowed.", other.as_str()] {
+        let missing = open_error_text(
+            "media: gst-launch-1.0 (GStreamer) not started: program not found. Install GStreamer.",
+        );
+        assert_eq!(
+            missing,
+            "Your camera needs GStreamer, which isn't installed on this computer."
+        );
+        for t in [
+            "Camera access wasn't allowed.",
+            other.as_str(),
+            missing.as_str(),
+        ] {
             assert!(!t.contains("media:") && !t.to_lowercase().contains("portal"));
         }
     }

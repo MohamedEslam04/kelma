@@ -2,6 +2,7 @@
 
 use super::Engine;
 use super::outbox::{PENDING_PREFIX, row_from_outbox};
+use super::outsider::{Outsider, classify, is_guest_upn, tagged};
 use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
@@ -185,6 +186,22 @@ impl Engine {
             .collect()
     }
 
+    /// Whether the other person of a 1:1 chat is outside our organization, as far as their MRI
+    /// and stored sign-in name say (a stored profile has no tenant id: an organization user of
+    /// another tenant shows no label here).
+    pub(super) fn outsider_of(&self, mri: &str) -> Option<Outsider> {
+        let guest = self
+            .store
+            .lock()
+            .unwrap()
+            .user(mri)
+            .ok()
+            .flatten()
+            .and_then(|u| u.email)
+            .is_some_and(|e| is_guest_upn(&e));
+        classify(mri, None, None, guest)
+    }
+
     pub(super) fn other_member(&self, conv_id: &str) -> Option<String> {
         one_on_one_members(conv_id)
             .into_iter()
@@ -296,6 +313,11 @@ impl Engine {
                 &names,
                 chan.as_ref().map_or("", |c| c.name.as_str()),
             );
+            // A 1:1 chat with someone outside the organization reads "Name (External)".
+            let title = match (r.kind, &avatar_mri) {
+                (ConvKind::OneOnOne, Some(m)) => tagged(&title, self.outsider_of(m)),
+                _ => title,
+            };
             let line = match (&r.kind, &r.team_name, draft) {
                 (ConvKind::Channel, Some(t), None) => Some(second_line(t, &r.last_preview)),
                 (ConvKind::Meeting, _, None) if generic_meeting => {
@@ -476,6 +498,16 @@ impl Engine {
             ConvKind::OneOnOne => avatar_mri.clone().unwrap_or_default(),
             _ => String::new(),
         };
+        // The header of a 1:1 chat with someone outside the organization reads "Name (External)".
+        let (ini, title) = (
+            initials(&title),
+            match kind {
+                ConvKind::OneOnOne if !person.is_empty() => {
+                    tagged(&title, self.outsider_of(&person))
+                }
+                _ => title,
+            },
+        );
         self.ui.header(HeaderData {
             presence: if person.is_empty() {
                 String::new()
@@ -483,7 +515,7 @@ impl Engine {
                 super::people_presence::want(&person)
             },
             person,
-            initials: initials(&title),
+            initials: ini,
             color: color_for(&id),
             avatar: avatar_mri.and_then(|m| self.avatar(&m)),
             is_channel: kind == ConvKind::Channel,

@@ -23,6 +23,7 @@ use super::{
     CallDriver, CallHandle, Caption, Control, ControlAction, Device, Devices, Event, EventSink,
     JoinOptions, JoinTarget, Link, Person, Phase, live_phase, recording_state,
 };
+use crate::backend::outsider::classify;
 use anyhow::Context;
 use calling::audio::{
     AudioProcessor, Capture, Playback, ProcessingOptions, echo_cancelled, spawn_capture_encoder,
@@ -819,7 +820,13 @@ fn speaker_name(roster: &Roster, user_id: &str) -> String {
         .unwrap_or_default()
 }
 
-fn people(roster: &Roster, me: &str, talk: &Talk, video: &RemoteVideo) -> Vec<Person> {
+fn people(
+    roster: &Roster,
+    me: &str,
+    own_tenant: Option<&str>,
+    talk: &Talk,
+    video: &RemoteVideo,
+) -> Vec<Person> {
     roster
         .participants()
         .iter()
@@ -838,6 +845,11 @@ fn people(roster: &Roster, me: &str, talk: &Talk, video: &RemoteVideo) -> Vec<Pe
             me: p.mri == me,
             role: p.role.map(|r| r.name().to_owned()).unwrap_or_default(),
             video_slot: video.slot_of(&p.mri),
+            outsider: if p.mri == me {
+                None
+            } else {
+                classify(&p.mri, p.tenant_id.as_deref(), own_tenant, p.guest)
+            },
         })
         .collect()
 }
@@ -1175,6 +1187,12 @@ impl Call {
             self.control(c, &mut audio, &sink).await;
         }
         let me = self.s.me.mri.clone();
+        // Ours, to tell who is from another organization (the call's own roster entry names it
+        // too, when the service sends tenant ids).
+        let own_tenant = match self.hub.client.tenant_id().await {
+            Ok(t) => Some(t),
+            Err(_) => self.roster.get(&me).and_then(|p| p.tenant_id.clone()),
+        };
         let (mut in_lobby, mut was_in_call) = (false, false);
         let mut shown: Option<Phase> = None;
         let mut own_hand: Option<bool> = None;
@@ -1362,7 +1380,13 @@ impl Call {
                 if let Some(name) = self.video.presenter_changed(&self.roster, &me) {
                     sink.send(Event::Presenter(name));
                 }
-                sink.send(Event::Roster(people(&self.roster, &me, &talk, &self.video)));
+                sink.send(Event::Roster(people(
+                    &self.roster,
+                    &me,
+                    own_tenant.as_deref(),
+                    &talk,
+                    &self.video,
+                )));
                 if let Some(p) = self.roster.get(&me) {
                     in_lobby = p.presence == Presence::Lobby;
                     let hand = p.hand.is_some();
@@ -1477,7 +1501,7 @@ impl Call {
                     Err(e) => {
                         tracing::warn!(%e, "screen share not started");
                         self.share.stop().await;
-                        sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
+                        sink.send(Event::Error(share::capture_error_text(&e.to_string())));
                     }
                 }
             }
@@ -1485,7 +1509,7 @@ impl Call {
             ShareMsg::Picked(Err(e)) => {
                 self.share.picked_nothing();
                 tracing::warn!(%e, "screen capture failed");
-                sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
+                sink.send(Event::Error(share::capture_error_text(&e)));
             }
             ShareMsg::Input(input) => self.input_answered(input, sink).await,
             ShareMsg::Ended => {
@@ -2145,7 +2169,13 @@ mod tests {
             "8:orgid:g": {"version": 1, "state": "active", "details": {"displayName": ""},
                 "endpoints": {"e": {"lobby": {}}}}
         }}));
-        let p = people(&r, "8:orgid:me", &Talk::default(), &RemoteVideo::default());
+        let p = people(
+            &r,
+            "8:orgid:me",
+            None,
+            &Talk::default(),
+            &RemoteVideo::default(),
+        );
         let me = p.iter().find(|p| p.me).unwrap();
         assert!(me.muted && !me.lobby);
         let guest = p.iter().find(|p| !p.me).unwrap();

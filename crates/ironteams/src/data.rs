@@ -262,6 +262,8 @@ pub struct CardData {
     pub phone: String,
     pub mobile: String,
     pub manager: String,
+    /// `External` or `Guest` for a person outside our organization, `""` for a colleague.
+    pub badge: String,
 }
 
 /// A forward target: an existing chat or channel.

@@ -43,6 +43,8 @@ export global PeopleStore {
     in property <string> card-phone;
     in property <string> card-mobile;
     in property <string> card-manager;
+    // "External" or "Guest" for someone outside our organization ("" for a colleague).
+    in property <string> card-badge;
     // Our own MRI (the photo at the top right opens our card).
     in property <string> me;
     // The card was opened by hovering (it closes when the pointer leaves it and its photo).

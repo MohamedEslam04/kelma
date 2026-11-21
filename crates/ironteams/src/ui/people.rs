@@ -35,6 +35,7 @@ fn fill_card(s: &PeopleStore<'_>, c: CardData) {
     s.set_card_phone(c.phone.into());
     s.set_card_mobile(c.mobile.into());
     s.set_card_manager(c.manager.into());
+    s.set_card_badge(c.badge.into());
 }
 
 fn people(v: Vec<PersonData>) -> ModelRc<PersonItem> {

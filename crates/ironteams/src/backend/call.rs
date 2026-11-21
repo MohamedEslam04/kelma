@@ -167,6 +167,9 @@ pub struct Person {
     pub spoke: u64,
     /// The meeting gallery slot ([`VideoSlot::Gallery`]) that shows their camera, if any.
     pub video_slot: Option<usize>,
+    /// Not part of our organization: People, the tiles and the lobby add "(External)" or
+    /// "(Guest)" after the name.
+    pub outsider: Option<super::outsider::Outsider>,
 }
 
 /// A bot's MRI prefix: the recorder and caption bots are `28:` participants.

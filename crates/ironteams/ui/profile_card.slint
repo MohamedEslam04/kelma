@@ -22,6 +22,8 @@ export component ProfileCard inherits Rectangle {
     in property <string> phone;
     in property <string> mobile;
     in property <string> manager;
+    // "External" or "Guest" for someone outside our organization ("" for a colleague).
+    in property <string> badge;
     // Opened by hovering a name or photo: it closes once the pointer is on neither it nor that
     // photo (`anchor-hovered`).
     in property <bool> hover-mode;
@@ -64,6 +66,7 @@ export component ProfileCard inherits Rectangle {
                 alignment: center;
                 spacing: 2px;
                 card-name := Text { text: root.person.name; color: Theme.fg; font-size: 17px * Theme.font-scale; font-weight: 700; wrap: word-wrap; accessible-role: text; accessible-label: root.person.name; }
+                if root.badge != "": card-badge := Text { text: "(" + root.badge + ")"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; accessible-role: text; accessible-label: root.badge; }
                 if root.person.subtitle != "": card-title := Text { text: root.person.subtitle; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; accessible-role: text; accessible-label: root.person.subtitle; }
                 if root.note != "": card-note := Text { text: root.note; color: Theme.fg; font-size: 12px * Theme.font-scale; font-italic: true; wrap: word-wrap; max-height: 34px; overflow: elide; accessible-role: text; accessible-label: "Status message"; accessible-value: self.text; }
                 if root.loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; }

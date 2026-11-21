@@ -48,6 +48,7 @@ pub(crate) mod meeting_cards;
 mod mentions;
 mod my_presence;
 mod outbox;
+pub(crate) mod outsider;
 mod people;
 #[cfg(test)]
 mod people_live;

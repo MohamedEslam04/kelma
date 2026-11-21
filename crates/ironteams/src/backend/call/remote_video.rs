@@ -8,8 +8,8 @@
 //!   subscribed to with `applyChannelParameters` (the participant's camera MSI from the roster on
 //!   the slot's `x-source-streamid` from the media server's answer).
 //!
-//! The gallery slots are offered only with `IRONTEAMS_CAMERA=1` (as the camera line), the sharing
-//! line only with `IRONTEAMS_SCREEN_SHARE=1`. Everything here is UNVERIFIED live.
+//! The gallery slots are offered unless `IRONTEAMS_CAMERA=0` (as the camera line), the sharing
+//! line unless `IRONTEAMS_SCREEN_SHARE=0`. Everything here is UNVERIFIED live.
 
 use super::{EventSink, VideoSlot};
 use calling::media::sdp::source_stream_ids;
@@ -40,7 +40,7 @@ const LINE_QUEUE: usize = 512;
 /// went off without a renegotiation).
 const IDLE: Duration = Duration::from_secs(10);
 
-/// The gallery slots a meeting join offers: [`RECEIVE_SLOTS`] with `IRONTEAMS_CAMERA=1`, else none.
+/// The gallery slots a meeting join offers: [`RECEIVE_SLOTS`], none with `IRONTEAMS_CAMERA=0`.
 pub fn wanted_slots() -> usize {
     if super::camera::wanted() {
         RECEIVE_SLOTS
