@@ -10,6 +10,9 @@ name: Release
 on:
   push:
     tags: ['v*']
+    # A branch named ci/release-* builds everything without publishing, to try workflow changes
+    # before they reach the default branch (a manual run needs the workflow there).
+    branches: ['ci/release-*']
   workflow_dispatch:
 
 permissions:
