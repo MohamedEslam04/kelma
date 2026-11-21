@@ -778,8 +778,10 @@ mod tests {
 
     #[test]
     fn a_recording_starts_in_the_starting_state_with_its_target() {
-        let mut st = State::default();
-        st.problem = "old".into();
+        let mut st = State {
+            problem: "old".into(),
+            ..State::default()
+        };
         begin_start(&mut st, "chat-1".into());
         assert_eq!(st.rec_state, "starting");
         assert_eq!(st.recording_for.as_deref(), Some("chat-1"));
