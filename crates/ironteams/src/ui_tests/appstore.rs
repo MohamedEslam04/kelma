@@ -1096,20 +1096,37 @@ fn a_meeting_recap_shows_its_parts_shared_files_notes_and_transcript() {
     assert!(r.get_has_notes());
     a.click_last("Open meeting notes");
 
-    // Watch in browser opens the part's recording; Share copies its link.
-    a.click_last("Watch in browser");
-    a.click_last("Play the recording in your browser");
+    // Watch and the play card play the part's recording in IronTeams's player window (demo
+    // mode only records it), never in the browser; Share copies its link.
+    a.click_last("Watch");
+    a.click_last("Play the recording");
     a.click("Agenda.docx");
     let opened = a.h.engine.apps_opened();
     assert!(opened.iter().any(|u| u.ends_with("/notes")), "{opened:?}");
-    assert_eq!(
+    let played = |opened: &[String]| {
         opened
             .iter()
-            .filter(|u| u.ends_with("/01DEMO1.mp4"))
-            .count(),
-        2,
-        "{opened:?}"
+            .filter(|u| u.starts_with("player:https://") && u.ends_with("/01DEMO1.mp4"))
+            .count()
+    };
+    let in_browser = |opened: &[String]| {
+        opened
+            .iter()
+            .filter(|u| u.starts_with("https://") && u.ends_with("/01DEMO1.mp4"))
+            .count()
+    };
+    assert_eq!(played(&opened), 2, "{opened:?}");
+    assert_eq!(in_browser(&opened), 0, "not in the browser: {opened:?}");
+    assert!(
+        crate::external::suppressed_targets()
+            .iter()
+            .all(|t| !t.ends_with("/01DEMO1.mp4")),
+        "nothing handed to the desktop"
     );
+    // More options keeps Open in browser as the fallback.
+    assert!(a.has_label("More options"));
+    a.send("recaps-watch-web", "");
+    assert_eq!(in_browser(&a.h.engine.apps_opened()), 1);
     assert!(
         opened.iter().any(|u| u.ends_with("/Agenda.docx")),
         "{opened:?}"
@@ -1231,7 +1248,8 @@ fn meeting_recaps_keep_long_text_inside_at_760_px() {
     ])));
     r.set_transcript(format!("{LONG}\n{LONG_WORD}\n{LONG_AR}").into());
     r.set_tab("transcript".into());
-    // A meeting recorded in many parts: the parts scroll and Share / Watch stay on the page.
+    // A meeting recorded in many parts: the parts scroll and Share / Watch / More options stay
+    // on the page.
     r.set_parts(slint::ModelRc::new(slint::VecModel::from(
         (1..=9)
             .map(|i| crate::AppNav {
@@ -1244,7 +1262,7 @@ fn meeting_recaps_keep_long_text_inside_at_760_px() {
         .next()
         .expect("the recap page");
     assert!(page.size().width <= 760.5, "{:?}", page.size());
-    for label in ["Share", "Watch in browser"] {
+    for label in ["Share", "Watch", "More options"] {
         let b = find_label(&a.h.app, label);
         assert!(!b.is_empty(), "{label} is shown");
         let (p, s) = (b[0].absolute_position(), b[0].size());

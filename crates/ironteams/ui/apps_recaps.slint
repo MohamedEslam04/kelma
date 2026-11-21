@@ -1,13 +1,15 @@
 // Meeting Recaps, as in Teams. The home lists your online meetings of the last 30 days from the
 // calendar, grouped by week, each with a Recap button. A meeting's recap shows its recording
-// parts (Watch in browser: IronTeams has no video player; Share copies the link), the files shared
-// in its chat, and its Notes and Transcript. The AI summary and Speakers are Copilot features
-// and are left out. The recap page is also a meeting chat's Recap tab (`RecapsChatPane`).
+// parts (Watch plays the recording in IronTeams's player window, More options keeps Open in
+// browser; Share copies the link), the files shared in its chat, and its Notes and Transcript.
+// The AI summary and Speakers are Copilot features and are left out. The recap page is also a
+// meeting chat's Recap tab (`RecapsChatPane`).
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconButton } from "widgets.slint";
 import { RecapsStore, RecapRow, AppRow } from "apps_store.slint";
 import { KitBadge, KitButton, KitNote, KitPill, KitSearch } from "apps_kit.slint";
+import { RecordingMenu } from "meeting_card.slint";
 
 component Heading inherits Text {
     color: Theme.fg;
@@ -156,7 +158,7 @@ component RecapsHome inherits Rectangle {
     }
 }
 
-// The recording area: IronTeams has no video player, so a card that opens it in the browser.
+// The recording area: a card that plays the recording in IronTeams's player window.
 component PlayCard inherits Rectangle {
     height: 220px;
     border-radius: 8px;
@@ -164,7 +166,7 @@ component PlayCard inherits Rectangle {
     border-color: Theme.border;
     background: Theme.surface;
     accessible-role: button;
-    accessible-label: "Play the recording in your browser";
+    accessible-label: "Play the recording";
     accessible-enabled: RecapsStore.has-recording;
     accessible-action-default => { RecapsStore.command("recaps-watch", ""); }
     TouchArea { enabled: RecapsStore.has-recording; mouse-cursor: RecapsStore.has-recording ? pointer : default; clicked => { RecapsStore.command("recaps-watch", ""); } }
@@ -183,7 +185,7 @@ component PlayCard inherits Rectangle {
             }
         }
         Text { text: RecapsStore.part-label; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; accessible-role: none; }
-        if RecapsStore.has-recording: Text { text: "IronTeams has no video player: the recording opens in your browser."; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; horizontal-alignment: center; wrap: word-wrap; accessible-role: none; }
+        if RecapsStore.has-recording: Text { text: "Plays in an IronTeams window, with the transcript beside the video."; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; horizontal-alignment: center; wrap: word-wrap; accessible-role: none; }
     }
 }
 
@@ -259,14 +261,14 @@ component RecapSide inherits Rectangle {
             if RecapsStore.transcript-note != "": Text { text: RecapsStore.transcript-note; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; }
             if RecapsStore.has-transcript-link: HorizontalLayout {
                 alignment: start;
-                KitButton { label: "Open transcript in browser"; clicked => { RecapsStore.command("recaps-transcript-web", ""); } }
+                KitButton { label: "Open transcript"; clicked => { RecapsStore.command("recaps-transcript", ""); } }
             }
             if RecapsStore.transcript != "": Text { text: RecapsStore.transcript; color: Theme.fg; font-size: 13px * Theme.font-scale; wrap: word-wrap; accessible-role: text; accessible-label: "Transcript text"; }
         }
     }
 }
 
-// One meeting's recap: the header (back, title, date), the parts, Share and Watch in browser,
+// One meeting's recap: the header (back, title, date), the parts, Share, Watch and More options,
 // then the recording card beside (wide) or above (narrow) the shared files, notes and transcript.
 component RecapDetailPage inherits Rectangle {
     property <bool> wide: root.width >= 900px;
@@ -321,7 +323,14 @@ component RecapDetailPage inherits Rectangle {
                 }
                 VerticalLayout {
                     alignment: center;
-                    KitButton { label: "Watch in browser"; primary: true; enabled: RecapsStore.has-recording; clicked => { RecapsStore.command("recaps-watch", ""); } }
+                    KitButton { label: "Watch"; primary: true; enabled: RecapsStore.has-recording; clicked => { RecapsStore.command("recaps-watch", ""); } }
+                }
+                if RecapsStore.has-recording: VerticalLayout {
+                    alignment: center;
+                    RecordingMenu {
+                        size: 32px;
+                        open-in-browser => { RecapsStore.command("recaps-watch-web", ""); }
+                    }
                 }
             }
         }

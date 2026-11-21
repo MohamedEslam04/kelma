@@ -15,6 +15,7 @@ mod form;
 #[cfg(test)]
 mod live;
 mod notes;
+mod player;
 mod recaps;
 mod shop;
 mod source;
@@ -59,6 +60,8 @@ pub struct Apps {
     grants: Grants,
     /// Links that were opened (the tests read these; nothing is opened offline).
     opened: Vec<String>,
+    /// The recording player window while it is open (see `player.rs`).
+    player: Option<Arc<webhost::WebWindow>>,
     /// The submit callback of the last task module opened in tests.
     #[cfg(test)]
     task_submit: Option<webhost_open::TaskSubmit>,
@@ -183,7 +186,9 @@ impl Engine {
             RecapsWatch => self.recaps_watch(),
             RecapsShare => self.recaps_share(),
             RecapsNotes => self.recaps_notes(),
-            RecapsTranscriptWeb => self.recaps_transcript_web(),
+            RecapsWatchWeb => self.recaps_watch_web(),
+            RecapsPlay(url) => self.recaps_play_link(&url),
+            RecapsTranscript => self.recaps_watch(),
             RecapsFile(url) => self.recaps_file(&url),
             RecapsChat(thread) => self.recaps_chat(&thread).await,
         }

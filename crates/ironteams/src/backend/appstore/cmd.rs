@@ -100,12 +100,17 @@ pub enum AppsCmd {
     RecapsPart(usize),
     /// `notes` or `transcript`.
     RecapsTab(String),
-    /// Opens the recording in the browser.
+    /// Plays the part's recording in IronTeams's player window.
     RecapsWatch,
+    /// Opens the part's recording in the browser (the fallback in the More options menu).
+    RecapsWatchWeb,
+    /// Plays a recording of a meeting card in the player window (its link).
+    RecapsPlay(String),
     /// Copies the recording's link.
     RecapsShare,
     RecapsNotes,
-    RecapsTranscriptWeb,
+    /// Opens the part's recording, whose page shows the transcript, in the player window.
+    RecapsTranscript,
     /// Opens a file shared in the meeting chat (its address).
     RecapsFile(String),
     /// The Recap tab of a meeting chat (its thread id).
@@ -188,7 +193,9 @@ impl AppsCmd {
             "recaps-watch" => AppsCmd::RecapsWatch,
             "recaps-share" => AppsCmd::RecapsShare,
             "recaps-notes" => AppsCmd::RecapsNotes,
-            "recaps-transcript-web" => AppsCmd::RecapsTranscriptWeb,
+            "recaps-watch-web" => AppsCmd::RecapsWatchWeb,
+            "recaps-play" => AppsCmd::RecapsPlay(s()),
+            "recaps-transcript" => AppsCmd::RecapsTranscript,
             "recaps-file" => AppsCmd::RecapsFile(s()),
             "recaps-chat" => AppsCmd::RecapsChat(s()),
             _ => return None,
@@ -226,6 +233,14 @@ mod tests {
         assert_eq!(
             AppsCmd::parse("recaps-watch", ""),
             Some(AppsCmd::RecapsWatch)
+        );
+        assert_eq!(
+            AppsCmd::parse("recaps-play", "https://x.invalid/:v:/r"),
+            Some(AppsCmd::RecapsPlay("https://x.invalid/:v:/r".into()))
+        );
+        assert_eq!(
+            AppsCmd::parse("recaps-watch-web", ""),
+            Some(AppsCmd::RecapsWatchWeb)
         );
         assert_eq!(
             AppsCmd::parse("recaps-part", "1"),

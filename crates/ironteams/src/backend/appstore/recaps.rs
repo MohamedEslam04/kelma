@@ -9,12 +9,15 @@
 //! `teams_proto::recaps::parse_recording_message`) are the parts, the files sent there are the
 //! shared files, and a transcript message or the recording's own `contentTypes` says a part has a
 //! transcript. The recording usually sits in the organizer's OneDrive, which is why the user's
-//! own `Recordings` folder had none. The video opens in the browser (IronTeams has no player); Share
-//! copies its link. The transcript text is read from SharePoint when IronTeams can, else the tab
-//! offers to open it in the browser. The meeting content service (MCPS) only adds recordings the
-//! chat does not show, and its failures (a 401 today) are logged, never shown. The AI summary and
-//! the Speakers timeline are Copilot features and are left out.
+//! own `Recordings` folder had none. Watch plays the video in IronTeams's player window (see
+//! `player.rs`), with "Open in browser" in the More options menu as the fallback; Share copies
+//! its link. The transcript text is read from SharePoint when IronTeams can, else the tab offers
+//! to open the recording, whose player page shows the transcript. The meeting content service
+//! (MCPS) only adds recordings the chat does not show, and its failures (a 401 today) are
+//! logged, never shown. The AI summary and the Speakers timeline are Copilot features and are
+//! left out.
 
+use super::player::PlayTarget;
 use super::view::{Nav, RecapDetail, RecapRow, RecapsData, Row};
 use crate::backend::Engine;
 use ::calendar::Event;
@@ -37,7 +40,7 @@ const NO_RECORDING: &str = "No recording was found in the meeting chat.";
 const CHAT_UNREADABLE: &str =
     "The meeting chat could not be read right now, so its recordings and files are not shown.";
 const TRANSCRIPT_UNREADABLE: &str =
-    "The transcript could not be read here. Open it in your browser.";
+    "The transcript could not be read here. Open the recording to see it next to the video.";
 
 /// A meeting of the home list.
 #[derive(Clone, Debug, PartialEq)]
@@ -773,18 +776,40 @@ impl Engine {
             .and_then(|p| p.web_url)
     }
 
-    /// Watch in browser: IronTeams has no video player, so the recording opens in SharePoint or
-    /// Stream.
+    /// Watch (and Open transcript): plays the part's recording in the player window.
     pub(super) fn recaps_watch(self: &Arc<Self>) -> anyhow::Result<()> {
-        match self.recaps_part_link() {
-            Some(l) => self.apps_open_link(&l),
+        let target = {
+            let a = self.apps.lock().unwrap();
+            let r = &a.recaps;
+            match r.current_part() {
+                Some(Part {
+                    web_url: Some(url),
+                    drive_id,
+                    item_id,
+                    ..
+                }) => Some(PlayTarget {
+                    url,
+                    title: r.open.as_ref().map(|m| m.title.clone()).unwrap_or_default(),
+                    drive_id,
+                    item_id,
+                }),
+                _ => None,
+            }
+        };
+        match target {
+            Some(t) => self.play_recording(t),
             None => self.ui.banner("There is no recording to open.".into()),
         }
         Ok(())
     }
 
-    pub(super) fn recaps_transcript_web(self: &Arc<Self>) -> anyhow::Result<()> {
-        self.recaps_watch()
+    /// Open in browser, from the More options menu: the fallback when the player cannot be used.
+    pub(super) fn recaps_watch_web(self: &Arc<Self>) -> anyhow::Result<()> {
+        match self.recaps_part_link() {
+            Some(l) => self.apps_open_link(&l),
+            None => self.ui.banner("There is no recording to open.".into()),
+        }
+        Ok(())
     }
 
     /// Share: copies the recording's link (whoever opens it needs access to the recording).

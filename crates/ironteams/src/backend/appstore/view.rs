@@ -280,7 +280,8 @@ pub struct RecapDetail {
     /// `Part 1`, `Part 2`, … when the meeting was recorded more than once.
     pub parts: Vec<Nav>,
     pub part: i32,
-    /// The selected part has a web address: Watch in browser and Share work.
+    /// The selected part has a web address: Watch (the player window), Open in browser and Share
+    /// work.
     pub has_recording: bool,
     /// What the play card says about the selected part (`Recording · 18 min`).
     pub part_label: String,
