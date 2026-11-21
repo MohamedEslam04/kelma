@@ -132,8 +132,9 @@ impl Engine {
         } else {
             self.client.add_chat_website_tab(&chat, &a, &b).await?;
         }
-        self.ui
-            .banner("Tab added. kelma doesn't show chat tabs yet: open the chat in Teams to use it.".into());
+        self.ui.banner(
+            "Tab added. kelma doesn't show chat tabs yet: open the chat in Teams to use it.".into(),
+        );
         Ok(())
     }
 

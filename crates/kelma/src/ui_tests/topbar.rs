@@ -520,9 +520,11 @@ fn the_more_menu_has_settings_zoom_shortcuts_updates_about_and_help() {
 
     tb(&app).set_more_open(true);
     control(&app, "Check for updates").invoke_accessible_default_action();
-    assert!(settings
-        .borrow()
-        .contains(&"check-updates-menu ".to_string()));
+    assert!(
+        settings
+            .borrow()
+            .contains(&"check-updates-menu ".to_string())
+    );
 
     tb(&app).set_more_open(true);
     control(&app, "Help").invoke_accessible_default_action();
@@ -700,10 +702,11 @@ fn a_pause_in_typing_lists_the_messages_of_the_cache_under_their_own_heading() {
     type_text(&h.app, "deployed");
     // Names come at once; the messages wait for typing to pause.
     assert!(message_rows(&h.app).is_empty());
-    assert!(!log
-        .borrow()
-        .iter()
-        .any(|l| l.starts_with("suggest-messages")));
+    assert!(
+        !log.borrow()
+            .iter()
+            .any(|l| l.starts_with("suggest-messages"))
+    );
     pause_typing();
     assert_eq!(
         log.borrow()

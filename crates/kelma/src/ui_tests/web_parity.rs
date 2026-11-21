@@ -153,7 +153,7 @@ fn a_chat_has_add_a_tab_which_adds_it_to_the_chat() {
 fn in_this_chat_lists_find_the_pins_and_create_and_share_content() {
     let h = Harness::new();
     h.select(BACKEND);
-    click(&button(&h.app, "In this chat"));
+    click(&button(&h.app, "Open chat details"));
     assert!(shows(
         &h.app,
         "Nothing is pinned. To pin a message, open its … menu and choose Pin for everyone."
@@ -161,7 +161,7 @@ fn in_this_chat_lists_find_the_pins_and_create_and_share_content() {
     click(&button(&h.app, "Create and share content"));
     assert!(h.app.global::<ComposerApps>().get_open());
 
-    click(&button(&h.app, "In this chat"));
+    click(&button(&h.app, "Open chat details"));
     click(&button(&h.app, "Find in chat"));
     assert!(h.app.global::<FindStore>().get_chat_find_open());
 }
@@ -193,7 +193,9 @@ fn alt_shift_a_calls_and_alt_shift_v_says_video_is_not_there_yet() {
     );
     assert_eq!(*sent.borrow(), [format!("dial {DIRECT}")]);
     // The notice can be dismissed.
-    let notice = ElementHandle::find_by_accessible_label(&h.app, "Notice").next().unwrap();
+    let notice = ElementHandle::find_by_accessible_label(&h.app, "Notice")
+        .next()
+        .unwrap();
     let below = notice.absolute_position().y;
     let dismiss = buttons(&h.app, "Dismiss")
         .into_iter()
@@ -214,11 +216,11 @@ fn a_channel_header_has_meet_now_shared_and_the_channel_more_menu() {
     h.runner()(Cmd::SelectChannel(TECH.into(), "tech only".into()));
     assert!(!buttons(&h.app, "Meet now").is_empty());
     assert!(
-        ElementHandle::find_by_accessible_label(&h.app, "Shared")
+        ElementHandle::find_by_accessible_label(&h.app, "Files")
             .any(|e| e.accessible_role() == Some(AccessibleRole::Tab)),
-        "Teams calls the channel's files tab Shared"
+        "the channel's files tab is called Files"
     );
-    assert!(!buttons(&h.app, "In this channel").is_empty());
+    assert!(!buttons(&h.app, "Open chat details").is_empty());
     click(&button(&h.app, "More channel options"));
     for item in [
         "See new posts at the top",

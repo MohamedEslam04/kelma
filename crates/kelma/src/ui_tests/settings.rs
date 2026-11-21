@@ -704,7 +704,7 @@ fn find_in_settings_reaches_the_chats_page() {
     let app = &ui.app;
     open_page(app, "general");
     control(app, "Find in Settings").set_accessible_value("link preview");
-    press(app, "Result: Link previews in Chats");
+    press(app, "Result: Link previews in Chats and channels");
     assert_eq!(value_of(app, "Settings page"), "Chats and channels");
 }
 #[test]

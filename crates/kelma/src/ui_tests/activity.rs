@@ -3,9 +3,9 @@
 //! clicks, filters and read state are tested end to end without a network.
 
 use super::*;
-use crate::backend::{activity_row_data, ActivityState};
+use crate::backend::{ActivityState, activity_row_data};
 use crate::ui::activity::row;
-use crate::{demo, ActivityRow};
+use crate::{ActivityRow, demo};
 use store::Store;
 
 const NOW: i64 = 1_795_000_000_000;
@@ -75,7 +75,11 @@ fn feed() -> (AppWindow, Shared, Log) {
                 let mut s = st.borrow_mut();
                 s.selected = Some(id.to_string());
                 s.set_read(&id, true);
-                s.item(&id).cloned().unwrap()
+                // (A row a test put straight into the window has no backend item.)
+                let Some(item) = s.item(&id).cloned() else {
+                    return;
+                };
+                item
             };
             push(&w, &st);
             // The backend sends a short window with the source a few rows from the top.
@@ -337,7 +341,7 @@ fn notification_settings_entry_is_in_the_menu() {
 
 #[test]
 fn long_titles_previews_and_locations_stay_inside_the_feed_rows() {
-    use super::overflow::{assert_texts_inside, LONG, LONG_AR, LONG_WORD};
+    use super::overflow::{LONG, LONG_AR, LONG_WORD, assert_texts_inside};
     let (app, _state, _log) = feed();
     let item = |id: &str, text: &str, rtl: bool| ActivityRow {
         id: id.into(),

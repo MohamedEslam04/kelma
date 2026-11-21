@@ -657,7 +657,10 @@ mod tests {
 
     #[test]
     fn a_task_from_a_message_takes_one_line_of_its_words() {
-        assert_eq!(task_title("  Ship the\n\nbuild   today "), "Ship the build today");
+        assert_eq!(
+            task_title("  Ship the\n\nbuild   today "),
+            "Ship the build today"
+        );
         assert_eq!(task_title(&"x".repeat(300)).chars().count(), 255);
         assert_eq!(task_title(""), "");
     }

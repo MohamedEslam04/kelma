@@ -98,7 +98,10 @@ fn the_menu_has_the_teams_items_in_order() {
         ]
     );
     // Teams greys Share screen out when it can't share (here: a group chat, no call).
-    assert_eq!(menu_item(&h.app, "Share screen").accessible_enabled(), Some(false));
+    assert_eq!(
+        menu_item(&h.app, "Share screen").accessible_enabled(),
+        Some(false)
+    );
 }
 
 #[test]

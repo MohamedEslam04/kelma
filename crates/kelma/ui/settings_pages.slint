@@ -83,6 +83,17 @@ export component GeneralPage inherits VerticalLayout {
         }
     }
     SSection {
+        title: @tr("System");
+        for t in SettingsStore.startup: SSwitch {
+            label: t.label;
+            hint: t.hint;
+            on: t.on;
+            enabled: t.enabled;
+            toggled(on) => { SettingsStore.command("startup", SettingsStore.j2(t.key, on ? "1" : "0")); }
+        }
+    }
+    // What kelma cannot do yet is greyed out, below the settings that work.
+    SSection {
         title: @tr("Translation");
         Para { text: @tr("Translation preferences are a Teams account setting. kelma cannot change them yet, so these show Teams' choices greyed out. Translate in a message's … menu."); }
         SChoiceRow {
@@ -120,16 +131,6 @@ export component GeneralPage inherits VerticalLayout {
             picked(v) => { }
         }
         SSwitch { label: @tr("Use Enter or Spacebar to show content"); hint: @tr("Not available in kelma yet."); enabled: false; on: false; }
-    }
-    SSection {
-        title: @tr("System");
-        for t in SettingsStore.startup: SSwitch {
-            label: t.label;
-            hint: t.hint;
-            on: t.on;
-            enabled: t.enabled;
-            toggled(on) => { SettingsStore.command("startup", SettingsStore.j2(t.key, on ? "1" : "0")); }
-        }
     }
 }
 

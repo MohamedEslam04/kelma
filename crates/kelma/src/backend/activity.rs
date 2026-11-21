@@ -461,7 +461,12 @@ impl Engine {
         }
         let html = render::text_to_teams_html(&text);
         self.client
-            .send_message(&reply_target(&conv, root.as_deref()), &html, &self.my_name, None)
+            .send_message(
+                &reply_target(&conv, root.as_deref()),
+                &html,
+                &self.my_name,
+                None,
+            )
             .await?;
         self.load_source(&item).await;
         self.mark(|d| d.activity = true);
@@ -563,14 +568,20 @@ mod tests {
 
     #[test]
     fn a_reply_goes_to_the_post_thread_or_to_the_chat() {
-        assert_eq!(reply_target("19:c@thread.tacv2", Some("17")), "19:c@thread.tacv2;messageid=17");
+        assert_eq!(
+            reply_target("19:c@thread.tacv2", Some("17")),
+            "19:c@thread.tacv2;messageid=17"
+        );
         assert_eq!(reply_target("19:g@thread.v2", None), "19:g@thread.v2");
     }
 
     #[test]
     fn only_a_missed_call_row_offers_to_call_back() {
         let missed = item("1", ActivityKind::MissedCall, "u1", "", 1, false);
-        assert_eq!(row_data(&missed, String::new(), None).call_mri, "8:orgid:u1");
+        assert_eq!(
+            row_data(&missed, String::new(), None).call_mri,
+            "8:orgid:u1"
+        );
         let mention = item("2", ActivityKind::Mention, "u1", "hi", 1, false);
         assert_eq!(row_data(&mention, String::new(), None).call_mri, "");
     }

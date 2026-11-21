@@ -498,6 +498,8 @@ export component Sidebar inherits Rectangle {
     }
 
     list-menu := PopupWindow {
+        // Customize view unfolds inside the menu, so a click must not close it by itself.
+        close-policy: close-on-click-outside;
         x: parent.width - 240px;
         y: 48px;
         width: 228px;
@@ -509,9 +511,9 @@ export component Sidebar inherits Rectangle {
             border-color: Theme.border;
             list-items := VerticalLayout {
                 padding: 4px;
-                MenuItem { label: @tr("Mark all as read"); clicked => { root.mark-all-read(); } }
-                MenuItem { label: @tr("New section"); clicked => { ListStore.dialog-target = ""; ListStore.dialog-text = ""; ListStore.dialog = "new-section"; } }
-                MenuItem { label: @tr("Collapse all sections"); clicked => { ListStore.command("collapse-all", ""); } }
+                MenuItem { label: @tr("Mark all as read"); clicked => { list-menu.close(); root.mark-all-read(); } }
+                MenuItem { label: @tr("New section"); clicked => { list-menu.close(); ListStore.dialog-target = ""; ListStore.dialog-text = ""; ListStore.dialog = "new-section"; } }
+                MenuItem { label: @tr("Collapse all sections"); clicked => { list-menu.close(); ListStore.command("collapse-all", ""); } }
                 // Teams' "Customize view": the list's display options, behind a chevron.
                 PMenuItem { label: @tr("Customize view"); chevron: true; checked: root.customize-open; clicked => { root.customize-open = !root.customize-open; } }
                 if root.customize-open: OptionRow { label: @tr("Show message previews"); checked: ListStore.show-previews; clicked => { ListStore.command("option", "previews\u{9}" + (ListStore.show-previews ? "off" : "on")); } }
@@ -534,10 +536,10 @@ export component Sidebar inherits Rectangle {
                     padding-left: 10px;
                     Text { text: @tr("Quick views"); color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: bottom; }
                 }
-                MenuItem { label: @tr("Mentions"); clicked => { root.quick-view("mentions"); } }
-                MenuItem { label: @tr("Saved"); clicked => { root.quick-view("saved"); } }
-                MenuItem { label: @tr("Followed threads"); clicked => { root.quick-view("followed"); } }
-                MenuItem { label: @tr("Reminders"); clicked => { RemindStore.open = true; RemindStore.command("refresh", ""); } }
+                MenuItem { label: @tr("Mentions"); clicked => { list-menu.close(); root.quick-view("mentions"); } }
+                MenuItem { label: @tr("Saved"); clicked => { list-menu.close(); root.quick-view("saved"); } }
+                MenuItem { label: @tr("Followed threads"); clicked => { list-menu.close(); root.quick-view("followed"); } }
+                MenuItem { label: @tr("Reminders"); clicked => { list-menu.close(); RemindStore.open = true; RemindStore.command("refresh", ""); } }
             }
         }
     }

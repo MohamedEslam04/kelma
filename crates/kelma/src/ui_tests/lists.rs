@@ -4,8 +4,8 @@
 //! the engine has no network, so account calls are skipped and only the local state changes.
 
 use super::*;
-use crate::backend::ListsCmd;
 use crate::ListStore;
+use crate::backend::ListsCmd;
 use serde_json::json;
 use store::{ConvKind, ConversationRow};
 use teams_proto::sections::{Folder, FolderItem, FolderKind, Folders};
@@ -555,16 +555,17 @@ fn list_options_hide_previews_and_time_stamps_and_combine_chats_and_channels() {
     let log = wire(&h);
     let preview = "Youssef: Fixed in 2.4.1";
     assert_eq!(find_label(&h.app, preview).len(), 1, "previews are on");
-    // The "…" menu of the list carries the options.
+    // The "…" menu of the list carries the options behind "Customize view", and stays open
+    // while they are toggled.
     let more = ElementHandle::find_by_element_id(&h.app, "IconButton::touch")
         .filter(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
         .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
         .expect("list menu button");
     click(&more);
+    click(&find_label(&h.app, "Customize view")[0]);
     click(&find_label(&h.app, "Show message previews")[0]);
     assert!(!ls(&h.app).get_show_previews());
     assert!(find_label(&h.app, preview).is_empty(), "previews hidden");
-    click(&more);
     click(&find_label(&h.app, "Show time stamps")[0]);
     assert!(!ls(&h.app).get_show_times());
     // Chats and channels together: the channel rows move into the Chats section.
@@ -572,7 +573,6 @@ fn list_options_hide_previews_and_time_stamps_and_combine_chats_and_channels() {
         !h.app.get_chats_channels().iter().next().is_none(),
         "separate at first"
     );
-    click(&more);
     click(&find_label(&h.app, "Chats and channels together")[0]);
     assert!(ls(&h.app).get_combined());
     assert_eq!(h.app.get_chats_channels().row_count(), 0);
@@ -702,10 +702,11 @@ fn go_to_team_opens_the_teams_view_and_a_private_channel_can_be_left_after_confi
         "nothing is sent before the answer"
     );
     click(&find_label(&h.app, "Leave")[0]);
-    assert!(log
-        .borrow()
-        .iter()
-        .any(|l| l == "channel-leave 19:private@thread.tacv2"));
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|l| l == "channel-leave 19:private@thread.tacv2")
+    );
     assert_eq!(ls(&h.app).get_dialog(), "");
 }
 

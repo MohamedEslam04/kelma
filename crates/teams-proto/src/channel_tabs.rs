@@ -148,16 +148,26 @@ impl Client {
     /// UNVERIFIED: never sent from kelma yet (docs/protocol.md).
     pub async fn add_chat_website_tab(&self, chat_id: &str, name: &str, url: &str) -> Result<()> {
         let body = website_tab_body(name, url);
-        self.json("add chat tab", Method::POST, &chat_tabs_url(chat_id), Some(&body))
-            .await?;
+        self.json(
+            "add chat tab",
+            Method::POST,
+            &chat_tabs_url(chat_id),
+            Some(&body),
+        )
+        .await?;
         Ok(())
     }
 
     /// Adds an installed app's tab to a chat (UNVERIFIED, as [`Client::add_chat_website_tab`]).
     pub async fn add_chat_app_tab(&self, chat_id: &str, name: &str, app_id: &str) -> Result<()> {
         let body = app_tab_body(name, app_id);
-        self.json("add chat app tab", Method::POST, &chat_tabs_url(chat_id), Some(&body))
-            .await?;
+        self.json(
+            "add chat app tab",
+            Method::POST,
+            &chat_tabs_url(chat_id),
+            Some(&body),
+        )
+        .await?;
         Ok(())
     }
 

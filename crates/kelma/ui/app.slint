@@ -890,7 +890,7 @@ export component AppWindow inherits Window {
                                     root.renaming = true;
                                 }
                             }
-                            for tab in (root.current-is-channel ? [{k: "posts", l: @tr("Posts")}, {k: "files", l: @tr("Shared")}] : [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}]): tab-item := Rectangle {
+                            for tab in (root.current-is-channel ? [{k: "posts", l: @tr("Posts")}, {k: "files", l: @tr("Files")}] : [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}]): tab-item := Rectangle {
                                 // The Shared (Files) tab replaces the conversation, see `FindStore`.
                                 property <bool> active: (FindStore.chat-tab == "shared") == (tab.k == "shared" || tab.k == "files");
                                 width: min(tab-label.preferred-width, 200px);
