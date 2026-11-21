@@ -9,7 +9,9 @@ publish = false
 
 [dependencies]
 directories = "6.0.0"
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+# Secret Service on Linux, Keychain on macOS, Credential Manager on Windows (each backend is
+# target-gated inside keyring, so every feature can stay on).
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "apple-native", "windows-native"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 teams-proto = { version = "0.0.0", path = "../teams-proto" }

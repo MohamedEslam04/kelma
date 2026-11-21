@@ -10,11 +10,15 @@
 //!
 //! The app sets its id once at start-up ([`set_host_app_id`]); every portal entry point awaits
 //! [`ensure_registered`] first, so the registration happens once and before any other call.
+//!
+//! Windows and macOS have no portal: the id is kept and nothing is registered.
 
 use std::sync::OnceLock;
+#[cfg(target_os = "linux")]
 use tokio::sync::OnceCell;
 
 static APP_ID: OnceLock<String> = OnceLock::new();
+#[cfg(target_os = "linux")]
 static REGISTERED: OnceCell<()> = OnceCell::const_new();
 
 /// Names the app for the portal (a reverse-DNS desktop file id). The first call wins.
@@ -24,6 +28,7 @@ pub fn set_host_app_id(id: &str) {
 
 /// Registers the app id with the portal, once. Never fails: a refusal only means the portal
 /// keeps naming the app its own way.
+#[cfg(target_os = "linux")]
 pub(crate) async fn ensure_registered() {
     REGISTERED
         .get_or_init(|| async {
@@ -34,6 +39,7 @@ pub(crate) async fn ensure_registered() {
         .await;
 }
 
+#[cfg(target_os = "linux")]
 async fn register(id: &str) {
     let app_id = match ashpd::AppID::try_from(id) {
         Ok(a) => a,
@@ -48,7 +54,7 @@ async fn register(id: &str) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 

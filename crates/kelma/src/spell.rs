@@ -2,7 +2,10 @@
 //! checked here and the composer draws the red underlines itself (`ui/spelling.slint`): it puts
 //! the cursor of a hidden copy of the text input at each word's ends to learn where the word is.
 //!
-//! The dictionaries are the system's Hunspell ones (`/usr/share/hunspell`, `/usr/share/myspell`):
+//! The dictionaries are the system's Hunspell ones (`/usr/share/hunspell`, `/usr/share/myspell`;
+//! on macOS `~/Library/Spelling` and `/Library/Spelling`), the ones packaged next to the program
+//! (`dictionaries/` beside the executable, `Contents/Resources/dictionaries` in the macOS app; the
+//! Windows and macOS packages ship en_US and ar there) or `dictionaries/` in the config dir:
 //! English (the locale's variant first, then en_US, en_GB, any other en_*) and Arabic (ar, then
 //! any ar_*). A word is checked against the dictionary of its script; with no dictionary for it,
 //! nothing is flagged. "Add to dictionary" keeps words in `spelling-words.txt` in the config dir.
@@ -24,6 +27,29 @@ const DIRS: [&str; 3] = [
 ];
 const MAX_SUGGESTIONS: usize = 5;
 const WORDS_FILE: &str = "spelling-words.txt";
+
+/// Where dictionaries are looked for, in order: the system's, then the packaged ones, then the
+/// user's.
+fn dictionary_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = DIRS.iter().map(PathBuf::from).collect();
+    if cfg!(target_os = "macos") {
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.push(PathBuf::from(home).join("Library/Spelling"));
+        }
+        dirs.push("/Library/Spelling".into());
+    }
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf))
+    {
+        dirs.push(exe_dir.join("dictionaries"));
+        dirs.push(exe_dir.join("../Resources/dictionaries"));
+    }
+    if let Ok(dir) = appearance::config_dir() {
+        dirs.push(dir.join("dictionaries"));
+    }
+    dirs
+}
 
 /// The loaded dictionaries and the words the user added.
 #[derive(Default)]
@@ -160,7 +186,7 @@ impl Speller {
 
     /// The system dictionaries and the words added earlier. Slow (parses the dictionaries).
     pub fn system() -> Speller {
-        let dirs: Vec<PathBuf> = DIRS.iter().map(PathBuf::from).collect();
+        let dirs = dictionary_dirs();
         let stems = dictionary_stems(&dirs);
         let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
             .iter()

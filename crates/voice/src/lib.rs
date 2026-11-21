@@ -2,21 +2,24 @@
 //!
 //! * [`Recorder`] captures the microphone as mono 48 kHz audio with a live waveform.
 //! * [`encode_m4a`] turns a [`Clip`] into the AAC-LC mono MP4 that Teams clients play, by
-//!   running the system `ffmpeg` (kelma is GPL-3.0-or-later, so no GPL-incompatible
-//!   encoder such as fdk-aac is linked).
+//!   running the system `ffmpeg` on Linux and with the system's own encoder on Windows (Media
+//!   Foundation) and macOS (AudioToolbox). kelma is GPL-3.0-or-later, so no GPL-incompatible
+//!   encoder such as fdk-aac is linked.
 //! * [`decode`] reads AAC-in-MP4 (and MP3, which voicemail uses) back with symphonia, pure Rust.
 //! * [`peaks`] reduces a whole clip to waveform bars for the message bubble.
 //! * [`Player`] plays one clip at a time at 1x, 1.5x or 2x without raising the pitch.
 
 mod decode;
 mod encode;
+#[cfg(any(windows, target_os = "macos", test))]
+mod native_aac;
 mod peaks;
 mod play;
 mod record;
 mod stretch;
 
 pub use decode::decode;
-pub use encode::encode_m4a;
+pub use encode::{encode_m4a, encoder_available, ffmpeg_program, ffmpeg_runs, no_console};
 pub use peaks::peaks;
 pub use play::{Player, PlayerState};
 pub use record::{MAX_DURATION, Recorder};

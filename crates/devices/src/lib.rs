@@ -13,7 +13,7 @@
 
 #[cfg(feature = "audio")]
 mod audio;
-#[cfg(feature = "cameras")]
+#[cfg(all(feature = "cameras", target_os = "linux"))]
 mod cameras;
 mod dsp;
 mod prefs;
@@ -23,8 +23,15 @@ pub use audio::{
     DeviceStream, MicLevelStream, audio_inputs, audio_outputs, loopback, mic_level,
     open_input_stream, open_output_stream, test_sound,
 };
-#[cfg(feature = "cameras")]
+#[cfg(all(feature = "cameras", target_os = "linux"))]
 pub use cameras::cameras;
+
+/// Capture-capable cameras. Only Linux (V4L2) lists them; on Windows and macOS calls use the
+/// system's default camera, so the list is empty there.
+#[cfg(all(feature = "cameras", not(target_os = "linux")))]
+pub fn cameras() -> Result<Vec<Camera>> {
+    Ok(Vec::new())
+}
 pub use dsp::{LevelMeter, MicLevel, Remix, sine_tone};
 pub use prefs::DevicePrefs;
 

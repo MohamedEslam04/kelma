@@ -111,15 +111,10 @@ pub(super) fn next_speed(speed: f32) -> f32 {
     SPEEDS[at.map_or(0, |i| (i + 1) % SPEEDS.len())]
 }
 
-/// True when ffmpeg, which encodes the recording, can be run (`KELMA_FFMPEG` or `PATH`).
+/// True when the recording can be encoded: ffmpeg runs (`KELMA_FFMPEG` or `PATH`), or the
+/// system's AAC encoder is there (Windows, macOS).
 fn encoder_present() -> bool {
-    let program = std::env::var_os("KELMA_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
-    std::process::Command::new(program)
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    voice::encoder_available()
 }
 
 /// The chosen microphone and speaker (Settings > Devices).

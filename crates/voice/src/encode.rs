@@ -1,9 +1,12 @@
 //! Encoding a recording to the format Teams voice messages use: AAC-LC, mono, 44.1 kHz in an
 //! MP4 container (`.m4a`, brand mp42).
 //!
-//! kelma is GPL-3.0-or-later, so it must not link fdk-aac (GPL-incompatible license). The
-//! system `ffmpeg` does the encoding as a child process instead: raw samples go in on
-//! stdin, the file comes out of a temporary path because MP4 needs a seekable output.
+//! kelma is GPL-3.0-or-later, so it must not link fdk-aac (GPL-incompatible license). On Linux
+//! the system `ffmpeg` does the encoding as a child process instead: raw samples go in on
+//! stdin, the file comes out of a temporary path because MP4 needs a seekable output. Windows and
+//! macOS use the system's own AAC encoder (`native_aac`: Media Foundation, AudioToolbox), so they
+//! need no ffmpeg; `KELMA_FFMPEG` still picks ffmpeg there, and ffmpeg is the fallback when the
+//! system encoder fails.
 
 use crate::{Clip, Error, Result};
 use std::ffi::OsStr;
@@ -22,11 +25,84 @@ const BIT_RATE: &str = "64k";
 /// Sample rate Teams voice messages use.
 const OUTPUT_RATE: &str = "44100";
 
-/// Encode `clip` as AAC-LC mono in an MP4 container. Needs `ffmpeg`: [`Error::EncoderMissing`]
-/// when it cannot be found (set `KELMA_FFMPEG` to point at it).
+/// Encode `clip` as AAC-LC mono in an MP4 container. Linux needs `ffmpeg`:
+/// [`Error::EncoderMissing`] when it cannot be found (set `KELMA_FFMPEG` to point at it).
 pub fn encode_m4a(clip: &Clip) -> Result<Vec<u8>> {
-    let program = std::env::var_os(FFMPEG_ENV).unwrap_or_else(|| "ffmpeg".into());
-    encode_with(&program, clip)
+    #[cfg(any(windows, target_os = "macos"))]
+    if std::env::var_os(FFMPEG_ENV).is_none() {
+        match encode_native(clip) {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) if ffmpeg_runs() => {
+                eprintln!("kelma voice: the system AAC encoder failed ({e}); trying ffmpeg");
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    encode_with(&ffmpeg_program(), clip)
+}
+
+/// The system encoder (Windows, macOS) into a temporary file, read back.
+#[cfg(any(windows, target_os = "macos"))]
+fn encode_native(clip: &Clip) -> Result<Vec<u8>> {
+    if clip.samples.is_empty() {
+        return Err(Error::Encode("nothing to encode".into()));
+    }
+    let output = TempFile::create()?;
+    crate::native_aac::encode(clip, output.path())?;
+    std::fs::read(output.path()).map_err(|e| Error::Encode(format!("read encoded file: {e}")))
+}
+
+/// Whether a voice message can be encoded here: always on macOS (AudioToolbox); on Windows when
+/// Media Foundation or ffmpeg is there; on Linux when ffmpeg runs.
+pub fn encoder_available() -> bool {
+    if cfg!(target_os = "macos") {
+        return true;
+    }
+    #[cfg(windows)]
+    if crate::native_aac::available() {
+        return true;
+    }
+    ffmpeg_runs()
+}
+
+/// The ffmpeg to run: `KELMA_FFMPEG`, else one shipped next to the executable (`ffmpeg.exe` beside
+/// `kelma.exe`, or in the macOS app's `Contents/MacOS`), else `ffmpeg` from `PATH`.
+pub fn ffmpeg_program() -> std::ffi::OsString {
+    if let Some(p) = std::env::var_os(FFMPEG_ENV) {
+        return p;
+    }
+    let name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join(name)))
+        .filter(|p| p.is_file())
+        .map_or_else(|| "ffmpeg".into(), PathBuf::into_os_string)
+}
+
+/// Whether [`ffmpeg_program`] runs.
+pub fn ffmpeg_runs() -> bool {
+    let mut command = Command::new(ffmpeg_program());
+    no_console(&mut command);
+    command
+        .arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// No console window flashing up for a child process on Windows.
+pub fn no_console(command: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command
 }
 
 /// [`encode_m4a`] with the encoder program chosen by the caller.
@@ -35,7 +111,9 @@ fn encode_with(program: &OsStr, clip: &Clip) -> Result<Vec<u8>> {
         return Err(Error::Encode("nothing to encode".into()));
     }
     let output = TempFile::create()?;
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    no_console(&mut command);
+    let mut child = command
         .args(ffmpeg_arguments(clip.sample_rate, output.path()))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -213,9 +291,30 @@ mod tests {
             return;
         }
         let clip = Clip::new(test_sine(440.0, 0.5, 48_000), 48_000);
-        let bytes = encode_m4a(&clip).expect("encode");
+        let bytes = encode_with(&ffmpeg_program(), &clip).expect("encode");
         assert_eq!(&bytes[4..8], b"ftyp");
         assert_eq!(&bytes[8..12], b"mp42");
+    }
+
+    /// The system encoder (Windows, macOS) writes an MP4 that decodes back to about as long a
+    /// clip, with no ffmpeg involved.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn the_system_encoder_writes_an_mp4_that_decodes_back() {
+        #[cfg(windows)]
+        if !crate::native_aac::available() {
+            eprintln!("skipped: no Media Foundation on this system");
+            return;
+        }
+        let clip = Clip::new(test_sine(440.0, 1.0, 48_000), 48_000);
+        let bytes = encode_native(&clip).expect("encode");
+        assert_eq!(&bytes[4..8], b"ftyp");
+        #[cfg(target_os = "macos")]
+        assert_eq!(&bytes[8..12], b"mp42", "brand");
+        eprintln!("brand {:?}", String::from_utf8_lossy(&bytes[8..12]));
+        let back = crate::decode(&bytes).expect("decode");
+        let secs = back.duration().as_secs_f32();
+        assert!((0.9..1.2).contains(&secs), "decoded {secs} s");
     }
 
     #[test]

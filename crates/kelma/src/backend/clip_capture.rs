@@ -33,9 +33,14 @@ async fn open() -> anyhow::Result<Box<dyn ClipCamera>> {
     live::open().await
 }
 
-/// The program to run for ffmpeg (`KELMA_FFMPEG`, else `ffmpeg` on `PATH`), as voice messages.
-fn ffmpeg() -> OsString {
-    std::env::var_os("KELMA_FFMPEG").unwrap_or_else(|| "ffmpeg".into())
+/// The program to run for ffmpeg (`KELMA_FFMPEG`, else one shipped beside kelma, else `ffmpeg` on
+/// `PATH`), as voice messages. Windows and macOS packages ship none: video clips need ffmpeg
+/// installed there.
+#[cfg_attr(not(feature = "calls"), allow(dead_code))]
+fn ffmpeg() -> std::process::Command {
+    let mut command = std::process::Command::new(voice::ffmpeg_program());
+    voice::no_console(&mut command);
+    command
 }
 
 fn os(args: &[&str]) -> Vec<OsString> {
@@ -119,7 +124,7 @@ mod live {
     use calling::video::{I420Frame, i420_to_rgb, step_for};
     use std::io::Write;
     use std::path::PathBuf;
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Stdio};
     use std::sync::mpsc::{SyncSender, sync_channel};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -152,7 +157,7 @@ mod live {
 
     /// True when ffmpeg can be run.
     fn encoder_present() -> bool {
-        Command::new(ffmpeg())
+        ffmpeg()
             .arg("-version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -229,7 +234,7 @@ mod live {
                 .microphone;
             let mic = voice::Recorder::start(mic.as_deref())
                 .map_err(|e| anyhow::anyhow!("Couldn't open the microphone: {e}"))?;
-            let mut child = Command::new(ffmpeg())
+            let mut child = ffmpeg()
                 .args(video_args(
                     self.settings.size,
                     self.settings.fps,
@@ -294,7 +299,7 @@ mod live {
                     let pcm: Vec<u8> = audio.samples.iter().flat_map(|s| s.to_le_bytes()).collect();
                     std::fs::write(&raw, pcm)?;
                     let output = dir.join("clip.mp4");
-                    let out = Command::new(ffmpeg())
+                    let out = ffmpeg()
                         .args(mux_args(&video, &raw, audio.sample_rate, &output))
                         .stdin(Stdio::null())
                         .stdout(Stdio::null())

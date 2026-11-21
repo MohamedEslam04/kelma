@@ -1,4 +1,6 @@
 //! kelma: a lightweight native Microsoft Teams chat client (unofficial).
+// A release build on Windows is a GUI program: no console window next to it.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod backend;
 mod catch_up;
@@ -14,6 +16,8 @@ mod loop_compose;
 mod markdown;
 mod media_data;
 mod mention;
+#[cfg(not(target_os = "linux"))]
+mod native_tray;
 mod reactions;
 mod send_options;
 mod shortcuts;
@@ -199,9 +203,10 @@ fn fc_match(pattern: &str) -> Option<std::path::PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// Builds the font chain: the UI font in each weight, then the bundled color emoji font.
+/// Builds the font chain: the UI font in each weight, then the bundled color emoji font. Linux
+/// only (fontconfig): Windows and macOS keep the system UI font and its color emoji fallback.
 fn configure_fonts() {
-    if std::env::var_os("SLINT_FONT_PATH").is_some() {
+    if std::env::var_os("SLINT_FONT_PATH").is_some() || !cfg!(target_os = "linux") {
         return;
     }
     let Ok(paths) = session::Paths::new() else {

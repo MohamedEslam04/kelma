@@ -10,21 +10,32 @@
 //! used as the coordinate space. [`control_target`] maps the shared picture onto that stream (it
 //! is the same size when the user picks the same screen or window again, or the whole desktop
 //! when the desktop offers no picker, as KDE did).
+//!
+//! Windows and macOS: not implemented yet. [`request_control`] fails with a message the call
+//! window shows, and no [`InputInjector`] can exist there.
 
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
 
+#[cfg(target_os = "linux")]
 use ashpd::desktop::Session;
+#[cfg(target_os = "linux")]
 use ashpd::desktop::remote_desktop::{
     Axis, DeviceType, KeyState, NotifyPointerAxisOptions, RemoteDesktop, SelectDevicesOptions,
 };
+#[cfg(target_os = "linux")]
 use ashpd::desktop::screencast::{Screencast, SourceType};
 
 use super::control_overlay::ShareArea;
+#[cfg(target_os = "linux")]
 use super::screencast::{ShareKind, portal_err, select_sources, stream_size};
-use crate::remote_control::{InputEvent, MouseButton, stream_point};
+use crate::remote_control::InputEvent;
+#[cfg(target_os = "linux")]
+use crate::remote_control::{MouseButton, stream_point};
 use crate::{Error, Result};
 
 /// Injects the controller's input into the shared stream. Cheap to clone.
+#[cfg(target_os = "linux")]
 #[derive(Clone)]
 pub struct InputInjector {
     proxy: Arc<RemoteDesktop>,
@@ -67,6 +78,7 @@ pub fn control_target(shared: &ShareArea, control: &ShareArea) -> Option<Target>
     })
 }
 
+#[cfg(target_os = "linux")]
 fn state(pressed: bool) -> KeyState {
     if pressed {
         KeyState::Pressed
@@ -75,6 +87,7 @@ fn state(pressed: bool) -> KeyState {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl InputInjector {
     /// Ends the control session (the desktop's "remote control" indicator goes).
     pub async fn close(&self) {
@@ -163,6 +176,7 @@ impl InputInjector {
 }
 
 /// Closes `session` and fails with `e`.
+#[cfg(target_os = "linux")]
 async fn fail<T>(session: Session<RemoteDesktop>, e: Error) -> Result<T> {
     let _ = session.close().await;
     Err(e)
@@ -171,6 +185,7 @@ async fn fail<T>(session: Session<RemoteDesktop>, e: Error) -> Result<T> {
 /// Asks the desktop for permission to drive the screen described by `shared` (what the share's
 /// capture covers) and returns the injector. `Ok(None)` when the user declined. The desktop may
 /// show its screen picker again: the same screen or window should be chosen.
+#[cfg(target_os = "linux")]
 pub async fn request_control(shared: ShareArea) -> Result<Option<InputInjector>> {
     super::portal::ensure_registered().await;
     let remote = RemoteDesktop::new().await.map_err(portal_err)?;
@@ -237,6 +252,32 @@ pub async fn request_control(shared: ShareArea) -> Result<Option<InputInjector>>
         stream: node,
         target,
     }))
+}
+
+/// Remote control on Windows and macOS: not implemented yet, so there is never an injector.
+#[cfg(not(target_os = "linux"))]
+#[derive(Clone)]
+pub enum InputInjector {}
+
+#[cfg(not(target_os = "linux"))]
+impl InputInjector {
+    pub async fn close(&self) {
+        match *self {}
+    }
+
+    pub async fn inject(&self, _ev: &InputEvent) -> Result<()> {
+        match *self {}
+    }
+}
+
+/// What [`request_control`] answers where remote control is not implemented.
+pub const UNSUPPORTED: &str =
+    "Letting others control your screen is only available on Linux for now";
+
+/// Windows and macOS: fails with [`UNSUPPORTED`].
+#[cfg(not(target_os = "linux"))]
+pub async fn request_control(_shared: ShareArea) -> Result<Option<InputInjector>> {
+    Err(Error::Media(UNSUPPORTED.into()))
 }
 
 #[cfg(test)]
