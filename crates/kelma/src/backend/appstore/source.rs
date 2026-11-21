@@ -8,11 +8,11 @@ use app_store::{
     AppDefinition, AppPolicy, CatalogApp, InstalledApps, SearchHit, StoreHome, YourApp,
 };
 use std::sync::atomic::Ordering;
+use store::MessageRow;
 use teams_proto::graph::Write;
 use teams_proto::lists::{Column, ListItem, Site, SpList};
 use teams_proto::onenote::{Notebook, Page, Section};
 use teams_proto::planner::{Bucket, Plan, PlannerTask, TodoList, TodoTask};
-use store::MessageRow;
 use teams_proto::recaps::{RecapMeeting, RecapResource};
 use teams_proto::time::now_ms;
 use teams_proto::workflows::{Flow, FlowEnvironment, FlowRun};

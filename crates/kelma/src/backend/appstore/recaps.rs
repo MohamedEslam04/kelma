@@ -17,7 +17,6 @@
 
 use super::view::{Nav, RecapDetail, RecapRow, RecapsData, Row};
 use crate::backend::Engine;
-use crate::backend::util::shown_error;
 use ::calendar::Event;
 use std::sync::Arc;
 use store::MessageRow;
@@ -35,6 +34,10 @@ const STILL_SYNCING: &str = "Your calendar is still loading. Refresh in a moment
 const NO_CHAT: &str =
     "This meeting has no meeting chat, so there is no recording or shared file to show.";
 const NO_RECORDING: &str = "No recording was found in the meeting chat.";
+const CHAT_UNREADABLE: &str =
+    "The meeting chat could not be read right now, so its recordings and files are not shown.";
+const TRANSCRIPT_UNREADABLE: &str =
+    "The transcript could not be read here. Open it in your browser.";
 
 /// A meeting of the home list.
 #[derive(Clone, Debug, PartialEq)]
@@ -324,7 +327,6 @@ pub struct Recaps {
     transcript_note: String,
     transcript_loading: bool,
     notes_link: Option<String>,
-    notes_note: String,
     /// Bumped for every recap opened, so a late answer for another one is dropped.
     seq: u64,
 }
@@ -379,8 +381,12 @@ impl Recaps {
                 title: m.title.clone(),
                 when: when(m),
                 organizer: m.organizer.clone(),
-                month: local.map(|t| t.format("%b").to_string()).unwrap_or_default(),
-                day: local.map(|t| t.format("%-d").to_string()).unwrap_or_default(),
+                month: local
+                    .map(|t| t.format("%b").to_string())
+                    .unwrap_or_default(),
+                day: local
+                    .map(|t| t.format("%-d").to_string())
+                    .unwrap_or_default(),
                 header: false,
                 canceled: m.canceled,
             });
@@ -501,8 +507,6 @@ impl Recaps {
                 "Looking for the meeting notes…".into()
             } else if self.notes_link.is_some() {
                 "The meeting notes open in your browser.".into()
-            } else if !self.notes_note.is_empty() {
-                self.notes_note.clone()
             } else {
                 "No notes".into()
             },
@@ -651,7 +655,6 @@ impl Engine {
             r.transcript_note.clear();
             r.transcript_loading = false;
             r.notes_link = None;
-            r.notes_note.clear();
             r.seq
         });
         if m.thread_id.is_empty() {
@@ -674,18 +677,16 @@ impl Engine {
                     r.chat_parts = parts_from_chat(&rows, window);
                     r.files = files_from_chat(&rows, &r.chat_parts);
                 }
+                // Said plainly, without the raw error (it goes to the log).
                 Err(e) => {
-                    tracing::debug!(err = %e, "meeting chat could not be read");
-                    r.detail_note = format!("The meeting chat could not be read: {}", shown_error(&e));
+                    tracing::info!(err = %e, "meeting chat could not be read");
+                    r.detail_note = CHAT_UNREADABLE.into();
                 }
             }
+            // A failed lookup reads as "No notes"; the error only goes to the log.
             match notes {
                 Ok(link) => r.notes_link = link,
-                Err(e) => {
-                    tracing::debug!(err = %e, "meeting notes could not be looked up");
-                    r.notes_note =
-                        format!("The meeting notes could not be looked up: {}", shown_error(&e));
-                }
+                Err(e) => tracing::debug!(err = %e, "meeting notes could not be looked up"),
             }
             r.tab == Tab::Transcript
         });
@@ -716,10 +717,7 @@ impl Engine {
                 Ok(t) => r.transcript = t,
                 Err(e) => {
                     tracing::debug!(err = %e, "transcript could not be read");
-                    r.transcript_note = format!(
-                        "The transcript could not be read here ({}). Open it in your browser.",
-                        shown_error(&e)
-                    );
+                    r.transcript_note = TRANSCRIPT_UNREADABLE.into();
                 }
             }
         });
@@ -798,8 +796,7 @@ impl Engine {
         if !self.apps_offline()
             && let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(link))
         {
-            self.ui
-                .banner(format!("The link could not be copied: {e}"));
+            self.ui.banner(format!("The link could not be copied: {e}"));
             return Ok(());
         }
         self.ui.banner("Link to the recording copied.".into());
@@ -965,7 +962,11 @@ mod tests {
         let files = files_from_chat(&rows, &parts);
         assert_eq!(files.len(), 1);
         assert_eq!(
-            (files[0].name.as_str(), files[0].ext.as_str(), files[0].by.as_str()),
+            (
+                files[0].name.as_str(),
+                files[0].ext.as_str(),
+                files[0].by.as_str()
+            ),
             ("Agenda.docx", "DOCX", "Ada Example")
         );
         // An occurrence of a series keeps what was posted while it ran.
@@ -1045,8 +1046,8 @@ mod tests {
         assert_eq!(d.part_label, NO_RECORDING);
         assert_eq!(d.files_note, "No files were shared.");
         // The chat could not be read: said plainly, in the detail.
-        r.detail_note = "The meeting chat could not be read: HTTP 403".into();
-        assert_eq!(r.data().detail.note, "The meeting chat could not be read: HTTP 403");
+        r.detail_note = CHAT_UNREADABLE.into();
+        assert_eq!(r.data().detail.note, CHAT_UNREADABLE);
         r.detail = false;
         assert_eq!(r.data().page, "home");
         assert!(!r.data().detail.open);

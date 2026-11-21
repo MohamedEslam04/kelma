@@ -2,7 +2,7 @@
 //! mode and the tests run the same parsers and view builders as the live client. Nothing here
 //! comes from a real tenant.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const MS_DAY: i64 = 24 * 3600 * 1000;
 

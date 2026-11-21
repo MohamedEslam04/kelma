@@ -1,7 +1,7 @@
 //! UI-thread side of the app screens: turns the backend's view data into the `AppsStore`,
 //! `TasksStore`, `FlowsStore`, `NotesStore`, `ListsStore` and `RecapsStore` globals.
 
-use super::{img, model, rgb, UiHandle};
+use super::{UiHandle, img, model, rgb};
 use crate::backend::appstore::view::{
     AppPage, Card, FlowsData, FormData, ListsData, Nav, NotesData, PermItem, RailData, RailItem,
     RecapRow, RecapsData, Row, StoreData, TableRow, TasksData,

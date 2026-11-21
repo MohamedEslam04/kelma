@@ -409,12 +409,12 @@ fn the_store_home_shows_popular_apps_with_their_facts() {
     assert!(a.has_label("Search the Store"));
     // Devices links out; the gear and Manage open their pages.
     a.click("Devices");
-    assert!(a
-        .h
-        .engine
-        .apps_opened()
-        .iter()
-        .any(|u| u.contains("microsoft.com")));
+    assert!(
+        a.h.engine
+            .apps_opened()
+            .iter()
+            .any(|u| u.contains("microsoft.com"))
+    );
 }
 
 #[test]
@@ -523,12 +523,12 @@ fn an_app_page_shows_the_listing_facts() {
         |u| u == "copied:https://teams.microsoft.com/l/app/com.microsoft.teamspace.tab.planner"
     ));
     a.click("Privacy policy");
-    assert!(a
-        .h
-        .engine
-        .apps_opened()
-        .iter()
-        .any(|u| u.ends_with("/privacy")));
+    assert!(
+        a.h.engine
+            .apps_opened()
+            .iter()
+            .any(|u| u.ends_with("/privacy"))
+    );
 }
 
 #[test]
@@ -570,12 +570,12 @@ fn add_asks_first_and_then_sends_the_install() {
 
     // The link button opens the app in Teams on the web and leaves the dialog open.
     a.click("Open in Teams on the web");
-    assert!(a
-        .h
-        .engine
-        .apps_opened()
-        .iter()
-        .any(|u| u.ends_with("/l/app/demo-polls")));
+    assert!(
+        a.h.engine
+            .apps_opened()
+            .iter()
+            .any(|u| u.ends_with("/l/app/demo-polls"))
+    );
     assert_eq!(s.get_form_title(), "Add Contoso Polls to a team");
 
     a.click_last(&teams[0]);
@@ -1172,15 +1172,16 @@ fn a_meeting_chat_has_a_recap_tab_that_shows_the_same_recap() {
     );
     // A chat that is not a meeting chat has no Recap tab.
     a.h.app.set_current_id("19:group@thread.v2".into());
-    assert!(!a
-        .find("Recap")
-        .into_iter()
-        .any(|e| e.accessible_role() == Some(AccessibleRole::Tab)));
+    assert!(
+        !a.find("Recap")
+            .into_iter()
+            .any(|e| e.accessible_role() == Some(AccessibleRole::Tab))
+    );
 }
 
 #[test]
 fn meeting_recaps_keep_long_text_inside_at_760_px() {
-    use super::overflow::{assert_texts_inside, LONG, LONG_AR, LONG_WORD};
+    use super::overflow::{LONG, LONG_AR, LONG_WORD, assert_texts_inside};
     let a = recaps_open();
     a.h.app.window().set_size(LogicalSize::new(760., 700.));
     let r = a.h.app.global::<RecapsStore>();
@@ -1332,7 +1333,7 @@ fn a_w_apps_tab_opens_in_the_web_host_and_the_plain_link_stays_in_the_browser() 
 }
 #[test]
 fn the_store_and_an_app_fit_a_narrow_window() {
-    use super::responsive::{assert_fits, resize, WIDTHS};
+    use super::responsive::{WIDTHS, assert_fits, resize};
     for width in WIDTHS {
         let a = AppsHarness::open();
         resize(&a.h.app, width);

@@ -464,7 +464,10 @@ fn recording_length_ms(s: &str) -> Option<i64> {
         }
         return num.is_empty().then_some(total as i64);
     }
-    let parts: Vec<f64> = s.split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    let parts: Vec<f64> = s
+        .split(':')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
     let secs = match parts[..] {
         [h, m, s] => h * 3600.0 + m * 60.0 + s,
         [m, s] => m * 60.0 + s,
@@ -511,7 +514,9 @@ pub fn parse_recording_message(message_type: &str, content: &str) -> Option<Chat
     Some(ChatRecording {
         name: first_attr(content, "OriginalName", "v").unwrap_or_default(),
         web_url,
-        drive_id: item.and_then(|t| tag_attr(t, "driveId")).filter(|s| !s.is_empty()),
+        drive_id: item
+            .and_then(|t| tag_attr(t, "driveId"))
+            .filter(|s| !s.is_empty()),
         item_id: item
             .and_then(|t| tag_attr(t, "driveItemId"))
             .filter(|s| !s.is_empty()),
