@@ -1679,6 +1679,25 @@ fn composer_more_menu_switches_the_enter_behavior() {
     assert_eq!(*log.borrow(), vec!["enter-sends false"]);
 }
 
+#[test]
+fn composer_more_menu_labels_sit_next_to_their_radio_and_check() {
+    let app = app_with_messages(vec![]);
+    toolbar(&app)[2].mock_single_click(PointerEventButton::Left);
+    let find =
+        |id: &str| -> Vec<ElementHandle> { ElementHandle::find_by_element_id(&app, id).collect() };
+    let rows = find("Composer::enter-opt");
+    let labels = find("Composer::enter-label");
+    assert_eq!(labels.len(), 2);
+    for (row, label) in rows.iter().zip(&labels) {
+        let gap = label.absolute_position().x - row.absolute_position().x;
+        assert!(gap < 40.0, "radio label starts {gap}px into its row");
+    }
+    let row = find("Composer::receipts-opt");
+    let label = find("Composer::receipts-label");
+    let gap = label[0].absolute_position().x - row[0].absolute_position().x;
+    assert!(gap < 40.0, "check label starts {gap}px into its row");
+}
+
 /// The real engine behind the real window, driven synchronously: every callback runs its command to
 /// completion on a current-thread runtime and then renders what the engine marked dirty.
 struct Harness {
