@@ -115,7 +115,7 @@ pub fn custom_file(id: &str) -> Option<&str> {
 }
 
 #[cfg(feature = "calls")]
-pub use state::{Choice, FxView, VideoFx};
+pub use state::{FxView, VideoFx};
 
 #[cfg(feature = "calls")]
 mod state {
@@ -185,6 +185,7 @@ mod state {
             self.mirror.clone()
         }
 
+        #[cfg(test)]
         pub fn prefs(&self) -> &VideoFxPrefs {
             &self.prefs
         }

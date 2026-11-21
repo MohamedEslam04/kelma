@@ -157,7 +157,7 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_speaker(int(d.speaker));
     let fx = w.global::<VideoFxStore>();
     fx.set_cameras(texts(d.cameras));
-    fx.set_camera(int(d.camera));
+    fx.set_camera(int(d.camera_device));
     s.set_held(d.held);
     s.set_found(model(d.found.into_iter().map(call_found).collect()));
     s.set_invite_status(d.invite_status.into());

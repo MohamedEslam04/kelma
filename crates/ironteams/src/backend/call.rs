@@ -573,7 +573,8 @@ pub struct CallData {
     pub speakers: Vec<String>,
     pub speaker: usize,
     pub cameras: Vec<String>,
-    pub camera: usize,
+    /// The camera chosen in [`Self::cameras`].
+    pub camera_device: usize,
     pub held: bool,
     pub found: Vec<Found>,
     /// A short status under the invite box ("Calling Ada…").
@@ -1149,7 +1150,7 @@ impl CallModel {
                 .iter()
                 .map(|d| d.name.clone())
                 .collect(),
-            camera: self.devices.camera,
+            camera_device: self.devices.camera,
             held: self.held,
             found: self.found.clone(),
             invite_status: self.invite_status.clone(),
@@ -1911,7 +1912,7 @@ impl CallManager {
     }
 
     /// "Add new" in the Video effects panel: the picture at `path` becomes a background.
-    #[cfg(feature = "calls")]
+    #[cfg(all(feature = "calls", not(test)))]
     pub fn add_background(&self, path: &std::path::Path) {
         let r = self.shared.fx.lock().unwrap().add_background(path);
         if let Err(e) = r {
