@@ -32,6 +32,10 @@ export global VoiceRecStore {
 export component VoiceRecorderBar inherits Rectangle {
     property <bool> paused: VoiceRecStore.state == "paused";
     property <bool> sending: VoiceRecStore.state == "sending";
+    // The microphone is still opening: nothing to pause or send yet.
+    property <bool> starting: VoiceRecStore.state == "starting";
+    // Neither the clock nor the waveform means anything yet (opening) or any more (sending).
+    property <bool> busy: root.starting || root.sending;
     height: 48px;
     border-radius: Theme.radius;
     background: Theme.surface;
@@ -40,15 +44,15 @@ export component VoiceRecorderBar inherits Rectangle {
     accessible-label: @tr("Recording a voice message");
     keys := FocusScope {
         key-pressed(e) => {
-            if e.text == Key.Escape {
+            if e.text == Key.Escape && !root.sending {
                 VoiceRecStore.discard();
                 return accept;
             }
-            if e.text == Key.Return && !root.sending {
+            if e.text == Key.Return && !root.busy {
                 VoiceRecStore.send();
                 return accept;
             }
-            if e.text == " " {
+            if e.text == " " && !root.busy {
                 if root.paused { VoiceRecStore.preview-toggle(); } else { VoiceRecStore.pause(); }
                 return accept;
             }
@@ -62,15 +66,46 @@ export component VoiceRecorderBar inherits Rectangle {
         alignment: stretch;
         VerticalLayout {
             alignment: center;
-            IconButton {
-                icon: @image-url("icons/trash.svg");
-                tooltip: @tr("Delete recording");
-                size: 34px;
-                tint: Theme.danger;
-                clicked => { VoiceRecStore.discard(); }
+            // Dimmed and click-proof while the message is on its way (`sending`).
+            Rectangle {
+                width: 34px;
+                height: 34px;
+                opacity: root.sending ? 0.4 : 1;
+                IconButton {
+                    icon: @image-url("icons/trash.svg");
+                    tooltip: @tr("Delete recording");
+                    size: 34px;
+                    tint: Theme.danger;
+                    clicked => { VoiceRecStore.discard(); }
+                }
+                if root.sending: TouchArea { }
             }
         }
-        if !root.paused: HorizontalLayout {
+        if root.busy: HorizontalLayout {
+            spacing: 8px;
+            horizontal-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: Theme.fg-subtle;
+                    // Pulses while it works (still with reduced motion).
+                    opacity: Theme.reduced-motion ? 1 : (mod(animation-tick() / 1ms, 1000) < 500 ? 1 : 0.3);
+                }
+            }
+            Text {
+                text: root.sending ? @tr("Sending…") : @tr("Starting microphone…");
+                color: Theme.fg-muted;
+                font-size: 13px * Theme.font-scale;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                accessible-role: text;
+                accessible-label: self.text;
+            }
+        }
+        if !root.paused && !root.busy: HorizontalLayout {
             spacing: 6px;
             horizontal-stretch: 1;
             VerticalLayout {
@@ -130,14 +165,20 @@ export component VoiceRecorderBar inherits Rectangle {
         }
         VerticalLayout {
             alignment: center;
-            IconButton {
-                icon: root.paused ? @image-url("icons/mic.svg") : @image-url("icons/pause.svg");
-                tooltip: root.paused ? @tr("Resume recording") : @tr("Pause recording");
-                size: 34px;
-                tint: root.paused ? Theme.danger : Theme.fg-muted;
-                clicked => {
-                    if root.paused { VoiceRecStore.resume(); } else { VoiceRecStore.pause(); }
+            Rectangle {
+                width: 34px;
+                height: 34px;
+                opacity: root.busy ? 0.4 : 1;
+                IconButton {
+                    icon: root.paused ? @image-url("icons/mic.svg") : @image-url("icons/pause.svg");
+                    tooltip: root.paused ? @tr("Resume recording") : @tr("Pause recording");
+                    size: 34px;
+                    tint: root.paused ? Theme.danger : Theme.fg-muted;
+                    clicked => {
+                        if root.paused { VoiceRecStore.resume(); } else { VoiceRecStore.pause(); }
+                    }
                 }
+                if root.busy: TouchArea { }
             }
         }
         VerticalLayout {
@@ -146,10 +187,12 @@ export component VoiceRecorderBar inherits Rectangle {
                 width: 36px;
                 height: 36px;
                 border-radius: 18px;
-                background: root.sending ? Theme.surface-hover : send-touch.has-hover ? Theme.accent : Theme.accent-strong;
+                background: root.busy ? Theme.surface-hover : send-touch.has-hover ? Theme.accent : Theme.accent-strong;
                 accessible-role: button;
                 accessible-label: @tr("Send voice message");
-                accessible-action-default => { VoiceRecStore.send(); }
+                accessible-action-default => {
+                    if !root.busy { VoiceRecStore.send(); }
+                }
                 Image {
                     source: @image-url("icons/send.svg");
                     colorize: white;
@@ -157,7 +200,7 @@ export component VoiceRecorderBar inherits Rectangle {
                     height: 18px;
                 }
                 send-touch := TouchArea {
-                    enabled: !root.sending;
+                    enabled: !root.busy;
                     mouse-cursor: pointer;
                     clicked => { VoiceRecStore.send(); }
                 }

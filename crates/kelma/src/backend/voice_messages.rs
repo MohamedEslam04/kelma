@@ -105,6 +105,14 @@ impl Default for State {
     }
 }
 
+/// A recording begins: the bar shows "starting" until the microphone is open.
+fn begin_start(st: &mut State, target: String) {
+    st.recording_for = Some(target);
+    st.rec_state = "starting";
+    st.preview = None;
+    st.problem.clear();
+}
+
 /// The speed after `speed` on the speed button.
 pub(super) fn next_speed(speed: f32) -> f32 {
     let at = SPEEDS.iter().position(|s| (s - speed).abs() < 0.01);
@@ -502,7 +510,7 @@ impl Engine {
     }
 
     fn record_start(self: &Arc<Self>) -> anyhow::Result<()> {
-        if self.voice.lock().unwrap().recorder.is_some() {
+        if self.voice.lock().unwrap().rec_state != "idle" {
             return Ok(());
         }
         #[cfg(feature = "calls")]
@@ -521,19 +529,53 @@ impl Engine {
             );
             return Ok(());
         }
+        // The bar shows "Starting microphone…" at once: opening the device can take seconds.
+        begin_start(&mut self.voice.lock().unwrap(), target);
+        self.voice_tick();
         let mic = chosen_devices().microphone;
-        let recorder = voice::Recorder::start(mic.as_deref())
-            .map_err(|e| anyhow::anyhow!("Couldn't open the microphone: {e}"))?;
-        let mut st = self.voice.lock().unwrap();
-        if let Some(p) = st.player.as_mut() {
-            p.stop();
-        }
-        st.recorder = Some(recorder);
-        st.recording_for = Some(target);
-        st.rec_state = "recording";
-        st.preview = None;
-        st.problem.clear();
+        let e = self.clone();
+        tokio::spawn(async move {
+            let opened =
+                tokio::task::spawn_blocking(move || voice::Recorder::start(mic.as_deref())).await;
+            e.microphone_opened(
+                opened
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r.map_err(|e| e.to_string())),
+            );
+        });
         Ok(())
+    }
+
+    /// The microphone opened (or not): the bar switches to recording, or goes away with the
+    /// reason. A recording discarded while it was opening is dropped, which stops it.
+    fn microphone_opened(self: &Arc<Self>, opened: Result<voice::Recorder, String>) {
+        let failed = {
+            let mut st = self.voice.lock().unwrap();
+            if st.rec_state != "starting" {
+                return;
+            }
+            match opened {
+                Ok(recorder) => {
+                    if let Some(p) = st.player.as_mut() {
+                        p.stop();
+                    }
+                    st.recorder = Some(recorder);
+                    st.rec_state = "recording";
+                    st.preview = None;
+                    st.problem.clear();
+                    None
+                }
+                Err(e) => {
+                    st.rec_state = "idle";
+                    st.recording_for = None;
+                    Some(e)
+                }
+            }
+        };
+        if let Some(e) = failed {
+            self.ui.banner(format!("Couldn't open the microphone: {e}"));
+        }
+        self.voice_tick();
     }
 
     /// Stops the recording, encodes it and queues it in the outbox. Its row plays from the local
@@ -697,7 +739,7 @@ impl Engine {
         };
         let busy = st.recorder.is_some()
             || !st.loading.is_empty()
-            || st.rec_state == "sending"
+            || matches!(st.rec_state, "starting" | "sending")
             || state.as_ref().is_some_and(|s| s.playing);
         (player, recorder, busy)
     }
@@ -732,6 +774,17 @@ mod tests {
         assert!(a.iter().all(|v| (0.15..=0.45).contains(v)), "{a:?}");
         assert_eq!(a, placeholder("0-x", BARS));
         assert_ne!(a, placeholder("0-y", BARS));
+    }
+
+    #[test]
+    fn a_recording_starts_in_the_starting_state_with_its_target() {
+        let mut st = State::default();
+        st.problem = "old".into();
+        begin_start(&mut st, "chat-1".into());
+        assert_eq!(st.rec_state, "starting");
+        assert_eq!(st.recording_for.as_deref(), Some("chat-1"));
+        assert!(st.problem.is_empty());
+        assert!(st.recorder.is_none(), "no microphone yet");
     }
 
     #[test]
