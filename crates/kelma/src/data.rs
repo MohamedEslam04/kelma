@@ -33,6 +33,8 @@ pub struct ChatData {
     pub presence: String,
     /// The other person in a 1:1 chat (`""` otherwise), for the hover card.
     pub person: String,
+    /// A private channel (the list shows a lock after its name).
+    pub private: bool,
 }
 
 /// A chip above the composer.

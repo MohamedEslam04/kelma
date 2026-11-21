@@ -15,6 +15,7 @@ use teams_proto::search::{MessageHit, SearchFilters, mentions_query};
 use teams_proto::time::now_ms;
 use teams_proto::views::FollowedThread;
 
+mod discover;
 mod global;
 mod goto;
 mod top_messages;
@@ -423,7 +424,12 @@ impl Engine {
             FindCmd::FindQuery(q) => self.chat_find_query(q).await,
             FindCmd::FindPrev => self.chat_find_step(false).await,
             FindCmd::FindNext => self.chat_find_step(true).await,
-            FindCmd::Tab(t) => self.shared_tab(&t).await,
+            FindCmd::Tab(t) => {
+                self.shared_tab(&t).await;
+                if t == "storyline" {
+                    self.storyline_open().await;
+                }
+            }
             FindCmd::ChannelTabOpen(url) => {
                 if url.starts_with("https://") {
                     self.clone().handle(super::Cmd::OpenUrl(url)).await;
@@ -1255,6 +1261,7 @@ impl Engine {
         let kind: &'static str = match kind {
             "followed" => "followed",
             "saved" => "saved",
+            "discover" => "discover",
             _ => "mentions",
         };
         let seq = {
@@ -1271,6 +1278,7 @@ impl Engine {
         match kind {
             "mentions" => self.load_mentions(seq).await,
             "saved" => self.load_saved(seq),
+            "discover" => self.load_discover(seq),
             _ => self.load_followed(seq).await,
         }
     }

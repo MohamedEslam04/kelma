@@ -106,6 +106,14 @@ impl UiHandle {
         });
     }
 
+    /// Chats with an unsent draft (the Quick views' Drafts row).
+    pub fn quick_drafts(&self, n: usize) {
+        self.run(move |w| {
+            w.global::<crate::QuickViewsStore>()
+                .set_drafts(i32::try_from(n).unwrap_or(i32::MAX));
+        });
+    }
+
     pub fn quick_open(&self, open: bool) {
         self.find_store(move |s| s.set_quick_open(open));
     }

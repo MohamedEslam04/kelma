@@ -185,6 +185,49 @@ pub fn parse_feed(v: &Value) -> Vec<EngagePost> {
         .collect()
 }
 
+/// A person's Viva Engage profile, for the Storyline tab's header card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngageUser {
+    pub id: u64,
+    pub name: String,
+    pub followers: u32,
+    pub following: u32,
+    /// Messages the person posted (`stats.updates`).
+    pub posts: u32,
+}
+
+/// Parses `GET users/by_email.json`: an array of users, of which the first is taken.
+pub fn parse_engage_user(v: &Value) -> Option<EngageUser> {
+    let u = v.as_array().and_then(|a| a.first()).unwrap_or(v);
+    let stat = |k: &str| {
+        u.pointer(&format!("/stats/{k}"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32
+    };
+    Some(EngageUser {
+        id: u.get("id")?.as_u64()?,
+        name: u
+            .get("full_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        followers: stat("followers"),
+        following: stat("following"),
+        posts: stat("updates"),
+    })
+}
+
+/// `GET users/by_email.json?email=<email>` (UNVERIFIED, see docs/protocol.md).
+pub fn engage_user_url(email: &str) -> String {
+    let enc = url::form_urlencoded::byte_serialize(email.as_bytes()).collect::<String>();
+    format!("{YAMMER_V1}/users/by_email.json?email={enc}")
+}
+
+/// `GET messages/from_user/<id>.json?limit=<n>`: the person's newest posts (UNVERIFIED).
+pub fn engage_user_posts_url(user_id: u64, limit: u32) -> String {
+    format!("{YAMMER_V1}/messages/from_user/{user_id}.json?limit={limit}")
+}
+
 /// Body of a storyline post: a post on our own profile feed, with no community.
 /// Not verified live (a storyline post is public to the company).
 pub fn storyline_body(text: &str) -> Value {
@@ -278,6 +321,35 @@ impl Client {
         }
         let v = self
             .json_as("community feed", &Audience::Yammer, Method::GET, &url, None)
+            .await?;
+        Ok(parse_feed(&v))
+    }
+
+    /// A person's Viva Engage profile (counts for the Storyline tab), found by email; `None`
+    /// when Engage does not know the address. Read only, UNVERIFIED (docs/protocol.md).
+    pub async fn engage_user(&self, email: &str) -> Result<Option<EngageUser>> {
+        let v = self
+            .json_as(
+                "engage user",
+                &Audience::Yammer,
+                Method::GET,
+                &engage_user_url(email),
+                None,
+            )
+            .await?;
+        Ok(parse_engage_user(&v))
+    }
+
+    /// The newest posts of a person, newest first. Read only, UNVERIFIED (docs/protocol.md).
+    pub async fn engage_user_posts(&self, user_id: u64, limit: u32) -> Result<Vec<EngagePost>> {
+        let v = self
+            .json_as(
+                "engage user posts",
+                &Audience::Yammer,
+                Method::GET,
+                &engage_user_posts_url(user_id, limit),
+                None,
+            )
             .await?;
         Ok(parse_feed(&v))
     }
@@ -379,6 +451,36 @@ mod tests {
         assert_eq!((posts[0].thread_messages, posts[1].thread_messages), (3, 3));
         assert_eq!(posts[1].replied_to_id, Some(5));
         assert_eq!(posts[1].sender_name, "");
+    }
+
+    #[test]
+    fn parses_an_engage_user_and_builds_the_read_urls() {
+        let u = parse_engage_user(&json!([
+            {"id": 42, "full_name": "Ann Example",
+             "stats": {"followers": 12, "following": 3, "updates": 7}},
+            {"id": 43}
+        ]))
+        .unwrap();
+        assert_eq!(
+            u,
+            EngageUser {
+                id: 42,
+                name: "Ann Example".into(),
+                followers: 12,
+                following: 3,
+                posts: 7,
+            }
+        );
+        assert_eq!(parse_engage_user(&json!([])), None);
+        assert_eq!(parse_engage_user(&json!([{"full_name": "no id"}])), None);
+        assert_eq!(
+            engage_user_url("ann+x@example.com"),
+            "https://api.yammer.com/api/v1/users/by_email.json?email=ann%2Bx%40example.com"
+        );
+        assert_eq!(
+            engage_user_posts_url(42, 20),
+            "https://api.yammer.com/api/v1/messages/from_user/42.json?limit=20"
+        );
     }
 
     #[test]

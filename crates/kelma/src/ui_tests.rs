@@ -37,6 +37,7 @@ mod format;
 mod format_live;
 mod global_search;
 mod language;
+mod list_parity;
 mod lists;
 mod media;
 mod msg_extras;
@@ -1690,6 +1691,9 @@ impl Harness {
         let app = new_window();
         app.window().set_size(LogicalSize::new(1200., 800.));
         app.set_login_state("ready".into());
+        // Quick views collapsed, so the tests' chat list rows stay in view (scrolled-out rows
+        // are not found); `list_parity` opens it.
+        app.global::<crate::QuickViewsStore>().set_open(false);
         app.show().unwrap();
         let rt = Rc::new(
             tokio::runtime::Builder::new_current_thread()

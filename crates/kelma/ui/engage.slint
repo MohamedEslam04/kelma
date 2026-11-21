@@ -61,7 +61,7 @@ component Disabled inherits Rectangle {
     }
 }
 
-component PostCard inherits Rectangle {
+export component PostCard inherits Rectangle {
     in property <EPost> p;
     height: lay.preferred-height;
     border-radius: Theme.radius;
