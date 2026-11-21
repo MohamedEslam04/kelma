@@ -814,8 +814,8 @@ export component Composer inherits Rectangle {
                     HorizontalLayout {
                         padding-left: 8px;
                         spacing: 8px;
-                        Text { text: (i == 0) == root.enter-sends ? "●" : "○"; color: Theme.accent; vertical-alignment: center; }
-                        Text { text: opt; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                        Text { text: (i == 0) == root.enter-sends ? "●" : "○"; color: Theme.accent; vertical-alignment: center; horizontal-stretch: 0; }
+                        enter-label := Text { text: opt; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 1; }
                     }
                     enter-opt := TouchArea {
                         mouse-cursor: pointer;
@@ -837,8 +837,8 @@ export component Composer inherits Rectangle {
                     HorizontalLayout {
                         padding-left: 8px;
                         spacing: 8px;
-                        Text { text: PeopleStore.receipts-on ? "☑" : "☐"; color: Theme.accent; vertical-alignment: center; }
-                        Text { text: @tr("Read receipts"); color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                        Text { text: PeopleStore.receipts-on ? "☑" : "☐"; color: Theme.accent; vertical-alignment: center; horizontal-stretch: 0; }
+                        receipts-label := Text { text: @tr("Read receipts"); color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; horizontal-stretch: 1; }
                     }
                     receipts-touch := TouchArea {
                         mouse-cursor: pointer;

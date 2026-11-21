@@ -324,6 +324,37 @@ fn the_loop_button_opens_the_paragraph_editor() {
 }
 
 #[test]
+fn the_template_chips_are_compact_and_wrap_instead_of_stretching() {
+    let app = app_with_messages(vec![]);
+    click(&loop_button(&app));
+    let chip = |label: &str| {
+        find_label(&app, label)
+            .into_iter()
+            .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button))
+            .unwrap_or_else(|| panic!("the {label} chip"))
+    };
+    let labels = [
+        "Table",
+        "Bulleted list",
+        "Checklist",
+        "Task list",
+        "Voting table",
+    ];
+    for width in WIDTHS {
+        resize(&app, width);
+        for label in labels {
+            let c = chip(label);
+            assert!(on_screen(&c, width), "{label} chip at {width}px");
+            assert!(
+                c.size().width < 140.,
+                "{label} chip is {}px wide at {width}px: it should hug its text",
+                c.size().width
+            );
+        }
+    }
+}
+
+#[test]
 fn each_template_inserts_its_structure() {
     let app = app_with_messages(vec![]);
     let s = app.global::<LoopStore>();

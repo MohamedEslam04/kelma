@@ -263,8 +263,10 @@ export component LoopEditor inherits Rectangle {
             }
         }
 
-        // Templates, while the paragraph has no structure yet: two rows, so they fit a narrow composer.
-        if LoopStore.kind == "": chips := Rectangle {
+        // Templates, while the paragraph has no structure yet: compact chips of their natural
+        // width on two lines (3 + 2), so they fit a narrow composer. The split does not depend on
+        // the width: the composer sizes itself from this layout.
+        if LoopStore.kind == "": chips := VerticalLayout {
             property <[{kind: string, label: string}]> items: [
                 { kind: "table", label: @tr("Table") },
                 { kind: "bullets", label: @tr("Bulleted list") },
@@ -273,13 +275,22 @@ export component LoopEditor inherits Rectangle {
                 { kind: "voting", label: @tr("Voting table") },
             ];
             property <int> per-row: 3;
-            height: 64px;
-            for t[i] in self.items: Pill {
-                x: mod(i, chips.per-row) * (chips.width / chips.per-row);
-                y: floor(i / chips.per-row) * 32px;
-                width: chips.width / chips.per-row - 6px;
-                label: t.label;
-                clicked => { LoopStore.insert(t.kind); }
+            spacing: 6px;
+            for line in ceil(self.items.length / self.per-row): HorizontalLayout {
+                alignment: start;
+                // Every chip is in every line's layout; the ones of other lines take no room.
+                for t[i] in chips.items: Rectangle {
+                    property <bool> here: floor(i / chips.per-row) == line;
+                    width: here ? pill.preferred-width + 6px : 0px;
+                    height: here ? 26px : 0px;
+                    pill := Pill {
+                        visible: parent.here;
+                        x: 0px;
+                        width: parent.width - 6px;
+                        label: t.label;
+                        clicked => { LoopStore.insert(t.kind); }
+                    }
+                }
             }
         }
 
