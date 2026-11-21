@@ -311,7 +311,8 @@ mod tests {
         for item in ["Copy name", "Remove from view"] {
             assert_eq!(labelled(&app, item).len(), 1, "{item}");
         }
-        assert_eq!(labelled(&app, "Add to speed dial").len(), 3);
+        // (Two rows' stars, the menu's entry and the Add button of the Speed dial heading.)
+        assert_eq!(labelled(&app, "Add to speed dial").len(), 4);
         assert!(labelled(&app, "Copy number").is_empty());
         press(&app, "Copy name");
         assert_eq!(
