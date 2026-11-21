@@ -7,6 +7,7 @@ import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
 import { PeopleStore, PersonHover } from "people.slint";
 import { ComposerApps } from "composer_apps.slint";
 import { KindBadge } from "onedrive.slint";
+import { Motion, SkeletonList } from "motion.slint";
 
 // One row of the Search page or a quick view.
 export struct HitRow {
@@ -403,12 +404,11 @@ export component SearchView inherits Rectangle {
                     Pill { label: FindStore.tab == "all" || FindStore.tab == "messages" ? "Show more messages" : "Show more results"; x: 12px; y: 8px; clicked => { FindStore.command("more", ""); } }
                 }
             }
-            if FindStore.searching && FindStore.results.length == 0: Text {
-                text: "Searching…";
-                color: Theme.fg-muted;
-                font-size: 14px * Theme.font-scale;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            if FindStore.searching && FindStore.results.length == 0: SkeletonList {
+                count: 7;
+                avatar: 36px;
+                row-height: 64px;
+                label: "Searching…";
             }
             if !FindStore.searching && FindStore.searched && FindStore.results.length == 0: VerticalLayout {
                 alignment: center;
@@ -486,7 +486,7 @@ export component QuickView inherits Rectangle {
                     Pill { label: "Show more"; x: 12px; y: 8px; clicked => { FindStore.command("more", ""); } }
                 }
             }
-            if FindStore.quick-loading && FindStore.quick-rows.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if FindStore.quick-loading && FindStore.quick-rows.length == 0: SkeletonList { count: 6; avatar: 36px; row-height: 64px; label: "Loading…"; }
             if !FindStore.quick-loading && FindStore.quick-rows.length == 0: VerticalLayout {
                 alignment: center;
                 spacing: 6px;
@@ -576,7 +576,7 @@ component SharedLine inherits Rectangle {
     callback more(length, length);
     height: root.compact ? 48px : 44px;
     background: root.data.highlight ? Theme.accent.with-alpha(0.22) : (t.has-hover ? Theme.surface-hover : transparent);
-    animate background { duration: 300ms; }
+    animate background { duration: Motion.normal; }
     // Dimmed while the server answers (a delete).
     opacity: root.data.busy != "" ? 0.55 : 1.0;
     accessible-role: list-item;
@@ -798,7 +798,7 @@ export component SharedView inherits Rectangle {
                     }
                 }
             }
-            if FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Loading…"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if FindStore.shared-loading && FindStore.shared.length == 0: SkeletonList { count: 5; avatar: 32px; row-height: 56px; label: "Loading…"; }
             if !FindStore.shared-loading && FindStore.shared.length == 0: Text { text: "Nothing has been shared here yet"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
         }
     }

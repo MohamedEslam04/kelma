@@ -66,6 +66,7 @@ mod stickers;
 pub(crate) mod storyline;
 mod sync;
 mod team_photo;
+pub(crate) mod typing;
 mod unread;
 pub(crate) mod util;
 mod video_clips;
@@ -227,7 +228,9 @@ struct View {
     editing: Option<String>,
     /// Sent messages (client message id, optimistic row) waiting for their echo.
     pending: Vec<(String, MessageRow)>,
-    typing: HashMap<String, (String, Instant)>,
+    typing: typing::Typing,
+    /// Messages that arrived live while their chat was open, and when (they fade in once).
+    fresh: HashMap<String, Instant>,
     last_typing_sent: Option<Instant>,
     collapsed_teams: HashSet<String>,
     teams_order: Vec<String>,

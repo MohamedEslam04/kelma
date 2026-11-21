@@ -3,6 +3,7 @@
 import { Theme } from "theme.slint";
 import { EmojiItem } from "types.slint";
 import { Icon } from "widgets.slint";
+import { Motion } from "motion.slint";
 
 export component ReactionPicker inherits Rectangle {
     in property <[EmojiItem]> items;
@@ -19,6 +20,17 @@ export component ReactionPicker inherits Rectangle {
     border-color: Theme.border;
     drop-shadow-blur: 12px;
     drop-shadow-color: #00000090;
+    // Fades in and grows from 0.97 (150 ms) each time it opens.
+    property <bool> shown: Theme.reduced-motion;
+    opacity: root.shown ? 1.0 : 0.0;
+    transform-scale: root.shown ? 1.0 : Motion.pop-from;
+    animate opacity { duration: Motion.fast; easing: ease-out; }
+    animate transform-scale { duration: Motion.fast; easing: ease-out; }
+    Timer {
+        interval: 16ms;
+        running: !root.shown;
+        triggered => { root.shown = true; }
+    }
 
     VerticalLayout {
         padding: 8px;

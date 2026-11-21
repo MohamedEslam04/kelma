@@ -11,6 +11,7 @@ import { ListView } from "std-widgets.slint";
 import { FileMenuItem } from "find.slint";
 import { PersonHover } from "people.slint";
 import { SettingsStore } from "settings_store.slint";
+import { SkeletonList } from "motion.slint";
 
 export struct CallHistoryItem {
     id: string,
@@ -465,7 +466,7 @@ export component CallsPage inherits Rectangle {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            if CallsPageStore.loading: Text { text: @tr("Loading…"); color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; height: 40px; vertical-alignment: center; }
+            if CallsPageStore.loading: SkeletonList { count: 7; avatar: 36px; row-height: 60px; label: @tr("Loading…"); }
             if CallsPageStore.filter != "voicemail" && CallsPageStore.error != "": Text { text: CallsPageStore.error; color: Theme.danger; font-size: 13px * Theme.font-scale; horizontal-alignment: center; height: 40px; vertical-alignment: center; wrap: word-wrap; overflow: elide; }
             if CallsPageStore.filter == "voicemail" && CallsPageStore.voicemail-error != "": Text { text: CallsPageStore.voicemail-error; color: Theme.danger; font-size: 13px * Theme.font-scale; horizontal-alignment: center; height: 40px; vertical-alignment: center; wrap: word-wrap; overflow: elide; }
             if !CallsPageStore.loading && CallsPageStore.filter != "voicemail" && CallsPageStore.error == "" && CallsPageStore.history.length == 0: Text {

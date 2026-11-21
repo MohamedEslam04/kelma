@@ -11,6 +11,7 @@ import { ChatTipLayer, ChatTipStore, QuickViewsSection } from "chat_list_extras.
 import { FindStore } from "find.slint";
 import { NewChatSplit, PMenuItem } from "web_parity.slint";
 import { ChatHeaderStore } from "chat_header.slint";
+import { Motion, PopIn, Reveal, SkeletonList, TypingDots, TypingStore } from "motion.slint";
 
 component MenuItem inherits Rectangle {
     in property <string> label;
@@ -18,6 +19,7 @@ component MenuItem inherits Rectangle {
     height: 32px;
     border-radius: 4px;
     background: touch.has-hover ? Theme.surface-hover : transparent;
+    animate background { duration: Motion.quick; }
     Text { x: 10px; text: root.label; color: Theme.fg; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
@@ -29,6 +31,7 @@ component MoreRow inherits Rectangle {
     height: 28px;
     border-radius: 4px;
     background: touch.has-hover ? Theme.surface-hover : transparent;
+    animate background { duration: Motion.quick; }
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => { root.clicked(); }
@@ -69,6 +72,7 @@ component ChatItem inherits Rectangle {
     height: 56px;
     border-radius: 4px;
     background: selected ? Theme.selected : (t.has-hover ? Theme.surface-hover : transparent);
+    animate background { duration: Motion.quick; }
     HorizontalLayout {
         padding-left: 12px;
         padding-right: 10px;
@@ -158,6 +162,18 @@ component ChatItem inherits Rectangle {
                     accessible-label: @tr("Private channel");
                 }
                 if root.data.private: Rectangle { horizontal-stretch: 1; }
+                // Someone is typing in this chat: three dots, as in Teams.
+                for tc in TypingStore.chats: Rectangle {
+                    width: tc == root.data.id ? 18px : 0px;
+                    horizontal-stretch: 0;
+                    if tc == root.data.id: TypingDots {
+                        tint: Theme.accent;
+                        dot: 3px;
+                        y: (parent.height - self.height) / 2;
+                        accessible-role: image;
+                        accessible-label: @tr("Typing");
+                    }
+                }
                 if root.data.mention: Text { text: "@"; color: Theme.accent; font-size: 13px * Theme.font-scale; font-weight: 700; horizontal-stretch: 0; vertical-alignment: center; accessible-role: text; accessible-label: @tr("You were mentioned"); }
                 if ListStore.show-times: Text { text: root.data.time; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-stretch: 0; vertical-alignment: center; }
                 if root.data.muted: Text { text: "🔕"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; horizontal-stretch: 0; vertical-alignment: center; accessible-role: text; accessible-label: @tr("Muted"); }
@@ -175,7 +191,8 @@ component ChatItem inherits Rectangle {
                 }
             }
         }
-        if root.data.unread: Rectangle {
+        if root.data.unread: PopIn {
+            from-scale: Theme.reduced-motion ? 1.0 : 0.3;
             width: 8px;
             height: 8px;
             border-radius: 4px;
@@ -319,6 +336,8 @@ export component Sidebar inherits Rectangle {
     in property <int> catch-chats;
     in property <int> catch-mentions;
     in property <bool> away-visible;
+    // The first sync has not finished and there is nothing to list yet: grey rows stand in.
+    in property <bool> loading;
 
     callback select-chat(string);
     callback select-channel(string, string);
@@ -352,6 +371,13 @@ export component Sidebar inherits Rectangle {
     width: 320px;
     background: Theme.sidebar;
     border-width: 0px;
+
+    // A section the user just opened or closed has had its moment: later rows are placed at once.
+    Timer {
+        interval: 400ms;
+        running: Motion.toggled;
+        triggered => { Motion.toggled = false; }
+    }
 
     VerticalLayout {
         HorizontalLayout {
@@ -438,7 +464,7 @@ export component Sidebar inherits Rectangle {
                 // The chat being started in the New chat pane, as Teams lists it.
                 if PeopleStore.new-chat-open: NewMessageRow { }
                 if root.filter != "communities": SectionHeader { label: @tr("Favorites"); expanded <=> ListStore.favorites-open; }
-                if ListStore.favorites-open: VerticalLayout { for c in root.chats-favorites: ChatItem {
+                if ListStore.favorites-open: Reveal { for c in root.chats-favorites: ChatItem {
                     data: c;
                     selected: c.id == root.current-id;
                     limit: root.absolute-position.y + root.height;
@@ -448,8 +474,8 @@ export component Sidebar inherits Rectangle {
                     leave => { root.leave-chat(c.id); }
                 } }
                 for sec in ListStore.sections: VerticalLayout {
-                    SectionHead { section: sec; toggle => { ListStore.command("section-toggle", sec.id); } }
-                    if sec.expanded: VerticalLayout { for c in sec.items: ChatItem {
+                    SectionHead { section: sec; toggle => { Motion.toggled = true; ListStore.command("section-toggle", sec.id); } }
+                    if sec.expanded: Reveal { for c in sec.items: ChatItem {
                         data: c;
                         selected: c.id == root.current-id;
                         limit: root.absolute-position.y + root.height;
@@ -460,7 +486,7 @@ export component Sidebar inherits Rectangle {
                     } }
                 }
                 if root.filter != "communities": SectionHeader { label: @tr("Chats"); expanded <=> ListStore.chats-open; }
-                if ListStore.chats-open: VerticalLayout { for c in root.chats-main: VerticalLayout {
+                if ListStore.chats-open: Reveal { for c in root.chats-main: VerticalLayout {
                     if c.section != "meetings": ChatItem {
                         data: c;
                         selected: c.id == root.current-id;
@@ -474,9 +500,9 @@ export component Sidebar inherits Rectangle {
                 // Meeting chats, collapsed by default: the newest five, then "See all".
                 if ListStore.meetings-count > 0: SectionHead {
                     section: { id: "meetings", name: @tr("Meetings"), expanded: ListStore.meetings-open, unread: ListStore.meetings-unread, local: false };
-                    toggle => { ListStore.meetings-open = !ListStore.meetings-open; }
+                    toggle => { Motion.toggled = true; ListStore.meetings-open = !ListStore.meetings-open; }
                 }
-                if ListStore.meetings-count > 0 && ListStore.meetings-open: VerticalLayout { for c[i] in root.chats-main: VerticalLayout {
+                if ListStore.meetings-count > 0 && ListStore.meetings-open: Reveal { for c[i] in root.chats-main: VerticalLayout {
                     if c.section == "meetings" && (ListStore.meetings-all || i < root.meetings-start + 5): ChatItem {
                         data: c;
                         selected: c.id == root.current-id;
@@ -492,7 +518,7 @@ export component Sidebar inherits Rectangle {
                     clicked => { ListStore.meetings-all = !ListStore.meetings-all; }
                 }
                 if !ListStore.combined && root.filter != "communities": SectionHeader { label: @tr("Teams and channels"); expanded <=> ListStore.channels-open; }
-                if ListStore.channels-open && !ListStore.combined: VerticalLayout { for c in root.chats-channels: ChatItem {
+                if ListStore.channels-open && !ListStore.combined: Reveal { for c in root.chats-channels: ChatItem {
                     data: c;
                     selected: c.id == root.current-id;
                     limit: root.absolute-position.y + root.height;
@@ -511,6 +537,8 @@ export component Sidebar inherits Rectangle {
                     height: 40px;
                     vertical-alignment: center;
                 }
+                // Under everything else, so it never moves a row.
+                if root.loading: SkeletonList { count: 8; label: @tr("Loading chats"); }
             }
         }
 

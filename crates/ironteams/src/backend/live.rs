@@ -5,7 +5,7 @@ use super::unread::follow_new_message;
 use super::util::*;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use store::Store;
 use teams_proto::model::{Event, Message};
 use teams_proto::trouter::TrouterEvent;
@@ -78,9 +78,11 @@ impl Engine {
                         .flatten()
                         .map(|u| u.display_name)
                         .unwrap_or_else(|| "Someone".into());
-                    self.view.lock().unwrap().typing.insert(
-                        conversation_id,
-                        (name, Instant::now() + Duration::from_secs(6)),
+                    self.view.lock().unwrap().typing.note(
+                        &conversation_id,
+                        &from,
+                        &name,
+                        Instant::now(),
                     );
                 }
             }
@@ -125,7 +127,7 @@ impl Engine {
                     outbox_echo = Some(cmid.clone());
                 }
             }
-            v.typing.remove(&m.conversation_id);
+            v.typing.stop(&m.conversation_id, &m.sender_mri);
             let follow = follow_new_message(v.at_bottom, mine);
             if follow {
                 v.at_bottom = true;
@@ -139,7 +141,7 @@ impl Engine {
         if let Some(cmid) = outbox_echo {
             let _ = self.store.lock().unwrap().remove(&cmid);
         }
-        let (known, counted) = {
+        let (known, counted, arrived) = {
             let st = self.store.lock().unwrap();
             let existed = st.message(&m.id).ok().flatten().is_some();
             let _ = st.upsert_message(&row_from_message(&m, None));
@@ -161,8 +163,16 @@ impl Engine {
             (
                 st.conversation(&m.conversation_id).ok().flatten().is_some(),
                 counted,
+                is_current && !mine && !existed && m.parent_id.is_none() && m.is_chat_content(),
             )
         };
+        if arrived {
+            self.view
+                .lock()
+                .unwrap()
+                .fresh
+                .insert(m.id.clone(), Instant::now());
+        }
         if is_current && focused && !mine {
             let e = self.clone();
             let msg = m.clone();

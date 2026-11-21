@@ -5,6 +5,7 @@ import { Theme } from "theme.slint";
 import { Icon, IconButton, Pill } from "widgets.slint";
 import { TChannel, TTeam, TeamsStore, TeamsActions } from "teams_store.slint";
 import { TButton, TMenuItem } from "teams_widgets.slint";
+import { SkeletonList } from "motion.slint";
 
 component Chip inherits Rectangle {
     in property <string> label;
@@ -308,6 +309,7 @@ component CommunitiesTab inherits Rectangle {
             VerticalLayout {
                 spacing: 8px;
                 alignment: start;
+                if TeamsStore.posts.length == 0 && TeamsStore.loading: SkeletonList { count: 4; avatar: 36px; row-height: 88px; label: "Loading posts"; }
                 if TeamsStore.posts.length == 0 && !TeamsStore.loading: Text { text: "No posts yet."; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
                 for p in TeamsStore.posts: Rectangle {
                     height: post-text.preferred-height + 54px;
@@ -462,7 +464,7 @@ export component TeamsPage inherits Rectangle {
                     padding: 12px;
                     spacing: 2px;
                     alignment: start;
-                    if TeamsStore.loading && TeamsStore.teams.length == 0: Text { text: "Loading your teams…"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; }
+                    if TeamsStore.loading && TeamsStore.teams.length == 0: SkeletonList { count: 7; avatar: 32px; row-height: 48px; label: "Loading your teams"; }
                     if !TeamsStore.loading && TeamsStore.teams.length == 0: Text { text: "No teams match."; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; accessible-role: text; }
                     for t[ti] in TeamsStore.teams: TeamLine {
                         t: t;

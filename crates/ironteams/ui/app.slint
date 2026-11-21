@@ -48,8 +48,11 @@ import { SendStore, ScheduledList } from "composer_send.slint";
 import { ChatHeaderStore, HeaderMoreButton, RemoveHistoryConfirm } from "chat_header.slint";
 import { StorylineView } from "storyline.slint";
 import { TopBarStore, TopSearch, SearchDropdown, NavButtons, MoreButton, MoreMenu } from "topbar.slint";
+import { Motion, PopIn, SkeletonMessages, Spinner, TypingIndicator } from "motion.slint";
 
 export { Theme } from "theme.slint";
+export { Motion, TypingStore } from "motion.slint";
+export { ReaderItem } from "types.slint";
 export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, LoopCard, MeetingCard, MeetingPerson, Msg, ChannelRow, TeamRow, VoiceItem, VideoClipItem } from "types.slint";
 export { EmojiApi } from "composer.slint";
 export { SpellApi, SpellWord } from "spelling.slint";
@@ -185,7 +188,6 @@ export component AppWindow inherits Window {
     in property <bool> current-muted;
     in property <string> thread-root;     // non-empty: viewing a channel thread
     in property <[Msg]> messages;
-    in property <string> typing;
     in property <bool> loading-older;
     // The open chat or channel is reading its newest page (what the store had already shows).
     in property <bool> loading-latest;
@@ -669,10 +671,11 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             alignment: center;
                             spacing: 2px;
-                            Icon { source: item.icon; tint: root.view == item.key || rt.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
+                            Icon { source: item.icon; tint: root.view == item.key || rt.has-hover ? Theme.accent : Theme.fg-muted; animate tint { duration: Motion.quick; } width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
                             Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px * Theme.font-scale; horizontal-alignment: center; overflow: elide; }
                         }
-                        if ri.badge-count > 0: Rectangle {
+                        if ri.badge-count > 0: PopIn {
+                            from-scale: Theme.reduced-motion ? 1.0 : 0.3;
                             x: parent.width / 2 + 2px;
                             y: 4px;
                             height: 16px;
@@ -708,6 +711,7 @@ export component AppWindow inherits Window {
                 catch-chats: root.catch-chats;
                 catch-mentions: root.catch-counts.length > 1 ? root.catch-counts[1] : 0;
                 away-visible: root.synced && !root.away-dismissed && root.catch-chats > 0;
+                loading: root.connected && !root.synced && root.chats-main.length == 0 && root.chats-favorites.length == 0 && root.chats-channels.length == 0;
                 catch-up => { root.catch-up(0); }
                 dismiss-away => { root.away-dismissed = true; }
                 mark-unread(id) => { root.mark-chat-unread(id); }
@@ -793,6 +797,7 @@ export component AppWindow inherits Window {
                     preview-location: root.activity-preview-location;
                     preview-is-channel: root.activity-preview-is-channel;
                     preview-loading: root.activity-preview-loading;
+                    loading: root.connected && !root.synced;
                     preview: root.activity-preview;
                     highlight: root.activity-highlight;
                     banner: root.banner;
@@ -1349,18 +1354,35 @@ export component AppWindow inherits Window {
                             x: (parent.width - 200px) / 2;
                             border-radius: 12px;
                             background: Theme.surface;
-                            Text { text: @tr("Loading older messages…"); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
+                            Spinner { x: 12px; y: 5px; }
+                            Text {
+                                x: 30px;
+                                width: parent.width - 38px;
+                                text: @tr("Loading older messages…");
+                                color: Theme.fg-muted;
+                                font-size: 12px * Theme.font-scale;
+                                horizontal-alignment: center;
+                            }
+                        }
+                        // Opening a chat or channel that has nothing stored yet: grey bubbles with a
+                        // highlight passing over them until its newest page arrives.
+                        if root.loading-latest && root.messages.length == 0 && !root.unavailable && root.thread-root == "": SkeletonMessages {
+                            z: 4;
+                            label: root.posts-mode ? @tr("Loading posts") : @tr("Loading messages");
                         }
                         if root.loading-latest && !root.loading-older: Rectangle {
                             z: 6;
                             // Below the Posts tab's "Post in channel" bar.
                             y: root.posts-mode ? 52px : 8px;
                             height: 24px;
-                            width: latest-text.preferred-width + 28px;
+                            width: latest-text.preferred-width + 52px;
                             x: (parent.width - self.width) / 2;
                             border-radius: 12px;
                             background: Theme.surface;
+                            Spinner { x: 12px; y: 5px; }
                             latest-text := Text {
+                                x: 30px;
+                                width: parent.width - 42px;
                                 text: root.posts-mode ? @tr("Loading new posts…") : @tr("Loading new messages…");
                                 color: Theme.fg-muted;
                                 font-size: 12px * Theme.font-scale;
@@ -1375,10 +1397,7 @@ export component AppWindow inherits Window {
                         max-bubble: min(720px, parent.width * 0.75);
                     }
 
-                    if root.typing != "": HorizontalLayout {
-                        padding-left: 24px;
-                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
-                    }
+                    TypingIndicator { }
 
                     if root.select-mode: SelectBar {
                         count: root.select-count;

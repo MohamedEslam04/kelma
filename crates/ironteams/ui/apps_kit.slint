@@ -3,6 +3,7 @@
 import { Theme } from "theme.slint";
 import { Icon } from "widgets.slint";
 import { AppCard } from "apps_store.slint";
+import { Spinner } from "motion.slint";
 
 // An app's icon, or its first letter on a colored square when the icon is not loaded.
 export component AppTile inherits Rectangle {
@@ -235,8 +236,11 @@ export component KitNote inherits Rectangle {
     in property <string> text;
     in property <color> tone: Theme.fg-subtle;
     in property <length> text-size: 13px;
+    // Work is going on: a small spinner leads the line.
+    in property <bool> busy: false;
     height: note.preferred-height + 10px;
-    note := Text { x: 20px; y: 5px; width: parent.width - 40px; text: root.text; color: root.tone; font-size: root.text-size; wrap: word-wrap; }
+    if root.busy: Spinner { x: 20px; y: 5px + (note.preferred-height > 18px ? 0px : (note.preferred-height - 14px) / 2); }
+    note := Text { x: root.busy ? 40px : 20px; y: 5px; width: parent.width - (root.busy ? 60px : 40px); text: root.text; color: root.tone; font-size: root.text-size; wrap: word-wrap; }
 }
 
 // A small status chip: On, Failed, Completed, …

@@ -5,6 +5,7 @@ import { PersonItem } from "types.slint";
 import { Avatar, IconButton } from "widgets.slint";
 import { DirectCallStore } from "call_incoming.slint";
 import { CallPersonButton } from "call_outgoing.slint";
+import { Skeleton, SkeletonList } from "motion.slint";
 
 export component ProfileCard inherits Rectangle {
     in property <PersonItem> person;
@@ -78,7 +79,12 @@ export component ProfileCard inherits Rectangle {
                 if root.badge != "": card-badge := Text { text: "(" + root.badge + ")"; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; accessible-role: text; accessible-label: root.badge; }
                 if root.person.subtitle != "": card-title := Text { text: root.person.subtitle; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; wrap: word-wrap; accessible-role: text; accessible-label: root.person.subtitle; }
                 if root.note != "": card-note := Text { text: root.note; color: Theme.fg; font-size: 12px * Theme.font-scale; font-italic: true; wrap: word-wrap; max-height: 34px; overflow: elide; accessible-role: text; accessible-label: "Status message"; accessible-value: self.text; }
-                if root.loading: Text { text: "Loading…"; color: Theme.fg-subtle; font-size: 12px * Theme.font-scale; }
+                if root.loading: Rectangle {
+                    height: 16px;
+                    accessible-role: text;
+                    accessible-label: "Loading";
+                    Skeleton { y: 4px; width: parent.width * 0.6; height: 8px; }
+                }
             }
             IconButton { icon: @image-url("icons/close.svg"); tooltip: "Close"; size: 28px; clicked => { root.close(); } }
         }
@@ -112,6 +118,8 @@ export component ProfileCard inherits Rectangle {
                 card-presence := Text { text: root.presence-label; color: Theme.fg; font-size: 13px * Theme.font-scale; font-weight: 600; vertical-alignment: center; accessible-role: text; accessible-label: "Availability"; accessible-value: self.text; }
             }
         }
+        // The details (email, location, local time) are being read.
+        if root.loading && root.person.kind == "person": SkeletonList { count: 3; avatar: 0px; row-height: 30px; label: "Loading details"; }
         if root.person.kind == "person" && !root.loading: Rectangle {
             height: 32px;
             border-radius: 4px;

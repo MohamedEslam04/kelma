@@ -71,8 +71,10 @@ impl Engine {
         let generation = self.find.lock().unwrap().top.start(local);
         self.push_top(&query);
         if self.offline.load(Ordering::Relaxed) || q.chars().count() < SERVER_MIN_CHARS {
+            self.ui.topbar_searching(false);
             return;
         }
+        self.ui.topbar_searching(true);
         // Off the find lane: the pause and the request must not hold up other commands.
         let me = self.clone();
         tokio::spawn(async move {
@@ -89,12 +91,16 @@ impl Engine {
                 Ok(p) => p,
                 Err(err) => {
                     tracing::debug!(%err, "top search: server message search failed");
+                    if me.find.lock().unwrap().top.is_current(generation) {
+                        me.ui.topbar_searching(false);
+                    }
                     return;
                 }
             };
             let hits: Vec<Hit> = page.hits.iter().map(|h| me.hit_from_message(h)).collect();
             if me.find.lock().unwrap().top.add_server(generation, hits) {
                 me.push_top(&query);
+                me.ui.topbar_searching(false);
             }
         });
     }

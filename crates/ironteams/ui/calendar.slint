@@ -8,6 +8,7 @@ import { CalStore, CalForm, CalFmt } from "calendar_store.slint";
 import { CalButton, CalCard, CalCheck, CalMenuItem, CalScrim } from "calendar_widgets.slint";
 import { EventPeek, EventFull } from "calendar_event.slint";
 import { EventForm } from "calendar_form.slint";
+import { Skeleton } from "motion.slint";
 import { AddCalendarMenu, FiltersPanel, MeetLinkDialog, MoreMenu, NewMenu, PromptDialog, RangePicker, SettingsDialog, ShareDialog, ViewsPanel, WorkLocationMenu } from "calendar_dialogs.slint";
 
 export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar_store.slint";
@@ -280,6 +281,19 @@ component TimeGrid inherits Rectangle {
             background: d.today ? #17172a : (d.weekend ? #181818 : transparent);
             // Outside work hours
             Rectangle { y: 0px; height: CalStore.work-start * root.pph / 60; background: #00000030; }
+            // The events are being read: grey blocks hold their place.
+            if CalStore.loading && CalStore.blocks.length == 0: Skeleton {
+                x: 3px;
+                y: root.pph * (9 + mod(i * 3, 5));
+                width: parent.width - 6px;
+                height: root.pph * (1 + mod(i, 2)) + 20px;
+            }
+            if CalStore.loading && CalStore.blocks.length == 0: Skeleton {
+                x: 3px;
+                y: root.pph * (14 + mod(i, 3));
+                width: parent.width - 6px;
+                height: root.pph + 12px;
+            }
             Rectangle { y: CalStore.work-end * root.pph / 60; height: parent.height - self.y; background: #00000030; }
             TouchArea {
                 accessible-role: button;
@@ -435,6 +449,12 @@ component MonthGrid inherits Rectangle {
         border-width: 1px;
         border-color: Theme.border;
         clip: true;
+        if CalStore.loading && c.items.length == 0 && mod(i, 3) != 1: Skeleton {
+            x: 4px;
+            y: 28px;
+            width: parent.width * (mod(i, 2) == 0 ? 0.7 : 0.5);
+            height: 12px;
+        }
         VerticalLayout {
             padding: 3px;
             spacing: 1px;

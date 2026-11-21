@@ -3,6 +3,7 @@
 import { Theme } from "theme.slint";
 import { LinkCard } from "types.slint";
 import { Icon, IconButton } from "widgets.slint";
+import { Spinner } from "motion.slint";
 
 export global MediaStore {
     in property <bool> viewer-open: false;
@@ -131,6 +132,11 @@ export component ImageViewer inherits Rectangle {
     // Clicking beside the picture closes the viewer.
     TouchArea { clicked => { MediaStore.command("image-close", ""); } }
 
+    if !MediaStore.viewer-loaded && !MediaStore.viewer-failed: Spinner {
+        size: 28px;
+        x: (parent.width - self.width) / 2;
+        y: parent.height / 2 - 40px;
+    }
     if !MediaStore.viewer-loaded && !MediaStore.viewer-failed: Text {
         text: "Loading image…";
         color: Theme.fg-muted;

@@ -253,6 +253,7 @@ impl Engine {
             v.reply_to = None;
             v.editing = None;
             v.selected.clear();
+            v.fresh.clear();
             v.forward = None;
             v.keep_unread = None;
             v.unread_marker = marker;

@@ -4,6 +4,7 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconButton, Pill } from "widgets.slint";
+import { SkeletonList } from "motion.slint";
 
 export struct DriveRow {
     id: string,
@@ -648,7 +649,7 @@ export component DriveFilePicker inherits Rectangle {
                     }
                 }
             }
-            if root.loading: Text { text: "Loading..."; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+            if root.loading: SkeletonList { count: 6; avatar: 22px; row-height: 34px; label: "Loading..."; }
             if !root.loading && root.rows.length == 0: Text { text: "Nothing here"; color: Theme.fg-subtle; font-size: 13px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
         }
         HorizontalLayout {
@@ -1169,7 +1170,7 @@ export component OneDriveView inherits Rectangle {
                         favorite => { DriveStore.command("favorite", r.id); }
                     }
                 }
-                if DriveStore.loading && DriveStore.rows.length == 0: Text { text: "Loading..."; color: Theme.fg-muted; font-size: 14px * Theme.font-scale; horizontal-alignment: center; vertical-alignment: center; }
+                if DriveStore.loading && DriveStore.rows.length == 0: SkeletonList { y: 8px; count: 9; avatar: 28px; row-height: 44px; label: "Loading..."; }
                 if !DriveStore.loading && DriveStore.rows.length == 0: Text {
                     text: DriveStore.filter != "" ? "No files match the filter" : (root.bin ? "The recycle bin is empty" : "Nothing here yet");
                     color: Theme.fg-subtle;
