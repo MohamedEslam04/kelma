@@ -456,6 +456,9 @@ impl Store {
                  snippet(messages_fts, 0, char(2), char(3), '', 16) \
              FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid \
              WHERE messages_fts MATCH ?1 AND m.deleted = 0 \
+               AND m.message_type NOT LIKE 'ThreadActivity/%' \
+               AND m.message_type NOT LIKE 'Event/%' \
+               AND m.message_type NOT LIKE 'Control/%' \
                AND (?2 IS NULL OR m.conversation_id = ?2) \
                AND (?3 IS NULL OR m.sender_mri = ?3) \
                AND m.compose_ms >= ?4 \

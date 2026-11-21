@@ -424,6 +424,12 @@ export component AppWindow inherits Window {
         changed page => {
             if !PaletteStore.open && self.page != "chat" && self.page != "teams" && self.page != "search" { self.focus(); }
         }
+        // The Teams page with no channel picked drops the conversation (and its composer, which
+        // may hold the focus): take the keys so Alt+Down and the other shortcuts still work.
+        property <bool> no-channel: root.teams-no-channel;
+        changed no-channel => {
+            if self.no-channel && !PaletteStore.open { self.focus(); }
+        }
         // Shift+Esc marks every chat read, wherever the focus is. The Activity view handles it
         // itself (marks every Activity item read).
         capture-key-pressed(event) => {
