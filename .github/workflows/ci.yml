@@ -4,7 +4,10 @@ on:
   push:
     # Feature branches too: local builds are memory-bound, so CI does the full check.
     branches: [main, dev, 'feat/**']
+    # Docs-only pushes need no build.
+    paths-ignore: ['**/*.md', 'docs/**', 'LICENSE*']
   pull_request:
+    paths-ignore: ['**/*.md', 'docs/**', 'LICENSE*']
 
 # A newer push to the same branch cancels the older run.
 concurrency:
@@ -13,25 +16,43 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI builds once from a clean tree: incremental data and debug info only cost time and cache.
+  # test-build.yml sets the same two, so it can reuse this cache.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
-  check:
+  # Formatting and clippy on Linux, in parallel with the tests below.
+  clippy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - run: cargo fmt --all --check
       - name: System libraries
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libdbus-1-dev libasound2-dev cmake pkg-config
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # The Linux tests. The job is named `check` so test-build.yml restores this job's cache.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libdbus-1-dev libasound2-dev cmake pkg-config
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
 
   # The same clippy and test gate on Windows and macOS (Apple Silicon and Intel). Formatting is
   # checked once, on Linux. UI tests run on Slint's testing backend, so no display is needed.
+  # These builds are slow and their caches are large, so they run for dev, main and pull requests
+  # only: feature branches get the fast Linux gate, and dev catches anything platform-specific.
   platforms:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
     name: check (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -47,7 +68,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          # A cold build of the workspace takes long here; keep what compiled even when a check fails.
+          # A cold build of the workspace takes long here; keep what compiled even when a check
+          # fails. Only dev and main save, so these large caches don't evict the Linux ones.
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
       - run: cargo test --workspace --no-fail-fast

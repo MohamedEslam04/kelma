@@ -17,8 +17,10 @@ on:
     branches: ['ci/release-*']
   workflow_dispatch:
 
+# Read-only for every build job (they run downloaded tools and crate build scripts); only the
+# publish job below may write.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -183,9 +185,12 @@ jobs:
     uses: ./.github/workflows/packaging.yml
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v') && !cancelled()
+    # Only when every build succeeded, so a release never goes out with missing packages.
+    if: startsWith(github.ref, 'refs/tags/v') && success()
     needs: [linux, windows, macos, packages]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:

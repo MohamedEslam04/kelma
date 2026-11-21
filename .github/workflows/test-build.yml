@@ -15,6 +15,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # The same as ci.yml, so the cached dependencies of its `check` job match this build.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   # Named like the CI job so Swatinem/rust-cache restores that job's cache.
