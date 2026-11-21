@@ -505,23 +505,29 @@ impl UiHandle {
             w.set_teams(model(
                 teams
                     .into_iter()
-                    .map(|t| TeamRow {
-                        id: t.id.into(),
-                        name: t.name.into(),
-                        initials: t.initials.into(),
-                        color: rgb(t.color),
-                        expanded: t.expanded,
-                        channels: model(
-                            t.channels
-                                .into_iter()
-                                .map(|(id, name, unread, hidden)| ChannelRow {
-                                    id: id.into(),
-                                    name: name.into(),
-                                    unread,
-                                    hidden,
-                                })
-                                .collect(),
-                        ),
+                    .map(|t| {
+                        let (avatar, has_avatar) = img(&t.avatar);
+                        TeamRow {
+                            id: t.id.into(),
+                            name: t.name.into(),
+                            initials: t.initials.into(),
+                            color: rgb(t.color),
+                            avatar,
+                            has_avatar,
+                            expanded: t.expanded,
+                            channels: model(
+                                t.channels
+                                    .into_iter()
+                                    .map(|c| ChannelRow {
+                                        id: c.id.into(),
+                                        name: c.name.into(),
+                                        unread: c.unread,
+                                        hidden: c.hidden,
+                                        private: c.private,
+                                    })
+                                    .collect(),
+                            ),
+                        }
                     })
                     .collect(),
             ));
@@ -531,10 +537,25 @@ impl UiHandle {
     pub fn header(&self, h: HeaderData) {
         self.run(move |w| {
             let (avatar, has) = img(&h.avatar);
-            // The Teams page opens the last channel again.
+            // The Teams page opens the last channel again; the Chat page the last conversation
+            // that was opened outside the Teams page.
             if h.is_channel && h.thread_root.is_empty() {
                 w.set_last_channel_id(h.id.as_str().into());
                 w.set_last_channel_title(h.title.as_str().into());
+            }
+            if !h.id.is_empty() && h.thread_root.is_empty() && w.get_view() != "teams" {
+                w.set_last_chat_id(h.id.as_str().into());
+            }
+            // Another conversation never shows the messages (or posts) of the previous one
+            // under its header while its own are still being drawn.
+            if w.get_current_id() != h.id.as_str() {
+                MESSAGES.with(|cell| {
+                    if let Some(m) = cell.borrow().as_ref() {
+                        m.set_vec(vec![]);
+                    }
+                });
+                w.global::<crate::ChannelStore>()
+                    .set_posts(ModelRc::default());
             }
             w.set_current_id(h.id.into());
             w.set_current_title(h.title.into());

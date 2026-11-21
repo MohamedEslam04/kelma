@@ -320,11 +320,28 @@ pub(crate) fn restore_quick_views(w: &AppWindow, s: &WindowState) {
     w.global::<QuickViewsStore>().set_open(quick_views_open(s));
 }
 
+/// Folds the open chat and the Teams page's channel into `s`. The chat is the Chat page's
+/// conversation (a channel opened on the Teams page is not it); before one was opened outside
+/// the Teams page, the open one. An empty id means "nothing open yet" (start, sign-in): the
+/// remembered one stays.
+pub(crate) fn remember_open_chat(w: &AppWindow, s: &mut WindowState) {
+    let chat = match w.get_last_chat_id() {
+        id if !id.is_empty() => id,
+        _ => w.get_current_id(),
+    };
+    if !chat.is_empty() {
+        s.set_last_chat(Some(chat.as_str()));
+    }
+    // The Teams page opens this channel again (see `navigate` in app.slint).
+    let channel = w.get_last_channel_id();
+    if !channel.is_empty() {
+        s.set_last_channel(Some(channel.as_str()));
+    }
+}
+
 /// Folds the live window and the open chat into the shared state.
 fn capture(w: &AppWindow) {
     let obs = observe(w.window());
-    let chat = w.get_current_id();
-    let channel = w.get_last_channel_id();
     let list = sidebar_width_to_save(w.get_sidebar_width());
     with_shared(|s| {
         if let Some(o) = obs {
@@ -332,14 +349,7 @@ fn capture(w: &AppWindow) {
         }
         s.state.sidebar_width = list;
         remember_quick_views(w, &mut s.state);
-        // An empty id means "nothing open yet" (start, sign-in): keep the remembered chat.
-        if !chat.is_empty() {
-            s.state.set_last_chat(Some(chat.as_str()));
-        }
-        // The Teams page opens this channel again (see `navigate` in app.slint).
-        if !channel.is_empty() {
-            s.state.set_last_channel(Some(channel.as_str()));
-        }
+        remember_open_chat(w, &mut s.state);
     });
 }
 

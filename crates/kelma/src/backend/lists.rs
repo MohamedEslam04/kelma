@@ -623,6 +623,16 @@ impl Engine {
             .filter(|g| !g.is_empty())
     }
 
+    /// Whether the channel is a private one (the Teams view draws a lock after its name).
+    pub(super) fn lists_channel_private(&self, id: &str) -> bool {
+        self.lists
+            .lock()
+            .unwrap()
+            .channels
+            .get(id)
+            .is_some_and(|c| c.kind == ChannelKind::Private)
+    }
+
     /// Whether the Teams view should draw this channel dimmed (hidden in Teams).
     pub(super) fn lists_channel_hidden(&self, id: &str) -> bool {
         self.lists
@@ -1153,6 +1163,7 @@ impl Engine {
     #[cfg(test)]
     pub(crate) fn test_set_teams(&self, teams: &[TeamEntry]) {
         self.lists_apply_teams(teams);
+        self.mark(|d| d.teams = true);
     }
 
     #[cfg(test)]

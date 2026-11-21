@@ -441,7 +441,10 @@ export component Sidebar inherits Rectangle {
                             Icon { source: t.expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-right.svg"); width: 14px; height: 14px; y: 15px; }
                             Rectangle {
                                 width: 28px; height: 28px; y: 8px; border-radius: 4px; background: t.color;
-                                Text { text: t.initials; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; }
+                                clip: true;
+                                // The team's picture when it is known, else its initials.
+                                if !t.has-avatar: Text { text: t.initials; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; }
+                                if t.has-avatar: Image { source: t.avatar; width: 28px; height: 28px; image-fit: cover; accessible-role: image; accessible-label: @tr("Team picture"); }
                             }
                             Text { text: t.name; color: Theme.fg; font-size: 14px * Theme.font-scale; font-weight: 600; vertical-alignment: center; overflow: elide; }
                             Rectangle { width: 30px; }
@@ -505,7 +508,19 @@ export component Sidebar inherits Rectangle {
                                     font-italic: ch.hidden;
                                     vertical-alignment: center;
                                     overflow: elide;
+                                    // A private channel's lock follows the name.
+                                    horizontal-stretch: ch.private ? 0 : 1;
                                 }
+                                if ch.private: Icon {
+                                    source: @image-url("icons/lock.svg");
+                                    width: 12px;
+                                    height: 12px;
+                                    y: (parent.height - 12px) / 2;
+                                    tint: Theme.fg-subtle;
+                                    accessible-role: image;
+                                    accessible-label: @tr("Private channel");
+                                }
+                                if ch.private: Rectangle { horizontal-stretch: 1; }
                             }
                             ct := TouchArea {
                                 mouse-cursor: pointer;

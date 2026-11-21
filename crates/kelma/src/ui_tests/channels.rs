@@ -169,6 +169,47 @@ fn the_teams_page_opens_the_last_channel_or_asks_for_one_never_a_chat() {
     assert!(find_label(&h.app, "Pick a channel").is_empty());
 }
 
+/// A channel opened on the Teams page does not replace the chat of the Chat page: Chat goes back
+/// to the last chat, Teams to the last channel.
+#[test]
+fn chat_and_teams_each_return_to_their_own_last_conversation() {
+    let h = Harness::new();
+    {
+        let run = h.runner();
+        h.app
+            .on_select_channel(move |id, title| run(Cmd::SelectChannel(id.into(), title.into())));
+    }
+    h.select(NOTES);
+    assert_eq!(h.app.get_last_chat_id(), NOTES);
+    h.app.invoke_navigate("teams".into());
+    h.runner()(Cmd::SelectChannel(TECH.into(), TECH_TITLE.into()));
+    assert_eq!(h.app.get_current_id(), TECH);
+    assert_eq!(h.app.get_last_channel_id(), TECH);
+    assert_eq!(
+        h.app.get_last_chat_id(),
+        NOTES,
+        "a channel opened on the Teams page is not the last chat"
+    );
+
+    h.app.invoke_navigate("chat".into());
+    assert_eq!(h.app.get_current_id(), NOTES, "Chat shows the last chat");
+    h.app.invoke_navigate("teams".into());
+    assert_eq!(h.app.get_current_id(), TECH, "Teams shows the last channel");
+    // The window state remembers the chat, not the channel, as the open chat.
+    let mut s = session::window_state::WindowState::default();
+    crate::window_state::remember_open_chat(&h.app, &mut s);
+    assert_eq!(s.last_chat.as_deref(), Some(NOTES));
+    assert_eq!(s.last_channel.as_deref(), Some(TECH));
+
+    // A channel opened from the chat list on the Chat page is that page's last chat.
+    h.app.invoke_navigate("chat".into());
+    h.runner()(Cmd::SelectChannel(TECH.into(), TECH_TITLE.into()));
+    assert_eq!(h.app.get_last_chat_id(), TECH);
+    h.app.invoke_navigate("teams".into());
+    h.app.invoke_navigate("chat".into());
+    assert_eq!(h.app.get_current_id(), TECH);
+}
+
 /// Opening a channel shows its header and the posts the store has at once, with a loading line
 /// while the newest page is read; the line goes when the read ends (here it fails: no network).
 #[test]

@@ -129,7 +129,13 @@ export component AppWindow inherits Window {
         root.leave-settings();
         // Leaving the call view keeps the call running in the small floating bar.
         if CallStore.phase != "" { CallStore.minimized = true; }
+        let from = root.view;
         root.view = v;
+        // Back from the Teams page: the chat that was open in the Chat view, not the channel
+        // that was opened on the Teams page.
+        if v == "chat" && from == "teams" && root.last-chat-id != "" && root.last-chat-id != root.current-id {
+            root.select-chat(root.last-chat-id);
+        }
         if v == "teams" && !root.current-is-channel && root.last-channel-id != "" {
             root.select-channel(root.last-channel-id, root.last-channel-title);
         }
@@ -162,6 +168,8 @@ export component AppWindow inherits Window {
     // page opens it again instead of showing the chat that is open.
     in-out property <string> last-channel-id;
     in-out property <string> last-channel-title;
+    // The last conversation opened outside the Teams page: the Chat page shows it again.
+    in-out property <string> last-chat-id;
     // The Teams page with no channel open: its right pane asks for one, it never shows a chat.
     property <bool> teams-no-channel: root.view == "teams" && !root.current-is-channel;
     // The open chat is muted ("More chat options" offers Unmute).
@@ -1113,7 +1121,19 @@ export component AppWindow inherits Window {
                                 self.aligning = true;
                                 self.content-y = min(0px, 24px - self.content-height * root.divider-index / max(1, root.messages.length));
                             }
+                            // The content height the last `changed content-height` saw. A content-y change
+                            // that arrives with a different height is the content growing under the
+                            // view (a card, an image or a voice bubble got its real height), not the
+                            // user scrolling up, so it must not unpin the list from the newest message.
+                            property <length> seen-height: 0px;
+                            // Whether the view is at the very bottom, as the user left it.
+                            function recheck() {
+                                self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
+                            }
+                            // The user scrolled (wheel, drag, scrollbar): that is never growth.
+                            scrolled => { self.recheck(); }
                             changed content-height => {
+                                self.seen-height = self.content-height;
                                 if self.pinned && !self.aligning {
                                     self.content-y = min(0px, self.visible-height - self.content-height);
                                 }
@@ -1122,7 +1142,9 @@ export component AppWindow inherits Window {
                                 // Pinned only at the very bottom: rows that get their real height while
                                 // scrolling up change the content height, and a looser margin pulled the
                                 // list back down (the list shook when scrolling up).
-                                self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
+                                if self.content-height == self.seen-height {
+                                    self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
+                                }
                                 if self.content-y > -40px && self.content-height > self.visible-height + 40px && !self.pinned && root.messages.length > 0 && !root.loading-older && !self.aligning {
                                     // Until the older page lands: one request per arrival at the top.
                                     self.aligning = true;
@@ -1215,11 +1237,11 @@ export component AppWindow inherits Window {
                             property <int> tick: root.msg-focus-tick;
                             changed tick => { self.focus(); }
                             key-pressed(event) => {
-                                if event.text == Key.UpArrow { msg-list.content-y = min(0px, msg-list.content-y + 48px); return accept; }
-                                if event.text == Key.DownArrow { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - 48px)); return accept; }
-                                if event.text == Key.PageUp { msg-list.content-y = min(0px, msg-list.content-y + msg-list.visible-height * 0.9); return accept; }
-                                if event.text == Key.PageDown { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - msg-list.visible-height * 0.9)); return accept; }
-                                if event.text == Key.Home { msg-list.content-y = 0px; return accept; }
+                                if event.text == Key.UpArrow { msg-list.content-y = min(0px, msg-list.content-y + 48px); msg-list.recheck(); return accept; }
+                                if event.text == Key.DownArrow { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - 48px)); msg-list.recheck(); return accept; }
+                                if event.text == Key.PageUp { msg-list.content-y = min(0px, msg-list.content-y + msg-list.visible-height * 0.9); msg-list.recheck(); return accept; }
+                                if event.text == Key.PageDown { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - msg-list.visible-height * 0.9)); msg-list.recheck(); return accept; }
+                                if event.text == Key.Home { msg-list.content-y = 0px; msg-list.recheck(); return accept; }
                                 if event.text == Key.End { root.scroll-tick += 1; return accept; }
                                 if event.text == Key.Escape { root.focus-tick += 1; return accept; }
                                 reject

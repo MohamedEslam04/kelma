@@ -5,8 +5,8 @@ use super::outbox::{PENDING_PREFIX, row_from_outbox};
 use super::unread::{divider_index, open_at_divider, unread_after};
 use super::util::*;
 use crate::data::{
-    ChatData, FileData, HeaderData, LoopData, MsgData, Pixels, ReactData, Scroll, TeamData,
-    color_for, initials,
+    ChatData, FileData, HeaderData, LoopData, MsgData, Pixels, ReactData, Scroll, TeamChannel,
+    TeamData, color_for, initials,
 };
 use crate::markdown::{reaction_emoji, render_blocks};
 use serde_json::{Value, json};
@@ -349,15 +349,24 @@ impl Engine {
                         c.title.to_lowercase(),
                     )
                 });
+                // The team's picture comes from its group, which the channels know.
+                let group = channels
+                    .iter()
+                    .find_map(|c| self.lists_channel_group(&c.id))
+                    .unwrap_or_default();
                 TeamData {
                     initials: initials(&t.name),
                     color: color_for(&t.id),
+                    avatar: self.team_avatar(&group, &t.name),
                     expanded: !collapsed.contains(&t.id),
                     channels: channels
                         .into_iter()
-                        .map(|c| {
-                            let hidden = self.lists_channel_hidden(&c.id);
-                            (c.id, c.title, c.unread, hidden)
+                        .map(|c| TeamChannel {
+                            hidden: self.lists_channel_hidden(&c.id),
+                            private: self.lists_channel_private(&c.id),
+                            id: c.id,
+                            name: c.title,
+                            unread: c.unread,
                         })
                         .collect(),
                     id: t.id,
