@@ -31,10 +31,17 @@
       <Component Directory="INSTALLFOLDER">
         <File Source="$(var.Stage)\LICENSE.txt" />
       </Component>
+      <!-- One file per component: WiX only generates GUIDs for single-file components. -->
       <Component Directory="DICTIONARIES">
         <File Source="$(var.Stage)\dictionaries\en_US.aff" />
+      </Component>
+      <Component Directory="DICTIONARIES">
         <File Source="$(var.Stage)\dictionaries\en_US.dic" />
+      </Component>
+      <Component Directory="DICTIONARIES">
         <File Source="$(var.Stage)\dictionaries\ar.aff" />
+      </Component>
+      <Component Directory="DICTIONARIES">
         <File Source="$(var.Stage)\dictionaries\ar.dic" />
       </Component>
       <Component Directory="ProgramMenuFolder">

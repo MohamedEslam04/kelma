@@ -18,7 +18,7 @@ jobs:
     container: fedora:latest
     steps:
       - name: Tools
-        run: dnf -y install rpm-build git cargo rust gcc gcc-c++ cmake pkgconf-pkg-config desktop-file-utils tar xz 'pkgconfig(alsa)' 'pkgconfig(fontconfig)' 'pkgconfig(xkbcommon)' 'pkgconfig(dbus-1)'
+        run: dnf -y install rpm-build git cargo rust gcc gcc-c++ cmake pkgconf-pkg-config desktop-file-utils tar xz 'pkgconfig(alsa)' 'pkgconfig(fontconfig)' 'pkgconfig(xkbcommon)' 'pkgconfig(dbus-1)' libappstream-glib
       - uses: actions/checkout@v4
       - name: Build the RPM
         run: |
