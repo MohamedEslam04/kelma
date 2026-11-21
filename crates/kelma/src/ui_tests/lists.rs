@@ -197,6 +197,47 @@ fn sections_of_the_account_show_between_favorites_and_chats_in_teams_order() {
     );
 }
 
+/// At start-up the list draws the sections and favorites Teams had last time, before the
+/// `conversationFolders` read answers: no empty Favorites, no missing sections.
+#[test]
+fn the_last_known_sections_and_favorites_show_at_start_before_teams_answers() {
+    let h = harness();
+    let mut f = folders(vec![("s1", "Operations", vec![BACKEND])]);
+    f.folders.push(Folder {
+        id: "fav".into(),
+        name: "Favorites".into(),
+        kind: FolderKind::Favorites,
+        folder_type: "Favorites".into(),
+        expanded: true,
+        items: vec![FolderItem {
+            conversation_id: STANDUP.into(),
+            thread_type: "chat".into(),
+        }],
+    });
+    h.engine.test_set_folders(&f);
+    let saved = h
+        .engine
+        .test_store(|st| st.get_kv("lists-server").unwrap())
+        .expect("the sections are saved");
+
+    // The next start: the same store, nothing read from Teams yet.
+    let store = Store::open_in_memory().unwrap();
+    demo::seed(&store, teams_proto::time::now_ms()).unwrap();
+    store.set_kv("lists-server", &saved).unwrap();
+    let next = Harness::with_store(store);
+    next.runner()(Cmd::SetFilter("all".into()));
+    assert_eq!(section_names(&next.app), vec!["Operations"]);
+    assert_eq!(section_items(&next.app, "Operations"), vec![BACKEND]);
+    assert!(ids_in(next.app.get_chats_favorites()).contains(&STANDUP.to_string()));
+
+    // What Teams answers then replaces them.
+    next.engine
+        .test_set_folders(&folders(vec![("s2", "Dev", vec![AHMED])]));
+    next.runner()(Cmd::SetFilter("all".into()));
+    assert_eq!(section_names(&next.app), vec!["Dev"]);
+    assert!(!ids_in(next.app.get_chats_favorites()).contains(&STANDUP.to_string()));
+}
+
 #[test]
 fn a_new_section_from_the_move_menu_is_created_and_takes_the_chat() {
     let h = harness();

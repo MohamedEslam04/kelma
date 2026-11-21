@@ -440,7 +440,10 @@ fn the_clear_button_empties_the_box_closes_the_list_and_keeps_the_cursor_there()
     );
     focus_box(&app);
     type_text(&app, "budget");
-    assert_eq!(filtered.borrow().last().unwrap(), "budget");
+    assert!(
+        filtered.borrow().iter().all(|q| q.is_empty()),
+        "typing never filters the chat list"
+    );
     control(&app, "Clear search").mock_single_click(PointerEventButton::Left);
     assert_eq!(tb(&app).get_input(), "");
     assert!(!tb(&app).get_search_open());

@@ -6,6 +6,7 @@ import { Theme } from "theme.slint";
 import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
 import { PeopleStore } from "people.slint";
 import { ComposerApps } from "composer_apps.slint";
+import { KindBadge } from "onedrive.slint";
 
 // One row of the Search page or a quick view.
 export struct HitRow {
@@ -30,7 +31,10 @@ export struct PickRow { id: string, title: string, subtitle: string }
 // One row of the Shared tab.
 // `editable` rows are SharePoint drive items (Download, Share, Rename and Delete apply);
 // `sharepoint` rows can be opened in SharePoint.
-export struct SharedRow { kind: string, name: string, ext: string, shared-by: string, date: string, url: string, editable: bool, sharepoint: bool }
+// `icon` is `folder`, `link` or a document kind (`word`, `excel`, `pdf`, `image`, `archive`, `other`, ...);
+// `busy` says what is being done to the row while the server answers ("Deleting…"); `highlight`
+// marks a row just created.
+export struct SharedRow { kind: string, name: string, ext: string, shared-by: string, date: string, url: string, editable: bool, sharepoint: bool, icon: string, busy: string, highlight: bool }
 
 // A channel tab beyond Posts and Files (Notes, a website, Planner, …).
 export struct ChannelTabItem { name: string, url: string, id: string }
@@ -91,6 +95,7 @@ export global FindStore {
     // action's outcome.
     in property <bool> shared-can-create;
     in property <string> shared-note;
+    in property <bool> shared-note-error; // the note says an action failed
     in-out property <string> shared-filter: "recent"; // recent | files | links
     in-out property <bool> details-open: false;
 
@@ -536,33 +541,39 @@ component SharedLine inherits Rectangle {
     // The "…" button or a right click: where the menu goes, in window coordinates.
     callback more(length, length);
     height: root.compact ? 48px : 44px;
-    background: t.has-hover ? Theme.surface-hover : transparent;
+    background: root.data.highlight ? Theme.accent.with-alpha(0.22) : (t.has-hover ? Theme.surface-hover : transparent);
+    animate background { duration: 300ms; }
+    // Dimmed while the server answers (a delete).
+    opacity: root.data.busy != "" ? 0.55 : 1.0;
     accessible-role: list-item;
     accessible-label: root.data.name;
-    accessible-description: root.data.shared-by + " · " + root.data.date;
+    accessible-description: root.data.busy != "" ? root.data.busy : root.data.shared-by + " · " + root.data.date;
     HorizontalLayout {
         padding-left: 12px;
         padding-right: root.compact ? 12px : 48px;
         spacing: 12px;
+        // A link icon, a folder icon, a coloured badge per document kind, or the extension.
         Rectangle {
             width: 28px;
             height: 28px;
             y: (parent.height - 28px) / 2;
             border-radius: 3px;
-            background: root.data.kind == "link" ? #2d3a5f : #ffffff;
+            background: root.data.kind == "link" ? #2d3a5f : (root.data.icon == "other" || root.data.icon == "" ? #5a5a5a : transparent);
             if root.data.kind == "link": Icon { source: @image-url("icons/link.svg"); tint: #ffffff; width: 16px; height: 16px; }
-            if root.data.kind != "link": Text { text: root.data.ext; color: #141414; font-size: 9px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            if root.data.kind != "link" && root.data.icon != "other" && root.data.icon != "": KindBadge { kind: root.data.icon; size: 28px; accessible-role: image; accessible-label: root.data.icon == "folder" ? @tr("Folder") : root.data.ext; }
+            if root.data.kind != "link" && (root.data.icon == "other" || root.data.icon == ""): Text { text: root.data.ext; color: #ffffff; font-size: 8px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
         }
         VerticalLayout {
             alignment: center;
             Text { text: root.data.name; color: Theme.fg; font-size: 13px * Theme.font-scale; overflow: elide; }
-            if root.compact: Text { text: root.data.shared-by + " · " + root.data.date; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
+            if root.compact: Text { text: root.data.busy != "" ? root.data.busy : root.data.shared-by + " · " + root.data.date; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; overflow: elide; }
         }
-        if !root.compact: Text { width: 140px; horizontal-stretch: 0; text: root.data.date; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+        if !root.compact: Text { width: 140px; horizontal-stretch: 0; text: root.data.busy != "" ? root.data.busy : root.data.date; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
         if !root.compact: Text { width: 160px; horizontal-stretch: 0; text: root.data.shared-by; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
     }
     t := TouchArea {
         mouse-cursor: pointer;
+        enabled: root.data.busy == "";
         clicked => { root.open(); }
         pointer-event(e) => {
             if !root.compact && e.button == PointerEventButton.right && e.kind == PointerEventKind.up {
@@ -570,7 +581,7 @@ component SharedLine inherits Rectangle {
             }
         }
     }
-    if !root.compact: IconButton {
+    if !root.compact && root.data.busy == "": IconButton {
         x: parent.width - self.width - 12px;
         y: (parent.height - self.height) / 2;
         size: 28px;
@@ -723,7 +734,7 @@ export component SharedView inherits Rectangle {
         if FindStore.shared-note != "": Text {
             height: 18px;
             text: FindStore.shared-note;
-            color: Theme.fg-muted;
+            color: FindStore.shared-note-error ? Theme.danger : Theme.fg-muted;
             font-size: 12px * Theme.font-scale;
             overflow: elide;
             vertical-alignment: center;
