@@ -194,13 +194,25 @@ fn click(e: &ElementHandle) {
     e.mock_single_click(PointerEventButton::Left);
 }
 
-/// Hover-bar buttons (the IconButtons in the band of the hovered row), left to right.
+/// Hover-bar buttons (the IconButtons in the hover bar at the top of the row), left to right.
+/// The bar floats over the bubble's top edge, so it can start above the row.
 fn bar_buttons(app: &AppWindow, row: &ElementHandle) -> Vec<ElementHandle> {
     let top = row.absolute_position().y;
+    let Some(bar) = ElementHandle::find_by_element_id(app, "MessageRow::bar").min_by(|a, b| {
+        let d = |e: &ElementHandle| (e.absolute_position().y - top).abs();
+        d(a).total_cmp(&d(b))
+    }) else {
+        return Vec::new();
+    };
+    let (bar_top, bar_bottom) = (
+        bar.absolute_position().y,
+        bar.absolute_position().y + bar.size().height,
+    );
+    let (bar_left, bar_right) = span(&bar);
     let mut v: Vec<_> = ElementHandle::find_by_element_type_name(app, "IconButton")
         .filter(|b| {
-            let y = b.absolute_position().y;
-            y >= top && y < top + 32.
+            let (x, y) = (b.absolute_position().x, b.absolute_position().y);
+            y >= bar_top && y < bar_bottom && x >= bar_left && x < bar_right
         })
         .collect();
     v.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
@@ -546,6 +558,231 @@ fn right_click_on_the_message_text_opens_the_menu() {
     crate::right_click_released(&app);
     testing::mock_elapsed_time(std::time::Duration::from_millis(16));
     assert!(app.get_menu_open(), "the menu opened");
+    assert_eq!(app.get_menu_msg().id, "m1");
+}
+
+/// Left, top, right and bottom edge of an element.
+fn rect(e: &ElementHandle) -> (f32, f32, f32, f32) {
+    let (p, s) = (e.absolute_position(), e.size());
+    (p.x, p.y, p.x + s.width, p.y + s.height)
+}
+
+/// Whether two rectangles share more than a half-pixel edge.
+fn overlaps(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> bool {
+    a.0 + 0.5 < b.2 && b.0 + 0.5 < a.2 && a.1 + 0.5 < b.3 && b.1 + 0.5 < a.3
+}
+
+/// The live test: the hover bar sat in the bubble's top band, over "<name> 16:14". As in Teams
+/// it floats over the bubble's top edge, so the sender's name stays readable; it does not change
+/// the bubble's size, and it stays shown while the pointer is on its part above the row.
+#[test]
+fn the_hover_bar_floats_over_the_top_edge_and_keeps_the_name_readable() {
+    let mut first = msg("m1", "a message above", false);
+    first.sender = "Someone Else".into();
+    let mut short = msg("m2", "hi", false);
+    short.sender = "Someone Else With A Long Name".into();
+    let app = app_with_messages(vec![first, short, msg("m3", "mine", true)]);
+    let rows = rows(&app);
+    let row = &rows[1];
+    let bubble = bubble_of(&app, row);
+    let size_before = bubble.size();
+
+    hover(&app, row);
+    let bar = ElementHandle::find_by_element_id(&app, "MessageRow::bar")
+        .next()
+        .expect("the hover bar");
+    let name = ElementHandle::find_by_element_id(&app, "MessageRow::sender-text")
+        .find(|t| {
+            let y = t.absolute_position().y;
+            y >= row.absolute_position().y && y < row.absolute_position().y + row.size().height
+        })
+        .expect("the sender's name");
+    let (b, n, bb) = (rect(&bar), rect(&name), rect(&bubble));
+    assert!(
+        !overlaps(b, n),
+        "the bar {b:?} does not cover the sender's name {n:?}"
+    );
+    assert!(
+        b.1 < bb.1 && b.3 > bb.1,
+        "the bar {b:?} sits over the bubble's top edge {bb:?}"
+    );
+    assert!(
+        b.0 >= rect(row).0 + 7.5 && b.2 <= rect(row).2 - 7.5,
+        "inside the pane"
+    );
+    assert_eq!(bubble.size(), size_before, "the bubble keeps its size");
+
+    // Onto the part of the bar above the row: the bar stays, and its buttons work.
+    let above = LogicalPosition::new(b.0 + 15., b.1 + 3.);
+    assert!(
+        above.y < row.absolute_position().y,
+        "that part is above the row"
+    );
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: above });
+    assert_eq!(
+        ElementHandle::find_by_element_id(&app, "MessageRow::bar").count(),
+        1,
+        "the bar stays while the pointer is on it"
+    );
+    let log = record_actions(&app);
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: above,
+        button: PointerEventButton::Left,
+    });
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: above,
+        button: PointerEventButton::Left,
+    });
+    assert_eq!(*log.borrow(), vec!["react m2 like"]);
+}
+
+/// The first message under the top of the pane has no room above: its bar sits inside the
+/// bubble's top edge instead of being cut off.
+#[test]
+fn the_first_messages_hover_bar_sits_inside_the_top_edge() {
+    let app = app_with_messages(vec![msg("m1", "first", false), msg("m2", "second", false)]);
+    let row = &rows(&app)[0];
+    hover(&app, row);
+    let bar = ElementHandle::find_by_element_id(&app, "MessageRow::bar")
+        .next()
+        .expect("the hover bar");
+    let top = bubble_of(&app, row).absolute_position().y;
+    assert!(
+        bar.absolute_position().y >= top,
+        "{} is inside the bubble's top {top}",
+        bar.absolute_position().y
+    );
+}
+
+/// A rail entry by its place (0 is Activity).
+fn rail_entry(app: &AppWindow, i: usize) -> ElementHandle {
+    let mut v: Vec<_> = ElementHandle::find_by_element_id(app, "AppWindow::rt").collect();
+    v.sort_by(|a, b| a.absolute_position().y.total_cmp(&b.absolute_position().y));
+    v.remove(i)
+}
+
+/// A click as the real window delivers it: `main.rs` reports the press (`pointer_pressed`)
+/// before the window handles it.
+fn click_through(app: &AppWindow, e: &ElementHandle, button: PointerEventButton) {
+    let (l, t, r, b) = rect(e);
+    let at = LogicalPosition::new((l + r) / 2., (t + b) / 2.);
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    crate::pointer_pressed(app, at);
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button,
+    });
+    testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button,
+    });
+    if button == PointerEventButton::Right {
+        crate::right_click_released(app);
+    }
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+}
+
+/// The live test: after the message menu was closed with Esc, the first click on the rail did
+/// nothing. Esc never reached the window's keys (the menu is outside them), so the menu stayed
+/// open and its full-window layer took that click.
+#[test]
+fn escape_closes_the_message_menu_and_one_click_on_the_rail_switches_the_view() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    open_menu(&app, &rows(&app)[0]);
+    key(&app, Key::Escape, true);
+    key(&app, Key::Escape, false);
+    assert!(!app.get_menu_open(), "Escape closed the menu");
+    click(&rail_entry(&app, 0));
+    assert_eq!(app.get_view(), "activity", "one click switched the view");
+}
+
+/// A click outside the message menu closes it and still reaches what it landed on, as in
+/// Teams; a press inside the menu leaves it open.
+#[test]
+fn a_click_outside_the_message_menu_closes_it_and_reaches_the_rail() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    open_menu(&app, &rows(&app)[0]);
+    let (l, t, r, b) = rect(&menu_items(&app)[0]);
+    crate::pointer_pressed(&app, LogicalPosition::new((l + r) / 2., (t + b) / 2.));
+    assert!(app.get_menu_open(), "a press inside keeps it open");
+
+    click_through(&app, &rail_entry(&app, 0), PointerEventButton::Left);
+    assert!(!app.get_menu_open());
+    assert_eq!(
+        app.get_view(),
+        "activity",
+        "the same click switched the view"
+    );
+}
+
+/// The same for the profile menu under the photo at the top right.
+#[test]
+fn a_click_outside_the_profile_menu_closes_it_and_reaches_the_rail() {
+    let app = app_with_messages(vec![msg("m1", "theirs", false)]);
+    let me = ElementHandle::find_by_element_id(&app, "AppWindow::me-photo")
+        .next()
+        .expect("my photo");
+    click(&me);
+    let settings = app.global::<crate::SettingsStore>();
+    assert!(
+        settings.get_profile_open(),
+        "a click on my photo opens the profile menu"
+    );
+
+    click_through(&app, &rail_entry(&app, 0), PointerEventButton::Left);
+    assert!(!settings.get_profile_open());
+    assert_eq!(app.get_view(), "activity");
+
+    // My photo still toggles it: a second click closes it rather than opening it again.
+    click_through(&app, &me, PointerEventButton::Left);
+    assert!(settings.get_profile_open());
+    click_through(&app, &me, PointerEventButton::Left);
+    assert!(!settings.get_profile_open(), "the photo closed it");
+}
+
+/// The live test once saw the profile menu after a right click on a message. A right click opens
+/// only the menu of the message under the pointer: nothing where no message is (my photo, the
+/// top bar), and on a message it also closes a profile menu that was still open.
+#[test]
+fn a_right_click_opens_only_the_hovered_messages_menu() {
+    let app = app_with_messages(vec![msg("m1", "some words from someone else", false)]);
+    let settings = app.global::<crate::SettingsStore>();
+    let me = ElementHandle::find_by_element_id(&app, "AppWindow::me-photo")
+        .next()
+        .expect("my photo");
+
+    // On my photo: no message is under the pointer.
+    click_through(&app, &me, PointerEventButton::Right);
+    assert!(!app.get_menu_open(), "no message menu");
+    assert!(!settings.get_profile_open(), "and no profile menu");
+
+    // With the profile menu open, a right click on the message's words.
+    click(&me);
+    assert!(settings.get_profile_open());
+    let row = &rows(&app)[0];
+    let bubble = bubble_of(&app, row);
+    let at = LogicalPosition::new(
+        bubble.absolute_position().x + 40.,
+        bubble.absolute_position().y + bubble.size().height - 18.,
+    );
+    app.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    crate::pointer_pressed(&app, at);
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button: PointerEventButton::Right,
+    });
+    crate::right_click_released(&app);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(!settings.get_profile_open(), "the profile menu closed");
+    assert!(app.get_menu_open(), "the message menu opened");
     assert_eq!(app.get_menu_msg().id, "m1");
 }
 
