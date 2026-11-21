@@ -575,7 +575,7 @@ impl Engine {
         Vec::new()
     }
 
-    fn members_known(&self, conv: &str) -> Option<Vec<String>> {
+    pub(super) fn members_known(&self, conv: &str) -> Option<Vec<String>> {
         if self.conv_kind(conv) == Some(ConvKind::OneOnOne) {
             return Some(one_on_one_members(conv));
         }

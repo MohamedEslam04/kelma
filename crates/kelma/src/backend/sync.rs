@@ -104,25 +104,21 @@ impl Engine {
                     .cloned()
                     .map(|(a, b, cn)| (Some(a), Some(b), Some(cn)))
                     .unwrap_or((None, None, None));
+                // A blank topic is no topic: Teams sends "" for a group chat nobody named.
+                let named = |t: Option<String>| t.filter(|t| !t.trim().is_empty());
                 let title = match kind {
                     ConvKind::Notes => format!("{} (You)", self.my_name),
-                    ConvKind::Channel => channel_name
-                        .unwrap_or_else(|| c.topic.clone().unwrap_or_else(|| "Channel".into())),
-                    _ => meta
-                        .get(c.id.as_str())
-                        .and_then(|m| m.title.clone())
-                        .or_else(|| c.topic.clone())
-                        .or_else(|| {
-                            (!others.is_empty()).then(|| {
-                                others
-                                    .iter()
-                                    .take(4)
-                                    .cloned()
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
+                    _ => row_title(
+                        kind,
+                        &named(channel_name)
+                            .or_else(|| {
+                                named(meta.get(c.id.as_str()).and_then(|m| m.title.clone()))
                             })
-                        })
-                        .unwrap_or_else(|| "Chat".into()),
+                            .or_else(|| named(c.topic.clone()))
+                            .unwrap_or_default(),
+                        &others,
+                        "",
+                    ),
                 };
                 let last = c
                     .last_message
