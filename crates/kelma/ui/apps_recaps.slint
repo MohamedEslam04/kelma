@@ -301,11 +301,20 @@ component RecapDetailPage inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 16px;
                 spacing: 8px;
-                for p[i] in RecapsStore.parts: VerticalLayout {
-                    alignment: center;
-                    KitPill { label: p.label; active: i == RecapsStore.part; clicked => { RecapsStore.command("recaps-part", "\{i}"); } }
+                // The parts scroll sideways when there are more than fit next to the buttons.
+                Flickable {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    content-width: max(self.width, parts.preferred-width);
+                    parts := HorizontalLayout {
+                        alignment: start;
+                        spacing: 8px;
+                        for p[i] in RecapsStore.parts: VerticalLayout {
+                            alignment: center;
+                            KitPill { label: p.label; active: i == RecapsStore.part; clicked => { RecapsStore.command("recaps-part", "\{i}"); } }
+                        }
+                    }
                 }
-                Rectangle { horizontal-stretch: 1; }
                 VerticalLayout {
                     alignment: center;
                     KitButton { label: "Share"; icon: @image-url("icons/share.svg"); enabled: RecapsStore.has-recording; clicked => { RecapsStore.command("recaps-share", ""); } }

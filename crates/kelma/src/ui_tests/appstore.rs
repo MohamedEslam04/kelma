@@ -1231,10 +1231,29 @@ fn meeting_recaps_keep_long_text_inside_at_760_px() {
     ])));
     r.set_transcript(format!("{LONG}\n{LONG_WORD}\n{LONG_AR}").into());
     r.set_tab("transcript".into());
+    // A meeting recorded in many parts: the parts scroll and Share / Watch stay on the page.
+    r.set_parts(slint::ModelRc::new(slint::VecModel::from(
+        (1..=9)
+            .map(|i| crate::AppNav {
+                label: format!("Part {i}").into(),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>(),
+    )));
     let page = ElementHandle::find_by_element_type_name(&a.h.app, "RecapDetailPage")
         .next()
         .expect("the recap page");
     assert!(page.size().width <= 760.5, "{:?}", page.size());
+    for label in ["Share", "Watch in browser"] {
+        let b = find_label(&a.h.app, label);
+        assert!(!b.is_empty(), "{label} is shown");
+        let (p, s) = (b[0].absolute_position(), b[0].size());
+        assert!(
+            p.x >= page.absolute_position().x - 0.5
+                && p.x + s.width <= page.absolute_position().x + page.size().width + 0.5,
+            "{label} at {p:?} size {s:?} leaves the page"
+        );
+    }
     // Texts that wrap may scroll below the fold, so only the header and the file row are
     // checked against their own boxes, and the page against the window's width.
     for f in ElementHandle::find_by_element_type_name(&a.h.app, "FileRow") {
