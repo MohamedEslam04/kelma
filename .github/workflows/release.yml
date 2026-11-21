@@ -37,7 +37,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: v
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v=${GITHUB_REF_NAME#v}
@@ -47,11 +47,11 @@ jobs:
   icons:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y librsvg2-bin imagemagick icnsutils
       - run: bash packaging/release/icons.sh icons "packaging/$APP_ID.svg"
       - run: bash packaging/release/dictionaries.sh dictionaries
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: shared-assets
           path: |
@@ -66,7 +66,7 @@ jobs:
     env:
       VERSION: ${{ needs.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: System libraries
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libdbus-1-dev libasound2-dev cmake pkg-config libfuse2
@@ -85,7 +85,7 @@ jobs:
           LDAI_OUTPUT=$APP_NAME-$VERSION-linux-x86_64.AppImage ./linuxdeploy --appimage-extract-and-run \
             --appdir AppDir -e "target/release/$BIN" \
             -d "packaging/$APP_ID.desktop" -i "packaging/$APP_ID.svg" --output appimage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-linux
           path: |
@@ -102,11 +102,11 @@ jobs:
         shell: bash
     steps:
       - run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p "$BIN" --bin "$BIN"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: shared-assets
           path: assets
@@ -127,7 +127,7 @@ jobs:
           # MSI versions are numeric: drop a pre-release suffix such as -rc1.
           wix build packaging/windows/app.wxs -arch x64 -d "Version=${VERSION%%-*}" -d Stage=stage \
             -d "AppName=$APP_NAME" -d "Exe=$BIN.exe" -o "$APP_NAME-$VERSION-windows-x86_64.msi"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-windows
           path: |
@@ -148,13 +148,13 @@ jobs:
     env:
       VERSION: ${{ needs.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p "$BIN" --bin "$BIN"
         env:
           MACOSX_DEPLOYMENT_TARGET: '11.0'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: shared-assets
           path: assets
@@ -175,7 +175,7 @@ jobs:
           ln -s /Applications dmg/Applications
       - name: dmg
         run: hdiutil create -volname "$APP_NAME" -srcfolder dmg -ov -format UDZO "$APP_NAME-$VERSION-macos-${{ matrix.arch }}.dmg"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-macos-${{ matrix.arch }}
           path: '*.dmg'
@@ -192,7 +192,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           # Everything this run uploaded (also packaging.yml's RPM and Flatpak); only package
           # files are attached below.
