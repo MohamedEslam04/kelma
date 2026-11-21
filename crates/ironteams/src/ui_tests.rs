@@ -44,6 +44,7 @@ mod language;
 mod list_parity;
 mod lists;
 mod media;
+mod meeting_cards;
 mod msg_extras;
 mod not_member;
 pub(crate) mod overflow;

@@ -101,7 +101,14 @@ pub(super) fn row_from_message(m: &Message, parent: Option<&str>) -> MessageRow 
 }
 
 /// Preview text for the chat list.
-pub(super) fn preview_of(m: &Message, me: &str) -> String {
+pub(crate) fn preview_of(m: &Message, me: &str) -> String {
+    // A meeting event reads as what happened ("Meeting ended · 1h 3m"), not its "Play" link.
+    if !m.deleted
+        && let Some(text) =
+            super::meeting_cards::summary(&m.message_type, &m.content, &m.conversation_id)
+    {
+        return text;
+    }
     let text = if m.deleted {
         "This message has been deleted.".to_string()
     } else {
@@ -254,10 +261,17 @@ pub(super) fn system_text(m: &MessageRow) -> Option<String> {
             }
             .into(),
         )
-    } else if t.starts_with("Event/Call") {
-        Some("Call".into())
-    } else if t.starts_with("RichText/Media_Call") {
-        Some("Call recording".into())
+    } else if t.starts_with("Event/Call") || t.starts_with("RichText/Media_Call") {
+        // "Meeting ended · 1h 3m", "Recording: …"; what cannot be read keeps the old words.
+        let old = if t.starts_with("Event/Call") {
+            "Call"
+        } else {
+            "Call recording"
+        };
+        Some(
+            super::meeting_cards::summary(t, &m.content_html, &m.conversation_id)
+                .unwrap_or_else(|| old.into()),
+        )
     } else {
         None
     }
