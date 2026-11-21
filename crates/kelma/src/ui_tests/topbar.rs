@@ -5,7 +5,7 @@
 use super::*;
 use crate::backend::FindCmd;
 use crate::suggest::SuggestData;
-use crate::{FindStore, SettingsStore, TopBarStore, TopRow};
+use crate::{FindStore, PeopleStore, SettingsStore, TopBarStore, TopRow};
 use std::path::PathBuf;
 
 const SARA: &str =
@@ -819,4 +819,122 @@ fn an_arabic_message_hit_runs_right_to_left() {
     assert_eq!(m.len(), 1, "{:?}", row_titles(&h.app));
     assert!(m[0].rtl);
     assert!(m[0].snippet_plain.contains("النشر"));
+}
+
+// ---- the hover card of a person row opens above the dropdown and goes with it ----------------
+
+fn move_to(app: &AppWindow, x: f32, y: f32) {
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(x, y),
+    });
+}
+
+fn rest(ms: u64) {
+    for _ in 0..ms / 50 {
+        testing::mock_elapsed_time(std::time::Duration::from_millis(50));
+    }
+}
+
+fn center(e: &ElementHandle) -> (f32, f32) {
+    let (p, s) = (e.absolute_position(), e.size());
+    (p.x + s.width / 2., p.y + s.height / 2.)
+}
+
+/// Types a name, rests on the person row's photo and returns the open hover card.
+fn dropdown_card(h: &Harness) -> ElementHandle {
+    let run = h.runner();
+    h.app.global::<PeopleStore>().on_command(move |name, arg| {
+        if let Some(c) = crate::backend::PeopleCmd::parse(&name, &arg) {
+            run(Cmd::People(c));
+        }
+    });
+    focus_box(&h.app);
+    type_text(&h.app, "sara");
+    settle();
+    let photo = ids(&h.app, "DropRow::photo-hover")
+        .into_iter()
+        .next()
+        .expect("the person row's photo");
+    let (x, y) = center(&photo);
+    move_to(&h.app, x, y);
+    rest(900);
+    let ps = h.app.global::<PeopleStore>();
+    assert!(ps.get_card_open(), "a rest on the photo opens the card");
+    assert!(ps.get_card_by_hover());
+    assert!(tb(&h.app).get_search_open(), "the dropdown is still open");
+    ElementHandle::find_by_accessible_label(&h.app, "Profile card")
+        .next()
+        .expect("the card")
+}
+
+#[test]
+fn a_person_rows_hover_card_is_drawn_above_the_dropdown() {
+    let (h, _log) = engine_window();
+    let card = dropdown_card(&h);
+    // The pointer moves from the photo onto the card, which lies over the dropdown's rows. A
+    // card under the dropdown would not get it, and would close for want of a hover.
+    let (x, y) = center(&card);
+    move_to(&h.app, x, y);
+    rest(1500);
+    assert!(
+        h.app.global::<PeopleStore>().get_card_open(),
+        "the card under the pointer stays open"
+    );
+    assert!(tb(&h.app).get_search_open());
+}
+
+#[test]
+fn closing_the_dropdown_closes_the_card_opened_from_it() {
+    // Escape.
+    let (h, _log) = engine_window();
+    dropdown_card(&h);
+    press(&h.app, Key::Escape);
+    assert!(!tb(&h.app).get_search_open());
+    assert!(
+        !h.app.global::<PeopleStore>().get_card_open(),
+        "Escape closes the card with the list"
+    );
+    rest(900);
+    assert!(
+        !h.app.global::<PeopleStore>().get_card_open(),
+        "it does not come back"
+    );
+
+    // A click outside the list and the card.
+    let (h, _log) = engine_window();
+    dropdown_card(&h);
+    let at = LogicalPosition::new(5., 700.);
+    crate::pointer_pressed(&h.app, at);
+    h.app
+        .window()
+        .dispatch_event(WindowEvent::PointerMoved { position: at });
+    for ev in [
+        WindowEvent::PointerPressed {
+            position: at,
+            button: PointerEventButton::Left,
+        },
+        WindowEvent::PointerReleased {
+            position: at,
+            button: PointerEventButton::Left,
+        },
+    ] {
+        h.app.window().dispatch_event(ev);
+    }
+    settle();
+    assert!(!tb(&h.app).get_search_open());
+    assert!(
+        !h.app.global::<PeopleStore>().get_card_open(),
+        "a click outside closes the card with the list"
+    );
+
+    // Picking the row.
+    let (h, _log) = engine_window();
+    dropdown_card(&h);
+    tb(&h.app).invoke_command("activate".into(), "0".into());
+    settle();
+    assert!(!tb(&h.app).get_search_open());
+    assert!(
+        !h.app.global::<PeopleStore>().get_card_open(),
+        "picking the row closes the card"
+    );
 }
