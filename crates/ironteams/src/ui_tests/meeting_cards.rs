@@ -83,23 +83,48 @@ fn a_meeting_shows_one_call_card_and_one_recording_card_in_its_final_state() {
     assert!(!find_label(&h.app, "Meeting ended · 1h 3m 12s").is_empty());
     assert!(!find_label(&h.app, "Transcript available").is_empty());
 
-    // Play opens the recording in the browser.
+    // Play opens the recording in IronTeams's player window: the in-app command goes to the
+    // engine, which (demo mode) records `player:<url>`; nothing goes to the browser.
+    let link = "https://contoso-my.sharepoint.invalid/:v:/g/rec";
     let opened = Rc::new(RefCell::new(Vec::<String>::new()));
     let o = opened.clone();
     h.app
         .on_open_url(move |u| o.borrow_mut().push(u.to_string()));
+    let asked = Rc::new(RefCell::new(Vec::<String>::new()));
+    let (a, engine, rt) = (asked.clone(), h.engine.clone(), h.rt.clone());
+    h.app.global::<RecapsStore>().on_command(move |n, arg| {
+        a.borrow_mut().push(format!("{n} {arg}"));
+        if n.as_str() == "recaps-play"
+            && let Some(c) = crate::backend::AppsCmd::parse(&n, &arg)
+        {
+            rt.block_on(engine.clone().handle(Cmd::Apps(c)));
+        }
+    });
     press(&h.app, "Play Weekly sync-20261110_1230-Meeting Recording");
-    assert_eq!(
-        *opened.borrow(),
-        ["https://contoso-my.sharepoint.invalid/:v:/g/rec"]
+    assert_eq!(*asked.borrow(), [format!("recaps-play {link}")]);
+    assert!(
+        opened.borrow().is_empty(),
+        "not the browser: {:?}",
+        opened.borrow()
+    );
+    assert_eq!(h.engine.apps_opened(), [format!("player:{link}")]);
+    assert!(
+        !crate::external::suppressed_targets()
+            .iter()
+            .any(|t| t == link),
+        "nothing handed to the desktop"
+    );
+    // Open in browser stays in the card's More options menu.
+    assert!(
+        !find_label(
+            &h.app,
+            "More options for Weekly sync-20261110_1230-Meeting Recording"
+        )
+        .is_empty()
     );
 
     // View recap switches to the chat's Recap tab.
-    let asked = Rc::new(RefCell::new(Vec::<String>::new()));
-    let a = asked.clone();
-    h.app
-        .global::<RecapsStore>()
-        .on_command(move |n, arg| a.borrow_mut().push(format!("{n} {arg}")));
+    asked.borrow_mut().clear();
     press(&h.app, "View recap");
     assert_eq!(*asked.borrow(), [format!("recaps-chat {CHAT}")]);
     assert_eq!(h.app.global::<crate::FindStore>().get_chat_tab(), "recap");

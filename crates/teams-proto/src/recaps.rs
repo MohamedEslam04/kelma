@@ -547,6 +547,69 @@ pub fn parse_transcript_message(message_type: &str, content: &str) -> Option<Str
     Some(id)
 }
 
+/// Whether the user can play a recording, from Graph's answer for its drive item. IronTeams asks
+/// before it opens the player window, so a recording the user cannot watch gets a plain line
+/// instead of an error page. The statuses are Graph's documented ones; which one a recording
+/// that expired or is still processing gets is UNVERIFIED without a live capture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordingAccess {
+    /// The item is there and the user can read it.
+    Ready,
+    /// The user was not invited or the recording was not shared with them (403).
+    NoAccess,
+    /// Expired (Teams recordings expire) or deleted: 404, 410, or a `deleted` item.
+    Gone,
+    /// Still uploading or being processed: 423, or an empty file.
+    Processing,
+    /// Graph could not say (another answer): the player opens the page anyway.
+    Unknown,
+}
+
+/// What [`recording_item_url`] asks Graph for.
+const RECORDING_SELECT: &str = "$select=id,size,deleted";
+
+/// The Graph URL of a recording's drive item: `/drives/{driveId}/items/{itemId}` when the chat
+/// message named both (the `onedriveForBusinessVideo` item), else `/shares/u!…/driveItem` for its
+/// https link. `None` when there is neither.
+pub fn recording_item_url(
+    drive_id: Option<&str>,
+    item_id: Option<&str>,
+    web_url: Option<&str>,
+) -> Option<String> {
+    let given = |s: Option<&str>| s.map(str::trim).filter(|s| !s.is_empty());
+    match (given(drive_id), given(item_id)) {
+        (Some(d), Some(i)) => Some(graph_url(&["drives", d, "items", i], RECORDING_SELECT)),
+        _ => given(web_url)
+            .filter(|u| u.starts_with("https://"))
+            .map(|u| {
+                format!(
+                    "{}?{RECORDING_SELECT}",
+                    crate::images::graph_share_item_url(u)
+                )
+            }),
+    }
+}
+
+/// Reads Graph's answer for a recording's drive item (see [`RecordingAccess`]).
+pub fn recording_access(status: u16, body: &str) -> RecordingAccess {
+    match status {
+        200..=299 => {
+            let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+            if !v["deleted"].is_null() {
+                RecordingAccess::Gone
+            } else if v["size"].as_i64() == Some(0) {
+                RecordingAccess::Processing
+            } else {
+                RecordingAccess::Ready
+            }
+        }
+        403 => RecordingAccess::NoAccess,
+        404 | 410 => RecordingAccess::Gone,
+        423 => RecordingAccess::Processing,
+        _ => RecordingAccess::Unknown,
+    }
+}
+
 impl Client {
     /// Meetings that ended in the last `days` days and have a recording or transcript (MCPS,
     /// UNVERIFIED audience: the bridge's, see [`Audience::MeetingContent`]). The host is
@@ -609,6 +672,23 @@ impl Client {
             return Err(Error::status("transcript file", status, &text));
         }
         Ok(text)
+    }
+
+    /// Whether the user can play a recording (Graph, see [`recording_item_url`]). A recording
+    /// with neither a drive item nor a link is [`RecordingAccess::Unknown`].
+    pub async fn recording_access(
+        &self,
+        drive_id: Option<&str>,
+        item_id: Option<&str>,
+        web_url: Option<&str>,
+    ) -> Result<RecordingAccess> {
+        let Some(url) = recording_item_url(drive_id, item_id, web_url) else {
+            return Ok(RecordingAccess::Unknown);
+        };
+        let (status, text) = self
+            .request_as(&Audience::Graph, Method::GET, &url, None, &[])
+            .await?;
+        Ok(recording_access(status, &text))
     }
 
     /// The tabs of a meeting chat (`GET /chats/{id}/tabs?$expand=teamsApp`).
@@ -878,5 +958,67 @@ mod tests {
             Some("https://example.invalid/n")
         );
         assert_eq!(notes_link(&tabs[..1]), None);
+    }
+
+    #[test]
+    fn a_recording_resolves_to_its_drive_item_or_its_share_link() {
+        assert_eq!(
+            recording_item_url(
+                Some("b!drive1"),
+                Some("01ITEM"),
+                Some("https://x.invalid/:v:/r")
+            )
+            .as_deref(),
+            Some(
+                "https://graph.microsoft.com/v1.0/drives/b!drive1/items/01ITEM?$select=id,size,deleted"
+            ),
+            "the drive item wins over the link"
+        );
+        // Without both ids: the Graph shares id of the link (`u!` + base64url, no padding).
+        let link = "https://contoso-my.sharepoint.invalid/:v:/g/rec";
+        let shared = recording_item_url(Some("b!drive1"), Some(" "), Some(link)).unwrap();
+        assert_eq!(
+            shared,
+            format!(
+                "{}?$select=id,size,deleted",
+                crate::images::graph_share_item_url(link)
+            )
+        );
+        assert!(shared.starts_with("https://graph.microsoft.com/v1.0/shares/u!"));
+        assert_eq!(
+            recording_item_url(None, None, Some("http://x.invalid/r")),
+            None
+        );
+        assert_eq!(recording_item_url(None, Some("01ITEM"), None), None);
+        assert_eq!(recording_item_url(None, None, None), None);
+    }
+
+    #[test]
+    fn graphs_answer_says_whether_the_recording_can_play() {
+        assert_eq!(
+            recording_access(
+                200,
+                r#"{"id":"01ITEM","size":123,"webUrl":"https://x.invalid/stream.aspx?id=1"}"#
+            ),
+            RecordingAccess::Ready
+        );
+        assert_eq!(recording_access(200, "not json"), RecordingAccess::Ready);
+        assert_eq!(
+            recording_access(200, r#"{"size":5,"deleted":{"state":"softDeleted"}}"#),
+            RecordingAccess::Gone
+        );
+        assert_eq!(
+            recording_access(200, r#"{"size":0}"#),
+            RecordingAccess::Processing
+        );
+        assert_eq!(
+            recording_access(403, r#"{"error":{"code":"accessDenied"}}"#),
+            RecordingAccess::NoAccess
+        );
+        assert_eq!(recording_access(404, ""), RecordingAccess::Gone);
+        assert_eq!(recording_access(410, ""), RecordingAccess::Gone);
+        assert_eq!(recording_access(423, ""), RecordingAccess::Processing);
+        assert_eq!(recording_access(500, ""), RecordingAccess::Unknown);
+        assert_eq!(recording_access(401, ""), RecordingAccess::Unknown);
     }
 }

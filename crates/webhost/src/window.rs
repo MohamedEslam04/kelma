@@ -494,6 +494,25 @@ impl WebWindow {
         evaluate(&self.inner, js).await
     }
 
+    /// Loads `url` in the window and brings the window to the front (a window kept open for
+    /// the next page, like the recording player).
+    pub async fn navigate(&self, url: &str) -> Result<()> {
+        if self.is_closed() {
+            return Err(Error::Closed);
+        }
+        let s = Some(self.inner.session.as_str());
+        let nav = self
+            .inner
+            .cdp
+            .call("Page.navigate", json!({ "url": url }), s)
+            .await?;
+        if let Some(e) = nav["errorText"].as_str() {
+            return Err(Error::Startup(format!("could not load the page: {e}")));
+        }
+        let _ = self.inner.cdp.call("Page.bringToFront", json!({}), s).await;
+        Ok(())
+    }
+
     /// Sets the handler for `window.ironteams.invoke(payload)` calls, replacing any earlier one.
     pub fn on_message(&self, handler: BridgeHandler) {
         *self.inner.bridge.lock().unwrap() = Some(handler);
