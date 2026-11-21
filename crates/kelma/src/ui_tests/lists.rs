@@ -113,9 +113,8 @@ fn harness() -> Harness {
         })
         .unwrap();
     let h = Harness::with_store(store);
-    // Tall enough for every row (scrolled-out rows are not found), with the Quick views collapsed
-    // so an open item menu does not cover the rows these tests click next.
-    h.app.window().set_size(LogicalSize::new(1200., 900.));
+    // The Quick views start collapsed: these tests click rows by position, and an item menu that
+    // opens over the section below would cover the next row.
     h.app.global::<crate::QuickViewsStore>().set_open(false);
     // Render the list once so the rows exist.
     h.runner()(Cmd::SetFilter("all".into()));
