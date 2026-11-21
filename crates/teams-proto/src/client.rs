@@ -91,9 +91,24 @@ fn build_http() -> Result<reqwest::Client> {
     install_crypto_provider();
     Ok(reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
+        // Close idle connections before the servers or a suspend do, so fewer requests start on
+        // a dead one.
+        .pool_idle_timeout(Duration::from_secs(50))
         .timeout(Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::limited(3))
         .build()?)
+}
+
+/// Wait before a read that got no answer is sent again.
+const RESEND_DELAY: Duration = Duration::from_millis(300);
+
+/// True when a request that failed with `err` may be sent again as it is: a read (GET or HEAD)
+/// whose connection failed or broke before an answer. A timeout is not resent: the server may be
+/// slow, and a second wait doubles the delay.
+fn resend_safe(method: &Method, err: &reqwest::Error) -> bool {
+    (*method == Method::GET || *method == Method::HEAD)
+        && (err.is_connect() || err.is_request())
+        && !err.is_timeout()
 }
 
 /// Seconds before expiry at which tokens are refreshed.
@@ -598,7 +613,9 @@ impl Client {
         extra: &[(&str, &str)],
     ) -> Result<(u16, String, Option<String>)> {
         self.ensure_fresh().await?;
-        for attempt in 0..2 {
+        let mut refreshed = false;
+        let mut resent = false;
+        loop {
             let parsed =
                 Url::parse(url).map_err(|e| Error::Protocol(format!("bad url {url}: {e}")))?;
             let tokens = self.tokens().await;
@@ -616,10 +633,23 @@ impl Client {
                 }
                 None => req,
             };
-            let resp = req.send().await?;
+            let resp = match req.send().await {
+                Ok(resp) => resp,
+                // A pooled connection the server or a suspend dropped fails at once with "error
+                // sending request". A read is safe to send again on a fresh connection; a write
+                // is not (it may have arrived), so it reports the error.
+                Err(e) if !resent && resend_safe(&method, &e) => {
+                    tracing::warn!(%url, err = %e, "request failed, sending it once more");
+                    resent = true;
+                    tokio::time::sleep(RESEND_DELAY).await;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
             let status = resp.status().as_u16();
-            if status == 401 && attempt == 0 {
+            if status == 401 && !refreshed {
                 tracing::warn!(%url, "401, refreshing tokens");
+                refreshed = true;
                 self.refresh_all().await?;
                 continue;
             }
@@ -630,7 +660,6 @@ impl Client {
                 .map(str::to_owned);
             return Ok((status, resp.text().await?, location));
         }
-        unreachable!("loop returns on second attempt")
     }
 
     /// Sends a request and parses a JSON response; non-2xx statuses become errors.
@@ -687,6 +716,21 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn only_a_read_whose_connection_failed_is_sent_again() {
+        // Nothing listens on port 1: the connection fails before any answer.
+        let err = reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(resend_safe(&Method::GET, &err));
+        assert!(resend_safe(&Method::HEAD, &err));
+        assert!(!resend_safe(&Method::POST, &err));
+        assert!(!resend_safe(&Method::PUT, &err));
+        assert!(!resend_safe(&Method::DELETE, &err));
+    }
 
     #[test]
     fn bearer_only_goes_to_the_audience_host() {

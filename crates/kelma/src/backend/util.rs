@@ -7,6 +7,17 @@ use serde_json::json;
 use store::{ConvKind, MessageRow};
 use teams_proto::model::{ConversationKind, Message};
 
+/// The text a failed command shows. A request Teams never answered says so plainly instead of
+/// the client library's wording; anything else keeps its own message.
+pub(super) fn shown_error(err: &anyhow::Error) -> String {
+    match err.downcast_ref::<teams_proto::Error>() {
+        Some(e) if e.is_transient() => {
+            "Couldn't reach Teams. Check the connection and try again.".to_owned()
+        }
+        _ => err.to_string(),
+    }
+}
+
 pub(super) fn kind_from(k: ConversationKind) -> Option<ConvKind> {
     Some(match k {
         ConversationKind::OneOnOne => ConvKind::OneOnOne,
@@ -192,6 +203,21 @@ pub(super) fn system_text(m: &MessageRow) -> Option<String> {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn an_unanswered_request_says_so_and_other_errors_keep_their_text() {
+        let unanswered = anyhow::Error::from(teams_proto::Error::status("messages", 503, ""));
+        assert_eq!(
+            shown_error(&unanswered),
+            "Couldn't reach Teams. Check the connection and try again."
+        );
+        let refused = anyhow::Error::from(teams_proto::Error::status("messages", 403, "no"));
+        assert_eq!(shown_error(&refused), "messages: HTTP 403: no");
+        assert_eq!(
+            shown_error(&anyhow::anyhow!("This conversation was deleted.")),
+            "This conversation was deleted."
+        );
+    }
     use serde_json::{Value, json};
 
     fn utc_ms(day: u32, h: u32, m: u32) -> i64 {

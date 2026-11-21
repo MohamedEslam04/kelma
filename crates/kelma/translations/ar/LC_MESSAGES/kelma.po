@@ -14,6 +14,53 @@ msgctxt "text direction"
 msgid "ltr"
 msgstr "rtl"
 
+# Voice messages: the player in chat rows and the recorder in the composer.
+
+msgid "Couldn't load"
+msgstr "تعذّر التحميل"
+
+msgid "Delete recording"
+msgstr "حذف التسجيل"
+
+msgid "Listen to the recording"
+msgstr "الاستماع إلى التسجيل"
+
+msgid "Not played yet"
+msgstr "لم يتم تشغيلها بعد"
+
+msgid "Pause"
+msgstr "إيقاف مؤقت"
+
+msgid "Pause recording"
+msgstr "إيقاف التسجيل مؤقتًا"
+
+msgid "Pause voice message"
+msgstr "إيقاف الرسالة الصوتية مؤقتًا"
+
+msgid "Play voice message"
+msgstr "تشغيل الرسالة الصوتية"
+
+msgid "Playback speed {}×"
+msgstr "سرعة التشغيل {}×"
+
+msgid "Record a voice message (Ctrl+Shift+R)"
+msgstr "تسجيل رسالة صوتية (Ctrl+Shift+R)"
+
+msgid "Recording a voice message"
+msgstr "جارٍ تسجيل رسالة صوتية"
+
+msgid "Recording, {}"
+msgstr "جارٍ التسجيل، {}"
+
+msgid "Resume recording"
+msgstr "استئناف التسجيل"
+
+msgid "Send voice message"
+msgstr "إرسال الرسالة الصوتية"
+
+msgid "Voice message, {}"
+msgstr "رسالة صوتية، {}"
+
 # Strings added with the UX pack, call settings, Calls page, Files tabs and Settings gaps.
 
 msgid "1 line"

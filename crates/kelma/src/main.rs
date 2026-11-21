@@ -410,6 +410,7 @@ fn main() -> anyhow::Result<()> {
     #[cfg(feature = "calls")]
     ui::calls_page::install(&window, tx.clone());
     ui::install_composer_apps(&window, tx.clone());
+    ui::install_voice(&window, tx.clone());
     {
         let tx = tx.clone();
         window.global::<FindStore>().on_command(move |name, arg| {

@@ -8,6 +8,17 @@ use store::{ConvFilter, ConvKind, ConversationRow, TeamRow, UserRow};
 use teams_proto::model::Message;
 use teams_proto::time::now_ms;
 
+/// Shown when a chat opens from the cache because Teams did not answer.
+const OPEN_OFFLINE: &str =
+    "Couldn't refresh this chat. Showing saved messages; kelma will try again.";
+
+/// Waits between the retries of [`Engine::retry_history`].
+const HISTORY_RETRY: [std::time::Duration; 3] = [
+    std::time::Duration::from_secs(5),
+    std::time::Duration::from_secs(20),
+    std::time::Duration::from_secs(60),
+];
+
 impl Engine {
     /// Fetches conversations, teams and names; writes them to the store.
     pub async fn sync(self: &Arc<Self>) -> anyhow::Result<()> {
@@ -217,14 +228,19 @@ impl Engine {
         id: String,
         title: Option<String>,
     ) -> anyhow::Result<()> {
+        let started = std::time::Instant::now();
+        let (row, cached) = {
+            let st = self.store.lock().unwrap();
+            let row = st.conversation(&id)?;
+            let cached = !st.messages_before(&id, None, 1)?.is_empty();
+            (row, cached)
+        };
+        let what = match row.as_ref().map(|c| c.kind) {
+            Some(ConvKind::Channel) => "channel",
+            _ => "chat",
+        };
         // The read horizon before this open moves it: the "New messages" divider goes there.
-        let marker = self
-            .store
-            .lock()
-            .unwrap()
-            .conversation(&id)?
-            .filter(|c| c.unread)
-            .map(|c| c.read_horizon_ms);
+        let marker = row.filter(|c| c.unread).map(|c| c.read_horizon_ms);
         let open_at = self.cfg.lock().unwrap().open_chat_at;
         self.flush_draft();
         {
@@ -256,13 +272,21 @@ impl Engine {
         self.on_chat_opened(&id);
         self.find_chat_opened(&id);
         self.scheduled_chat_opened();
+        // The header and the posts the store has show at once (the next render tick); the
+        // newest page is read behind a loading line.
         self.mark(|d| {
             d.header = true;
             d.messages = true;
             d.scroll = true;
             d.chats = true;
         });
-        let page = match self.client.messages(&id, None, PAGE as u32).await {
+        let offline = self.offline.load(std::sync::atomic::Ordering::Relaxed);
+        self.ui.loading_latest(!offline);
+        let fetched = self.client.messages(&id, None, PAGE as u32).await;
+        if self.view.lock().unwrap().current.as_deref() == Some(id.as_str()) {
+            self.ui.loading_latest(false);
+        }
+        let page = match fetched {
             Ok(p) => p,
             Err(e) if is_soft_deleted(&e.to_string()) => {
                 self.store.lock().unwrap().delete_conversation(&id)?;
@@ -272,21 +296,68 @@ impl Engine {
                 });
                 anyhow::bail!("This conversation was deleted.");
             }
+            // No answer (a dropped connection, a suspend, no network): the saved messages are
+            // already on screen, so say so quietly and try again instead of a red error.
+            Err(e) if e.is_transient() => {
+                tracing::warn!(err = %e, "chat history fetch failed, showing the cache");
+                self.view.lock().unwrap().loaded = true;
+                self.mark(|d| d.messages = true);
+                self.ui.info(OPEN_OFFLINE.into());
+                self.retry_history(id);
+                return Ok(());
+            }
             Err(e) => return Err(e.into()),
         };
         self.store_messages(&page.messages, None);
-        if let Some(last) = page.messages.iter().rev().find(|m| m.is_chat_content()) {
-            self.store.lock().unwrap().mark_read(&id, last.compose_ms)?;
-            let _ = self.client.mark_read(&id, last).await;
-        }
         self.view.lock().unwrap().loaded = true;
         self.mark(|d| {
             d.messages = true;
             d.scroll = true;
             d.chats = true;
         });
+        tracing::info!(
+            cached,
+            fetched = page.messages.len(),
+            "{what} opened in {} ms",
+            started.elapsed().as_millis()
+        );
+        // The read position goes to the server in the background: the posts never wait for it.
+        if let Some(last) = page.messages.iter().rev().find(|m| m.is_chat_content()) {
+            self.store.lock().unwrap().mark_read(&id, last.compose_ms)?;
+            let (e, id, last) = (self.clone(), id.clone(), last.clone());
+            tokio::spawn(async move {
+                if let Err(err) = e.client.mark_read(&id, &last).await {
+                    tracing::debug!(%err, "mark read failed");
+                }
+            });
+        }
         self.prefetch_threads(&id);
         Ok(())
+    }
+
+    /// Fetches the open chat's newest page again after a fetch got no answer: a few times, further
+    /// apart each time, and only while the chat is still open.
+    fn retry_history(self: &Arc<Self>, id: String) {
+        let e = self.clone();
+        tokio::spawn(async move {
+            for wait in HISTORY_RETRY {
+                tokio::time::sleep(wait).await;
+                if e.view.lock().unwrap().current.as_deref() != Some(id.as_str()) {
+                    return;
+                }
+                match e.client.messages(&id, None, PAGE as u32).await {
+                    Ok(page) => {
+                        e.store_messages(&page.messages, None);
+                        e.mark(|d| {
+                            d.messages = true;
+                            d.scroll = true;
+                        });
+                        return;
+                    }
+                    Err(err) => tracing::warn!(%err, "chat history retry failed"),
+                }
+            }
+        });
     }
 
     pub(super) async fn load_older(self: &Arc<Self>) -> anyhow::Result<()> {

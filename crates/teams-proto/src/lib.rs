@@ -52,6 +52,7 @@ pub mod trouter;
 pub mod urlpreview;
 pub mod user_settings;
 pub mod views;
+pub mod voice;
 pub mod workflows;
 
 pub use client::{Client, Session};

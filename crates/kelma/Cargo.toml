@@ -35,6 +35,7 @@ session = { version = "0.0.0", path = "../session" }
 slint = { version = "~1.19", features = ["unstable-winit-030"] }
 store = { version = "0.0.0", path = "../store" }
 teams-proto = { version = "0.0.0", path = "../teams-proto" }
+voice = { version = "0.0.0", path = "../voice" }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

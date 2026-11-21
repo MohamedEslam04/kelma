@@ -118,6 +118,9 @@ pub enum OutboxKind {
     File,
     /// A message that carries app cards (`OutboxItem::cards`) and the typed text (`html`).
     Card,
+    /// A voice message: the recording is `payload_path` (an .m4a), and `html` is the card the
+    /// pending row shows (it states the length).
+    Voice,
 }
 
 impl OutboxKind {
@@ -127,6 +130,7 @@ impl OutboxKind {
             OutboxKind::Image => "image",
             OutboxKind::File => "file",
             OutboxKind::Card => "card",
+            OutboxKind::Voice => "voice",
         }
     }
 
@@ -136,6 +140,7 @@ impl OutboxKind {
             "image" => OutboxKind::Image,
             "file" => OutboxKind::File,
             "card" => OutboxKind::Card,
+            "voice" => OutboxKind::Voice,
             _ => return None,
         })
     }

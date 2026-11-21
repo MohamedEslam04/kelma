@@ -273,6 +273,58 @@ fn media_html(kind: &str, content: &Value) -> Option<String> {
     ))
 }
 
+/// A voice message found in a message's HTML by [`split_voice`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceClip {
+    /// The AMS `views/audio` URL of the recording.
+    pub url: String,
+    /// The length the card states, to the second (0 when it states none).
+    pub duration_ms: u64,
+}
+
+const VOICE_LABEL: &str = "<p><b>🎤 Voice message";
+const VOICE_LINK: &str = "<p><a href=\"kelma-media:";
+const VOICE_END: &str = "\">▶ Play</a></p>";
+
+/// Takes the voice messages [`attachments_html`] wrote out of `html`: the HTML without them, and
+/// the clips in order. `None` when there is no voice message, so other messages pay nothing.
+/// A chat draws the clips as players instead of the "▶ Play" link.
+pub fn split_voice(html: &str) -> Option<(String, Vec<VoiceClip>)> {
+    if !html.contains(VOICE_LABEL) {
+        return None;
+    }
+    let (mut rest, mut clips) = (String::new(), Vec::new());
+    let mut tail = html;
+    while let Some(at) = tail.find(VOICE_LABEL) {
+        let label = &tail[at + VOICE_LABEL.len()..];
+        let Some(label_end) = label.find("</b></p>") else {
+            break;
+        };
+        let after = &label[label_end + "</b></p>".len()..];
+        let Some(link) = after.strip_prefix(VOICE_LINK) else {
+            break;
+        };
+        let Some(link_end) = link.find(VOICE_END) else {
+            break;
+        };
+        let seconds = label[..label_end]
+            .strip_prefix(" · ")
+            .and_then(|d| d.split_once(':'))
+            .and_then(|(m, s)| Some(m.parse::<u64>().ok()? * 60 + s.parse::<u64>().ok()?))
+            .unwrap_or(0);
+        clips.push(VoiceClip {
+            url: link[..link_end]
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&"),
+            duration_ms: seconds * 1000,
+        });
+        rest.push_str(&tail[..at]);
+        tail = &link[link_end + VOICE_END.len()..];
+    }
+    rest.push_str(tail);
+    (!clips.is_empty()).then_some((rest, clips))
+}
+
 /// Renders a list of attachments (`[{contentType, content}]`) to HTML.
 pub fn attachments_html(attachments: &Value) -> Option<String> {
     let mut out = String::new();
@@ -375,6 +427,47 @@ mod tests {
             "<p><b>🎤 Voice message · 0:23</b></p><p><a href=\"kelma-media:https://us-api.asm.skype.com/v1/objects/0-x/views/audio\">▶ Play</a></p>"
         );
         assert_eq!(iso_duration("PT1M5.4S"), "1:05");
+    }
+
+    #[test]
+    fn voice_messages_split_out_of_the_html_and_the_rest_stays() {
+        let card = |url: &str, d: &str| {
+            let a = json!([{"contentType": "application/vnd.microsoft.card.audio", "content": {"duration": d, "media": [{"url": url}]}}]);
+            attachments_html(&a).unwrap()
+        };
+        let html = format!(
+            "<div>before</div>{}{}<p>after</p>",
+            card(
+                "https://us-api.asm.skype.com/v1/objects/0-a/views/audio",
+                "PT1M5S"
+            ),
+            card(
+                "https://us-api.asm.skype.com/v1/objects/0-b/views/audio?x=1&y=2",
+                "PT9S"
+            ),
+        );
+        let (rest, clips) = split_voice(&html).unwrap();
+        assert_eq!(rest, "<div>before</div><p>after</p>");
+        assert_eq!(
+            clips,
+            [
+                VoiceClip {
+                    url: "https://us-api.asm.skype.com/v1/objects/0-a/views/audio".into(),
+                    duration_ms: 65_000
+                },
+                VoiceClip {
+                    url: "https://us-api.asm.skype.com/v1/objects/0-b/views/audio?x=1&y=2".into(),
+                    duration_ms: 9_000
+                },
+            ]
+        );
+        assert!(split_voice("<p>hello</p>").is_none());
+        // A card without a duration still plays; a video card is not a voice message.
+        let a = json!([{"contentType": "application/vnd.microsoft.card.audio", "content": {"media": [{"url": "https://h/v1/objects/0-c/views/audio"}]}}]);
+        let (_, clips) = split_voice(&attachments_html(&a).unwrap()).unwrap();
+        assert_eq!(clips[0].duration_ms, 0);
+        let v = json!([{"contentType": "application/vnd.microsoft.card.video", "content": {"media": [{"url": "https://h/v1/objects/0-d/views/video"}]}}]);
+        assert!(split_voice(&attachments_html(&v).unwrap()).is_none());
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub use appstore::wire as install_apps;
 pub use cal::read_form as read_form_for_test;
 pub use cal::wire as install_calendar;
 pub use composer_apps::wire as install_composer_apps;
+pub use voice::{PlayerView, RecorderView, wire as install_voice};
 
 use crate::data::{
     AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
@@ -13,7 +14,7 @@ use crate::data::{
 use crate::reactions;
 use crate::{
     AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard,
-    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow,
+    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow, VoiceItem,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -43,6 +44,7 @@ mod remind;
 pub(crate) mod settings;
 mod teams;
 pub(crate) mod topbar;
+mod voice;
 
 thread_local! {
     static MESSAGES: RefCell<Option<Rc<VecModel<Msg>>>> = const { RefCell::new(None) };
@@ -203,6 +205,19 @@ fn msg(m: MsgData) -> Msg {
                 })
                 .collect(),
         ),
+        voices: model(
+            m.voices
+                .into_iter()
+                .map(|v| VoiceItem {
+                    key: v.key.into(),
+                    url: v.url.into(),
+                    duration_ms: v.duration_ms,
+                    peaks: model(v.peaks),
+                    unplayed: v.unplayed,
+                    failed: v.failed,
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -329,6 +344,11 @@ impl UiHandle {
 
     pub fn loading_older(&self, on: bool) {
         self.run(move |w| w.set_loading_older(on));
+    }
+
+    /// The open chat or channel is reading its newest page.
+    pub fn loading_latest(&self, on: bool) {
+        self.run(move |w| w.set_loading_latest(on));
     }
 
     pub fn focus(&self) {
@@ -492,6 +512,11 @@ impl UiHandle {
     pub fn header(&self, h: HeaderData) {
         self.run(move |w| {
             let (avatar, has) = img(&h.avatar);
+            // The Teams page opens the last channel again.
+            if h.is_channel && h.thread_root.is_empty() {
+                w.set_last_channel_id(h.id.as_str().into());
+                w.set_last_channel_title(h.title.as_str().into());
+            }
             w.set_current_id(h.id.into());
             w.set_current_title(h.title.into());
             w.set_current_initials(h.initials.into());

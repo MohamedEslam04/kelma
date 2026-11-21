@@ -19,7 +19,10 @@ mod dsp;
 mod prefs;
 
 #[cfg(feature = "audio")]
-pub use audio::{MicLevelStream, audio_inputs, audio_outputs, loopback, mic_level, test_sound};
+pub use audio::{
+    DeviceStream, MicLevelStream, audio_inputs, audio_outputs, loopback, mic_level,
+    open_input_stream, open_output_stream, test_sound,
+};
 #[cfg(feature = "cameras")]
 pub use cameras::cameras;
 pub use dsp::{LevelMeter, MicLevel, Remix, sine_tone};

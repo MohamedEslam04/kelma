@@ -323,6 +323,63 @@ pub fn test_sound(output: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// An open capture or playback stream with the format the device runs at. Dropping it closes
+/// the device. Like [`MicLevelStream`] it is not `Send`: keep it on the thread that made it.
+pub struct DeviceStream {
+    _stream: Stream,
+    /// Frames per second of the interleaved samples in the callback.
+    pub sample_rate: u32,
+    /// Interleaved channels in the callback.
+    pub channels: u16,
+}
+
+/// Open `input` (default microphone when `None`, else an id or name from [`audio_inputs`]).
+/// `make_callback` is told the device's sample rate and channel count, and returns the
+/// function that receives interleaved f32 samples in that format on the audio thread.
+pub fn open_input_stream<F>(
+    input: Option<&str>,
+    make_callback: impl FnOnce(u32, u16) -> F,
+) -> Result<DeviceStream>
+where
+    F: FnMut(&[f32]) + Send + 'static,
+{
+    let device = pick_device(input, true)?;
+    let config = device
+        .default_input_config()
+        .map_err(|e| audio_err("input config", e))?;
+    let (sample_rate, channels) = (config.sample_rate(), config.channels());
+    let (stream, _) = open_input(&device, make_callback(sample_rate, channels))?;
+    Ok(DeviceStream {
+        _stream: stream,
+        sample_rate,
+        channels,
+    })
+}
+
+/// Open `output` (default speakers when `None`, else an id or name from [`audio_outputs`]).
+/// `make_fill` is told the device's sample rate and channel count, and returns the function
+/// the audio thread calls for each buffer of interleaved f32 samples in that format. It
+/// must write the whole buffer (silence included).
+pub fn open_output_stream<F>(
+    output: Option<&str>,
+    make_fill: impl FnOnce(u32, u16) -> F,
+) -> Result<DeviceStream>
+where
+    F: FnMut(&mut [f32]) + Send + 'static,
+{
+    let device = pick_device(output, false)?;
+    let config = device
+        .default_output_config()
+        .map_err(|e| audio_err("output config", e))?;
+    let (sample_rate, channels) = (config.sample_rate(), config.channels());
+    let stream = open_output(&device, make_fill(sample_rate, channels))?;
+    Ok(DeviceStream {
+        _stream: stream,
+        sample_rate,
+        channels,
+    })
+}
+
 /// Level readings from an open microphone, one about every 50 ms. Dropping it closes the
 /// microphone. (`cpal` streams are not `Send` on every platform: keep this on the thread that
 /// made it and hand the readings over.)

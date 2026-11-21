@@ -585,6 +585,12 @@ impl Engine {
             let mine = r.sender_mri == self.me;
             let shown = self.translated_html(&r.id);
             let html = shown.as_deref().unwrap_or(&r.content_html);
+            // Voice messages are drawn as players: their "▶ Play" link leaves the text.
+            let split = teams_proto::cards::split_voice(html);
+            let (html, voices) = match &split {
+                Some((rest, clips)) => (rest.as_str(), self.voice_rows(clips, mine)),
+                None => (html, Vec::new()),
+            };
             let rich = render::parse_teams_html(html);
             let urls = render::links(&rich);
             let loops: Vec<LoopData> = urls
@@ -761,6 +767,7 @@ impl Engine {
                 pinned: self.is_pinned(&r.conversation_id, &r.id),
                 urls,
                 loops,
+                voices,
             });
             prev = Some(r);
         }

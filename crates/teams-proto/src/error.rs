@@ -3,8 +3,10 @@
 /// Errors returned by the protocol layer.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A request that got no answer. Built through `From`, which drops the URL: it can name a
+    /// conversation and is no use in a banner (the log line of the request has it).
     #[error("http: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(reqwest::Error),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
     #[error("websocket: {0}")]
@@ -23,6 +25,12 @@ pub enum Error {
     DeviceCodeExpired,
     #[error("not signed in")]
     NotSignedIn,
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        Error::Http(e.without_url())
+    }
 }
 
 /// Result alias for the protocol crate.
@@ -85,5 +93,20 @@ mod tests {
             .await
             .unwrap_err();
         assert!(Error::Http(err).is_transient());
+    }
+
+    #[tokio::test]
+    async fn a_failed_request_does_not_show_its_url() {
+        let err = reqwest::Client::new()
+            .get("http://127.0.0.1:1/v1/users/ME/conversations/19:secret@thread.v2/messages")
+            .send()
+            .await
+            .unwrap_err();
+        let shown = Error::from(err).to_string();
+        assert!(shown.starts_with("http: "), "{shown}");
+        assert!(
+            !shown.contains("127.0.0.1") && !shown.contains("19:secret"),
+            "{shown}"
+        );
     }
 }

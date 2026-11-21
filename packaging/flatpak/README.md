@@ -21,6 +21,13 @@ The file chooser, open-URI, camera and screen-cast portals need no permission. I
 portal names kelma by its Flatpak id, so the app's own registration (`register_host_app`) is
 skipped there.
 
+## Known gaps
+
+- Recording voice messages runs `ffmpeg` to encode the recording to AAC, and the
+  freedesktop runtime has no `ffmpeg` program, so recording says "Install ffmpeg" inside the
+  sandbox. Playing voice messages works (it is pure Rust). Bundling an ffmpeg module built with
+  only its native `aac` encoder would close the gap.
+
 ## Build
 
 The sandbox has no network during the build, so the crates are vendored from `Cargo.lock`.
