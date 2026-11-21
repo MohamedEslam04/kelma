@@ -21,7 +21,7 @@ use super::remote_video::{self, RemoteVideo};
 use super::share::{self, Sending, SessionNews, Share, ShareMsg};
 use super::{
     CallDriver, CallHandle, Caption, Control, ControlAction, Device, Devices, Event, EventSink,
-    JoinOptions, JoinTarget, Link, Person, Phase, live_phase, recording_state,
+    JoinOptions, JoinTarget, Link, Person, Phase, live_phase, reaction_named, recording_state,
 };
 use anyhow::Context;
 use calling::audio::{
@@ -40,6 +40,7 @@ use calling::signaling::call_ops::{
     TransferOutcome, hold_offer, keep_media_running, parse_transfer_completion,
 };
 use calling::signaling::content_sharing::{SESSION_UPDATE, is_session_event};
+use calling::signaling::controls::{Reaction, parse_reactions};
 use calling::signaling::meeting::{MeetingTarget, meeting_from_csa_chat, meeting_from_join_url};
 use calling::signaling::roster::{Presence, roster_snapshot};
 use calling::signaling::{CallSession, Controls, NgcClient, Roster};
@@ -983,6 +984,14 @@ impl Call {
                     sink.send(Event::Hand(true));
                 }
             }
+            Control::React(name) => {
+                if let Some(r) = Reaction::parse(name)
+                    && let Err(e) = self.ngc.send_reaction(s, links, controller, r).await
+                {
+                    tracing::warn!(%e, "reaction not sent");
+                    sink.send(Event::Error("Couldn't send your reaction.".into()));
+                }
+            }
             Control::Devices { mic, speaker } => {
                 if let Err(e) = audio.start(mic.as_deref(), speaker.as_deref()) {
                     sink.send(Event::Error(format!("Audio device: {e:#}")));
@@ -1303,6 +1312,18 @@ impl Call {
                                 sink.send(ev);
                             }
                             self.step_bots(&sink).await;
+                        }
+                        // Live reactions (UNVERIFIED live: the body is logged so a run confirms
+                        // its shape; see `controls::parse_reactions`).
+                        CallEvent::Other { scope, event, body }
+                            if scope == "conversation" && event == "receiveMessage" =>
+                        {
+                            tracing::debug!(%body, "conversation message");
+                            for r in parse_reactions(&body).into_iter().filter(|r| r.mri != me) {
+                                if let Some(name) = reaction_named(r.reaction.wire_name()) {
+                                    sink.send(Event::Reaction { mri: r.mri, name });
+                                }
+                            }
                         }
                         CallEvent::Other { scope, event, body }
                             if scope == "conversation" && is_session_event(&event) =>

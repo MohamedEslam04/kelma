@@ -328,6 +328,27 @@ Where the links come from (live 1:1 dump, names only):
    - The GUI opens Transfer with the call on hold, as Teams on the web does. Consult first (a
      second call, then `replacementDetails` naming its leg) is not built.
 
+## Live reactions (built 2026-11-21, UNVERIFIED live)
+
+- **Not a published state.** Raise hand is `POST publishState` (`raiseHands`) with a `removeState`
+  later; a reaction is a one-off message that floats and goes, so it has no state to remove.
+- **Send:** `POST sendMessage` (the conversation's link, else `<controller>/sendMessage`) with
+  `{from, messageContent: [{operationId, type: "Reaction", scope: "all", to: [], payload:
+  {values: [{id, name, count: 1, attributes: {skinTone}}]}}]}`. Names: `like`, `heart`, `laugh`,
+  `surprised`, `applause`; `like` and `applause` carry `skinTone: 2`, the others `null`.
+  - Source: rusty-teams `reaction.rs` `reaction_message` and `signaling.rs` `send_reaction` (MIT).
+  - IronTeams: `controls::reaction_body`, `NgcClient::send_reaction`, which logs the answer at
+    debug level (`calling=debug`).
+- **Receive:** the `conversation/receiveMessage` callback (already in our callback links) with
+  the same `messageContent` items; the sender is the item's `from.id`, else the message's.
+  - Source: rusty-teams `trouter_events.rs` (`receiveMessage` → `parse_reactions`).
+  - IronTeams: `controls::parse_reactions`; the live driver logs each body at debug level and
+    drops our own echo.
+- **To confirm live:** that the service answers `sendMessage` with 2xx, that another client sees
+  the reaction, and the received body's shape (`IRONTEAMS_CALL_DUMP` keeps the raw push).
+- **The window:** at most one reaction a second; each rises over the stage for 2.5 s (2 s standing
+  still with reduced motion) and shows on the sender's tile and People row meanwhile.
+
 ## Open
 
 - **TURN over TCP/TLS.** webrtc-rs 0.21.1 only relays over UDP. A network that blocks UDP 3478 needs a TLS shim to `turns:<gateway>:443`.

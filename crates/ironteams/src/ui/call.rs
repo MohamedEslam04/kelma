@@ -1,10 +1,12 @@
 //! UI-thread side of the call window: fills the `CallStore` global (`ui/call_store.slint`).
 
 use super::{UiHandle, model};
-use crate::backend::call::{CallData, Found, Person, is_meeting_chat};
+use crate::backend::call::{CallData, Floating, Found, Person, REACTIONS, is_meeting_chat};
 use crate::backend::call_feedback::{self, Ask};
 use crate::data::{Pixels, initials};
-use crate::{AppWindow, CallCaption, CallFound, CallPerson, CallStore, SettingsStore};
+use crate::{
+    AppWindow, CallCaption, CallFound, CallPerson, CallReaction, CallStore, SettingsStore,
+};
 use slint::{ComponentHandle, Image, SharedString};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -119,6 +121,10 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_in_lobby(int(d.in_lobby));
     s.set_can_admit(d.can_admit);
     let images = photo_images(&photos);
+    // Every tile and People row shows its person's live reaction.
+    let live = live_reactions(&d.reactions);
+    let call_person =
+        |p, images: &HashMap<String, Image>, video| reacting(call_person(p, images, video), &live);
     let (mini, more) = mini_people(&d.people);
     let mini_owner = video_owner(&mini);
     s.set_mini_people(model(
@@ -152,6 +158,84 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_held(d.held);
     s.set_found(model(d.found.into_iter().map(call_found).collect()));
     s.set_invite_status(d.invite_status.into());
+    REACTIONS_MODEL.with(|m| sync_reactions(m, &d.reactions));
+}
+
+/// A reaction's emoji and the name read out.
+fn reaction_look(name: &str) -> (&'static str, &'static str) {
+    REACTIONS
+        .iter()
+        .find(|r| r.0 == name)
+        .map_or(("", ""), |r| (r.1, r.2))
+}
+
+/// Where a reaction rises across the stage, 0..1: spread by its id (golden-ratio steps), so
+/// reactions in a row do not stack and the same one keeps its lane.
+fn lane(id: u64) -> f32 {
+    (id as f64 * 0.618_034).fract() as f32
+}
+
+/// The latest live reaction of each sender, by MRI ("" for us).
+fn live_reactions(reactions: &[Floating]) -> HashMap<String, &'static str> {
+    reactions.iter().map(|r| (r.mri.clone(), r.name)).collect()
+}
+
+/// A tile or People row shows its person's live reaction.
+fn reacting(mut cp: CallPerson, live: &HashMap<String, &'static str>) -> CallPerson {
+    // Ours has no MRI; someone else's without one cannot be matched.
+    let key = if cp.me {
+        String::new()
+    } else {
+        cp.id.to_string()
+    };
+    let name = live.get(&key).filter(|_| cp.me || !key.is_empty());
+    if let Some(name) = name {
+        let (emoji, label) = reaction_look(name);
+        cp.reaction = emoji.into();
+        cp.reaction_name = label.into();
+    }
+    cp
+}
+
+fn reaction_id(r: &Floating) -> i32 {
+    i32::try_from(r.id).unwrap_or(i32::MAX)
+}
+
+fn call_reaction(r: &Floating) -> CallReaction {
+    let (emoji, name) = reaction_look(r.name);
+    CallReaction {
+        id: reaction_id(r),
+        emoji: emoji.into(),
+        name: name.into(),
+        who: r.who.clone().into(),
+        mine: r.mine,
+        lane: lane(r.id),
+    }
+}
+
+thread_local! {
+    /// The floating reactions, one model for the window: rows are removed and added, never
+    /// replaced, so each reaction's rise goes on while the call state is pushed again.
+    static REACTIONS_MODEL: std::rc::Rc<slint::VecModel<CallReaction>> = std::rc::Rc::default();
+}
+
+/// Makes `m` the floating reactions in `now`: the gone ones leave, the new ones come last.
+fn sync_reactions(m: &slint::VecModel<CallReaction>, now: &[Floating]) {
+    use slint::Model;
+    let ids: Vec<i32> = now.iter().map(reaction_id).collect();
+    let mut i = 0;
+    while i < m.row_count() {
+        match m.row_data(i) {
+            Some(r) if !ids.contains(&r.id) => {
+                m.remove(i);
+            }
+            _ => i += 1,
+        }
+    }
+    let shown: Vec<i32> = m.iter().map(|r| r.id).collect();
+    for r in now.iter().filter(|r| !shown.contains(&reaction_id(r))) {
+        m.push(call_reaction(r));
+    }
 }
 
 fn call_found(f: Found) -> CallFound {
@@ -199,6 +283,8 @@ fn call_person(p: Person, images: &HashMap<String, Image>, video: bool) -> CallP
         name: p.name.into(),
         muted: p.muted,
         hand: p.hand,
+        reaction: SharedString::new(),
+        reaction_name: SharedString::new(),
         lobby: p.lobby,
         me: p.me,
         role: p.role.into(),
@@ -258,6 +344,7 @@ pub fn wire(window: &AppWindow) {
     s.set_camera_available(crate::backend::call::camera::wanted());
     #[cfg(feature = "calls")]
     s.set_slot_videos(GALLERY.with(|g| slint::ModelRc::from(g.clone())));
+    s.set_reactions(REACTIONS_MODEL.with(|m| slint::ModelRc::from(m.clone())));
 }
 
 #[cfg(feature = "calls")]
@@ -419,6 +506,68 @@ mod tests {
             "the user had left the shared screen"
         );
         assert_eq!(view_after_share("content", false, false), None);
+    }
+
+    fn floating(id: u64, name: &'static str, mri: &str) -> Floating {
+        Floating {
+            id,
+            name,
+            mri: mri.into(),
+            who: if mri.is_empty() { "You" } else { "Ada" }.into(),
+            mine: mri.is_empty(),
+            at: std::time::Instant::now(),
+        }
+    }
+
+    #[test]
+    fn the_reactions_model_keeps_its_rows_and_only_adds_and_removes() {
+        use slint::Model;
+        let m = slint::VecModel::<CallReaction>::default();
+        sync_reactions(&m, &[floating(1, "like", ""), floating(2, "heart", "8:a")]);
+        let ids = |m: &slint::VecModel<CallReaction>| m.iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(&m), [1, 2]);
+        let first = m.row_data(1).unwrap();
+        assert_eq!((first.emoji.as_str(), first.name.as_str()), ("❤️", "Heart"));
+        assert_eq!(first.who, "Ada");
+        // 1 expired, 3 came: 2 stays where it was.
+        sync_reactions(
+            &m,
+            &[floating(2, "heart", "8:a"), floating(3, "laugh", "8:a")],
+        );
+        assert_eq!(ids(&m), [2, 3]);
+        sync_reactions(&m, &[]);
+        assert_eq!(m.row_count(), 0);
+    }
+
+    #[test]
+    fn reactions_rise_in_lanes_inside_the_stage() {
+        for id in 1..50 {
+            assert!((0.0..1.0).contains(&lane(id)), "{id}");
+        }
+        assert!((lane(1) - lane(2)).abs() > 0.2, "neighbours are apart");
+    }
+
+    #[test]
+    fn a_tile_shows_the_live_reaction_of_its_person() {
+        let live = live_reactions(&[floating(1, "like", ""), floating(2, "applause", "8:a")]);
+        let person = |id: &str, me| CallPerson {
+            id: id.into(),
+            me,
+            ..Default::default()
+        };
+        let ours = reacting(person("8:me", true), &live);
+        assert_eq!(
+            (ours.reaction.as_str(), ours.reaction_name.as_str()),
+            ("👍", "Like")
+        );
+        let ada = reacting(person("8:a", false), &live);
+        assert_eq!(ada.reaction_name, "Applause");
+        assert_eq!(reacting(person("8:b", false), &live).reaction, "");
+        assert_eq!(
+            reacting(person("", false), &live).reaction,
+            "",
+            "an unknown person is not us"
+        );
     }
 
     #[test]

@@ -210,6 +210,43 @@ pub struct Caption {
 /// How many caption lines the strip shows.
 const CAPTION_LINES: usize = 2;
 
+/// Teams' live meeting reactions, as its React menu orders them: the wire name, the emoji and
+/// the name read out.
+pub const REACTIONS: [(&str, &str, &str); 5] = [
+    ("like", "👍", "Like"),
+    ("heart", "❤️", "Heart"),
+    ("laugh", "😂", "Laugh"),
+    ("surprised", "😮", "Surprised"),
+    ("applause", "👏", "Applause"),
+];
+
+/// The reaction `name` names (its wire name), if it is one of [`REACTIONS`].
+pub fn reaction_named(name: &str) -> Option<&'static str> {
+    REACTIONS.iter().find(|r| r.0 == name).map(|r| r.0)
+}
+
+/// How long a reaction floats over the stage; the window has faded it out by then.
+pub const REACTION_SHOWN: Duration = Duration::from_millis(2500);
+/// At most one reaction of ours a second.
+pub const REACTION_EVERY: Duration = Duration::from_secs(1);
+/// At most this many float at once (a burst drops the oldest).
+const MAX_FLOATING: usize = 12;
+
+/// A reaction floating over the stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Floating {
+    /// Rising per call, so the window keeps a reaction's place while others come and go.
+    pub id: u64,
+    /// The wire name ([`REACTIONS`]).
+    pub name: &'static str,
+    /// Who sent it (empty for us).
+    pub mri: String,
+    /// Their name, "You" for us.
+    pub who: String,
+    pub mine: bool,
+    pub at: Instant,
+}
+
 pub const RECORDING_NOTICE: &str =
     "Recording has started. By attending this meeting, you consent to being included.";
 pub const TRANSCRIPTION_NOTICE: &str =
@@ -235,6 +272,12 @@ pub enum Event {
     /// Our hand (raised elsewhere, or lowered by an organizer).
     #[cfg(any(test, feature = "calls"))]
     Hand(bool),
+    /// Someone's live reaction (a wire name of [`REACTIONS`]).
+    #[cfg(any(test, feature = "calls"))]
+    Reaction {
+        mri: String,
+        name: &'static str,
+    },
     /// Whether the call is on hold (a hold or resume that failed puts it back).
     #[cfg(any(test, feature = "calls"))]
     Held(bool),
@@ -272,6 +315,8 @@ pub enum Control {
     Mute(bool),
     RaiseHand,
     LowerHand,
+    /// Send a live reaction (a wire name of [`REACTIONS`]).
+    React(&'static str),
     /// Switch the microphone and speaker (device ids; `None` is the system default).
     Devices {
         mic: Option<String>,
@@ -548,6 +593,8 @@ pub struct CallData {
     pub found: Vec<Found>,
     /// A short status under the invite box ("Calling Ada…").
     pub invite_status: String,
+    /// The reactions floating over the stage now, oldest first.
+    pub reactions: Vec<Floating>,
 }
 
 /// `m:ss`, or `h:mm:ss` from an hour on.
@@ -609,6 +656,12 @@ pub struct CallModel {
     pub find_seq: u64,
     /// A short status under the invite box ("Calling Ada…").
     pub invite_status: String,
+    /// The reactions floating over the stage, oldest first.
+    pub reactions: Vec<Floating>,
+    /// The last [`Floating::id`] handed out.
+    reaction_seq: u64,
+    /// When we last sent a reaction ([`REACTION_EVERY`]).
+    reacted_at: Option<Instant>,
 }
 
 pub const ALREADY_IN_CALL: &str = "You're already in a call. Leave it before joining another.";
@@ -744,6 +797,8 @@ impl CallModel {
             #[cfg(any(test, feature = "calls"))]
             Event::Hand(h) => return replace(&mut self.hand, h),
             #[cfg(any(test, feature = "calls"))]
+            Event::Reaction { mri, name } => return self.reacted(mri, name, now),
+            #[cfg(any(test, feature = "calls"))]
             Event::Held(h) => return replace(&mut self.held, h),
             Event::Share { available, sharing } => {
                 let a = replace(&mut self.can_share, available);
@@ -795,6 +850,7 @@ impl CallModel {
         self.held = false;
         self.found.clear();
         self.invite_status.clear();
+        self.reactions.clear();
     }
 
     /// Shows `text` as the notice when `show`, clears it when `hide` and it is showing.
@@ -930,6 +986,53 @@ impl CallModel {
             self.hand = !self.hand;
             self.hand
         })
+    }
+
+    /// The React menu's pick: it floats here at once and goes to the call, at most one a second
+    /// ([`REACTION_EVERY`]). `None` while not connected, or too soon after the last one.
+    pub fn react(&mut self, name: &'static str, now: Instant) -> Option<Control> {
+        let too_soon = self
+            .reacted_at
+            .is_some_and(|t| now.saturating_duration_since(t) < REACTION_EVERY);
+        if self.phase != Phase::Connected || too_soon {
+            return None;
+        }
+        self.reacted_at = Some(now);
+        self.float(name, String::new(), "You".into(), true, now);
+        Some(Control::React(name))
+    }
+
+    /// Someone's reaction floats with their name. Ours, echoed back by the service, already
+    /// floated when we sent it.
+    #[cfg(any(test, feature = "calls"))]
+    fn reacted(&mut self, mri: String, name: &'static str, now: Instant) -> bool {
+        let sender = self.roster.iter().find(|p| p.mri == mri);
+        if sender.is_some_and(|p| p.me) {
+            return false;
+        }
+        let who = sender
+            .map(|p| p.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "Someone".into());
+        self.float(name, mri, who, false, now);
+        true
+    }
+
+    fn float(&mut self, name: &'static str, mri: String, who: String, mine: bool, now: Instant) {
+        self.reactions
+            .retain(|r| now.saturating_duration_since(r.at) < REACTION_SHOWN);
+        if self.reactions.len() >= MAX_FLOATING {
+            self.reactions.remove(0);
+        }
+        self.reaction_seq += 1;
+        self.reactions.push(Floating {
+            id: self.reaction_seq,
+            name,
+            mri,
+            who,
+            mine,
+            at: now,
+        });
     }
 
     /// Hold / Resume. Returns the new state while the call is connected.
@@ -1102,6 +1205,14 @@ impl CallModel {
             held: self.held,
             found: self.found.clone(),
             invite_status: self.invite_status.clone(),
+            reactions: self
+                .reactions
+                .iter()
+                .filter(|r| {
+                    self.phase.active() && now.saturating_duration_since(r.at) < REACTION_SHOWN
+                })
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -1174,6 +1285,8 @@ pub enum CallCmd {
     Speaker(usize),
     ToggleMute,
     ToggleHand,
+    /// The React menu: send a live reaction (a wire name of [`REACTIONS`]).
+    React(&'static str),
     /// Hold / Resume.
     ToggleHold,
     /// The Transfer dialog opened (it holds the call).
@@ -1225,6 +1338,7 @@ impl CallCmd {
             "speaker" => CallCmd::Speaker(arg.parse().ok()?),
             "mute" => CallCmd::ToggleMute,
             "hand" => CallCmd::ToggleHand,
+            "react" => CallCmd::React(reaction_named(arg)?),
             "hold" => CallCmd::ToggleHold,
             "transfer-open" => CallCmd::TransferOpen,
             "find" => CallCmd::Find(arg.into()),
@@ -1659,6 +1773,20 @@ impl CallManager {
         m.connected_at = m.connected_at.map(|t| t - by);
     }
 
+    /// Makes the floating reactions and our last send `by` older, then shows the window what is
+    /// left, so a test need not wait for them to expire.
+    #[cfg(test)]
+    pub fn backdate_reactions(&self, by: Duration) {
+        {
+            let mut m = self.shared.model.lock().unwrap();
+            for r in &mut m.reactions {
+                r.at -= by;
+            }
+            m.reacted_at = m.reacted_at.map(|t| t - by);
+        }
+        self.shared.push();
+    }
+
     /// Keeps the call-quality ratings in `path` instead of IronTeams's data dir.
     #[cfg(test)]
     pub fn set_feedback_file(&self, path: std::path::PathBuf) {
@@ -1773,6 +1901,7 @@ impl CallManager {
                         Control::LowerHand
                     }
                 }),
+                CallCmd::React(name) => m.react(name, now),
                 CallCmd::ToggleHold => m.toggle_hold().map(Control::Hold),
                 CallCmd::TransferOpen => m.transfer_opened().map(Control::Hold),
                 CallCmd::Find(_) => None,
@@ -2260,6 +2389,7 @@ impl CallHandle for FakeHandle {
             Control::Mute(m) => format!("mute {}", if *m { "on" } else { "off" }),
             Control::RaiseHand => "hand up".into(),
             Control::LowerHand => "hand down".into(),
+            Control::React(name) => format!("react {name}"),
             Control::Share(on) => format!("share {}", if *on { "on" } else { "off" }),
             Control::Camera(on) => format!("camera {}", if *on { "on" } else { "off" }),
             Control::Devices { mic, speaker } => format!(
@@ -3153,11 +3283,94 @@ mod tests {
             CallCmd::parse("transfer", "8:orgid:a"),
             Some(CallCmd::Transfer("8:orgid:a".into()))
         );
+        assert_eq!(CallCmd::parse("react", ""), None);
+        assert_eq!(CallCmd::parse("react", "wave"), None, "not a live reaction");
+        for (name, ..) in REACTIONS {
+            assert_eq!(CallCmd::parse("react", name), Some(CallCmd::React(name)));
+        }
+    }
+
+    fn connected(t0: Instant) -> CallModel {
+        let mut m = ready();
+        m.joining();
+        m.apply(Event::Connected, t0);
+        m
+    }
+
+    fn floating(m: &CallModel, now: Instant) -> Vec<(&'static str, String, bool)> {
+        m.data(now)
+            .reactions
+            .into_iter()
+            .map(|r| (r.name, r.who, r.mine))
+            .collect()
+    }
+
+    #[test]
+    fn our_reaction_floats_at_once_and_goes_to_the_call_at_most_once_a_second() {
+        let t0 = Instant::now();
         assert_eq!(
-            CallCmd::parse("react", ""),
+            ready().react("like", t0),
             None,
-            "no reaction API in the engine"
+            "not on the pre-join screen"
         );
+        let mut m = connected(t0);
+        assert_eq!(m.react("like", t0), Some(Control::React("like")));
+        assert_eq!(floating(&m, t0), [("like", "You".to_owned(), true)]);
+        let ms = Duration::from_millis;
+        assert_eq!(m.react("heart", t0 + ms(400)), None, "throttled");
+        assert_eq!(m.react("heart", t0 + ms(999)), None, "throttled");
+        assert_eq!(
+            m.react("heart", t0 + ms(1000)),
+            Some(Control::React("heart"))
+        );
+        assert_eq!(m.react("laugh", t0 + ms(1500)), None, "throttled again");
+        assert_eq!(floating(&m, t0 + ms(1000)).len(), 2);
+        // Each floats for REACTION_SHOWN, then is gone.
+        assert_eq!(
+            floating(&m, t0 + ms(2600)),
+            [("heart", "You".to_owned(), true)]
+        );
+        assert!(floating(&m, t0 + ms(3600)).is_empty());
+        let ids: Vec<u64> = m.reactions.iter().map(|r| r.id).collect();
+        assert!(ids[0] < ids[1], "ids rise: {ids:?}");
+    }
+
+    #[test]
+    fn others_reactions_float_with_their_name_and_our_echo_is_dropped() {
+        let t0 = Instant::now();
+        let mut m = connected(t0);
+        let p = |mri: &str, name: &str, me| Person {
+            mri: mri.into(),
+            name: name.into(),
+            me,
+            ..Default::default()
+        };
+        m.apply(
+            Event::Roster(vec![p("8:me", "Me", true), p("8:a", "Ada", false)]),
+            t0,
+        );
+        let r = |mri: &str, name| Event::Reaction {
+            mri: mri.into(),
+            name,
+        };
+        assert!(m.apply(r("8:a", "heart"), t0));
+        assert!(!m.apply(r("8:me", "like"), t0), "ours already floated");
+        assert!(m.apply(r("8:x", "applause"), t0));
+        assert_eq!(
+            floating(&m, t0),
+            [
+                ("heart", "Ada".to_owned(), false),
+                ("applause", "Someone".to_owned(), false)
+            ]
+        );
+        // A burst keeps only the latest few.
+        for _ in 0..20 {
+            m.apply(r("8:a", "laugh"), t0);
+        }
+        assert_eq!(floating(&m, t0).len(), MAX_FLOATING);
+        m.leave(t0);
+        assert!(m.reactions.is_empty(), "the ended call drops them");
+        assert!(!m.apply(r("8:a", "heart"), t0), "no call");
     }
 
     #[test]
