@@ -91,6 +91,7 @@ fn chat_row(c: ChatData) -> ChatRow {
         presence: c.presence.into(),
         person: c.person.into(),
         private: c.private,
+        kind: c.kind.into(),
     }
 }
 
@@ -492,8 +493,14 @@ impl UiHandle {
         });
     }
 
+    /// The fixed sections' rows. `main` ends with the rows of the Meetings section (`section`
+    /// "meetings"), which the list draws under its own header.
     pub fn chats(&self, fav: Vec<ChatData>, main: Vec<ChatData>, chans: Vec<ChatData>) {
         self.run(move |w| {
+            let meetings: Vec<_> = main.iter().filter(|c| c.section == "meetings").collect();
+            let list = w.global::<crate::ListStore>();
+            list.set_meetings_count(meetings.len() as i32);
+            list.set_meetings_unread(meetings.iter().filter(|c| c.unread).count() as i32);
             w.set_chats_favorites(model(fav.into_iter().map(chat_row).collect()));
             w.set_chats_main(model(main.into_iter().map(chat_row).collect()));
             w.set_chats_channels(model(chans.into_iter().map(chat_row).collect()));

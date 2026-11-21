@@ -1563,6 +1563,24 @@ msgstr "المسودات"
 msgid "Favorites"
 msgstr "المفضلة"
 
+msgid "Meetings"
+msgstr "الاجتماعات"
+
+msgid "See all ({})"
+msgstr "عرض الكل ({})"
+
+msgid "Show less"
+msgstr "عرض أقل"
+
+msgid "Meeting chat"
+msgstr "دردشة اجتماع"
+
+msgid "Group chat"
+msgstr "دردشة جماعية"
+
+msgid "Channel"
+msgstr "قناة"
+
 msgid "Teams and channels"
 msgstr "الفرق والقنوات"
 

@@ -108,6 +108,32 @@ fn chat_time_at(zone: Option<Tz>, now_ms: i64, ms: i64) -> String {
     }
 }
 
+/// The day a meeting chat's row names after a generic title ("Meet now · Nov 10"), with the
+/// year when it is not this year.
+pub(super) fn meeting_day(ms: i64) -> String {
+    meeting_day_at(
+        formats::time_zone(),
+        chrono::Utc::now().timestamp_millis(),
+        ms,
+    )
+}
+
+fn meeting_day_at(zone: Option<Tz>, now_ms: i64, ms: i64) -> String {
+    if ms <= 0 {
+        return String::new();
+    }
+    let (Some(t), Some(now)) = (formats::local_in(zone, ms), formats::local_in(zone, now_ms))
+    else {
+        return String::new();
+    };
+    let pattern = if t.year() == now.year() {
+        "%b %-d"
+    } else {
+        "%b %-d, %Y"
+    };
+    t.format(pattern).to_string()
+}
+
 pub(super) fn day_label(ms: i64) -> String {
     day_label_at(
         formats::time_zone(),
@@ -276,6 +302,24 @@ mod tests {
         assert!(utc.starts_with("08:00") || utc.starts_with("8:00"), "{utc}");
         assert!(eg.starts_with("10:00"), "{eg}");
         assert_eq!(chat_time_at(cairo, now, 0), "");
+    }
+
+    #[test]
+    fn a_meeting_day_names_the_month_and_the_year_only_when_it_differs() {
+        let cairo = Some(Tz::Africa__Cairo);
+        let now = utc_ms(19, 12, 0);
+        assert_eq!(
+            meeting_day_at(Some(Tz::UTC), now, utc_ms(10, 9, 0)),
+            "Nov 10"
+        );
+        // 23:00 UTC on the 9th is already the 10th in Cairo.
+        assert_eq!(meeting_day_at(cairo, now, utc_ms(9, 23, 0)), "Nov 10");
+        let last_year = Utc
+            .with_ymd_and_hms(2025, 3, 4, 9, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(meeting_day_at(Some(Tz::UTC), now, last_year), "Mar 4, 2025");
+        assert_eq!(meeting_day_at(Some(Tz::UTC), now, 0), "");
     }
 
     #[test]

@@ -29,7 +29,7 @@ component ChatItem inherits Rectangle {
     in property <length> limit: 100000px;
     // The open menu's height when it opens upwards (0 when it opens downwards).
     property <length> menu-up: 0px;
-    property <bool> in-section: root.data.section != "favorites" && root.data.section != "chats" && root.data.section != "channels";
+    property <bool> in-section: root.data.section != "favorites" && root.data.section != "chats" && root.data.section != "meetings" && root.data.section != "channels";
     // The menu's main view (as `ItemMenu.menu-height` counts it).
     property <length> menu-height: (6 + (root.in-section ? 1 : 0) + (root.data.channel ? 2 + (ListStore.channel-private ? 1 : 0) : 4) + (root.data.group ? 1 : 0)) * 32px + 8px;
     function open-menu() {
@@ -48,7 +48,10 @@ component ChatItem inherits Rectangle {
         padding-right: 10px;
         spacing: 10px;
         alignment: stretch;
-        if !(root.data.channel && root.data.has-avatar): Avatar {
+        // Each kind of row has its own avatar, as in Teams: a person's photo (or initials) with
+        // presence, a people glyph for a group chat, a calendar for a meeting chat and the team's
+        // square picture with a "#" badge for a channel.
+        if !root.data.channel && root.data.kind != "meeting" && !(root.data.group && !root.data.has-avatar): Avatar {
             initials: root.data.initials;
             tone: root.data.color;
             img: root.data.avatar;
@@ -57,16 +60,52 @@ component ChatItem inherits Rectangle {
             size: 32px;
             y: (parent.height - 32px) / 2;
         }
-        // A channel shows its team's picture, square like in Teams.
-        if root.data.channel && root.data.has-avatar: Rectangle {
+        if root.data.group && !root.data.has-avatar: GlyphAvatar {
+            y: (parent.height - 32px) / 2;
+            icon: @image-url("icons/people.svg");
+            tone: Theme.surface-hover;
+            tint: Theme.fg-muted;
+            accessible-label: @tr("Group chat");
+        }
+        if !root.data.channel && root.data.kind == "meeting": GlyphAvatar {
+            y: (parent.height - 32px) / 2;
+            icon: @image-url("icons/calendar.svg");
+            tone: Theme.accent.transparentize(0.8);
+            tint: Theme.accent;
+            accessible-label: @tr("Meeting chat");
+        }
+        if root.data.channel: Rectangle {
             width: 32px;
             height: 32px;
             y: (parent.height - 32px) / 2;
-            border-radius: 6px;
-            clip: true;
             accessible-role: image;
-            accessible-label: @tr("Team picture");
-            Image { source: root.data.avatar; width: 32px; height: 32px; image-fit: cover; }
+            accessible-label: @tr("Channel");
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 6px;
+                background: root.data.has-avatar ? transparent : root.data.color;
+                clip: true;
+                if !root.data.has-avatar: Text { text: root.data.initials; color: #ffffff; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                // The team's picture, square like in Teams.
+                if root.data.has-avatar: Image {
+                    source: root.data.avatar;
+                    width: 32px;
+                    height: 32px;
+                    image-fit: cover;
+                    accessible-role: image;
+                    accessible-label: @tr("Team picture");
+                }
+            }
+            Rectangle {
+                x: 32px - 13px + 2px;
+                y: 32px - 13px + 2px;
+                width: 13px;
+                height: 13px;
+                border-radius: 4px;
+                background: Theme.sidebar;
+                Icon { source: @image-url("icons/hash.svg"); width: 9px; height: 9px; tint: Theme.fg-muted; }
+            }
         }
         VerticalLayout {
             alignment: center;
@@ -189,6 +228,45 @@ component ChatItem inherits Rectangle {
     }
 }
 
+// A round avatar drawing a glyph instead of initials (group and meeting chats).
+component GlyphAvatar inherits Rectangle {
+    in property <image> icon;
+    in property <color> tone;
+    in property <color> tint;
+    width: 32px;
+    height: 32px;
+    border-radius: 16px;
+    background: root.tone;
+    accessible-role: image;
+    Icon { source: root.icon; width: 18px; height: 18px; tint: root.tint; }
+}
+
+// "See all" / "Show less" under the Meetings section.
+component MoreRow inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+    height: 28px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.surface-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Text {
+        x: 54px;
+        y: 0px;
+        width: parent.width - 64px;
+        height: parent.height;
+        text: root.label;
+        color: Theme.accent;
+        font-size: 12px * Theme.font-scale;
+        vertical-alignment: center;
+        horizontal-alignment: Theme.start-align;
+        overflow: elide;
+        accessible-role: none;
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
 // The row of the chat being started in the New chat pane: "New message", selected.
 component NewMessageRow inherits Rectangle {
     height: 56px;
@@ -275,6 +353,8 @@ export component Sidebar inherits Rectangle {
     callback dismiss-away();
 
     property <bool> communities-open: true;
+    // Where the Meetings section's rows start in `chats-main`.
+    property <int> meetings-start: root.chats-main.length - ListStore.meetings-count;
     // The filter row's chevron shows the less used filters (Communities).
     property <bool> more-filters: root.filter == "communities";
     // The list menu's "Customize view" shows its options.
@@ -393,15 +473,37 @@ export component Sidebar inherits Rectangle {
                     } }
                 }
                 if root.filter != "communities": SectionHeader { label: @tr("Chats"); expanded <=> ListStore.chats-open; }
-                if ListStore.chats-open: VerticalLayout { for c in root.chats-main: ChatItem {
-                    data: c;
-                    selected: c.id == root.current-id;
-                    limit: root.absolute-position.y + root.height;
-                    clicked => { root.select-chat(c.id); }
-                    toggle-favorite => { root.toggle-favorite(c.id); }
-                    mark-unread => { root.mark-unread(c.id); }
-                    leave => { root.leave-chat(c.id); }
+                if ListStore.chats-open: VerticalLayout { for c in root.chats-main: VerticalLayout {
+                    if c.section != "meetings": ChatItem {
+                        data: c;
+                        selected: c.id == root.current-id;
+                        limit: root.absolute-position.y + root.height;
+                        clicked => { root.select-chat(c.id); }
+                        toggle-favorite => { root.toggle-favorite(c.id); }
+                        mark-unread => { root.mark-unread(c.id); }
+                        leave => { root.leave-chat(c.id); }
+                    }
                 } }
+                // Meeting chats, collapsed by default: the newest five, then "See all".
+                if ListStore.meetings-count > 0: SectionHead {
+                    section: { id: "meetings", name: @tr("Meetings"), expanded: ListStore.meetings-open, unread: ListStore.meetings-unread, local: false };
+                    toggle => { ListStore.meetings-open = !ListStore.meetings-open; }
+                }
+                if ListStore.meetings-count > 0 && ListStore.meetings-open: VerticalLayout { for c[i] in root.chats-main: VerticalLayout {
+                    if c.section == "meetings" && (ListStore.meetings-all || i < root.meetings-start + 5): ChatItem {
+                        data: c;
+                        selected: c.id == root.current-id;
+                        limit: root.absolute-position.y + root.height;
+                        clicked => { root.select-chat(c.id); }
+                        toggle-favorite => { root.toggle-favorite(c.id); }
+                        mark-unread => { root.mark-unread(c.id); }
+                        leave => { root.leave-chat(c.id); }
+                    }
+                } }
+                if ListStore.meetings-open && ListStore.meetings-count > 5: MoreRow {
+                    label: ListStore.meetings-all ? @tr("Show less") : @tr("See all ({})", ListStore.meetings-count);
+                    clicked => { ListStore.meetings-all = !ListStore.meetings-all; }
+                }
                 if !ListStore.combined && root.filter != "communities": SectionHeader { label: @tr("Teams and channels"); expanded <=> ListStore.channels-open; }
                 if ListStore.channels-open && !ListStore.combined: VerticalLayout { for c in root.chats-channels: ChatItem {
                     data: c;

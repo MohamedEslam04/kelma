@@ -33,6 +33,12 @@ export global ListStore {
     in-out property <bool> favorites-open: true;
     in-out property <bool> chats-open: true;
     in-out property <bool> channels-open: true;
+    // Meeting chats sit in their own section, collapsed until opened. Their rows end
+    // `chats-main` (`section` "meetings"); the section shows the newest five until "See all".
+    in-out property <bool> meetings-open: false;
+    in-out property <bool> meetings-all: false;
+    in property <int> meetings-count;
+    in property <int> meetings-unread;
     // The name dialog: "" | new-section | rename-section. `dialog-target` is the chat to move into
     // the new section, or the section being renamed.
     in-out property <string> dialog;

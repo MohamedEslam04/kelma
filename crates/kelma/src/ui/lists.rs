@@ -47,11 +47,12 @@ impl UiHandle {
         });
     }
 
-    /// Opens or closes the three fixed sections (Favorites, Chats, Teams and channels).
+    /// Opens or closes the fixed sections (Favorites, Chats, Meetings, Teams and channels).
     pub fn fixed_sections_open(&self, open: bool) {
         self.list_store(move |s| {
             s.set_favorites_open(open);
             s.set_chats_open(open);
+            s.set_meetings_open(open);
             s.set_channels_open(open);
         });
     }

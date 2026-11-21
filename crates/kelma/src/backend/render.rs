@@ -229,8 +229,14 @@ impl Engine {
             rows.retain(|r| r.kind == ConvKind::Meeting);
         }
         let rows = super::remind::filter_snoozed(rows, |r| r.id.as_str(), &snoozed, now);
+        // The whole list gathers meeting chats in their own section, and leaves out those nobody
+        // wrote in. The Meeting chats filter and search list every one of them among the chats.
+        let listing = search.trim().is_empty();
+        let meetings_apart = listing && matches!(filter.as_str(), "all" | "chats");
+        let hide_empty_meetings = listing && filter != "meetings";
         let mut fav = vec![];
         let mut main = vec![];
+        let mut meetings = vec![];
         let mut chans = vec![];
         let mut by_section: HashMap<String, Vec<ChatData>> = HashMap::new();
         for r in rows {
@@ -241,6 +247,17 @@ impl Engine {
                 continue;
             }
             let placement = ov.placement(&r.id, r.favorite);
+            let draft = drafts.get(&r.id);
+            // Kept: a favorite or sectioned one, one with a draft, and the open one.
+            if hide_empty_meetings
+                && r.kind == ConvKind::Meeting
+                && r.last_preview.trim().is_empty()
+                && placement == super::lists::Placement::Default
+                && draft.is_none()
+                && current.as_deref() != Some(r.id.as_str())
+            {
+                continue;
+            }
             let avatar_mri = match r.kind {
                 ConvKind::OneOnOne => self.other_member(&r.id),
                 ConvKind::Notes => Some(self.me.clone()),
@@ -255,13 +272,21 @@ impl Engine {
                 self.team_avatar(&c.group_id, r.team_name.as_deref().unwrap_or_default())
             });
             // A channel shows its own name; its team goes on the second line, as in Teams.
-            let title = r.title.clone();
-            let draft = drafts.get(&r.id);
-            let channel_line = match (&r.kind, &r.team_name, draft) {
-                (ConvKind::Channel, Some(t), None) => Some(channel_preview(t, &r.last_preview)),
+            // A meeting chat with a generic title ("Meet now") says which day it was.
+            let generic_meeting = r.kind == ConvKind::Meeting && is_generic_meeting(&r.title);
+            let title = match r.kind {
+                ConvKind::Meeting if r.title.trim().is_empty() => "Meeting".to_string(),
+                _ => r.title.clone(),
+            };
+            let line = match (&r.kind, &r.team_name, draft) {
+                (ConvKind::Channel, Some(t), None) => Some(second_line(t, &r.last_preview)),
+                (ConvKind::Meeting, _, None) if generic_meeting => {
+                    let day = meeting_day(r.last_activity_ms);
+                    (!day.is_empty()).then(|| second_line(&day, &r.last_preview))
+                }
                 _ => None,
             };
-            let preview_text = channel_line.as_ref().or(draft).unwrap_or(&r.last_preview);
+            let preview_text = line.as_ref().or(draft).unwrap_or(&r.last_preview);
             let unread = r.unread
                 && (current.as_deref() != Some(r.id.as_str())
                     || keep_unread.as_deref() == Some(r.id.as_str()));
@@ -284,7 +309,11 @@ impl Engine {
                 mention,
                 group: r.kind == ConvKind::Group,
                 draft: draft.is_some(),
-                initials: initials(&r.title),
+                // A channel without its team's picture shows the team's initials.
+                initials: match (&r.kind, &r.team_name) {
+                    (ConvKind::Channel, Some(t)) if !t.trim().is_empty() => initials(t),
+                    _ => initials(&r.title),
+                },
                 color: color_for(&r.id),
                 avatar: avatar_mri.and_then(|m| self.avatar(&m)).or(team_photo),
                 private: chan
@@ -301,7 +330,15 @@ impl Engine {
                 section: match &placement {
                     super::lists::Placement::Favorites => "favorites",
                     _ if r.kind == ConvKind::Channel && !ov.combined() => "channels",
+                    _ if r.kind == ConvKind::Meeting && meetings_apart => "meetings",
                     _ => "chats",
+                },
+                kind: match r.kind {
+                    ConvKind::OneOnOne => "chat",
+                    ConvKind::Notes => "notes",
+                    ConvKind::Group => "group",
+                    ConvKind::Meeting => "meeting",
+                    ConvKind::Channel => "channel",
                 },
                 id: r.id,
                 title,
@@ -315,9 +352,12 @@ impl Engine {
             match data.section {
                 "favorites" => fav.push(data),
                 "channels" => chans.push(data),
+                "meetings" => meetings.push(data),
                 _ => main.push(data),
             }
         }
+        // The Meetings section's rows end the main list (see `UiHandle::chats`).
+        main.extend(meetings);
         self.ui.chats(fav, main, chans);
         self.push_sections(by_section);
         // The chat list draws first after sign-in: our own photo opens our card from then on.
@@ -812,11 +852,18 @@ impl Engine {
     }
 }
 
-/// The second line of a channel in the chat list: the team, then the last message.
-fn channel_preview(team: &str, last: &str) -> String {
+/// The second line of a channel or a generic meeting chat in the chat list: the team or the
+/// meeting's day, then the last message.
+fn second_line(head: &str, last: &str) -> String {
     if last.trim().is_empty() {
-        team.to_string()
+        head.to_string()
     } else {
-        format!("{team} · {last}")
+        format!("{head} · {last}")
     }
+}
+
+/// A meeting chat title that does not tell meetings apart: empty or Teams' "Meet now".
+fn is_generic_meeting(title: &str) -> bool {
+    let t = title.trim();
+    t.is_empty() || t.eq_ignore_ascii_case("meet now")
 }
