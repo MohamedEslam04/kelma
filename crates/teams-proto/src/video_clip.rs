@@ -163,8 +163,12 @@ pub fn split_video(html: &str) -> Option<(String, Vec<VideoClip>)> {
                     clips.push(VideoClip {
                         url: unesc(src),
                         duration_ms: attr(open, "data-duration").map_or(0, parse_iso),
-                        width: attr(open, "width").and_then(|w| w.parse().ok()).unwrap_or(0),
-                        height: attr(open, "height").and_then(|h| h.parse().ok()).unwrap_or(0),
+                        width: attr(open, "width")
+                            .and_then(|w| w.parse().ok())
+                            .unwrap_or(0),
+                        height: attr(open, "height")
+                            .and_then(|h| h.parse().ok())
+                            .unwrap_or(0),
                     });
                     rest.push_str(&tail[..at]);
                 }
@@ -320,6 +324,9 @@ mod tests {
             thumbnail_url("https://eu-api.asm.skype.com/v1/objects/0-a/views/video").as_deref(),
             Some("https://eu-api.asm.skype.com/v1/objects/0-a/views/thumbnail")
         );
-        assert_eq!(thumbnail_url("https://evil.example/v1/objects/a/views/video"), None);
+        assert_eq!(
+            thumbnail_url("https://evil.example/v1/objects/a/views/video"),
+            None
+        );
     }
 }

@@ -204,7 +204,10 @@ fn the_recorder_previews_records_with_a_timer_and_keeps_the_take() {
 
     press(&c.h.app, "Cancel");
     assert_eq!(c.state(), "idle");
-    assert!(find_label(&c.h.app, "Retake").is_empty(), "the recorder closes");
+    assert!(
+        find_label(&c.h.app, "Retake").is_empty(),
+        "the recorder closes"
+    );
 }
 
 #[test]
@@ -328,8 +331,18 @@ fn each_template_inserts_its_structure() {
         ("Table", "table", 2, &["Column 1", "Column 3", "Add row"]),
         ("Bulleted list", "bullets", 1, &["List item"]),
         ("Checklist", "checklist", 1, &["Checklist item"]),
-        ("Task list", "tasks", 1, &["Task", "Assigned to", "Due date"]),
-        ("Voting table", "voting", 2, &["Vote for option 1", "Vote for option 2"]),
+        (
+            "Task list",
+            "tasks",
+            1,
+            &["Task", "Assigned to", "Due date"],
+        ),
+        (
+            "Voting table",
+            "voting",
+            2,
+            &["Vote for option 1", "Vote for option 2"],
+        ),
     ];
     for (chip, kind, rows, labels) in cases {
         click(&loop_button(&app));
@@ -411,8 +424,15 @@ fn clip_recorder_and_loop_editor_fit_narrow_windows() {
             .any(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Button));
         if width < 860. {
             // GIF and Loop fold into the "…" menu.
-            assert!(!has_loop_button, "no Loop button in the toolbar at {width}px");
-            assert_eq!(toolbar(app).len(), 5, "emoji, attach, more, apps, voice message");
+            assert!(
+                !has_loop_button,
+                "no Loop button in the toolbar at {width}px"
+            );
+            assert_eq!(
+                toolbar(app).len(),
+                5,
+                "emoji, attach, more, apps, voice message"
+            );
             click(&toolbar(app)[2]);
             assert!(!find_label(app, "GIF").is_empty(), "GIF is in the menu");
             press(app, "Loop paragraph");

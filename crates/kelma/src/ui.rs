@@ -5,8 +5,8 @@ pub use appstore::wire as install_apps;
 #[cfg(test)]
 pub use cal::read_form as read_form_for_test;
 pub use cal::wire as install_calendar;
-pub use composer_apps::wire as install_composer_apps;
 pub use clip::{ClipView, wire as install_clip};
+pub use composer_apps::wire as install_composer_apps;
 pub use voice::{PlayerView, RecorderView, wire as install_voice};
 
 use crate::data::{
@@ -31,6 +31,7 @@ pub(crate) mod call_direct;
 #[cfg(feature = "calls")]
 pub(crate) mod calls_page;
 mod channels;
+mod clip;
 mod composer_apps;
 pub(crate) mod drive;
 mod engage;
@@ -45,7 +46,6 @@ mod remind;
 pub(crate) mod settings;
 mod teams;
 pub(crate) mod topbar;
-mod clip;
 mod voice;
 
 thread_local! {

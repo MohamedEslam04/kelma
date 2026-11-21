@@ -81,11 +81,7 @@ fn esc(s: &str) -> String {
 }
 
 fn tick(checked: bool) -> &'static str {
-    if checked {
-        "☑"
-    } else {
-        "☐"
-    }
+    if checked { "☑" } else { "☐" }
 }
 
 /// A table with a header row; `None` when no row has anything in it.

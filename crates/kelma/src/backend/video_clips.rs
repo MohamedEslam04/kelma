@@ -204,7 +204,13 @@ impl Engine {
             }
             ClipCmd::Send => self.clip_send()?,
             ClipCmd::PlayTake => {
-                let mp4 = self.clips.lock().unwrap().take.as_ref().map(|t| t.mp4.clone());
+                let mp4 = self
+                    .clips
+                    .lock()
+                    .unwrap()
+                    .take
+                    .as_ref()
+                    .map(|t| t.mp4.clone());
                 if let (Some(mp4), Some(dir)) = (mp4, media_dir()) {
                     std::fs::create_dir_all(&dir)?;
                     let path = dir.join("clip-take.mp4");
@@ -338,8 +344,14 @@ impl Engine {
     /// Puts a take in the outbox. The pending row's tag points at a local key whose clip and
     /// thumbnail are already in the media cache, so it shows and plays without a fetch.
     fn queue_clip(&self, target: String, take: &RecordedClip) -> anyhow::Result<()> {
-        let item =
-            self.new_outbox_item(target, OutboxKind::VideoClip, String::new(), None, None, None);
+        let item = self.new_outbox_item(
+            target,
+            OutboxKind::VideoClip,
+            String::new(),
+            None,
+            None,
+            None,
+        );
         let key = format!("local-{}", item.client_message_id);
         let html = clip::video_html(
             &clip::video_url(&key),

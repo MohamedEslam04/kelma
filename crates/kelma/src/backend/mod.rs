@@ -102,7 +102,9 @@ pub(crate) use media::decode_for_test;
 pub use people::PeopleCmd;
 pub use remind::{RemindCmd, ReminderData, SnoozedData};
 pub use scheduled::{ScheduledCmd, ScheduledData};
-pub use video_clips::{ClipCamera, ClipCmd, ClipDevices, Picture, RecordedClip};
+#[cfg(test)]
+pub(crate) use video_clips::RecordedClip;
+pub use video_clips::{ClipCamera, ClipCmd, ClipDevices, Picture};
 pub use voice_messages::VoiceCmd;
 
 /// Commands sent by the UI.

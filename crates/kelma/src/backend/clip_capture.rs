@@ -311,7 +311,10 @@ mod live {
                 Ok(std::fs::read(output)?)
             })();
             let _ = std::fs::remove_dir_all(&dir);
-            let first = rec.first.take().or_else(|| self.latest.lock().unwrap().clone());
+            let first = rec
+                .first
+                .take()
+                .or_else(|| self.latest.lock().unwrap().clone());
             Ok(RecordedClip {
                 mp4: result?,
                 // As the clip shows it: not mirrored.

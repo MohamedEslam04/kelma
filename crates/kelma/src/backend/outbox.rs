@@ -419,9 +419,8 @@ impl Engine {
                 let (name, data) = read_payload(item)?;
                 let clip = teams_proto::video_clip::split_video(&item.html)
                     .and_then(|(_, clips)| clips.into_iter().next());
-                let (duration_ms, size) = clip.map_or((0, (0, 0)), |c| {
-                    (c.duration_ms, (c.width, c.height))
-                });
+                let (duration_ms, size) =
+                    clip.map_or((0, (0, 0)), |c| (c.duration_ms, (c.width, c.height)));
                 let sent = async {
                     let id = self.client.upload_video_clip(chat, &name, data).await?;
                     self.client
