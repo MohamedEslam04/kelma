@@ -369,11 +369,14 @@ fn list_devices() -> Devices {
             })
             .collect()
     };
+    let (cameras, camera) = camera::list(prefs.camera.as_deref());
     Devices {
         mic: index(&inputs, prefs.find_microphone(&inputs)),
         speaker: index(&outputs, prefs.find_speaker(&outputs)),
         mics: to(&inputs),
         speakers: to(&outputs),
+        cameras,
+        camera,
     }
 }
 
@@ -394,6 +397,11 @@ impl CallDriver for LiveDriver {
         let (tx, rx) = mpsc::unbounded_channel();
         tokio::spawn(run_meeting(self.hub.clone(), target, opts, sink, rx));
         Box::new(LiveHandle(tx))
+    }
+
+    fn preview(&self, sink: EventSink, camera: Option<String>) -> Option<super::Preview> {
+        let p = camera::preview(sink, camera)?;
+        Some(Box::new(p))
     }
 }
 

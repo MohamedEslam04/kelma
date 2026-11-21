@@ -1,0 +1,33 @@
+// The camera preview and the video effects, filled by `src/ui/call.rs` from the call manager
+// (`backend/call/video_fx.rs`). Choices go back as `CallStore.command("fx-…", …)` and
+// `CallStore.command("camera-device", index)`.
+
+// A tile of the background picker.
+export struct FxChoice {
+    // none | blur | strong-blur | a built-in background's id | custom:<file>
+    id: string,
+    name: string,
+    thumb: image,
+    has-thumb: bool,
+}
+
+export global VideoFxStore {
+    // The pre-join preview: our camera through the effects, mirrored when `mirror`.
+    in property <image> preview;
+    in property <bool> has-preview;
+    // Why there is no picture yet ("Starting your camera…", a refusal), or "".
+    in property <string> preview-status;
+    in property <[FxChoice]> backgrounds;
+    in property <string> background: "none";
+    // none | warm | cool | mono | vivid
+    in property <string> filter: "none";
+    in property <bool> brighten;
+    in property <bool> soft-focus;
+    // Our self-view is mirrored (what the others see never is).
+    in property <bool> mirror: true;
+    // The cameras the pickers list ("Default camera" first) and the one chosen.
+    in property <[string]> cameras: ["Default camera"];
+    in property <int> camera;
+    // The effects panel is open: beside the pre-join preview, or as the More panel's page.
+    in-out property <bool> open;
+}

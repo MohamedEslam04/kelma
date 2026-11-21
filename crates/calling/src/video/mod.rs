@@ -16,6 +16,8 @@
 pub mod camera;
 #[cfg(feature = "screen-share")]
 pub mod control_overlay;
+#[cfg(feature = "effects")]
+pub mod effects;
 #[cfg(feature = "screen-share")]
 mod gst;
 pub mod h264;
@@ -125,6 +127,15 @@ impl I420Frame {
             &self.data[y..y + c],
             &self.data[y + c..y + 2 * c],
         )
+    }
+
+    /// The Y, U and V planes, to change in place.
+    pub fn planes_mut(&mut self) -> (&mut [u8], &mut [u8], &mut [u8]) {
+        let y = self.width * self.height;
+        let c = y / 4;
+        let (luma, chroma) = self.data.split_at_mut(y);
+        let (u, v) = chroma.split_at_mut(c);
+        (luma, u, &mut v[..c])
     }
 }
 

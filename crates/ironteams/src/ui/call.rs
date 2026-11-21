@@ -7,6 +7,7 @@ use crate::backend::outsider::Outsider;
 use crate::data::{Pixels, initials};
 use crate::{
     AppWindow, CallCaption, CallFound, CallPerson, CallReaction, CallStore, SettingsStore,
+    VideoFxStore,
 };
 use slint::{ComponentHandle, Image, SharedString};
 use std::cell::RefCell;
@@ -68,6 +69,10 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
             d.feedback_eligible
                 && call_feedback::sampled(ask.unwrap_or_default(), call_feedback::roll(), demo),
         );
+    }
+    if s.get_phase() == "prejoin" && d.phase != "prejoin" {
+        // The effects panel was the pre-join screen's; the call's More panel opens on its own.
+        w.global::<VideoFxStore>().set_open(false);
     }
     if d.phase == "ended" && s.get_phase() != "ended" {
         // The call just ended: its floating card has nothing left to show, so the ended screen
@@ -156,6 +161,9 @@ fn set(w: &AppWindow, d: CallData, photos: HashMap<String, Pixels>) {
     s.set_mic(int(d.mic));
     s.set_speakers(texts(d.speakers));
     s.set_speaker(int(d.speaker));
+    let fx = w.global::<VideoFxStore>();
+    fx.set_cameras(texts(d.cameras));
+    fx.set_camera(int(d.camera_device));
     s.set_held(d.held);
     s.set_found(model(d.found.into_iter().map(call_found).collect()));
     s.set_invite_status(d.invite_status.into());
@@ -366,6 +374,53 @@ impl UiHandle {
         self.run(move |w| set(&w, d, photos));
     }
 
+    /// The Video effects panel's choices and its background tiles.
+    #[cfg(feature = "calls")]
+    pub fn video_fx(&self, v: crate::backend::call::video_fx::FxView) {
+        // The thumbnails' pixels are copied here, off the UI thread.
+        let tiles: Vec<_> = v
+            .choices
+            .into_iter()
+            .map(|c| {
+                let thumb = c.thumb.and_then(|f| {
+                    let (w, h) = (u32::try_from(f.width).ok()?, u32::try_from(f.height).ok()?);
+                    Some(
+                        slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(
+                            &f.data, w, h,
+                        ),
+                    )
+                });
+                (c.id, c.name, thumb)
+            })
+            .collect();
+        let p = v.prefs;
+        self.run(move |w| {
+            let fx = w.global::<VideoFxStore>();
+            fx.set_backgrounds(model(
+                tiles
+                    .into_iter()
+                    .map(|(id, name, thumb)| crate::FxChoice {
+                        id: id.into(),
+                        name: name.into(),
+                        has_thumb: thumb.is_some(),
+                        thumb: thumb.map(Image::from_rgb8).unwrap_or_default(),
+                    })
+                    .collect(),
+            ));
+            fx.set_background(p.background.into());
+            fx.set_filter(p.filter.into());
+            fx.set_brighten(p.brighten);
+            fx.set_soft_focus(p.soft_focus);
+            fx.set_mirror(p.mirror);
+        });
+    }
+
+    /// Why the pre-join preview has no picture yet ("" once it has).
+    #[cfg(feature = "calls")]
+    pub fn preview_status(&self, text: String) {
+        self.run(move |w| w.global::<VideoFxStore>().set_preview_status(text.into()));
+    }
+
     /// Draws our self-view or the other side's video (`None` clears it).
     #[cfg(feature = "calls")]
     pub fn call_video(
@@ -387,6 +442,11 @@ impl UiHandle {
                 VideoSlot::SelfView => {
                     s.set_self_view(image);
                     s.set_has_self_view(shown);
+                }
+                VideoSlot::Preview => {
+                    let fx = w.global::<VideoFxStore>();
+                    fx.set_preview(image);
+                    fx.set_has_preview(shown);
                 }
                 VideoSlot::Remote => {
                     s.set_remote_video(image);

@@ -6,6 +6,8 @@ import { Avatar, Icon, IconButton } from "widgets.slint";
 import { CallStore, CallPerson, CallFound } from "call_store.slint";
 import { CallAction, CallButton, DeviceSettings } from "call_widgets.slint";
 import { PersonHover } from "people.slint";
+import { VideoFxStore } from "video_fx_store.slint";
+import { VideoEffectsPanel } from "video_effects.slint";
 
 // A small text button of a People row (Admit, Admit all).
 component RowButton inherits Rectangle {
@@ -290,7 +292,8 @@ component SwitchRow inherits Rectangle {
     }
 }
 
-// More, as Teams' "..." menu: Record and transcribe, Language and speech, and the devices. The
+// More, as Teams' "..." menu: Record and transcribe, Language and speech, Video effects and the
+// devices. The
 // service decides who may record; a refusal shows as the call's error banner.
 export component MorePanel inherits Rectangle {
     // The top bar had no room for these (a narrow window): they are here instead.
@@ -378,6 +381,14 @@ export component MorePanel inherits Rectangle {
             checked: CallStore.captions;
             toggled => { CallStore.command("captions", CallStore.captions ? "off" : "on"); }
         }
+        SectionTitle { text: "Video"; }
+        HorizontalLayout {
+            alignment: start;
+            CallAction {
+                label: "Video effects";
+                clicked => { VideoFxStore.open = true; }
+            }
+        }
         SectionTitle { text: "Device settings"; }
         DeviceSettings { prefix: "more"; }
         Text {
@@ -386,5 +397,10 @@ export component MorePanel inherits Rectangle {
             font-size: 12px * Theme.font-scale;
             wrap: word-wrap;
         }
+    }
+    // Video effects: a page of the panel, over its content.
+    if VideoFxStore.open: VideoEffectsPanel {
+        width: root.width;
+        height: root.height;
     }
 }

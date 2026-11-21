@@ -116,7 +116,7 @@ pub fn set_link_previews(on: bool) {
     LINK_PREVIEWS.store(on, Ordering::Relaxed);
 }
 
-fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
+pub(crate) fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
     std::fs::read(path)
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
@@ -124,7 +124,7 @@ fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
 }
 
 /// Writes JSON atomically (temp file in the same directory, then rename).
-fn write_json(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+pub(crate) fn write_json(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("prefs");

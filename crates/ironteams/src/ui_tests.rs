@@ -59,6 +59,8 @@ mod snippets;
 mod splash;
 mod teams;
 mod topbar;
+#[cfg(feature = "calls")]
+mod video_effects;
 mod web_parity;
 mod window_state;
 
