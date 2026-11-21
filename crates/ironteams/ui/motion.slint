@@ -189,11 +189,13 @@ export component PopIn inherits Rectangle {
 // exist at start-up are placed at once (`Motion.toggled` is only set by a click).
 export component Reveal inherits Rectangle {
     property <bool> shown: !Motion.toggled || Theme.reduced-motion;
-    height: root.shown ? lay.preferred-height : 0px;
-    opacity: root.shown ? 1.0 : 0.0;
-    clip: true;
-    animate height { duration: Motion.normal; easing: ease-out; }
-    animate opacity { duration: Motion.normal; easing: ease-out; }
+    // 0 to 1 as the rows unfold. Only this animates: the rows being added or removed later change
+    // the height at once.
+    property <float> amount: root.shown ? 1.0 : 0.0;
+    height: lay.preferred-height * root.amount;
+    opacity: root.amount;
+    clip: root.amount < 1.0;
+    animate amount { duration: Motion.normal; easing: ease-out; }
     Timer {
         interval: 16ms;
         running: !root.shown;

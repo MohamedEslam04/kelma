@@ -109,6 +109,8 @@ fn a_chat_row_shows_dots_while_someone_types_there() {
 #[test]
 fn the_skeleton_for_a_chat_shows_while_it_loads_and_is_gone_after() {
     let app = app_with_messages(vec![]);
+    // (The chat list's own grey rows go with the first sync.)
+    app.set_synced(true);
     assert_eq!(count(&app, "Loading messages"), 0);
     app.set_loading_latest(true);
     pass(16);

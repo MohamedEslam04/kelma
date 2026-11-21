@@ -448,7 +448,6 @@ export component Sidebar inherits Rectangle {
                 padding: 6px;
                 spacing: 1px;
                 alignment: start;
-                if root.loading: SkeletonList { count: 9; label: @tr("Loading chats"); }
                 QuickViewsSection {
                     mentions: root.catch-mentions;
                     drafts-on: root.filter == "drafts";
@@ -538,6 +537,8 @@ export component Sidebar inherits Rectangle {
                     height: 40px;
                     vertical-alignment: center;
                 }
+                // Under everything else, so it never moves a row.
+                if root.loading: SkeletonList { count: 8; label: @tr("Loading chats"); }
             }
         }
 
