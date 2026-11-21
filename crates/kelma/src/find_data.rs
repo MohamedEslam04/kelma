@@ -19,6 +19,8 @@ pub struct HitData {
     pub initials: String,
     pub color: u32,
     pub avatar: Option<Pixels>,
+    /// The person the photo shows (a message's sender, a People hit), for the hover card.
+    pub person: String,
     pub rtl: bool,
 }
 

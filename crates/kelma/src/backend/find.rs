@@ -586,6 +586,7 @@ impl Engine {
             initials: initials(&title),
             color: color_for(if h.mri.is_empty() { &h.conv } else { &h.mri }),
             avatar: self.avatar(avatar_of),
+            person: avatar_of.to_string(),
             rtl: ::render::base_direction(&h.text) == ::render::Dir::Rtl,
         }
     }
