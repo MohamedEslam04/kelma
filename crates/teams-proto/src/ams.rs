@@ -10,8 +10,9 @@ use url::Url;
 pub const AMS_VIEW_HOST: &str = "as-api.asm.skype.com";
 /// Host objects are created and uploaded on.
 const AMS_UPLOAD: &str = "https://as-prod.asyncgw.teams.microsoft.com/v1/objects/";
-/// AMS object type of a voice message recording. NOT YET CONFIRMED: the metadata of a voice
-/// message Teams mobile uploaded must be read (`kelma-cli ams-meta`) before this is trusted.
+/// AMS object type of a voice message recording. Confirmed 2026-11-21 from the metadata of a
+/// voice message Teams mobile uploaded (`kelma-cli ams-meta`): `sharing/audio`, bytes in the
+/// `audio` slot (Teams adds a `transcript_info` slot itself).
 pub const AUDIO_OBJECT_TYPE: &str = "sharing/audio";
 /// Content slot an audio object's bytes are written to (its view is `audio`).
 const AUDIO_CONTENT: &str = "audio";

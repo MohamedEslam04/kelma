@@ -128,6 +128,14 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
   1. `POST as-prod.asyncgw.teams.microsoft.com/v1/objects/` `{type:"pish/image", permissions:{<conv>:["read"]}, filename, sharingMode:"Inline"}` → `id`
   2. `PUT …/v1/objects/{id}/content/imgpsh` with the bytes
   3. Send `<img itemtype="http://schema.skype.com/AMSImage" src=".../views/imgo">` ✅ (self notes)
+- **Upload a voice message** (`teams_proto::ams::upload_voice`, `voice::voice_message_body`) ✅ type
+  confirmed 2026-11-21 with `kelma-cli ams-meta` on a voice message Teams mobile sent to the own
+  notes chat: the object is `{"type":"sharing/audio", "contents":{"audio":{…},
+  "transcript_info":{…}}}` (Teams fills `transcript_info` itself). The message is `RichText/Html`
+  whose body is only an `InputExtension` span, `properties.cards` a JSON string with one
+  `application/vnd.microsoft.card.audio` card `{duration:"PT3S", media:[{url:
+  "https://<region>-api.asm.skype.com/v1/objects/<id>/views/audio"}]}` and `amsreferences`
+  naming the object (mobile listed three objects; only one is in the card).
 - **Views of one object** (`GET …/v1/objects/<id>/views/<view>`, `teams_proto::images`) ✅ 2026-11-19 live, on images in the own notes chat:
 
   | View | Answer |
