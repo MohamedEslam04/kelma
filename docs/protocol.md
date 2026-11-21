@@ -104,9 +104,13 @@ The response has `teams[].channels[]` and `chats[]` (`title`, `isOneOnOne`, `mem
 
 - Profiles: `POST <middleTier>/beta/users/fetchShortProfile?…` with a JSON array of MRIs. The
   response is `value[]` with `displayName` and `email`.
-- Avatars: `GET <middleTier>/beta/users/{selfGuid}/profilepicturev2/{mri}?size=HR64x64`.
+- Avatars: `GET <middleTier>/beta/users/{selfGuid}/profilepicturev2/{mri}?size=HR196x196` (lists,
+  chat, cards; 64 px looked blurry at 2x), and `size=HR648x648` for the photo preview. The service
+  offers HR64x64, HR96x96, HR196x196, HR432x432 and HR648x648. Avatars stored before this change
+  are 64 px and are read again when first shown.
 - Team pictures (channel rows of the chat list, `mt::team_picture`):
-  `GET <middleTier>/beta/users/{selfGuid}/profilepicturev2/teams/{groupId}?displayName=<team name>`,
+  `GET <middleTier>/beta/users/{selfGuid}/profilepicturev2/teams/{groupId}?displayName=<team name>&size=HR196x196`
+  (the `size` is an assumption carried over from the user form: if the read fails it is repeated without it),
   the group id being the CSA `teamSiteInformation.groupId`. From the reference API description
   (`fetchTeamPicture`, which also passes `etag=<pictureETag>`; IronTeams does not read the etag yet).
   Fetched once per run, kept in memory only; a refusal keeps the initials. **UNVERIFIED**: not

@@ -5,7 +5,7 @@
 use super::Engine;
 use super::mentions::{self, Entry};
 use super::outbox::PENDING_PREFIX;
-use super::util::{decode_image, one_on_one_members};
+use super::util::{AVATAR_PX, decode_image, one_on_one_members};
 use crate::data::{CardData, PersonData, PinnedData};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
@@ -1222,7 +1222,7 @@ impl Engine {
 
     // ---- 6.5 profile card ----------------------------------------------------
 
-    /// The card's photo: the stored one at full size, else the small cached avatar.
+    /// The card's photo: the stored one at the avatar size, else the cached avatar.
     fn card_photo(self: &Arc<Self>, mri: &str) -> Option<crate::data::Pixels> {
         let stored = self
             .store
@@ -1233,7 +1233,7 @@ impl Engine {
             .flatten()
             .and_then(|u| u.avatar);
         stored
-            .and_then(|b| decode_image(&b, 160, 160))
+            .and_then(|b| decode_image(&b, AVATAR_PX, AVATAR_PX))
             .or_else(|| self.avatar(mri))
     }
 

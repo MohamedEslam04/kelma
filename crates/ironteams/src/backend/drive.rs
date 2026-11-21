@@ -1003,12 +1003,12 @@ impl Engine {
                             ThumbSource::Url(u) => u,
                             ThumbSource::Item(r) => {
                                 let t = browse::thumbnails(&client, &r).await.ok()?;
-                                t.medium.or(t.small).or(t.large)?
+                                t.large.or(t.medium).or(t.small)?
                             }
                         };
                         let bytes = client.bytes(&url, &[], 3 * 1024 * 1024).await.ok()?;
                         let px = tokio::task::spawn_blocking(move || {
-                            super::util::decode_image(&bytes, 240, 160)
+                            super::util::decode_image(&bytes, 480, 320)
                         })
                         .await
                         .ok()??;

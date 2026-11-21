@@ -3,7 +3,7 @@
 //! account (`teams_proto::photo`, UNVERIFIED in docs/protocol.md), so a refusal is shown as it is.
 
 use super::Engine;
-use super::util::decode_image;
+use super::util::{AVATAR_PX, decode_image};
 use crate::data::Pixels;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -11,11 +11,16 @@ use store::UserRow;
 use teams_proto::photo::check_photo;
 
 /// The size the avatar cache keeps, like every other avatar.
-const SIZE: u32 = 64;
+const SIZE: u32 = AVATAR_PX;
 
 /// The picture as a small PNG, which is what the store keeps for an avatar.
 fn thumbnail_png(bytes: &[u8]) -> Option<Vec<u8>> {
-    let img = image::load_from_memory(bytes).ok()?.thumbnail(SIZE, SIZE);
+    let img = image::load_from_memory(bytes).ok()?;
+    let img = if img.width() > SIZE || img.height() > SIZE {
+        img.thumbnail(SIZE, SIZE)
+    } else {
+        img
+    };
     let mut out = std::io::Cursor::new(Vec::new());
     img.write_to(&mut out, image::ImageFormat::Png).ok()?;
     Some(out.into_inner())
