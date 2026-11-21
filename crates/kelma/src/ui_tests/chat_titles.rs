@@ -84,8 +84,8 @@ fn a_channel_without_a_name_is_general() {
     assert_eq!(titles(&h.app)[CHANNEL], "General");
 }
 
-/// How many elements carry the accessible `label`: the list's rows and, when the open chat
-/// draws one, the header's avatar.
+/// How many elements carry the accessible `label`: the list's rows (the Meetings section may be
+/// collapsed) and, when the open chat draws one, the header's avatar.
 fn glyphs(h: &Harness, label: &str) -> usize {
     ElementHandle::find_by_accessible_label(&h.app, label).count()
 }
@@ -95,7 +95,6 @@ fn a_meeting_chats_header_shows_the_calendar_glyph_not_initials() {
     let h = harness();
     h.select(NOTES);
     let in_list = glyphs(&h, "Meeting chat");
-    assert!(in_list >= 1, "the list's meeting row");
     h.select(MEETING);
     assert_eq!(h.app.get_current_kind(), "meeting");
     assert_eq!(glyphs(&h, "Meeting chat"), in_list + 1);
