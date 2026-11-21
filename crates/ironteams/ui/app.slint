@@ -103,6 +103,8 @@ export component AppWindow inherits Window {
     in property <string> user-code;
     in property <string> verify-url;
     in property <string> login-error;
+    // The sign-in splash is still on screen (it fades out over the main UI).
+    out property <bool> splash-shown: splash.shown;
     in property <string> me-initials;
     in property <bool> connected: true;
     in property <string> banner;
@@ -479,8 +481,11 @@ export component AppWindow inherits Window {
     // This press closed the profile menu: on my photo it stays closed (the photo toggles it).
     property <bool> profile-closed-by-press;
 
-    if root.login-state != "ready": LoginView {
+    // The splash stays in the tree and fades out over the main UI once signed in.
+    splash := LoginView {
+        z: 100;
         state: root.login-state;
+        done: root.login-state == "ready";
         user-code: root.user-code;
         verify-url: root.verify-url;
         error: root.login-error;

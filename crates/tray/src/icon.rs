@@ -44,7 +44,6 @@ pub fn badge_label(count: u32) -> Option<String> {
     }
 }
 
-const PURPLE: [u8; 4] = [255, 0x5b, 0x5f, 0xc7];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
 const RED: [u8; 4] = [255, 0xe0, 0x24, 0x2f];
 const CLEAR: [u8; 4] = [0, 0, 0, 0];
@@ -65,17 +64,49 @@ fn in_capsule(x: f32, y: f32, (x0, x1, cy): (f32, f32, f32), r: f32) -> bool {
     (x - cx).powi(2) + (y - cy).powi(2) <= r * r
 }
 
-/// The colour of `packaging/io.github.mohamedeslam04.ironteams.svg` at a point of its 128 x 128 canvas.
+/// Linear gradient from `from` to `to` along the box's diagonal (SVG `x1=0 y1=0 x2=1 y2=1`).
+fn diagonal(
+    x: f32,
+    y: f32,
+    (x0, y0, x1, y1): (f32, f32, f32, f32),
+    from: [u8; 3],
+    to: [u8; 3],
+) -> [u8; 4] {
+    let t = (((x - x0) / (x1 - x0) + (y - y0) / (y1 - y0)) / 2.0).clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
+    [
+        255,
+        mix(from[0], to[0]),
+        mix(from[1], to[1]),
+        mix(from[2], to[2]),
+    ]
+}
+
+/// The colour of `packaging/io.github.mohamedeslam04.ironteams.svg` at a point of its 128 x 128
+/// canvas, without the soft shadow under the front tile.
 fn svg_color(x: f32, y: f32) -> [u8; 4] {
-    if !in_round_rect(x, y, (0.0, 0.0, 128.0, 128.0), 28.0) {
-        return CLEAR;
+    const FRONT: (f32, f32, f32, f32) = (8.0, 36.0, 92.0, 120.0);
+    const BACK: (f32, f32, f32, f32) = (42.0, 8.0, 120.0, 86.0);
+    // The I: two capsule bars joined by a stem.
+    let beam = in_capsule(x, y, (29.0, 71.0, 59.0), 5.0)
+        || in_capsule(x, y, (29.0, 71.0, 101.0), 5.0)
+        || ((44.0..=56.0).contains(&x) && (64.0..=96.0).contains(&y));
+    if in_round_rect(x, y, FRONT, 22.0) {
+        if beam {
+            WHITE
+        } else {
+            diagonal(x, y, FRONT, [0x7b, 0x83, 0xeb], [0x4b, 0x53, 0xbc])
+        }
+    } else if [79.0, 93.0, 107.0]
+        .iter()
+        .any(|&cx| (x - cx).powi(2) + (y - 25.0).powi(2) <= 25.0)
+    {
+        WHITE
+    } else if in_round_rect(x, y, BACK, 20.0) {
+        diagonal(x, y, BACK, [0xb4, 0xb8, 0xff], [0x7b, 0x83, 0xeb])
+    } else {
+        CLEAR
     }
-    let bubble = in_round_rect(x, y, (30.0, 28.0, 98.0, 84.0), 10.0)
-        // The tail: the triangle (44,84) (62,84) (44,100).
-        || (x >= 44.0 && y >= 84.0 && y <= 84.0 + (62.0 - x) * 16.0 / 18.0);
-    let lines =
-        in_capsule(x, y, (46.0, 82.0, 50.0), 3.5) || in_capsule(x, y, (46.0, 68.0, 62.0), 3.5);
-    if bubble && !lines { WHITE } else { PURPLE }
 }
 
 /// Average `SS` x `SS` samples per pixel of `shade(u, v)` over the unit square, in straight alpha.
@@ -112,7 +143,7 @@ fn rasterize(size: u32, shade: impl Fn(f32, f32) -> [u8; 4]) -> Pixmap {
     }
 }
 
-/// The app icon (purple rounded square with a white chat bubble) at `size` x `size`.
+/// The app icon (a gradient back tile with three dots, a front tile with a white I) at `size` x `size`.
 pub fn app_icon(size: u32) -> Pixmap {
     rasterize(size, |u, v| svg_color(u * 128.0, v * 128.0))
 }
@@ -252,22 +283,36 @@ mod tests {
         assert_eq!(badge_label(u32::MAX).as_deref(), Some("99+"));
     }
 
+    /// Each channel within 4 of `want`, the gradient being sampled at a pixel, not a point.
+    fn assert_near(got: [u8; 4], want: [u8; 4], what: &str) {
+        let near = got[0] == want[0] && (1..4).all(|i| got[i].abs_diff(want[i]) <= 4);
+        assert!(near, "{what}: {got:?} vs {want:?}");
+    }
+
     #[test]
     fn app_icon_has_the_right_shape_and_colors() {
         let p = app_icon(128);
         assert_eq!((p.width, p.height, p.argb.len()), (128, 128, 128 * 128 * 4));
-        assert_eq!(p.pixel(0, 0)[0], 0, "corner is outside the rounded square");
+        assert_eq!(p.pixel(0, 0)[0], 0, "canvas corner is transparent");
         assert_eq!(
-            p.pixel(10, 10),
-            [255, 0x5b, 0x5f, 0xc7],
-            "square is IronTeams purple"
+            p.pixel(10, 10)[0],
+            0,
+            "above the front tile, left of the back one"
         );
-        assert_eq!(p.pixel(80, 40), WHITE, "bubble is white");
-        assert_eq!(
-            p.pixel(56, 62),
-            [255, 0x5b, 0x5f, 0xc7],
-            "text line is purple"
+        assert_near(p.pixel(100, 60), [255, 140, 147, 241], "back tile is light");
+        assert_near(
+            p.pixel(15, 80),
+            [255, 108, 116, 221],
+            "front tile is deeper",
         );
+        assert_eq!(p.pixel(79, 25), WHITE, "dot");
+        assert_eq!(p.pixel(107, 25), WHITE, "dot");
+        assert_ne!(p.pixel(86, 25), WHITE, "between the dots is the tile");
+        assert_eq!(p.pixel(50, 59), WHITE, "top bar of the I");
+        assert_eq!(p.pixel(50, 80), WHITE, "stem of the I");
+        assert_eq!(p.pixel(50, 101), WHITE, "bottom bar of the I");
+        assert_eq!(p.pixel(74, 59), WHITE, "round end of the top bar");
+        assert_ne!(p.pixel(35, 80), WHITE, "beside the stem is the tile");
     }
 
     #[test]
