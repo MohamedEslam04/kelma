@@ -1,22 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- kelma.app's Info.plist. The release workflow replaces @VERSION@. -->
+<!-- The app bundle's Info.plist. The release workflow fills in @APP_NAME@, @APP_ID@, @EXECUTABLE@
+     and @VERSION@ from its env block. -->
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>kelma</string>
+    <string>@APP_NAME@</string>
     <key>CFBundleExecutable</key>
-    <string>kelma</string>
+    <string>@EXECUTABLE@</string>
     <key>CFBundleIconFile</key>
-    <string>kelma</string>
+    <string>app</string>
     <key>CFBundleIdentifier</key>
-    <string>io.github.mohamedeslam04.kelma</string>
+    <string>@APP_ID@</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>kelma</string>
+    <string>@APP_NAME@</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -30,9 +31,9 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>kelma uses the microphone for calls and voice messages.</string>
+    <string>@APP_NAME@ uses the microphone for calls and voice messages.</string>
     <key>NSCameraUsageDescription</key>
-    <string>kelma uses the camera for video calls and video clips.</string>
+    <string>@APP_NAME@ uses the camera for video calls and video clips.</string>
     <key>NSHumanReadableCopyright</key>
     <string>GPL-3.0-or-later</string>
 </dict>

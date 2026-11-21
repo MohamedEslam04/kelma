@@ -1,32 +1,33 @@
 <!--
-  The Windows installer (WiX 5): kelma.exe, the Hunspell dictionaries and a Start menu shortcut,
-  per machine under Program Files. Built by .github/workflows/release.yml:
+  The Windows installer (WiX 5): the program, the Hunspell dictionaries and a Start menu shortcut,
+  per machine under Program Files. Built by .github/workflows/release.yml, which passes the name:
 
-    wix build packaging/windows/kelma.wxs -arch x64 -d Version=0.1.0 -d Stage=stage -o kelma.msi
+    wix build packaging/windows/app.wxs -arch x64 -d Version=0.1.0 -d Stage=stage
+        -d AppName=kelma -d Exe=kelma.exe -o kelma.msi
 
-  `Stage` is the folder the release job fills (kelma.exe, kelma.ico, LICENSE.txt, dictionaries\).
-  The UpgradeCode never changes: a newer MSI replaces the installed one.
+  `Stage` is the folder the release job fills (the .exe, app.ico, LICENSE.txt, dictionaries\).
+  The UpgradeCode never changes, also across a rename: a newer MSI replaces the installed one.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="kelma" Manufacturer="kelma contributors" Version="$(var.Version)"
+  <Package Name="$(var.AppName)" Manufacturer="$(var.AppName) contributors" Version="$(var.Version)"
            UpgradeCode="e34c59c1-04b5-4785-ace7-df60f5bfd5dc" Scope="perMachine" Compressed="yes">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of kelma is already installed." />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of $(var.AppName) is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <Icon Id="kelma.ico" SourceFile="$(var.Stage)\kelma.ico" />
-    <Property Id="ARPPRODUCTICON" Value="kelma.ico" />
+    <Icon Id="app.ico" SourceFile="$(var.Stage)\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="app.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/MohamedEslam04/kelma" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="kelma">
+      <Directory Id="INSTALLFOLDER" Name="$(var.AppName)">
         <Directory Id="DICTIONARIES" Name="dictionaries" />
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
 
-    <Feature Id="Main" Title="kelma">
+    <Feature Id="Main" Title="$(var.AppName)">
       <Component Directory="INSTALLFOLDER">
-        <File Source="$(var.Stage)\kelma.exe" KeyPath="yes" />
+        <File Source="$(var.Stage)\$(var.Exe)" KeyPath="yes" />
       </Component>
       <Component Directory="INSTALLFOLDER">
         <File Source="$(var.Stage)\LICENSE.txt" />
@@ -45,9 +46,9 @@
         <File Source="$(var.Stage)\dictionaries\ar.dic" />
       </Component>
       <Component Directory="ProgramMenuFolder">
-        <Shortcut Name="kelma" Description="Microsoft Teams chat client (unofficial)"
-                  Target="[INSTALLFOLDER]kelma.exe" WorkingDirectory="INSTALLFOLDER" Icon="kelma.ico" />
-        <RegistryValue Root="HKMU" Key="Software\kelma" Name="StartMenuShortcut" Type="integer"
+        <Shortcut Name="$(var.AppName)" Description="Microsoft Teams chat client (unofficial)"
+                  Target="[INSTALLFOLDER]$(var.Exe)" WorkingDirectory="INSTALLFOLDER" Icon="app.ico" />
+        <RegistryValue Root="HKMU" Key="Software\$(var.AppName)" Name="StartMenuShortcut" Type="integer"
                        Value="1" KeyPath="yes" />
       </Component>
     </Feature>
