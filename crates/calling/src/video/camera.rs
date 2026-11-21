@@ -38,6 +38,30 @@ pub enum CameraSource {
     V4l2(String),
     /// The system's default camera through its own GStreamer source (Windows, macOS).
     System,
+    /// A camera GStreamer's device monitor listed: its source element and properties
+    /// ([`SystemCamera::source`]; Windows, macOS).
+    Device(Vec<String>),
+}
+
+/// Which camera to open.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum CameraChoice {
+    /// The portal's camera on Linux (a V4L2 device when the portal has none), the system's
+    /// default elsewhere.
+    #[default]
+    Default,
+    /// This V4L2 device (Linux). With a Camera portal, only once it allowed the camera.
+    V4l2(String),
+    /// A camera the device monitor listed ([`SystemCamera::source`]; Windows, macOS).
+    Device(Vec<String>),
+}
+
+/// A camera `gst-device-monitor-1.0` lists (Windows, macOS): its name, and the GStreamer source
+/// with the properties that open it (`mfvideosrc device-path="..."`, `avfvideosrc device-index=1`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemCamera {
+    pub name: String,
+    pub source: Vec<String>,
 }
 
 /// How the frames come out.
@@ -127,16 +151,40 @@ async fn portal() -> Result<Portal> {
 /// Starts the camera: through the portal, or `v4l2_device` (default `/dev/video0`) when the
 /// portal has none.
 pub async fn open(v4l2_device: Option<&str>, settings: CameraSettings) -> Result<CameraCapture> {
+    open_choice(&CameraChoice::Default, v4l2_device, settings).await
+}
+
+/// Starts the camera `choice` names. On Linux the Camera portal asks first either way (the user
+/// answers; a refusal is an error, with no V4L2 behind their back); once it allows the camera a
+/// chosen V4L2 device is read directly (the portal's PipeWire remote does not say which node is
+/// which camera; UNVERIFIED in a Flatpak sandbox, where `/dev/video*` is not visible). Without a
+/// portal camera, the chosen device, else `v4l2_fallback` (default `/dev/video0`).
+pub async fn open_choice(
+    choice: &CameraChoice,
+    v4l2_fallback: Option<&str>,
+    settings: CameraSettings,
+) -> Result<CameraCapture> {
     #[cfg(not(target_os = "linux"))]
     let (source, stdin) = {
-        let _ = v4l2_device;
-        (CameraSource::System, Stdio::null())
+        let _ = v4l2_fallback;
+        match choice {
+            CameraChoice::Device(source) => (CameraSource::Device(source.clone()), Stdio::null()),
+            _ => (CameraSource::System, Stdio::null()),
+        }
     };
     #[cfg(target_os = "linux")]
-    let (source, stdin) = match portal().await? {
-        Portal::Remote(fd) => (CameraSource::Portal, Stdio::from(fd)),
-        Portal::NoCamera(why) => {
-            let device = v4l2_device.unwrap_or("/dev/video0").to_owned();
+    let (source, stdin) = match (portal().await?, choice) {
+        (Portal::Remote(_), CameraChoice::V4l2(device))
+            if std::path::Path::new(device).exists() =>
+        {
+            (CameraSource::V4l2(device.clone()), Stdio::null())
+        }
+        (Portal::Remote(fd), _) => (CameraSource::Portal, Stdio::from(fd)),
+        (Portal::NoCamera(why), _) => {
+            let device = match choice {
+                CameraChoice::V4l2(d) => d.clone(),
+                _ => v4l2_fallback.unwrap_or("/dev/video0").to_owned(),
+            };
             tracing::info!(%why, %device, "camera from V4L2");
             (CameraSource::V4l2(device), Stdio::null())
         }
@@ -177,6 +225,7 @@ pub fn gstreamer_args(source: &CameraSource, size: (u32, u32), fps: u32) -> Vec<
         CameraSource::V4l2(device) => {
             args.extend(["v4l2src".into(), format!("device={device}")]);
         }
+        CameraSource::Device(source) => args.extend(source.iter().cloned()),
         CameraSource::System => args.push(
             if cfg!(windows) {
                 "mfvideosrc"
@@ -212,9 +261,139 @@ pub fn gstreamer_args(source: &CameraSource, size: (u32, u32), fps: u32) -> Vec<
     args
 }
 
+/// The cameras `gst-device-monitor-1.0 Video/Source` lists; empty when it is not installed.
+/// Blocks while the monitor runs (well under a second).
+pub fn system_cameras() -> Vec<SystemCamera> {
+    let monitor = super::gst::gst_launch().with_file_name(if cfg!(windows) {
+        "gst-device-monitor-1.0.exe"
+    } else {
+        "gst-device-monitor-1.0"
+    });
+    let mut command = std::process::Command::new(monitor);
+    // No console window flashing up on Windows.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    match command
+        .arg("Video/Source")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    {
+        Ok(out) => parse_device_monitor(&String::from_utf8_lossy(&out.stdout)),
+        Err(e) => {
+            tracing::info!(%e, "no GStreamer device monitor: only the default camera");
+            Vec::new()
+        }
+    }
+}
+
+/// The cameras in `gst-device-monitor-1.0`'s listing: each device's `name :` line and the source
+/// part of its `gst-launch-1.0 ... ! ...` line.
+pub fn parse_device_monitor(text: &str) -> Vec<SystemCamera> {
+    let mut cameras = Vec::new();
+    let mut name: Option<String> = None;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with("Device found") {
+            name = None;
+        } else if let Some(n) = line
+            .strip_prefix("name")
+            .map(str::trim_start)
+            .and_then(|r| r.strip_prefix(':'))
+        {
+            name.get_or_insert_with(|| n.trim().to_owned());
+        } else if let Some(launch) = line.strip_prefix("gst-launch-1.0 ") {
+            let source = split_launch(launch.split(" ! ").next().unwrap_or_default());
+            if let Some(name) = name.take().filter(|_| !source.is_empty()) {
+                cameras.push(SystemCamera { name, source });
+            }
+        }
+    }
+    cameras
+}
+
+/// A launch line's words: split at spaces outside double quotes, quotes and escapes kept as
+/// `gst-launch-1.0` reads them.
+fn split_launch(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let (mut quoted, mut escaped) = (false, false);
+    for c in s.chars() {
+        if escaped {
+            word.push(c);
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => {
+                word.push(c);
+                escaped = true;
+            }
+            '"' => {
+                word.push(c);
+                quoted = !quoted;
+            }
+            ' ' if !quoted => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            _ => word.push(c),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_device_monitor_listing_gives_each_camera_and_its_source() {
+        let text = r#"Probing devices...
+
+
+Device found:
+
+	name  : Integrated Camera
+	class : Video/Source
+	caps  : video/x-raw, format=NV12, width=1280, height=720, framerate=30/1
+	properties:
+		device.api = mediafoundation
+		device.path = "\\?\usb#vid_04f2&pid_b6d9&mi_00#6&1a2b3c4d&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}\global"
+	gst-launch-1.0 mfvideosrc device-path="\\\\\?\\usb\#vid_04f2\&pid_b6d9\&mi_00\#6\&1a2b3c4d\&0\&0000\#\{e5323777-f976-4f5b-9b55-b94699c46e44\}\\global" ! ...
+
+Device found:
+
+	name  : USB Camera
+	class : Video/Source
+	caps  : video/x-raw
+	gst-launch-1.0 avfvideosrc device-index=1 ! ...
+"#;
+        let cams = parse_device_monitor(text);
+        assert_eq!(cams.len(), 2);
+        assert_eq!(cams[0].name, "Integrated Camera");
+        assert_eq!(cams[0].source[0], "mfvideosrc");
+        assert_eq!(cams[0].source.len(), 2, "the quoted path is one word");
+        assert!(cams[0].source[1].starts_with("device-path=\""));
+        assert_eq!(cams[1].name, "USB Camera");
+        assert_eq!(cams[1].source, ["avfvideosrc", "device-index=1"]);
+        assert!(parse_device_monitor("Probing devices...\n").is_empty());
+    }
+
+    #[test]
+    fn a_listed_camera_is_read_with_its_own_source() {
+        let source = CameraSource::Device(vec!["avfvideosrc".into(), "device-index=1".into()]);
+        let args = gstreamer_args(&source, (640, 360), 15);
+        assert_eq!(args[..3], ["-q", "avfvideosrc", "device-index=1"]);
+        assert_eq!(args[3], "!");
+        assert!(args.contains(&"decodebin".to_owned()));
+    }
 
     #[test]
     fn the_portal_pipeline_reads_fd_0_without_naming_a_node() {

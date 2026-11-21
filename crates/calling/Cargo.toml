@@ -52,6 +52,9 @@ sonora = { version = "0.3.0", optional = true }
 # openh264-devel). The camera will use the same encoder and track (`video::VideoRole`).
 openh264 = { version = "0.9.10", optional = true }
 ab_glyph = { version = "0.2.32", optional = true }
+# Person segmentation for the background effects (`video::effects`): a pure Rust ONNX runtime, so
+# no C++ toolchain or system library. The model is bundled (`assets/segmentation`, Apache-2.0).
+tract-onnx = { version = "0.23.10", default-features = false, optional = true }
 
 # Linux only: Windows and macOS capture through GStreamer's own screen and camera sources
 # (`video::screencast`, `video::camera`) and have no remote control or control cursor yet.
@@ -70,7 +73,7 @@ smithay-client-toolkit = { version = "0.20.0", default-features = false, feature
 rcgen = "0.14.10"
 
 [features]
-default = ["devices", "aec", "screen-share", "camera"]
+default = ["devices", "aec", "screen-share", "camera", "effects"]
 # Microphone/speaker I/O through cpal (needs alsa-lib-devel on Linux). The Opus codec, WAV and tone
 # endpoints build without it.
 devices = ["dep:cpal"]
@@ -91,6 +94,9 @@ screen-share = [
 # encoder, and the OpenH264 decoder for the other side's video. Runtime needs GStreamer's
 # `pipewiresrc` (portal) or `v4l2src` (gstreamer1-plugins-good) and `decodebin`.
 camera = ["screen-share", "ashpd/camera"]
+# Video effects on the camera (background blur and replacement, filters): tract runs the bundled
+# person-segmentation model on the CPU.
+effects = ["camera", "dep:tract-onnx"]
 
 [[example]]
 name = "screencast"
