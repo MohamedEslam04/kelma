@@ -6,6 +6,8 @@ name: Packaging
 
 on:
   workflow_dispatch:
+  # release.yml runs these too and attaches the RPM and the Flatpak to the release.
+  workflow_call:
   push:
     branches: [main, 'ci/packaging-*']
     paths: ['packaging/**', 'Cargo.lock', '.github/workflows/packaging.yml']

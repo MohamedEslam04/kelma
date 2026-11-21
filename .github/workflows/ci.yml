@@ -46,5 +46,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # A cold build of the workspace takes long here; keep what compiled even when a check fails.
+          cache-on-failure: true
       - run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
       - run: cargo test --workspace --no-fail-fast

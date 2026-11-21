@@ -1,0 +1,192 @@
+# Installable builds for every system, attached to a GitHub release for a `v*` tag (a manual run
+# only uploads them as workflow artifacts):
+#   Linux    x86_64 tar.gz and AppImage, plus the RPM and Flatpak of packaging.yml
+#   Windows  x86_64 MSI installer and portable zip
+#   macOS    kelma.app in a .dmg, Apple Silicon (arm64) and Intel (x86_64), ad-hoc signed
+# Icons are rendered from packaging/io.github.mohamedeslam04.kelma.svg; the Windows and macOS
+# packages also ship the English and Arabic Hunspell dictionaries (packaging/release/).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v=${GITHUB_REF_NAME#v}
+          else v=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/kelma/Cargo.toml | head -1); fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  icons:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y librsvg2-bin imagemagick icnsutils
+      - run: bash packaging/release/icons.sh icons
+      - run: bash packaging/release/dictionaries.sh dictionaries
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shared-assets
+          path: |
+            icons/kelma.ico
+            icons/kelma.icns
+            dictionaries/
+
+  linux:
+    needs: meta
+    # The oldest supported runner, so the binary runs on older glibc too.
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libdbus-1-dev libasound2-dev cmake pkg-config libfuse2
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p kelma --bin kelma
+      - name: tar.gz
+        run: |
+          id=io.github.mohamedeslam04.kelma
+          d=kelma-$VERSION-linux-x86_64
+          mkdir -p "$d"
+          cp target/release/kelma "packaging/$id.desktop" "packaging/$id.svg" "packaging/$id.metainfo.xml" LICENSE README.md "$d/"
+          tar -czf "$d.tar.gz" "$d"
+      - name: AppImage
+        run: |
+          id=io.github.mohamedeslam04.kelma
+          curl -fsSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy
+          LDAI_OUTPUT=kelma-$VERSION-linux-x86_64.AppImage ./linuxdeploy --appimage-extract-and-run \
+            --appdir AppDir -e target/release/kelma \
+            -d "packaging/$id.desktop" -i "packaging/$id.svg" --output appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kelma-linux
+          path: |
+            kelma-*.tar.gz
+            kelma-*.AppImage
+
+  windows:
+    needs: [meta, icons]
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p kelma --bin kelma
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-assets
+          path: assets
+      - name: Stage
+        run: |
+          mkdir -p stage/dictionaries
+          cp target/release/kelma.exe assets/icons/kelma.ico stage/
+          cp LICENSE stage/LICENSE.txt
+          cp assets/dictionaries/* stage/dictionaries/
+      - name: Portable zip
+        shell: pwsh
+        run: Compress-Archive -Path stage\* -DestinationPath "kelma-$env:VERSION-windows-x86_64-portable.zip"
+      - name: MSI (WiX 5)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          # MSI versions are numeric: drop a pre-release suffix such as -rc1.
+          wix build packaging/windows/kelma.wxs -arch x64 -d "Version=${VERSION%%-*}" -d Stage=stage \
+            -o "kelma-$VERSION-windows-x86_64.msi"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kelma-windows
+          path: |
+            kelma-*.zip
+            kelma-*.msi
+
+  macos:
+    needs: [meta, icons]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p kelma --bin kelma
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-assets
+          path: assets
+      - name: kelma.app
+        run: |
+          app=dmg/kelma.app/Contents
+          mkdir -p "$app/MacOS" "$app/Resources/dictionaries"
+          cp target/release/kelma "$app/MacOS/"
+          sed "s/@VERSION@/$VERSION/g" packaging/macos/Info.plist > "$app/Info.plist"
+          cp assets/icons/kelma.icns "$app/Resources/"
+          cp assets/dictionaries/* "$app/Resources/dictionaries/"
+          cp LICENSE "$app/Resources/"
+          # Ad-hoc signature: Apple Silicon refuses unsigned code. Not notarized (needs an Apple
+          # Developer ID): the first start needs right click > Open, or System Settings > Privacy.
+          codesign --force --deep --sign - dmg/kelma.app
+          codesign --verify --deep --strict dmg/kelma.app
+          ln -s /Applications dmg/Applications
+      - name: dmg
+        run: hdiutil create -volname kelma -srcfolder dmg -ov -format UDZO "kelma-$VERSION-macos-${{ matrix.arch }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kelma-macos-${{ matrix.arch }}
+          path: kelma-*.dmg
+
+  # The RPM and the Flatpak (and the AUR package check) as packaging.yml builds them.
+  packages:
+    uses: ./.github/workflows/packaging.yml
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v') && !cancelled()
+    needs: [linux, windows, macos, packages]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          pattern: kelma*
+          merge-multiple: true
+      - run: ls -la out
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "kelma $GITHUB_REF_NAME" --notes "Builds for Linux, Windows and macOS." --draft
+          find out -type f \( -name '*.tar.gz' -o -name '*.AppImage' -o -name '*.msi' -o -name '*.zip' -o -name '*.dmg' -o -name '*.rpm' -o -name '*.flatpak' \) -print0 \
+            | xargs -0 gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --clobber
