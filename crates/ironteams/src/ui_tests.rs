@@ -56,6 +56,7 @@ mod scroll;
 mod settings;
 mod shortcuts;
 mod snippets;
+mod splash;
 mod teams;
 mod topbar;
 mod web_parity;
