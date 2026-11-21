@@ -1,6 +1,6 @@
 # MCP server for IronTeams: design
 
-Date: 2026-11-21. Status: approved by the user and implemented on `feat/mcp-server`.
+Date: 2026-11-21. Status: approved by the user and implemented on `feat/mcp-server`. Behind the `mcp` cargo feature, off by default: release builds do not contain it (user decision, 2026-11-21).
 
 ## Why
 

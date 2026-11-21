@@ -11,6 +11,15 @@ signed-in IronTeams account:
 It runs on stdio, uses the session the desktop app already saved in the keyring, and needs no API
 key.
 
+**It is not in release builds.** The server is behind the `mcp` cargo feature, which is off by
+default. Build it yourself to use it:
+
+```sh
+cargo build --release -p ironteams-cli --features mcp
+```
+
+Without the feature, `ironteams-cli mcp` only says that the build has no MCP server.
+
 ## Before you start: where your data goes
 
 Whatever the client reads goes to its AI provider: messages, names, meeting text. For Claude, that
