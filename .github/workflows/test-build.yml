@@ -23,11 +23,14 @@ jobs:
   # Named like the CI job so Swatinem/rust-cache restores that job's cache.
   check:
     runs-on: ubuntu-latest
+    env:
+      # mold links the large test and GUI binaries several times faster than the default linker.
+      RUSTFLAGS: -C link-arg=-fuse-ld=mold
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libdbus-1-dev libasound2-dev cmake pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libdbus-1-dev libasound2-dev cmake pkg-config mold
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
