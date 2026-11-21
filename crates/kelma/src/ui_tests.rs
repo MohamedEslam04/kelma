@@ -47,6 +47,7 @@ mod palette;
 mod people;
 pub(crate) mod responsive;
 mod saved;
+mod scroll;
 mod settings;
 mod shortcuts;
 mod snippets;

@@ -259,15 +259,27 @@ pub enum Scroll {
     Anchor(usize),
 }
 
+/// One channel under a team in the Teams view.
+#[derive(Clone)]
+pub struct TeamChannel {
+    pub id: String,
+    pub name: String,
+    pub unread: bool,
+    pub hidden: bool,
+    /// A private channel gets a lock after its name.
+    pub private: bool,
+}
+
 #[derive(Clone)]
 pub struct TeamData {
     pub id: String,
     pub name: String,
     pub initials: String,
     pub color: u32,
+    /// The team's picture, when it is known.
+    pub avatar: Option<Pixels>,
     pub expanded: bool,
-    /// `(id, name, unread, hidden)`.
-    pub channels: Vec<(String, String, bool, bool)>,
+    pub channels: Vec<TeamChannel>,
 }
 
 #[derive(Clone, Default)]

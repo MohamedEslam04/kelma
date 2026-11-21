@@ -112,12 +112,14 @@ fn teams_list_keeps_long_team_and_channel_names_inside_the_list() {
                     name: LONG.into(),
                     unread: true,
                     hidden,
+                    private: false,
                 },
                 ChannelRow {
                     id: "c2".into(),
                     name: LONG_AR.into(),
                     unread: false,
                     hidden,
+                    private: true,
                 },
             ]))
         };
@@ -127,6 +129,8 @@ fn teams_list_keeps_long_team_and_channel_names_inside_the_list() {
                 name: LONG.into(),
                 initials: "QP".into(),
                 color: slint::Color::from_rgb_u8(0x33, 0x66, 0x99),
+                avatar: Default::default(),
+                has_avatar: false,
                 expanded: true,
                 channels: channels(false),
             },
@@ -135,6 +139,8 @@ fn teams_list_keeps_long_team_and_channel_names_inside_the_list() {
                 name: LONG_AR.into(),
                 initials: "اج".into(),
                 color: slint::Color::from_rgb_u8(0x33, 0x66, 0x99),
+                avatar: Default::default(),
+                has_avatar: false,
                 expanded: true,
                 channels: channels(true),
             },

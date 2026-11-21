@@ -138,8 +138,8 @@ export struct PersonItem {
 // One pinned message of the open chat, for the banner.
 export struct PinnedItem { id: string, sender: string, preview: string }
 
-export struct ChannelRow { id: string, name: string, unread: bool, hidden: bool }
-export struct TeamRow { id: string, name: string, initials: string, color: color, expanded: bool, channels: [ChannelRow] }
+export struct ChannelRow { id: string, name: string, unread: bool, hidden: bool, private: bool }
+export struct TeamRow { id: string, name: string, initials: string, color: color, avatar: image, has-avatar: bool, expanded: bool, channels: [ChannelRow] }
 
 export struct ActivityRow {
     id: string,

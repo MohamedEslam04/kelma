@@ -327,6 +327,51 @@ fn a_channel_row_shows_its_team_picture_a_private_lock_and_a_hover_card() {
     );
 }
 
+/// The Teams view draws the team's picture on its row (initials until it is known) and a lock
+/// after a private channel's name, as the chat list does.
+#[test]
+fn the_teams_view_shows_the_team_picture_and_a_lock_after_private_channel_names() {
+    let h = Harness::new();
+    h.app.window().set_size(LogicalSize::new(1200., 1000.));
+    h.app.set_view("teams".into());
+    h.engine.test_store(|st| {
+        st.upsert_conversation(&channel(LEADS, "Leads", 60_000))
+            .unwrap()
+    });
+    h.engine.test_set_teams(&[team_entry()]);
+    h.runner()(Cmd::SetFilter("all".into()));
+    let teams = h.app.get_teams();
+    let team = teams.row_data(0).expect("a team row");
+    assert!(!team.has_avatar, "no picture yet: the initials show");
+    assert!(find_label(&h.app, "Team picture").is_empty());
+    let private: Vec<_> = team
+        .channels
+        .iter()
+        .filter(|c| c.private)
+        .map(|c| c.name.to_string())
+        .collect();
+    assert_eq!(private, ["Leads"], "only the private channel gets a lock");
+
+    // The picture arrives: the row shows it instead of the initials.
+    h.engine
+        .test_set_avatar("team:g-1", crate::data::Pixels::new(4, 4));
+    h.engine.test_set_teams(&[team_entry()]);
+    h.runner()(Cmd::SetFilter("all".into()));
+    assert!(h.app.get_teams().row_data(0).unwrap().has_avatar);
+    assert_eq!(find_label(&h.app, "Team picture").len(), 1);
+    let lock = find_label(&h.app, "Private channel");
+    assert_eq!(lock.len(), 1);
+    let name = find_label(&h.app, "Leads")
+        .into_iter()
+        .find(|e| (e.absolute_position().y - lock[0].absolute_position().y).abs() < 20.)
+        .expect("the channel name");
+    assert!(
+        (lock[0].absolute_position().x - (name.absolute_position().x + name.size().width)).abs()
+            < 10.,
+        "the lock follows the name"
+    );
+}
+
 #[test]
 fn a_long_private_channel_name_elides_before_its_lock() {
     for width in [220., 320.] {

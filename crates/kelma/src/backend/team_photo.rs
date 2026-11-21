@@ -1,4 +1,4 @@
-//! Team pictures for the channel rows of the chat list. They share the avatar cache (keyed
+//! Team pictures for the channel rows of the chat list and the team rows of the Teams view. They share the avatar cache (keyed
 //! `team:<group id>`), are fetched once per run and are not stored: the read is UNVERIFIED
 //! (`Client::team_picture`, docs/protocol.md), so a refusal just leaves the initials.
 
@@ -37,7 +37,10 @@ impl Engine {
                 Ok(bytes) => {
                     if let Some(px) = decode_image(&bytes, 64, 64) {
                         e.avatars.lock().unwrap().insert(key, Some(px));
-                        e.mark(|d| d.chats = true);
+                        e.mark(|d| {
+                            d.chats = true;
+                            d.teams = true;
+                        });
                     }
                 }
                 Err(err) => tracing::debug!(%err, "no team picture"),
