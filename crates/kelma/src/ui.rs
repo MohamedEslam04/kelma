@@ -346,6 +346,11 @@ impl UiHandle {
         self.run(move |w| w.set_loading_older(on));
     }
 
+    /// The open chat or channel is reading its newest page.
+    pub fn loading_latest(&self, on: bool) {
+        self.run(move |w| w.set_loading_latest(on));
+    }
+
     pub fn focus(&self) {
         self.run(|w| w.set_focus_tick(w.get_focus_tick() + 1));
     }
@@ -507,6 +512,11 @@ impl UiHandle {
     pub fn header(&self, h: HeaderData) {
         self.run(move |w| {
             let (avatar, has) = img(&h.avatar);
+            // The Teams page opens the last channel again.
+            if h.is_channel && h.thread_root.is_empty() {
+                w.set_last_channel_id(h.id.as_str().into());
+                w.set_last_channel_title(h.title.as_str().into());
+            }
             w.set_current_id(h.id.into());
             w.set_current_title(h.title.into());
             w.set_current_initials(h.initials.into());

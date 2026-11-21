@@ -1492,3 +1492,27 @@ fn indexing_5000_messages_stays_cheap() {
         "5000 indexed upserts took {indexed:?}"
     );
 }
+
+#[test]
+fn system_event_messages_are_not_search_hits() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_message(&html_msg("1", "c", 10, "<p>kelma follow test</p>"))
+        .unwrap();
+    for (id, kind) in [
+        ("2", "ThreadActivity/TopicUpdate"),
+        ("3", "Event/Call"),
+        ("4", "Control/Typing"),
+    ] {
+        s.upsert_message(&MessageRow {
+            message_type: kind.into(),
+            ..html_msg(
+                id,
+                "c",
+                20,
+                r#"{"topic":"kelma renamed","user":"8:orgid:x"}"#,
+            )
+        })
+        .unwrap();
+    }
+    assert_eq!(find(&s, "kelma"), ["1"]);
+}

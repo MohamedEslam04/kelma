@@ -534,6 +534,9 @@ fn shared_row(name: &str, url: &str, editable: bool, sharepoint: bool) -> crate:
         url: url.into(),
         editable,
         sharepoint,
+        icon: "word".into(),
+        busy: "".into(),
+        highlight: false,
     }
 }
 
@@ -762,4 +765,63 @@ fn a_channel_files_tab_can_create_a_folder_and_a_document() {
     // Upload and From OneDrive stay.
     assert!(!find_label(&app, "Upload").is_empty());
     assert!(!find_label(&app, "Upload from OneDrive").is_empty());
+}
+
+/// A folder row shows a folder icon and documents a coloured badge, not "DIR" or a raw
+/// extension; a row being deleted dims at once with "Deleting…" and offers no actions.
+#[test]
+fn a_folder_has_a_folder_icon_and_a_row_being_deleted_dims_at_once() {
+    let mut folder = shared_row("Plans", "https://x.sharepoint.com/Plans", true, true);
+    folder.ext = "DIR".into();
+    folder.icon = "folder".into();
+    let mut doc = shared_row(
+        "Plan.docx",
+        "https://x.sharepoint.com/Plan.docx",
+        true,
+        true,
+    );
+    doc.busy = "Deleting…".into();
+    let (app, _) = files_tab(vec![folder, doc], true);
+    assert!(!find_label(&app, "Folder").is_empty(), "a folder icon");
+    assert!(find_label(&app, "DIR").is_empty(), "no DIR text badge");
+    assert!(!find_label(&app, "Deleting…").is_empty());
+    assert!(
+        find_label(&app, "More actions for Plan.docx").is_empty(),
+        "no actions on a row being deleted"
+    );
+    assert!(!find_label(&app, "More actions for Plans").is_empty());
+}
+
+/// A folder made on the Recent filter shows at once under Files, first and highlighted.
+#[test]
+fn a_new_folder_shows_at_once_under_files_and_is_highlighted() {
+    let h = Harness::new();
+    wire(&h);
+    h.select(CHANNEL);
+    click(&labelled(&h.app, "Files"));
+    assert_eq!(fs(&h.app).get_chat_tab(), "shared");
+    assert_eq!(fs(&h.app).get_shared_filter(), "recent");
+
+    let rt = h.rt.clone();
+    rt.block_on(async {
+        h.engine.test_shared_created(onedrive::DriveItem {
+            id: "f1".into(),
+            drive_id: "d1".into(),
+            name: "Plans".into(),
+            is_folder: true,
+            web_url: "https://x.sharepoint.com/Plans".into(),
+            modified_by: "Me".into(),
+            ..Default::default()
+        });
+    });
+    assert_eq!(fs(&h.app).get_shared_filter(), "files");
+    let rows: Vec<_> = fs(&h.app).get_shared().iter().collect();
+    assert_eq!(rows[0].name, "Plans");
+    assert_eq!(rows[0].icon, "folder");
+    assert!(rows[0].highlight);
+    assert_eq!(rows.iter().filter(|r| r.highlight).count(), 1);
+    assert!(
+        !find_label(&h.app, "Plans").is_empty(),
+        "the row is on screen"
+    );
 }

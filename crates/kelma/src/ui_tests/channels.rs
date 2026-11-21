@@ -123,6 +123,69 @@ fn first(app: &AppWindow, label: &str) -> ElementHandle {
         .unwrap_or_else(|| panic!("an element labelled {label:?}"))
 }
 
+// ---- the Teams page and opening a channel --------------------------------------------------
+
+/// The Teams page never shows a chat: with a chat open it asks for a channel, and once a
+/// channel was open it opens that channel again.
+#[test]
+fn the_teams_page_opens_the_last_channel_or_asks_for_one_never_a_chat() {
+    let h = Harness::new();
+    let opened = Log::default();
+    {
+        let (l, run) = (opened.clone(), h.runner());
+        h.app.on_select_channel(move |id, title| {
+            l.borrow_mut().push(format!("{id} {title}"));
+            run(Cmd::SelectChannel(id.into(), title.into()));
+        });
+    }
+    let composer_shown = |app: &AppWindow| {
+        ElementHandle::find_by_element_id(app, "Composer::composer-input")
+            .next()
+            .is_some()
+    };
+    h.select(NOTES);
+    assert!(composer_shown(&h.app));
+    h.app.invoke_navigate("teams".into());
+    assert!(
+        !find_label(&h.app, "Pick a channel").is_empty(),
+        "no channel was open yet: the pane asks for one"
+    );
+    assert!(
+        !composer_shown(&h.app),
+        "the chat is not shown on the Teams page"
+    );
+    assert!(opened.borrow().is_empty());
+
+    // A channel opened from the Teams list...
+    h.runner()(Cmd::SelectChannel(TECH.into(), TECH_TITLE.into()));
+    assert!(find_label(&h.app, "Pick a channel").is_empty());
+    // ...opens again when Teams is picked after a chat.
+    h.app.invoke_navigate("chat".into());
+    h.select(NOTES);
+    assert!(composer_shown(&h.app), "the Chat page shows the chat");
+    h.app.invoke_navigate("teams".into());
+    assert_eq!(*opened.borrow(), vec![format!("{TECH} {TECH_TITLE}")]);
+    assert_eq!(h.app.get_current_id(), TECH);
+    assert!(find_label(&h.app, "Pick a channel").is_empty());
+}
+
+/// Opening a channel shows its header and the posts the store has at once, with a loading line
+/// while the newest page is read; the line goes when the read ends (here it fails: no network).
+#[test]
+fn a_channel_shows_its_cached_posts_at_once_and_a_loading_line_while_it_reads() {
+    let h = channel_harness(0);
+    assert_eq!(h.app.get_current_id(), TECH);
+    assert!(h.app.get_current_is_channel());
+    assert_eq!(post_ids(&h.app), ["1000", "2000"]);
+    assert!(
+        !h.app.get_loading_latest(),
+        "the line is gone once the read ended"
+    );
+    h.app.set_loading_latest(true);
+    testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+    assert!(!find_label(&h.app, "Loading new posts…").is_empty());
+}
+
 // ---- 8.4 posts ---------------------------------------------------------------------------
 
 /// A channel opens at its newest post at the bottom, as in Teams (and as a chat opens), not at

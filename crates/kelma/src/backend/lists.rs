@@ -22,6 +22,9 @@ use teams_proto::time::now_ms;
 
 /// Key of the saved state in the store's key/value table.
 const KV_KEY: &str = "lists";
+/// Key of the account's sections and favorites as last read from Teams: the list draws them at
+/// start-up, before `conversationFolders` answers.
+const KV_SERVER: &str = "lists-server";
 /// The id "Move to section" uses for Favorites.
 pub(super) const FAVORITES: &str = "favorites";
 /// The account's lists are fetched again at most this often.
@@ -174,6 +177,45 @@ pub(crate) struct ServerSection {
     pub items: Vec<String>,
 }
 
+/// The account's sections and favorites as saved for the next start.
+fn server_to_json(sections: &[ServerSection], favs: &HashSet<String>) -> Value {
+    let mut favs: Vec<&String> = favs.iter().collect();
+    favs.sort();
+    json!({
+        "sections": sections
+            .iter()
+            .map(|s| json!({"id": s.id, "name": s.name, "expanded": s.expanded, "items": s.items}))
+            .collect::<Vec<_>>(),
+        "favorites": favs,
+    })
+}
+
+/// The saved sections and favorites; anything unreadable is left out.
+fn server_from_json(v: &Value) -> (Vec<ServerSection>, HashSet<String>) {
+    let strings = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_owned))
+            .collect()
+    };
+    let sections = v
+        .get("sections")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            Some(ServerSection {
+                id: s.get("id")?.as_str()?.to_string(),
+                name: s.get("name")?.as_str()?.to_string(),
+                expanded: s.get("expanded").and_then(Value::as_bool).unwrap_or(true),
+                items: strings(s.get("items")),
+            })
+        })
+        .collect();
+    (sections, strings(v.get("favorites")).into_iter().collect())
+}
+
 /// What kelma knows about a channel (from the aggregator).
 #[derive(Debug, Clone)]
 pub(super) struct ChannelInfo {
@@ -193,6 +235,8 @@ pub(super) struct State {
     loaded: bool,
     server: Vec<ServerSection>,
     server_favs: HashSet<String>,
+    /// `server` and `server_favs` came from Teams in this run (not from the saved copy).
+    server_known: bool,
     muted: HashSet<String>,
     channels: HashMap<String, ChannelInfo>,
     last_refresh_ms: i64,
@@ -353,6 +397,20 @@ impl Engine {
             if let Some(v) = saved {
                 st.local = Local::from_json(&v);
             }
+            // The sections Teams had last time show at once; the refresh replaces them.
+            if !st.server_known {
+                let last = self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .get_kv(KV_SERVER)
+                    .ok()
+                    .flatten()
+                    .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+                if let Some(v) = last {
+                    (st.server, st.server_favs) = server_from_json(&v);
+                }
+            }
             st.local.opts
         };
         self.ui.list_options(fresh);
@@ -499,6 +557,7 @@ impl Engine {
 
     pub(super) fn lists_apply_folders(&self, f: &Folders) {
         let mut st = self.lists.lock().unwrap();
+        st.server_known = true;
         st.server = f
             .folders
             .iter()
@@ -514,6 +573,11 @@ impl Engine {
             .favorites()
             .map(|x| x.items.iter().map(|i| i.conversation_id.clone()).collect())
             .unwrap_or_default();
+        let json = server_to_json(&st.server, &st.server_favs).to_string();
+        drop(st);
+        if let Err(err) = self.store.lock().unwrap().set_kv(KV_SERVER, &json) {
+            tracing::warn!(%err, "saving the chat list sections failed");
+        }
     }
 
     pub(super) fn lists_apply_teams(&self, teams: &[TeamEntry]) {
@@ -538,6 +602,17 @@ impl Engine {
                 );
             }
         }
+    }
+
+    /// The Graph group id of a channel's team, when the aggregator listed the channel.
+    pub(super) fn lists_channel_group(&self, id: &str) -> Option<String> {
+        self.lists
+            .lock()
+            .unwrap()
+            .channels
+            .get(id)
+            .map(|c| c.group_id.clone())
+            .filter(|g| !g.is_empty())
     }
 
     /// Whether the Teams view should draw this channel dimmed (hidden in Teams).

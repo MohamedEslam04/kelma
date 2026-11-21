@@ -211,10 +211,7 @@ impl Engine {
                 {
                     st.waves.insert(key.clone(), w);
                 }
-                let played = st
-                    .played
-                    .as_ref()
-                    .is_some_and(|l| l.iter().any(|k| *k == key));
+                let played = st.played.as_ref().is_some_and(|l| l.contains(&key));
                 (
                     st.waves.get(&key).cloned(),
                     st.failed.contains(&key),
