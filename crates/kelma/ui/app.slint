@@ -1668,6 +1668,15 @@ export component AppWindow inherits Window {
     changed card-shown => {
         if !self.card-shown { PeopleStore.anchor-w = 0; }
     }
+    // A hover card opened from a dropdown row goes with the dropdown, however it closes.
+    property <bool> search-shown: TopBarStore.search-open;
+    changed search-shown => {
+        if !self.search-shown && PeopleStore.card-open && PeopleStore.card-by-hover {
+            PeopleStore.card-open = false;
+            PeopleStore.hover-id = "";
+            PeopleStore.hover-armed = false;
+        }
+    }
     property <string> hover-chat: root.current-id;
     changed hover-chat => {
         PeopleStore.hover-id = "";
@@ -1677,8 +1686,9 @@ export component AppWindow inherits Window {
     if root.login-state == "ready" && PeopleStore.card-open: Rectangle {
         width: root.width;
         height: root.height;
-        // Above the call window too (its roster photos open cards).
-        z: 50;
+        // Above the call window too (its roster photos open cards), and above the search
+        // dropdown (z 65) for a hover card opened from one of its rows.
+        z: PeopleStore.card-by-hover && TopBarStore.search-open ? 66 : 50;
         // A clicked card closes on a click anywhere else; a hover card when the pointer leaves
         // it and its photo (so the photo under it keeps its hover).
         if !PeopleStore.card-by-hover: TouchArea {
