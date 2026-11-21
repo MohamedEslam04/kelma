@@ -121,10 +121,14 @@ export component ViewsPanel inherits CalCard {
 }
 
 export component MoreMenu inherits CalCard {
+    // The toolbar has no room for its Meet now button: its two choices are here.
+    in property <bool> meet: false;
     width: 240px;
-    height: 7 * 30px + 8px;
+    height: (7 + (root.meet ? 2 : 0)) * 30px + 8px;
     VerticalLayout {
         padding: 4px;
+        if root.meet: CalMenuItem { label: "Meet now"; clicked => { CalStore.popup = ""; CalStore.ask("meet-now", "Meet now", "Starts a Teams meeting right away and gives you the link.", "Meeting title (optional)", "", "", "Start meeting"); } }
+        if root.meet: CalMenuItem { label: "Join with a meeting ID"; clicked => { CalStore.popup = ""; CalStore.ask("join-id", "Join with a meeting ID", "Type the meeting ID and the passcode from the invitation.", "Meeting ID", "Passcode", "", "Join"); } }
         CalMenuItem { label: "Share calendar…"; clicked => { CalStore.popup = ""; CalStore.command("share-open", ""); } }
         CalMenuItem { label: "Print to PDF"; clicked => { CalStore.popup = ""; CalStore.command("print-pdf", ""); } }
         CalMenuItem { label: "Export visible range (.ics)"; clicked => { CalStore.popup = ""; CalStore.command("export-ics", ""); } }

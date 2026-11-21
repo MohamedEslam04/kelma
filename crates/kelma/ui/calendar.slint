@@ -561,6 +561,9 @@ export component CalendarView inherits Rectangle {
     property <bool> narrow: root.window-width < 890px;
     // Teams' "collapse sidebar": the left pane hidden on a wide window too.
     in-out property <bool> pane-hidden: false;
+    // Room for the pane toggle and the Meet now button in the toolbar; below it Meet now is in the ⋯ menu.
+    property <bool> wide: root.window-width >= 1100px;
+    property <bool> pane-off: root.pane-hidden && root.wide;
     // Where an event was clicked, in this view's coordinates, so the peek opens next to it.
     property <[{key: string, label: string}]> views: [{key: "day", label: "Day"}, {key: "workweek", label: "Work week"}, {key: "week", label: "Week"}, {key: "month", label: "Month"}, {key: "split", label: "Split view"}];
     property <string> view-label: CalStore.view-kind == "day" ? "Day" : CalStore.view-kind == "workweek" ? "Work week" : CalStore.view-kind == "week" ? "Week" : CalStore.view-kind == "month" ? "Month" : "Split view";
@@ -574,8 +577,8 @@ export component CalendarView inherits Rectangle {
     HorizontalLayout {
         // Left: New event, mini month, calendars, time scale, days
         Rectangle {
-            width: root.narrow || root.pane-hidden ? 0px : 232px;
-            visible: !root.narrow && !root.pane-hidden;
+            width: root.narrow || root.pane-off ? 0px : 232px;
+            visible: !root.narrow && !root.pane-off;
             background: Theme.sidebar;
             ScrollView {
                 VerticalLayout {
@@ -632,8 +635,8 @@ export component CalendarView inherits Rectangle {
                     padding-left: 16px;
                     padding-right: 16px;
                     spacing: 8px;
-                    if !root.narrow: IconButton { icon: @image-url("icons/columns.svg"); y: 8px; tooltip: root.pane-hidden ? "Show the calendar pane" : "Hide the calendar pane"; active: root.pane-hidden; clicked => { root.pane-hidden = !root.pane-hidden; } }
-                    if root.narrow || root.pane-hidden: CalButton { label: "New ▾"; primary: true; y: 10px; accessible-label: "New event"; active: CalStore.popup == "new"; clicked => { CalStore.popup = CalStore.popup == "new" ? "" : "new"; } }
+                    if root.wide: IconButton { icon: @image-url("icons/columns.svg"); y: 8px; tooltip: root.pane-hidden ? "Show the calendar pane" : "Hide the calendar pane"; active: root.pane-hidden; clicked => { root.pane-hidden = !root.pane-hidden; } }
+                    if root.narrow || root.pane-off: CalButton { label: "New ▾"; primary: true; y: 10px; accessible-label: "New event"; active: CalStore.popup == "new"; clicked => { CalStore.popup = CalStore.popup == "new" ? "" : "new"; } }
                     Pill { label: "Today"; y: 11px; clicked => { CalStore.command("today", ""); } }
                     IconButton { icon: @image-url("icons/chevron-left.svg"); y: 8px; tooltip: "Previous"; clicked => { CalStore.command("prev", ""); } }
                     IconButton { icon: @image-url("icons/chevron-right.svg"); y: 8px; tooltip: "Next"; clicked => { CalStore.command("next", ""); } }
@@ -671,7 +674,7 @@ export component CalendarView inherits Rectangle {
                         active: CalStore.popup == "view-pick";
                         clicked => { CalStore.popup = CalStore.popup == "view-pick" ? "" : "view-pick"; }
                     }
-                    CalButton { label: root.narrow ? "Meet ▾" : "Meet now ▾"; accessible-label: "Meet now menu"; y: 10px; active: CalStore.popup == "meet"; clicked => { CalStore.popup = CalStore.popup == "meet" ? "" : "meet"; } }
+                    if root.wide: CalButton { label: "Meet now ▾"; accessible-label: "Meet now menu"; y: 10px; active: CalStore.popup == "meet"; clicked => { CalStore.popup = CalStore.popup == "meet" ? "" : "meet"; } }
                     CalButton { label: "⋯"; y: 10px; preferred-width: 36px; min-width: 36px; active: CalStore.popup == "more"; clicked => { CalStore.popup = CalStore.popup == "more" ? "" : "more"; } }
                 }
                 Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
@@ -720,7 +723,7 @@ export component CalendarView inherits Rectangle {
     if CalStore.popup == "range": RangePicker { z: 41; x: 248px; y: 52px; }
     if CalStore.popup == "filters": FiltersPanel { z: 41; x: root.width - self.width - 16px; y: 52px; }
     if CalStore.popup == "views": ViewsPanel { z: 41; x: root.width - self.width - 16px; y: 52px; }
-    if CalStore.popup == "more": MoreMenu { z: 41; x: root.width - self.width - 16px; y: 52px; }
+    if CalStore.popup == "more": MoreMenu { meet: !root.wide; z: 41; x: root.width - self.width - 16px; y: 52px; }
     if CalStore.popup == "view-pick": CalCard {
         z: 41;
         x: root.width - self.width - 16px;
