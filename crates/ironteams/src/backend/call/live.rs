@@ -23,7 +23,7 @@ use super::{
     CallDriver, CallHandle, Caption, Control, ControlAction, Device, Devices, Event, EventSink,
     JoinOptions, JoinTarget, Link, Person, Phase, live_phase, recording_state,
 };
-use crate::backend::outsider::classify;
+use crate::backend::outsider::classify as classify_outsider;
 use anyhow::Context;
 use calling::audio::{
     AudioProcessor, Capture, Playback, ProcessingOptions, echo_cancelled, spawn_capture_encoder,
@@ -848,7 +848,7 @@ fn people(
             outsider: if p.mri == me {
                 None
             } else {
-                classify(&p.mri, p.tenant_id.as_deref(), own_tenant, p.guest)
+                classify_outsider(&p.mri, p.tenant_id.as_deref(), own_tenant, p.guest)
             },
         })
         .collect()
