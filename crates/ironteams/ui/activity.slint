@@ -6,6 +6,7 @@ import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
 import { MessageRow } from "message_row.slint";
 import { DirectCallStore } from "call_incoming.slint";
 import { PersonHover } from "people.slint";
+import { SkeletonList, Spinner } from "motion.slint";
 
 component MenuEntry inherits Rectangle {
     in property <string> label;
@@ -210,6 +211,8 @@ export component ActivityView inherits Rectangle {
     in property <string> preview-location;
     in property <bool> preview-is-channel;
     in property <bool> preview-loading;
+    // The first sync has not finished: the feed may still be empty because it is being read.
+    in property <bool> loading;
     in property <[Msg]> preview;
     in property <string> highlight;
     in property <string> banner;
@@ -358,7 +361,8 @@ export component ActivityView inherits Rectangle {
                                 }
                             }
                         }
-                        if root.items.length == 0: Text {
+                        if root.items.length == 0 && root.loading: SkeletonList { count: 8; label: "Loading activity"; }
+                        if root.items.length == 0 && !root.loading: Text {
                             text: root.filter == "all" && search-input.text == "" ? "No activity yet" : "Nothing matches";
                             color: Theme.fg-subtle;
                             font-size: 13px * Theme.font-scale;
@@ -424,11 +428,10 @@ export component ActivityView inherits Rectangle {
                             more-reactions(id, x, y) => { root.more-reactions(id, x, y); }
                             menu(m, x, y) => { root.menu(m, x, y); }
                         }
-                        if root.preview-loading || (root.preview-id != root.selected-id && root.preview.length == 0): Text {
-                            text: "Loading…";
-                            color: Theme.fg-subtle;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                        if root.preview-loading || (root.preview-id != root.selected-id && root.preview.length == 0): Rectangle {
+                            accessible-role: text;
+                            accessible-label: "Loading";
+                            Spinner { size: 22px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
                         }
                     }
 

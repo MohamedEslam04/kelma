@@ -194,6 +194,8 @@ pub struct MsgData {
     pub receipt_names: String,
     /// The row a jump from the pinned banner landed on.
     pub flash: bool,
+    /// Arrived live a moment ago: the row fades in.
+    pub fresh: bool,
     /// An Adaptive Card drawn like Teams does; empty when the message has none.
     pub card: Vec<crate::lists_data::CardRowData>,
     /// Headline of an announcement post.

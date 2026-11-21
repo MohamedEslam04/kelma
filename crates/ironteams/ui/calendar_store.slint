@@ -129,6 +129,8 @@ export global CalStore {
     in property <int> now-min: -1;
     in property <int> now-col: -1;
     in property <string> status;
+    // The events of the shown days are being read (grey blocks hold their place).
+    in property <bool> loading;
     in property <string> join-text;
     in property <string> join-url;
 

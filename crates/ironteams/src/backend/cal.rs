@@ -1080,7 +1080,10 @@ impl Engine {
         if self.offline.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
-        let events = Calendar::view(&self.client, want.0, want.1).await?;
+        self.ui.calendar_loading(true);
+        let events = Calendar::view(&self.client, want.0, want.1).await;
+        self.ui.calendar_loading(false);
+        let events = events?;
         let mut s = self.cal.lock();
         tracing::info!(events = events.len(), "calendar range loaded");
         s.cache.apply(

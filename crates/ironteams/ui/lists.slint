@@ -8,6 +8,7 @@ import { RemindStore } from "remind.slint";
 import { TeamsStore } from "teams_store.slint";
 import { MediaStore } from "media.slint";
 import { FlowsStore } from "apps_store.slint";
+import { Motion } from "motion.slint";
 
 // A section of the list: sections made in Teams (read from the account) and local ones.
 export struct SectionRow {
@@ -66,6 +67,7 @@ component MenuRow inherits Rectangle {
     height: 32px;
     border-radius: 4px;
     background: touch.has-hover ? Theme.surface-hover : transparent;
+    animate background { duration: Motion.quick; }
     accessible-role: button;
     accessible-label: root.label;
     accessible-checkable: root.checked;
@@ -121,6 +123,17 @@ export component ItemMenu inherits Rectangle {
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.border;
+    // The menu fades in and grows from 0.97 (150 ms) each time it opens.
+    property <bool> shown: Theme.reduced-motion;
+    opacity: root.shown ? 1.0 : 0.0;
+    transform-scale: root.shown ? 1.0 : Motion.pop-from;
+    animate opacity { duration: Motion.fast; easing: ease-out; }
+    animate transform-scale { duration: Motion.fast; easing: ease-out; }
+    Timer {
+        interval: 16ms;
+        running: !root.shown;
+        triggered => { root.shown = true; }
+    }
 
     VerticalLayout {
         padding: 4px;
@@ -224,6 +237,7 @@ export component SectionHead inherits Rectangle {
     callback toggle();
     height: 30px;
     background: head-touch.has-hover ? Theme.surface-hover : transparent;
+    animate background { duration: Motion.quick; }
     accessible-role: button;
     accessible-label: root.section.name + (root.section.expanded ? @tr(", expanded") : @tr(", collapsed"));
     accessible-expandable: true;
@@ -233,7 +247,14 @@ export component SectionHead inherits Rectangle {
         padding-left: 12px;
         padding-right: 8px;
         spacing: 4px;
-        Icon { source: root.section.expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-right.svg"); width: 14px; height: 14px; y: 8px; }
+        Icon {
+            source: @image-url("icons/chevron-right.svg");
+            width: 14px;
+            height: 14px;
+            y: 8px;
+            transform-rotation: root.section.expanded ? 90deg : 0deg;
+            animate transform-rotation { duration: Motion.normal; easing: ease-out; }
+        }
         Text { text: root.section.name; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
         if !root.section.expanded && root.section.unread > 0: Rectangle {
             width: 8px;

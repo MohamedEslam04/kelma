@@ -69,7 +69,7 @@ export component NotesView inherits Rectangle {
                     KitButton { y: 12px; label: "Open in OneNote on the web"; enabled: NotesStore.can-open-web; clicked => { NotesStore.command("notes-open-web", ""); } }
                 }
             }
-            if NotesStore.loading: KitNote { text: "Loading…"; }
+            if NotesStore.loading: KitNote { text: "Loading…"; busy: true; }
             if NotesStore.status != "": KitNote { text: NotesStore.status; }
             ScrollView {
                 vertical-stretch: 1;
@@ -107,7 +107,7 @@ export component ListsView inherits Rectangle {
                     KitButton { y: 12px; label: "New item"; primary: true; enabled: ListsStore.can-edit; clicked => { ListsStore.command("item-new", ""); } }
                 }
             }
-            if ListsStore.loading: KitNote { text: "Loading…"; }
+            if ListsStore.loading: KitNote { text: "Loading…"; busy: true; }
             if ListsStore.status != "": KitNote { text: ListsStore.status; }
             if ListsStore.columns.length > 0: Rectangle {
                 height: 32px;

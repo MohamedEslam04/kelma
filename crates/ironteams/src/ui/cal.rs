@@ -407,6 +407,11 @@ impl UiHandle {
         self.run(move |w| set(&w, d));
     }
 
+    /// The shown days' events are being read (or the read ended): grey blocks hold their place.
+    pub fn calendar_loading(&self, on: bool) {
+        self.run(move |w| w.global::<CalStore>().set_loading(on));
+    }
+
     /// Shows the Join banner (`text`, `url`), or hides it when `text` is empty.
     pub fn join_banner(&self, (text, url): (String, String)) {
         self.run(move |w| {

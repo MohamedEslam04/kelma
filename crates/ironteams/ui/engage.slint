@@ -5,6 +5,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, IconButton } from "widgets.slint";
 import { TButton } from "teams_widgets.slint";
+import { SkeletonList, Spinner } from "motion.slint";
 
 export struct EPost {
     id: string,
@@ -165,12 +166,11 @@ export component EngageView inherits Rectangle {
             VerticalLayout {
                 spacing: 8px;
                 alignment: start;
-                if EngageStore.loading && EngageStore.posts.length == 0: Text {
-                    text: "Loading posts…";
-                    color: Theme.fg-subtle;
-                    font-size: 13px * EngageType.scale;
-                    accessible-role: text;
-                    accessible-label: "Loading posts";
+                if EngageStore.loading && EngageStore.posts.length == 0: SkeletonList {
+                    count: 4;
+                    avatar: 36px;
+                    row-height: 96px;
+                    label: "Loading posts";
                 }
                 if EngageStore.error != "": Rectangle {
                     height: err-lay.preferred-height;
@@ -195,12 +195,17 @@ export component EngageView inherits Rectangle {
                     accessible-label: "No posts yet";
                 }
                 for p in EngageStore.posts: PostCard { p: p; }
-                if EngageStore.loading && EngageStore.posts.length > 0: Text {
-                    text: "Loading…";
-                    color: Theme.fg-subtle;
-                    font-size: 12px * EngageType.scale;
-                    accessible-role: text;
-                    accessible-label: "Loading";
+                if EngageStore.loading && EngageStore.posts.length > 0: HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Spinner { }
+                    Text {
+                        text: "Loading…";
+                        color: Theme.fg-subtle;
+                        font-size: 12px * EngageType.scale;
+                        accessible-role: text;
+                        accessible-label: "Loading";
+                    }
                 }
                 if EngageStore.more: TButton {
                     label: "Older posts";

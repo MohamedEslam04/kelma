@@ -94,7 +94,7 @@ export component FlowsView inherits Rectangle {
                 }
             }
             KitNote { text: "Run starts a flow with a button trigger once. Turn on or off changes whether a flow runs on its trigger. Building flows is done in Power Automate."; text-size: 12px; }
-            if FlowsStore.loading: KitNote { text: "Loading…"; }
+            if FlowsStore.loading: KitNote { text: "Loading…"; busy: true; }
             if FlowsStore.status != "": KitNote { text: FlowsStore.status; }
             ScrollView {
                 vertical-stretch: 1;

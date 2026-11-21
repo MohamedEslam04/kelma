@@ -6,6 +6,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar } from "widgets.slint";
 import { EPost, PostCard } from "engage.slint";
+import { SkeletonList } from "motion.slint";
 
 export global StorylineStore {
     in property <string> name;
@@ -151,7 +152,8 @@ export component StorylineView inherits Rectangle {
             VerticalLayout {
                 spacing: 8px;
                 alignment: start;
-                if StorylineStore.loading: Text {
+                if StorylineStore.loading && StorylineStore.posts.length == 0: SkeletonList { count: 3; avatar: 36px; row-height: 88px; label: @tr("Loading posts…"); }
+                if StorylineStore.loading && StorylineStore.posts.length > 0: Text {
                     text: @tr("Loading posts…");
                     color: Theme.fg-subtle;
                     font-size: 13px * Theme.font-scale;

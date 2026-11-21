@@ -16,8 +16,8 @@ use crate::data::{
 use crate::reactions;
 use crate::{
     AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard,
-    LoopCard, MeetingCard, MeetingPerson, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow,
-    VideoClipItem, VoiceItem,
+    LoopCard, MeetingCard, MeetingPerson, Msg, PendingAttachment, ReactionItem, ReaderItem,
+    Recipient, TeamRow, VideoClipItem, VoiceItem,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -41,6 +41,7 @@ mod find;
 mod gifs;
 mod lists;
 mod media;
+pub(crate) mod motion;
 mod palette;
 mod people;
 pub(crate) mod popout;
@@ -101,8 +102,27 @@ fn styled(markdown: &str) -> StyledText {
     StyledText::from_markdown(markdown).unwrap_or_else(|_| StyledText::from_plain_text(markdown))
 }
 
+/// The little photos under my newest message: one circle of initials per name in the "seen by"
+/// line (`A, B, C +2`; the "+2" is not a person).
+fn readers(names: &str) -> Vec<ReaderItem> {
+    let names = match names.rsplit_once(" +") {
+        Some((head, n)) if n.chars().all(|c| c.is_ascii_digit()) => head,
+        _ => names,
+    };
+    names
+        .split(", ")
+        .filter(|n| !n.trim().is_empty())
+        .take(3)
+        .map(|n| ReaderItem {
+            initials: crate::data::initials(n).into(),
+            color: rgb(crate::data::color_for(n)),
+        })
+        .collect()
+}
+
 fn msg(m: MsgData) -> Msg {
     let (avatar, has_avatar) = img(&m.avatar);
+    let readers = readers(&m.receipt_names);
     Msg {
         id: m.id.into(),
         sender: m.sender.into(),
@@ -177,6 +197,8 @@ fn msg(m: MsgData) -> Msg {
         receipt: m.receipt.into(),
         receipt_names: m.receipt_names.into(),
         flash: m.flash,
+        fresh: m.fresh,
+        readers: model(readers),
         card: channels::card_rows(m.card),
         headline: m.headline.into(),
         importance: m.importance.into(),
@@ -384,8 +406,9 @@ impl UiHandle {
         self.run(|w| w.set_synced(true));
     }
 
-    pub fn typing(&self, text: String) {
-        self.run(move |w| w.set_typing(text.into()));
+    /// Who is typing in the open chat, and in which chats (dots on their rows).
+    pub fn typing(&self, names: Vec<String>, chats: Vec<String>) {
+        self.run(move |w| motion::set_typing(w, &names, &chats));
     }
 
     pub fn loading_older(&self, on: bool) {
@@ -645,8 +668,17 @@ impl UiHandle {
                             .unwrap_or(msgs.len()),
                     ),
                 };
+                // My newest message, still pending, that the server's copy replaced is the same
+                // row: it is updated in place, so its clock turns into the check with a fade.
+                let settled = |k: usize| {
+                    k + 1 == old - a
+                        && b + k + 1 == msgs.len()
+                        && m.row_data(a + k).is_some_and(|o| o.pending && o.mine)
+                        && msgs[b + k].mine
+                        && !msgs[b + k].pending
+                };
                 let run = (0..(old - a).min(msgs.len().saturating_sub(b)))
-                    .take_while(|&k| id(a + k) == msgs[b + k].id.as_str())
+                    .take_while(|&k| id(a + k) == msgs[b + k].id.as_str() || settled(k))
                     .count();
                 if run == 0 {
                     m.set_vec(msgs.into_iter().map(msg).collect::<Vec<_>>());
@@ -708,5 +740,19 @@ impl UiHandle {
     /// Count shown on the "Jump to newest" button.
     pub fn new_count(&self, n: usize) {
         self.run(move |w| w.set_new_count(n as i32));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::readers;
+
+    #[test]
+    fn readers_are_the_names_of_the_seen_by_line() {
+        let r = readers("Mia Stone, Omar Haddad, Lena Voss +2");
+        let initials: Vec<String> = r.iter().map(|x| x.initials.to_string()).collect();
+        assert_eq!(initials, ["MS", "OH", "LV"], "the +2 is not a person");
+        assert_eq!(readers("Mia Stone").len(), 1);
+        assert!(readers("").is_empty(), "a 1:1 chat names nobody");
     }
 }

@@ -1017,6 +1017,40 @@ msgstr "تمت المشاهدة"
 msgid "Sent"
 msgstr "تم الإرسال"
 
+# Typing, loading and sending states (ui/motion.slint).
+msgid "{} is typing…"
+msgstr "{} يكتب…"
+
+msgid "{} and {} are typing…"
+msgstr "{} و{} يكتبان…"
+
+msgid "Several people are typing…"
+msgstr "عدة أشخاص يكتبون…"
+
+msgid "Typing"
+msgstr "يكتب"
+
+msgid "Sending"
+msgstr "جارٍ الإرسال"
+
+msgid "Sending…"
+msgstr "جارٍ الإرسال…"
+
+msgid "Loading"
+msgstr "جارٍ التحميل"
+
+msgid "Loading chats"
+msgstr "جارٍ تحميل المحادثات"
+
+msgid "Loading messages"
+msgstr "جارٍ تحميل الرسائل"
+
+msgid "Loading posts"
+msgstr "جارٍ تحميل المنشورات"
+
+msgid "Searching messages"
+msgstr "جارٍ البحث في الرسائل"
+
 msgid "Select message"
 msgstr "تحديد الرسالة"
 

@@ -126,7 +126,7 @@ component RecapsHome inherits Rectangle {
                 }
             }
         }
-        if RecapsStore.loading: KitNote { text: "Loading your meetings…"; }
+        if RecapsStore.loading: KitNote { text: "Loading your meetings…"; busy: true; }
         if RecapsStore.note != "": KitNote { text: RecapsStore.note; }
         ScrollView {
             vertical-stretch: 1;
@@ -325,7 +325,7 @@ component RecapDetailPage inherits Rectangle {
                 }
             }
         }
-        if RecapsStore.detail-loading: KitNote { text: "Reading the meeting chat…"; }
+        if RecapsStore.detail-loading: KitNote { text: "Reading the meeting chat…"; busy: true; }
         if RecapsStore.detail-note != "": KitNote { text: RecapsStore.detail-note; }
         if root.wide: HorizontalLayout {
             vertical-stretch: 1;

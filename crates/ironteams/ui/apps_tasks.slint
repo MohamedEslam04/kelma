@@ -133,7 +133,7 @@ export component TasksView inherits Rectangle {
                     }
                 }
             }
-            if TasksStore.loading: KitNote { text: "Loading tasks…"; }
+            if TasksStore.loading: KitNote { text: "Loading tasks…"; busy: true; }
             if TasksStore.status != "": KitNote { text: TasksStore.status; }
             if TasksStore.mode == "list": ScrollView {
                 vertical-stretch: 1;

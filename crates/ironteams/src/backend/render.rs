@@ -25,26 +25,28 @@ pub(super) struct MsgMarks<'a> {
     pub divider: Option<usize>,
     /// My newest message and its read receipt: `(id, "sent" | "seen", names)`.
     pub receipt: Option<&'a (String, String, String)>,
+    /// Messages that arrived live a moment ago: the row fades in.
+    pub fresh: Option<&'a HashMap<String, Instant>>,
 }
 
 impl Engine {
     pub(super) async fn render_loop(self: Arc<Self>) {
-        let mut last_typing = String::new();
+        let mut last_typing = (Vec::new(), Vec::new());
         loop {
             tokio::time::sleep(Duration::from_millis(120)).await;
             self.render_dirty();
             let typing = {
                 let mut v = self.view.lock().unwrap();
-                let now = Instant::now();
-                v.typing.retain(|_, (_, until)| *until > now);
-                v.current
+                v.typing.expire(Instant::now());
+                let names = v
+                    .current
                     .as_ref()
-                    .and_then(|c| v.typing.get(c))
-                    .map(|(n, _)| format!("{n} is typing…"))
-                    .unwrap_or_default()
+                    .map(|c| v.typing.names(c))
+                    .unwrap_or_default();
+                (names, v.typing.chats())
             };
             if typing != last_typing {
-                self.ui.typing(typing.clone());
+                self.ui.typing(typing.0.clone(), typing.1.clone());
                 last_typing = typing;
             }
         }
@@ -596,6 +598,7 @@ impl Engine {
         } else {
             None
         };
+        let fresh = self.view.lock().unwrap().fresh.clone();
         let mut out = self.build_msgs(
             &rows,
             is_channel,
@@ -607,6 +610,7 @@ impl Engine {
                 failed: Some(&failed),
                 divider,
                 receipt: receipt.as_ref(),
+                fresh: Some(&fresh),
             },
         );
         if is_channel && thread.is_none() {
@@ -666,6 +670,7 @@ impl Engine {
         let failed = marks.failed.unwrap_or(&none);
         let divider = marks.divider;
         let receipt = marks.receipt;
+        let fresh = marks.fresh;
         let (visible, meetings) = super::meeting_cards::visible_rows(rows);
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
@@ -851,6 +856,10 @@ impl Engine {
                     .map(|x| x.2.clone())
                     .unwrap_or_default(),
                 flash: false,
+                fresh: fresh.is_some_and(|f| {
+                    f.get(&r.id)
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(3))
+                }),
                 card,
                 headline,
                 importance: props

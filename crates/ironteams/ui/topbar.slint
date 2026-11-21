@@ -8,6 +8,7 @@ import { Avatar, Icon } from "widgets.slint";
 import { SettingsStore } from "settings_store.slint";
 import { PersonHover } from "people.slint";
 import { SFont, ZoomRow } from "settings_widgets.slint";
+import { SkeletonRow } from "motion.slint";
 
 // One row of the dropdown. `kind`: command | person | chat | channel | message | search | recent
 // | clear. A message hit has `title` (its sender), `subtitle` (its chat), a one-line `snippet` with
@@ -38,6 +39,8 @@ export global TopBarStore {
     in-out property <string> input;
     in-out property <bool> search-open: false;
     in property <[TopRow]> rows;
+    // The server is being asked for message hits: grey rows hold their place under the others.
+    in property <bool> searching: false;
     // The row the arrow keys chose, -1 for none.
     in-out property <int> selected: -1;
     in property <bool> can-back: false;
@@ -392,7 +395,8 @@ export component SearchDropdown inherits Rectangle {
     property <length> top-of-chosen;
     property <length> chosen-height;
     width: max(340px, TopBarStore.box-w);
-    height: TopBarStore.rows.length == 0 ? 44px : root.shown-height;
+    property <bool> waiting: TopBarStore.searching && TopBarStore.input != "";
+    height: TopBarStore.rows.length == 0 && !root.waiting ? 44px : root.shown-height;
     border-radius: 8px;
     background: Theme.surface;
     border-width: 1px;
@@ -403,7 +407,7 @@ export component SearchDropdown inherits Rectangle {
     accessible-label: @tr("Search suggestions");
     // Keeps clicks on the list from closing it.
     TouchArea { }
-    if TopBarStore.rows.length == 0: Text {
+    if TopBarStore.rows.length == 0 && !root.waiting: Text {
         x: 12px;
         width: parent.width - 24px;
         height: parent.height;
@@ -414,13 +418,20 @@ export component SearchDropdown inherits Rectangle {
         overflow: elide;
     }
     sv := ScrollView {
-        visible: TopBarStore.rows.length > 0;
+        visible: TopBarStore.rows.length > 0 || root.waiting;
         col := VerticalLayout {
             padding: 4px;
             for r[i] in TopBarStore.rows: DropRow {
                 data: r;
                 chosen: TopBarStore.selected == i;
                 clicked => { TopBarStore.command("activate", "" + i); }
+            }
+            if root.waiting: Rectangle {
+                height: 80px;
+                accessible-role: text;
+                accessible-label: @tr("Searching messages");
+                SkeletonRow { y: 0px; height: 40px; avatar: 24px; }
+                SkeletonRow { y: 40px; height: 40px; avatar: 24px; opacity: 0.6; }
             }
         }
     }

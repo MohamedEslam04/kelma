@@ -419,6 +419,12 @@ impl UiHandle {
         });
     }
 
+    /// The server is (or has stopped being) asked for message hits: the dropdown holds grey rows
+    /// for them meanwhile.
+    pub fn topbar_searching(&self, on: bool) {
+        self.run(move |w| w.global::<TopBarStore>().set_searching(on));
+    }
+
     /// The message hits for `query`; dropped when the box has moved on.
     pub fn topbar_messages(&self, query: String, hits: Vec<HitData>) {
         self.run(move |w| {

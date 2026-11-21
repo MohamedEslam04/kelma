@@ -3,6 +3,7 @@
 // `teams_proto::chat_card` through `Msg.card`.
 import { Theme } from "theme.slint";
 import { CardRow } from "types.slint";
+import { Skeleton } from "motion.slint";
 
 export global CardColors {
     pure public function band(b: string) -> color {
@@ -122,7 +123,7 @@ export component CardView inherits Rectangle {
                 if r.kind == "image": Rectangle {
                     height: r.img-h;
                     if r.has-img: Image { source: r.img; width: min(r.img-w, parent.width); height: parent.height; image-fit: contain; x: 0px; }
-                    if !r.has-img: Text { text: "Loading image…"; color: Theme.fg-subtle; font-size: 11px * Theme.font-scale; vertical-alignment: center; }
+                    if !r.has-img: Skeleton { x: 0px; width: min(r.img-w, parent.width); height: parent.height; accessible-role: image; accessible-label: "Loading image…"; }
                 }
                 if r.kind == "actions": HorizontalLayout {
                     spacing: 8px;
