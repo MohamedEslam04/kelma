@@ -403,7 +403,7 @@ pub struct ChatRecording {
 }
 
 /// Each `<element …>` start tag of `content`, without its `<` and `>`.
-fn start_tags<'a>(content: &'a str, element: &str) -> Vec<&'a str> {
+pub(crate) fn start_tags<'a>(content: &'a str, element: &str) -> Vec<&'a str> {
     let open = format!("<{element} ");
     let mut out = Vec::new();
     let mut rest = content;
@@ -417,7 +417,7 @@ fn start_tags<'a>(content: &'a str, element: &str) -> Vec<&'a str> {
 }
 
 /// The value of `name="…"` in a start tag, entities decoded.
-fn tag_attr(tag: &str, name: &str) -> Option<String> {
+pub(crate) fn tag_attr(tag: &str, name: &str) -> Option<String> {
     let mut from = 0;
     while let Some(i) = tag[from..].find(name) {
         let at = from + i;
@@ -432,13 +432,13 @@ fn tag_attr(tag: &str, name: &str) -> Option<String> {
     None
 }
 
-fn first_attr(content: &str, element: &str, name: &str) -> Option<String> {
+pub(crate) fn first_attr(content: &str, element: &str, name: &str) -> Option<String> {
     start_tags(content, element)
         .into_iter()
         .find_map(|t| tag_attr(t, name))
 }
 
-fn unescape_xml(s: &str) -> String {
+pub(crate) fn unescape_xml(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
@@ -448,7 +448,7 @@ fn unescape_xml(s: &str) -> String {
 }
 
 /// `0:30:32.00` (or ISO `PT30M32S`) as milliseconds.
-fn recording_length_ms(s: &str) -> Option<i64> {
+pub(crate) fn recording_length_ms(s: &str) -> Option<i64> {
     if let Some(iso) = s.strip_prefix("PT") {
         let (mut total, mut num) = (0.0, String::new());
         for c in iso.chars() {
@@ -479,7 +479,7 @@ fn recording_length_ms(s: &str) -> Option<i64> {
 }
 
 /// A call id named by `<Id type="callId" value="…"/>`.
-fn call_id_of(content: &str) -> Option<String> {
+pub(crate) fn call_id_of(content: &str) -> Option<String> {
     start_tags(content, "Id")
         .into_iter()
         .find(|t| tag_attr(t, "type").as_deref() == Some("callId"))

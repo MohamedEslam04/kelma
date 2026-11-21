@@ -44,6 +44,7 @@ mod live;
 mod loop_paragraph;
 mod manage;
 mod media;
+pub(crate) mod meeting_cards;
 mod mentions;
 mod my_presence;
 mod outbox;

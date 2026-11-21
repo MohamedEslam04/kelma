@@ -115,6 +115,32 @@ pub struct VideoClipData {
     pub thumb: Option<Pixels>,
 }
 
+/// Someone on a meeting card.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeetingPersonData {
+    pub name: String,
+    pub initials: String,
+    pub color: u32,
+}
+
+/// A meeting event drawn as a card (`ui/meeting_card.slint`), see `backend/meeting_cards.rs`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeetingCardData {
+    /// `call`, `recording` or `transcript`.
+    pub kind: &'static str,
+    pub title: String,
+    pub detail: String,
+    pub people: Vec<MeetingPersonData>,
+    /// People who took part beyond the ones drawn.
+    pub more: i32,
+    /// A call: `started` or `ended`; a recording or transcript: `ready`, `progress` or `failed`.
+    pub state: &'static str,
+    /// Where Play opens the recording ("" offers no Play).
+    pub url: String,
+    /// The meeting chat whose Recap tab the card opens ("" offers none).
+    pub recap_chat: String,
+}
+
 #[derive(Clone)]
 pub struct ReactData {
     pub key: String,
@@ -188,6 +214,8 @@ pub struct MsgData {
     pub loops: Vec<LoopData>,
     pub voices: Vec<VoiceData>,
     pub videos: Vec<VideoClipData>,
+    /// A meeting event's card (at most one).
+    pub meeting: Vec<MeetingCardData>,
 }
 
 /// A person, or a team, channel or "everyone" entry, in a people list.

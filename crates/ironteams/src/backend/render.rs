@@ -575,10 +575,8 @@ impl Engine {
             };
             (rows, is_channel, counts, marker, failed, saved)
         };
-        let visible: Vec<&MessageRow> = rows
-            .iter()
-            .filter(|r| !r.message_type.starts_with("Control/"))
-            .collect();
+        // Meeting events another row says again are left out (backend/meeting_cards.rs).
+        let (visible, _) = super::meeting_cards::visible_rows(&rows);
         let info: Vec<(i64, bool)> = visible
             .iter()
             .map(|r| {
@@ -668,10 +666,7 @@ impl Engine {
         let failed = marks.failed.unwrap_or(&none);
         let divider = marks.divider;
         let receipt = marks.receipt;
-        let visible: Vec<&MessageRow> = rows
-            .iter()
-            .filter(|r| !r.message_type.starts_with("Control/"))
-            .collect();
+        let (visible, meetings) = super::meeting_cards::visible_rows(rows);
         let mut out: Vec<MsgData> = Vec::with_capacity(rows.len());
         let mut prev: Option<&MessageRow> = None;
         // Where a file card opens (Settings > Files and links), read once and only when needed.
@@ -873,6 +868,7 @@ impl Engine {
                 loops,
                 voices,
                 videos,
+                meeting: meetings.get(&r.id).cloned().flatten().into_iter().collect(),
             });
             prev = Some(r);
         }

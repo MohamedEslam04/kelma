@@ -10,12 +10,14 @@ pub use composer_apps::wire as install_composer_apps;
 pub use voice::{PlayerView, RecorderView, wire as install_voice};
 
 use crate::data::{
-    AttachmentData, ChatData, HeaderData, MsgData, Pixels, RecipientData, Scroll, TeamData,
+    AttachmentData, ChatData, HeaderData, MeetingCardData, MsgData, Pixels, RecipientData, Scroll,
+    TeamData,
 };
 use crate::reactions;
 use crate::{
     AppWindow, ChannelRow, ChatRow, ComposerEmoji, EmojiItem, FileItem, ImageItem, LinkCard,
-    LoopCard, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow, VideoClipItem, VoiceItem,
+    LoopCard, MeetingCard, MeetingPerson, Msg, PendingAttachment, ReactionItem, Recipient, TeamRow,
+    VideoClipItem, VoiceItem,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, StyledText, VecModel, Weak,
@@ -237,6 +239,29 @@ fn msg(m: MsgData) -> Msg {
                 })
                 .collect(),
         ),
+        meeting: model(m.meeting.into_iter().map(meeting_card).collect()),
+    }
+}
+
+fn meeting_card(c: MeetingCardData) -> MeetingCard {
+    MeetingCard {
+        kind: c.kind.into(),
+        title: c.title.into(),
+        detail: c.detail.into(),
+        people: model(
+            c.people
+                .into_iter()
+                .map(|p| MeetingPerson {
+                    name: p.name.into(),
+                    initials: p.initials.into(),
+                    color: rgb(p.color),
+                })
+                .collect(),
+        ),
+        more: c.more,
+        state: c.state.into(),
+        url: c.url.into(),
+        recap_chat: c.recap_chat.into(),
     }
 }
 
