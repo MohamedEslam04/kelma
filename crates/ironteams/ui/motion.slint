@@ -185,17 +185,14 @@ export component PopIn inherits Rectangle {
     @children
 }
 
-// A section's rows when the user opens it: they unfold (200 ms) instead of appearing. Rows that
-// exist at start-up are placed at once (`Motion.toggled` is only set by a click).
+// A section's rows when the user opens it: they fade in (200 ms) instead of appearing. Rows that
+// exist at start-up are drawn at once (`Motion.toggled` is only set by a click). The height is
+// not animated: clipped rows would be out of reach of the pointer and of screen readers.
 export component Reveal inherits Rectangle {
     property <bool> shown: !Motion.toggled || Theme.reduced-motion;
-    // 0 to 1 as the rows unfold. Only this animates: the rows being added or removed later change
-    // the height at once.
-    property <float> amount: root.shown ? 1.0 : 0.0;
-    height: lay.preferred-height * root.amount;
-    opacity: root.amount;
-    clip: root.amount < 1.0;
-    animate amount { duration: Motion.normal; easing: ease-out; }
+    height: lay.preferred-height;
+    opacity: root.shown ? 1.0 : 0.0;
+    animate opacity { duration: Motion.normal; easing: ease-out; }
     Timer {
         interval: 16ms;
         running: !root.shown;
