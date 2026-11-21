@@ -425,8 +425,8 @@ code was copied from either.
 What IronTeams does with this (`calling::video`, `calling::media`, `calling::signaling::video`,
 `ironteams/src/backend/call/share.rs`):
 
-- **Opt-in**: the sharing line is offered only with `IRONTEAMS_SCREEN_SHARE=1`, so the audio-only
-  offer verified above stays the default until a live run confirms the media servers take it.
+- **On by default** (shipped before a live run confirmed every media server takes it):
+  `IRONTEAMS_SCREEN_SHARE=0` is the kill switch that goes back to the audio-only offer.
 - A `MediaSession` built with `MediaOptions::video = [VideoRole::ApplicationSharing]` registers
   H.264 (`packetization-mode=1`, constrained baseline as `42c01f` at payload type 107 and
   `42e01f` at 108: webrtc-rs pairs H.264 by the first two bytes of `profile-level-id`, and the
@@ -512,9 +512,10 @@ Sources, facts only, as for screen sharing: rusty-teams (`video_layout.rs`, `ros
 
 What IronTeams does with this (`calling::video::{camera, receive}`, `ironteams/src/backend/call/camera.rs`):
 
-- **Opt-in**: the main-video line is offered only with `IRONTEAMS_CAMERA=1` (like
-  `IRONTEAMS_SCREEN_SHARE=1`), first among the video lines, so it is mid 1. Without it the Camera
-  buttons stay disabled.
+- **On by default**: the main-video line is offered unless `IRONTEAMS_CAMERA=0` (like
+  `IRONTEAMS_SCREEN_SHARE=0`), first among the video lines, so it is mid 1. With the kill switch the
+  Camera buttons stay disabled. Without GStreamer the camera and the share fail with a calm
+  "needs GStreamer, which isn't installed" message instead of the OS error.
 - Capture: the Camera portal (`ashpd` `desktop::camera`: `IsCameraPresent`, `AccessCamera`,
   `OpenPipeWireRemote`); a `gst-launch-1.0 pipewiresrc fd=0` child with no node named reads the
   first camera on that remote. When the portal is missing or sees no camera, `v4l2src` reads
@@ -577,7 +578,7 @@ What IronTeams does (`calling::signaling::{roster, video}`, `calling::media`,
   subscribed to (`VideoSlot::Gallery`), anything else in the other person's tile as before. A
   line quiet for 10 s is cleared.
 - A meeting join offers nine receive-only `main-video` lines after the video lines when
-  `IRONTEAMS_CAMERA=1` (`MediaOptions::receive_slots`); `from_teams_with` keeps that many main-video
+  `IRONTEAMS_CAMERA` not `0` (`MediaOptions::receive_slots`); `from_teams_with` keeps that many main-video
   sections of the answer. A media server's re-offer (lobby admission) is answered without them.
 - A join that offers video lines is laid out as the web client's (camera mid 1, gallery 2-10,
   sharing mid 11; `IRONTEAMS_MEETING_VIDEO_LAYOUT=sharing-second` puts the sharing line at mid 2,
@@ -589,7 +590,8 @@ What IronTeams does (`calling::signaling::{roster, video}`, `calling::media`,
   `applyChannelParameters` `sendSideBWSeed`) was taken (201) and ended within 1.5 s by a
   `conversationEnd` and `callEnd` of 410, subCode 301999, "InvalidFinalAnswerMediaDescriptions"
   (both live 2026-11-20, the second on `b1d38a7`; the offer had 13 lines, data at mid 12).
-- UNVERIFIED, opt-in with `IRONTEAMS_MEETING_VIDEO_DESCRIBE=1`: the join names `ScreenViewer` and
+- UNVERIFIED, ON by default since 2026-11-21 (`IRONTEAMS_MEETING_VIDEO_DESCRIBE=0` is the kill
+  switch; see "Audio-only fallback" below): the join names `ScreenViewer` and
   declares only its send-capable video lines (`sendrecv`/`sendonly` in the offer: camera mid 1,
   sharing mid 11), each `recvonly`, plus the bandwidth seed; a receive-only gallery line is never
   named, and with no send-capable line the list is empty. Why: the web client's captured join
@@ -604,8 +606,9 @@ What IronTeams does (`calling::signaling::{roster, video}`, `calling::media`,
 - A meeting may switch only the lines its join declared (`calling::signaling::bodies::
   declared_video_mids`, kept on the call): after the default join (no `mediaDescriptions`)
   Share and Camera stay disabled ("Sharing/Video isn't available in meetings yet") and no
-  `UpdateMediaDescriptions` is ever posted, whatever ports the answer gave the lines. With
-  `IRONTEAMS_MEETING_VIDEO_DESCRIBE=1` the update names only the declared lines (camera mid 1,
+  `UpdateMediaDescriptions` is ever posted, whatever ports the answer gave the lines (the
+  audio-only fallback below joins like this, with no video lines at all). With the lines declared
+  (the default) the update names only the declared lines (camera mid 1,
   sharing mid 11) that are also live, as the web client's updates name only its send-capable
   mids, with a call-wide `requestId` (UNVERIFIED live). A declared line the media server answered
   with port 0 is never named either ("Sharing/Video isn't available in this meeting").
@@ -625,7 +628,7 @@ What IronTeams does (`calling::signaling::{roster, video}`, `calling::media`,
   subscribed in order through one queue (`sequenceNumber` rising per call), on the
   `applyChannelParameters` link, else `{callLeg}/applyChannelParameters`.
 - Someone else's share (roster) is subscribed on our sharing line (needs
-  `IRONTEAMS_SCREEN_SHARE=1`), and named: the call window's View menu enables "Focus on content",
+  `IRONTEAMS_SCREEN_SHARE` not `0`), and named: the call window's View menu enables "Focus on content",
   switches to it when a share starts (and back to the gallery when it ends) and shows
   "<name> is presenting". In a 1:1 call the share's first picture does the same, named after the
   call.
@@ -790,3 +793,34 @@ viewer, with the web client's or the desktop client's network log): the request 
 twelve action codes, the coordinate space (normalized, pixels, per monitor) and the key codes
 (Windows virtual keys, scancodes or keysyms); and how the presenter's client confirms or ends
 control.
+
+## External and guest labels (2026-11-21, the roster fields are UNVERIFIED)
+
+People, the tiles, the lobby, the profile card and 1:1 chat titles and headers add "(External)" or
+"(Guest)" like Teams (`backend/outsider.rs`). The decision, in order: `8:teamsvisitor:` is a
+guest, `8:live:` (a consumer account) is external, anything else that is not `8:orgid:` has no
+label; an `8:orgid:` user is a guest when the roster flags them (`details.isGuest`, or
+`details.userType` `Guest`) or their stored sign-in name has `#EXT#`, and external when their
+tenant id differs from ours. The roster's `details.tenantId` is a guess (the call invitation's
+`from` carries a `tenantId`, a roster entry may not); our own tenant id is the `tid` claim of our
+token. Without a tenant id for them nothing is claimed. Chats and cards only know the MRI and the
+stored sign-in name (no tenant id is stored), so they label consumer accounts and `#EXT#` guests
+but not another organization's `8:orgid:` users.
+
+## Audio-only fallback of a meeting join (2026-11-21, UNVERIFIED live)
+
+Meeting joins declare their video lines by default (`IRONTEAMS_MEETING_VIDEO_DESCRIBE=0` goes back
+to the audio-only declaration). `call/fallback.rs` is the safety net for the refusals seen live
+2026-11-20 (a join ended 1.5 s in with 410, subCode 301999, "InvalidFinalAnswerMediaDescriptions";
+an update refused with 400, 10146, then the call ended with 410, 301999,
+"InvalidUpdatedMediaDescriptions"):
+
+- A join that fails with an error naming `MediaDescriptions`, or a call the service ends (or
+  rejects) with a phrase naming `MediaDescriptions` at any time, or with subCode 301999 in the
+  first 20 s, is redone once, audio only: no video lines in the offer, no gallery slots, no
+  `ScreenViewer`, no `mediaDescriptions`. The call shows "Video isn't working in this meeting yet,
+  so you joined with audio." and the camera stays off.
+- The refusal is remembered for the hub's session: later meeting joins are audio only at once.
+- The refusal (join error, end code, subCode and phrase, the refused update's error) is logged at
+  info level, so a live run shows why.
+- The rejoin declares no lines, so a refusal there ends the call as before (no loop).

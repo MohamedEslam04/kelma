@@ -5,6 +5,7 @@
 use super::Engine;
 use super::mentions::{self, Entry};
 use super::outbox::PENDING_PREFIX;
+use super::outsider::{Outsider, classify, is_guest_upn};
 use super::util::{AVATAR_PX, decode_image, one_on_one_members};
 use crate::data::{CardData, PersonData, PinnedData};
 use serde_json::{Value, json};
@@ -166,6 +167,14 @@ fn fill_facts(card: &mut CardData, f: CardFacts) {
     card.phone = f.phone;
     card.mobile = f.mobile;
     card.manager = f.manager;
+}
+
+/// `External` or `Guest` for a person outside our organization, `""` for a colleague (from their
+/// MRI and sign-in name: a profile has no tenant id).
+fn card_badge(mri: &str, email: &str) -> String {
+    classify(mri, None, None, is_guest_upn(email))
+        .map_or("", Outsider::label)
+        .into()
 }
 
 /// The card's details from the Delve card and the directory entry: each field from the first
@@ -1271,6 +1280,7 @@ impl Engine {
         if let Some((f, _)) = &cached {
             fill_facts(&mut card, f.clone());
         }
+        card.badge = card_badge(&mri, &card.email);
         {
             let mut p = self.people.lock().unwrap();
             p.card_email = (!card.email.is_empty()).then(|| card.email.clone());
@@ -1328,6 +1338,7 @@ impl Engine {
                 .profiles
                 .insert(mri.clone(), (facts.clone(), std::time::Instant::now()));
             fill_facts(&mut card, facts);
+            card.badge = card_badge(&mri, &card.email);
             card.person.avatar = self.card_photo(&mri);
         }
         match presence {

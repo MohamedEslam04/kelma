@@ -2,8 +2,9 @@
 // More panels, lobby, reconnecting banner) and the call-ended screen. It covers the area right of
 // the rail (see app.slint); `CallMini` is the floating call while another page is open.
 //
-// Camera and screen sharing work when the build negotiates them (IRONTEAMS_CAMERA=1,
-// IRONTEAMS_SCREEN_SHARE=1); someone else's share takes the stage (View > Focus on content).
+// Camera and screen sharing work when the call negotiates them (on by default; IRONTEAMS_CAMERA=0
+// and IRONTEAMS_SCREEN_SHARE=0 switch them off); someone else's share takes the stage (View >
+// Focus on content).
 // Reactions are drawn but disabled (no reaction API, crates/calling/src/signaling/controls.rs).
 import { Theme } from "theme.slint";
 import { Avatar, Icon } from "widgets.slint";
@@ -411,7 +412,7 @@ component Tile inherits Rectangle {
             y: 3px;
         }
         Text {
-            text: root.p.name + (root.p.me ? " (You)" : "");
+            text: CallStore.tagged-name(root.p) + (root.p.me ? " (You)" : "");
             color: Theme.fg;
             font-size: 12px * Theme.font-scale;
             overflow: elide;

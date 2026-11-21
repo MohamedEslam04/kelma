@@ -9,6 +9,11 @@ const GROUP: &str = "19:unnamed@thread.v2";
 const BARE_GROUP: &str = "19:bare@thread.v2";
 const CHANNEL: &str = "19:nameless@thread.tacv2";
 const MEETING: &str = "19:meeting_sprint@thread.v2";
+// 1:1 chats with a guest of the organization (a `#EXT#` sign-in name) and with a colleague.
+const GUEST_CHAT: &str =
+    "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-0000000000e1@unq.gbl.spaces";
+const COLLEAGUE_CHAT: &str =
+    "19:00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-0000000000e2@unq.gbl.spaces";
 
 fn row(id: &str, kind: ConvKind, title: &str) -> ConversationRow {
     ConversationRow {
@@ -51,7 +56,31 @@ fn harness() -> Harness {
             })
             .unwrap();
     }
+    for (mri, name, email) in [
+        (
+            "8:orgid:00000000-0000-0000-0000-0000000000e1",
+            "Sara Example",
+            "sara_home.example#EXT#@contoso.example",
+        ),
+        (
+            "8:orgid:00000000-0000-0000-0000-0000000000e2",
+            "Omar Example",
+            "omar@contoso.example",
+        ),
+    ] {
+        store
+            .upsert_user(&UserRow {
+                mri: mri.into(),
+                display_name: name.into(),
+                email: Some(email.into()),
+                avatar: None,
+                updated_ms: 0,
+            })
+            .unwrap();
+    }
     for r in [
+        row(GUEST_CHAT, ConvKind::OneOnOne, "Sara Example"),
+        row(COLLEAGUE_CHAT, ConvKind::OneOnOne, "Omar Example"),
         row(GROUP, ConvKind::Group, ""),
         row(BARE_GROUP, ConvKind::Group, "  "),
         row(CHANNEL, ConvKind::Channel, ""),
@@ -76,6 +105,21 @@ fn a_group_chat_without_a_topic_lists_its_members_or_says_group_chat() {
     let t = titles(&h.app);
     assert_eq!(t[GROUP], "Ann, Bo");
     assert_eq!(t[BARE_GROUP], "Group chat");
+}
+
+#[test]
+fn a_one_on_one_chat_with_a_guest_says_so_in_the_list_and_the_header() {
+    let h = harness();
+    let t = titles(&h.app);
+    assert_eq!(t[GUEST_CHAT], "Sara Example (Guest)");
+    assert_eq!(
+        t[COLLEAGUE_CHAT], "Omar Example",
+        "a colleague has no label"
+    );
+    h.select(GUEST_CHAT);
+    assert_eq!(h.app.get_current_title(), "Sara Example (Guest)");
+    h.select(COLLEAGUE_CHAT);
+    assert_eq!(h.app.get_current_title(), "Omar Example");
 }
 
 #[test]

@@ -8,8 +8,8 @@
 //!   subscribed to with `applyChannelParameters` (the participant's camera MSI from the roster on
 //!   the slot's `x-source-streamid` from the media server's answer).
 //!
-//! The gallery slots are offered only with `IRONTEAMS_CAMERA=1` (as the camera line), the sharing
-//! line only with `IRONTEAMS_SCREEN_SHARE=1`. Everything here is UNVERIFIED live.
+//! The gallery slots are offered unless `IRONTEAMS_CAMERA=0` (as the camera line), the sharing
+//! line unless `IRONTEAMS_SCREEN_SHARE=0`. Everything here is UNVERIFIED live.
 
 use super::{EventSink, VideoSlot};
 use calling::media::sdp::source_stream_ids;
@@ -40,7 +40,7 @@ const LINE_QUEUE: usize = 512;
 /// went off without a renegotiation).
 const IDLE: Duration = Duration::from_secs(10);
 
-/// The gallery slots a meeting join offers: [`RECEIVE_SLOTS`] with `IRONTEAMS_CAMERA=1`, else none.
+/// The gallery slots a meeting join offers: [`RECEIVE_SLOTS`], none with `IRONTEAMS_CAMERA=0`.
 pub fn wanted_slots() -> usize {
     if super::camera::wanted() {
         RECEIVE_SLOTS
@@ -63,16 +63,21 @@ fn layout_by(v: Option<&std::ffi::OsStr>) -> VideoLayout {
     }
 }
 
-/// A meeting join's `callModalities`: `Audio`, plus `ScreenViewer` with
-/// `IRONTEAMS_MEETING_VIDEO_DESCRIBE=1`, which also makes the join declare its send-capable video
-/// lines (`mediaDescriptions`, UNVERIFIED). Off by default: the join declaring every video line
-/// was ended with 410 "InvalidFinalAnswerMediaDescriptions" (live 2026-11-20).
-pub fn join_modalities() -> &'static [Modality] {
-    modalities_by(compat::var_os("IRONTEAMS_MEETING_VIDEO_DESCRIBE").as_deref())
+/// A meeting join's `callModalities`: `Audio`, plus `ScreenViewer` (which also makes the join
+/// declare its send-capable video lines, `mediaDescriptions`, UNVERIFIED) when `video` is set and
+/// `IRONTEAMS_MEETING_VIDEO_DESCRIBE` is not `0`. The join declaring every video line was ended
+/// with 410 "InvalidFinalAnswerMediaDescriptions" (live 2026-11-20); `video` is cleared for the
+/// audio-only rejoin that follows such a refusal ([`super::fallback`]).
+pub fn join_modalities(video: bool) -> &'static [Modality] {
+    if video {
+        modalities_by(compat::var_os("IRONTEAMS_MEETING_VIDEO_DESCRIBE").as_deref())
+    } else {
+        &[Modality::Audio]
+    }
 }
 
 fn modalities_by(v: Option<&std::ffi::OsStr>) -> &'static [Modality] {
-    if v.is_some_and(|v| !v.is_empty() && v != "0") {
+    if v.is_none_or(|v| v != "0") {
         &[Modality::Audio, Modality::ScreenViewer]
     } else {
         &[Modality::Audio]
@@ -402,14 +407,14 @@ mod tests {
     }
 
     #[test]
-    fn a_meeting_join_declares_its_video_lines_only_when_asked_to() {
-        assert_eq!(modalities_by(None), [Modality::Audio]);
-        assert_eq!(modalities_by(Some("".as_ref())), [Modality::Audio]);
+    fn a_meeting_join_declares_its_video_lines_unless_switched_off_or_refused() {
+        let declared = [Modality::Audio, Modality::ScreenViewer];
+        assert_eq!(modalities_by(None), declared);
+        assert_eq!(modalities_by(Some("".as_ref())), declared);
+        assert_eq!(modalities_by(Some("1".as_ref())), declared);
         assert_eq!(modalities_by(Some("0".as_ref())), [Modality::Audio]);
-        assert_eq!(
-            modalities_by(Some("1".as_ref())),
-            [Modality::Audio, Modality::ScreenViewer]
-        );
+        // The audio-only rejoin after a refusal never declares them.
+        assert_eq!(join_modalities(false), [Modality::Audio]);
     }
     use serde_json::json;
 

@@ -150,6 +150,9 @@ fn the_prejoin_screen_shows_the_meeting_your_name_and_devices() {
     assert!(c.shows("Join as Me"));
     assert!(c.shows("Your camera is off"));
 
+    // With the camera switched off (`IRONTEAMS_CAMERA=0`); on by default, see
+    // `the_prejoin_camera_switch_works_when_the_build_has_video`.
+    cs(&c.h.app).set_camera_available(false);
     let camera = c.button("Camera");
     assert_eq!(camera.accessible_enabled(), Some(false));
     assert_eq!(
@@ -930,6 +933,19 @@ fn a_refused_recording_shows_the_services_reason() {
 }
 
 #[test]
+fn the_audio_only_rejoin_says_so_in_a_dismissable_note() {
+    use crate::backend::call::fallback::NOTE;
+    let c = CallHarness::new();
+    c.connected();
+    c.fake.emit(Event::Notice(NOTE.into()));
+    assert!(c.shows("Video isn't working in this meeting yet, so you joined with audio."));
+    // A note, not an error: no red bar.
+    assert_eq!(cs(&c.h.app).get_error(), "");
+    click(&c.button("Dismiss notice"));
+    assert!(!c.shows(NOTE));
+}
+
+#[test]
 fn live_captions_show_the_speaker_and_the_text_at_the_bottom() {
     let c = CallHarness::new();
     c.connected();
@@ -1373,6 +1389,59 @@ fn the_organizer_admits_one_or_all_from_the_lobby() {
     assert!(
         c.all("Admit Ada").is_empty(),
         "only the lobby has an Admit button"
+    );
+}
+
+#[test]
+fn people_from_outside_the_organization_carry_external_and_guest_labels() {
+    use crate::backend::outsider::Outsider;
+    let c = CallHarness::new();
+    c.connected();
+    let p = |mri: &str, name: &str, lobby, me, outsider| Person {
+        mri: mri.into(),
+        name: name.into(),
+        lobby,
+        me,
+        role: if me {
+            "organizer".into()
+        } else {
+            String::new()
+        },
+        outsider,
+        ..Default::default()
+    };
+    c.fake.emit(Event::Roster(vec![
+        p(ORGANIZER, "Me", false, true, None),
+        p(
+            "8:orgid:sara",
+            "Sara Example",
+            false,
+            false,
+            Some(Outsider::External),
+        ),
+        p("8:orgid:omar", "Omar Example", false, false, None),
+        p(
+            "8:teamsvisitor:vis",
+            "Visitor",
+            true,
+            false,
+            Some(Outsider::Guest),
+        ),
+    ]));
+    click(&c.button("People"));
+    // The People rows (and the tiles) carry the label; a colleague and we do not.
+    assert_eq!(
+        label(&c.row("Sara Example (External)")),
+        "Sara Example (External)"
+    );
+    c.row("Omar Example");
+    c.row("Me");
+    // The lobby names who is being admitted, label included.
+    c.row("Visitor (Guest)");
+    click(&c.button("Admit Visitor (Guest)"));
+    assert_eq!(
+        c.sent().last().map(String::as_str),
+        Some("admit 8:teamsvisitor:vis")
     );
 }
 

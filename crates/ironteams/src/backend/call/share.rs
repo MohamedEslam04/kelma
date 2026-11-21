@@ -1,10 +1,11 @@
 //! Screen sharing in a live call: the desktop's ScreenCast picker, the encoder task feeding the
 //! call's sharing line, and telling the service (see `docs/protocol-calls.md`, Screen sharing).
 //!
-//! The sharing line is negotiated only when `IRONTEAMS_SCREEN_SHARE=1` (until a live run confirms the
-//! media servers accept it, the verified audio-only offer stays the default). Then:
+//! The sharing line is negotiated by default; `IRONTEAMS_SCREEN_SHARE=0` is the kill switch that
+//! goes back to the audio-only offer. Not yet confirmed against every media server. Then:
 //! - a meeting flips the line with `UpdateMediaDescriptions` (no renegotiation), only when its
-//!   join declared the line (`IRONTEAMS_MEETING_VIDEO_DESCRIBE=1`; never after the default join);
+//!   join declared the line (the default; not with `IRONTEAMS_MEETING_VIDEO_DESCRIBE=0` or after
+//!   the media servers refused the lines and the join was redone audio only, see `fallback`);
 //! - a 1:1 call sends a re-offer with `ScreenSharer` on the other side's `mediaRenegotiation`.
 //!
 //! The camera will reuse this path with `VideoRole::MainVideo` and a camera frame source.
@@ -29,13 +30,27 @@ use tokio::task::JoinHandle;
 
 pub const ROLE: VideoRole = VideoRole::ApplicationSharing;
 
-/// Whether calls negotiate a sharing line (`IRONTEAMS_SCREEN_SHARE` set to anything but `0`).
+/// Whether calls negotiate a sharing line: on unless `IRONTEAMS_SCREEN_SHARE=0`.
 pub fn wanted() -> bool {
     wanted_by(compat::var_os("IRONTEAMS_SCREEN_SHARE").as_deref())
 }
 
 fn wanted_by(v: Option<&std::ffi::OsStr>) -> bool {
-    v.is_some_and(|v| !v.is_empty() && v != "0")
+    v.is_none_or(|v| v != "0")
+}
+
+/// Whether a capture error is the missing `gst-launch-1.0` (GStreamer is not installed).
+pub(super) fn gstreamer_missing(e: &str) -> bool {
+    e.contains("(GStreamer) not started")
+}
+
+/// What the red bar says when the screen capture failed: `e` is the media error (logged in full).
+pub fn capture_error_text(e: &str) -> String {
+    if gstreamer_missing(e) {
+        "Sharing your screen needs GStreamer, which isn't installed on this computer.".into()
+    } else {
+        format!("Couldn't share your screen: {e}")
+    }
 }
 
 /// The media options of a call's session: audio, plus the camera's main-video line when
@@ -424,7 +439,11 @@ pub async fn tell_meeting(
     with.0.insert("updateMediaDescriptions".into(), url);
     let tag = negotiation_tag(s, role, sending);
     ngc.update_media_descriptions(s, &with, lines, &tag, request_id)
-        .await?;
+        .await
+        .inspect_err(|e| {
+            // The service ends the call after refusing one; the join is redone audio only.
+            tracing::info!(%e, sending, "the meeting refused UpdateMediaDescriptions");
+        })?;
     Ok(())
 }
 
@@ -498,11 +517,25 @@ mod tests {
     }
 
     #[test]
-    fn sharing_is_opt_in_until_verified_live() {
-        assert!(!wanted_by(None));
-        assert!(!wanted_by(Some("0".as_ref())));
-        assert!(!wanted_by(Some("".as_ref())));
+    fn sharing_is_on_unless_switched_off() {
+        assert!(wanted_by(None));
+        assert!(wanted_by(Some("".as_ref())));
         assert!(wanted_by(Some("1".as_ref())));
+        assert!(!wanted_by(Some("0".as_ref())));
+    }
+
+    #[test]
+    fn a_missing_gstreamer_is_said_calmly() {
+        let e =
+            "media: gst-launch-1.0 (GStreamer) not started: program not found. Install GStreamer.";
+        assert_eq!(
+            capture_error_text(e),
+            "Sharing your screen needs GStreamer, which isn't installed on this computer."
+        );
+        assert_eq!(
+            capture_error_text("media: portal refused"),
+            "Couldn't share your screen: media: portal refused"
+        );
     }
 
     #[test]
@@ -689,7 +722,7 @@ mod tests {
         media.close().await.unwrap();
     }
 
-    /// A join that declared its send-capable lines (`IRONTEAMS_MEETING_VIDEO_DESCRIBE=1`) may switch
+    /// A join that declared its send-capable lines (the default for meetings) may switch
     /// them, and its update names only the lines it declared (as the web client's names only its
     /// send-capable mids), never another live line.
     #[tokio::test]

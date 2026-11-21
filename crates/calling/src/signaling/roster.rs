@@ -92,6 +92,12 @@ pub struct RosterEndpoint {
 pub struct RosterParticipant {
     pub mri: String,
     pub display_name: String,
+    /// The tenant the participant belongs to (`details.tenantId`; UNVERIFIED in a roster, the
+    /// call invitation's `from` carries it), as the service wrote it.
+    pub tenant_id: Option<String>,
+    /// The roster flags them as a guest (`details.isGuest`, or `details.userType` `Guest`;
+    /// UNVERIFIED shape).
+    pub guest: bool,
     pub role: Option<MeetingRole>,
     pub presence: Presence,
     /// Every endpoint in the call is self-muted.
@@ -313,6 +319,17 @@ fn participant_from(
         .map(str::to_owned)
         .or_else(|| previous.map(|m| m.display_name.clone()))
         .unwrap_or_default();
+    let tenant_id = p
+        .pointer("/details/tenantId")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
+        .or_else(|| previous.and_then(|m| m.tenant_id.clone()));
+    let guest = p.pointer("/details/isGuest").and_then(Value::as_bool) == Some(true)
+        || p.pointer("/details/userType")
+            .and_then(Value::as_str)
+            .is_some_and(|t| t.eq_ignore_ascii_case("guest"))
+        || previous.is_some_and(|m| m.guest);
     let raw_endpoints: Vec<(&String, &Value)> =
         p["endpoints"].as_object().into_iter().flatten().collect();
     let endpoints: Vec<RosterEndpoint> = raw_endpoints
@@ -330,6 +347,8 @@ fn participant_from(
     RosterParticipant {
         mri: mri.to_owned(),
         display_name,
+        tenant_id,
+        guest,
         role: ROLE_KEYS
             .iter()
             .filter_map(|k| p[*k].as_str())
@@ -465,5 +484,41 @@ mod content_sharing_tests {
                 "endpoints": {"e1": {"call": {}}}}
         }}));
         assert_eq!(r.content_presenter("8:orgid:me"), None);
+    }
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_roster_keeps_a_participants_tenant_and_guest_flag() {
+        let mut r = Roster::default();
+        r.apply(&json!({"participants": {
+            "8:orgid:ada": {"state": "active", "version": 1,
+                "details": {"displayName": "Ada", "tenantId": "tenant-a"}},
+            "8:orgid:bo": {"state": "active", "version": 1,
+                "details": {"displayName": "Bo", "isGuest": true}},
+            "8:orgid:cy": {"state": "active", "version": 1,
+                "details": {"displayName": "Cy", "userType": "Guest"}},
+            "8:orgid:di": {"state": "active", "version": 1, "details": {"displayName": "Di"}}
+        }}));
+        let get = |m: &str| r.get(m).unwrap().clone();
+        assert_eq!(get("8:orgid:ada").tenant_id.as_deref(), Some("tenant-a"));
+        assert!(!get("8:orgid:ada").guest);
+        assert!(get("8:orgid:bo").guest && get("8:orgid:cy").guest);
+        assert_eq!(get("8:orgid:di").tenant_id, None);
+        assert!(!get("8:orgid:di").guest);
+        // A delta that leaves the details out keeps what was known.
+        r.apply(&json!({"participants": {
+            "8:orgid:ada": {"state": "active", "version": 2},
+            "8:orgid:bo": {"state": "active", "version": 2}
+        }}));
+        assert_eq!(
+            r.get("8:orgid:ada").unwrap().tenant_id.as_deref(),
+            Some("tenant-a")
+        );
+        assert!(r.get("8:orgid:bo").unwrap().guest);
     }
 }

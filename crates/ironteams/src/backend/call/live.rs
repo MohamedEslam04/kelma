@@ -16,6 +16,7 @@
 
 use super::bots::Bots;
 use super::camera::{self, Camera, CameraMsg};
+use super::fallback;
 use super::remote_control::{self, Ctx, RemoteControl, Step};
 use super::remote_video::{self, RemoteVideo};
 use super::share::{self, Sending, SessionNews, Share, ShareMsg};
@@ -23,6 +24,7 @@ use super::{
     CallDriver, CallHandle, Caption, Control, ControlAction, Device, Devices, Event, EventSink,
     JoinOptions, JoinTarget, Link, Person, Phase, live_phase, reaction_named, recording_state,
 };
+use crate::backend::outsider::classify as classify_outsider;
 use anyhow::Context;
 use calling::audio::{
     AudioProcessor, Capture, Playback, ProcessingOptions, echo_cancelled, spawn_capture_encoder,
@@ -77,6 +79,8 @@ pub struct Hub {
     sessions: Mutex<HashMap<String, mpsc::UnboundedSender<CallPush>>>,
     invitations: Mutex<Vec<mpsc::UnboundedSender<Box<CallInvitation>>>>,
     unmatched: Mutex<Vec<mpsc::UnboundedSender<CallPush>>>,
+    /// Whether the media servers refused a meeting's video lines in this session.
+    video: fallback::Memory,
 }
 
 impl Hub {
@@ -88,6 +92,7 @@ impl Hub {
             sessions: Mutex::new(HashMap::new()),
             invitations: Mutex::new(Vec::new()),
             unmatched: Mutex::new(Vec::new()),
+            video: fallback::Memory::default(),
         })
     }
 
@@ -395,31 +400,55 @@ impl CallDriver for LiveDriver {
 async fn run_meeting(
     hub: Arc<Hub>,
     target: JoinTarget,
-    opts: JoinOptions,
+    mut opts: JoinOptions,
     sink: EventSink,
     mut ctl: mpsc::UnboundedReceiver<Control>,
 ) {
     sink.send(Event::Connecting);
-    let setup = join_meeting(hub.clone(), target, opts.clone());
-    tokio::pin!(setup);
-    // Controls pressed while joining wait; Leave (or closing the window) gives up the join.
-    let mut early = Vec::new();
-    let joined = loop {
-        tokio::select! {
-            r = &mut setup => break r,
-            c = ctl.recv() => match c {
-                None | Some(Control::Leave) => return,
-                Some(c) => early.push(c),
-            },
+    // The join declares its video lines unless a refusal was seen in this session; a refusal
+    // makes one more, audio-only attempt (see [`fallback`]).
+    let mut video = hub.video.video_allowed() && (camera::wanted() || share::wanted());
+    loop {
+        let setup = join_meeting(hub.clone(), target.clone(), opts.clone(), video);
+        tokio::pin!(setup);
+        // Controls pressed while joining wait; Leave (or closing the window) gives up the join.
+        let mut early = Vec::new();
+        let joined = loop {
+            tokio::select! {
+                r = &mut setup => break r,
+                c = ctl.recv() => match c {
+                    None | Some(Control::Leave) => return,
+                    Some(c) => early.push(c),
+                },
+            }
+        };
+        match joined {
+            // `run` is true when the service ended the call refusing the video lines.
+            Ok((call, events, pushes)) => {
+                let refused = call
+                    .run(events, pushes, opts.clone(), sink.clone(), &mut ctl, early)
+                    .await;
+                if !refused {
+                    return;
+                }
+            }
+            Err(e) => {
+                let text = format!("{e:#}");
+                if !fallback::join_refused_video(video, &text) {
+                    tracing::warn!("join failed: {text}");
+                    sink.send(Event::Error(format!("Couldn't join: {text}")));
+                    sink.send(Event::Ended("Couldn't join the meeting.".into()));
+                    return;
+                }
+                tracing::info!(refusal = %text, "the meeting refused the join's video lines");
+            }
         }
-    };
-    match joined {
-        Ok((call, events, pushes)) => call.run(events, pushes, opts, sink, ctl, early).await,
-        Err(e) => {
-            tracing::warn!("join failed: {e:#}");
-            sink.send(Event::Error(format!("Couldn't join: {e:#}")));
-            sink.send(Event::Ended("Couldn't join the meeting.".into()));
-        }
+        hub.video.remember_refusal();
+        video = false;
+        // Nothing to turn on in an audio-only call.
+        opts.camera = false;
+        sink.send(Event::Connecting);
+        sink.send(Event::Notice(fallback::NOTE.into()));
     }
 }
 
@@ -430,6 +459,7 @@ async fn join_meeting(
     hub: Arc<Hub>,
     target: JoinTarget,
     opts: JoinOptions,
+    with_video: bool,
 ) -> anyhow::Result<Joined> {
     let target = hub.resolve(target).await?;
     let ngc = hub.ngc_client().await?;
@@ -438,15 +468,20 @@ async fn join_meeting(
         .await
         .context("the calling connection didn't come up")?;
     let ice = hub.ice_servers(&ngc.endpoints().region).await;
-    // A meeting join also offers the gallery's receive-only lines (UNVERIFIED).
+    // A meeting join also offers the gallery's receive-only lines (UNVERIFIED), unless `with_video`
+    // is off: the audio-only rejoin after the media servers refused the video lines.
     let options = MediaOptions {
-        receive_slots: remote_video::wanted_slots(),
+        receive_slots: if with_video {
+            remote_video::wanted_slots()
+        } else {
+            0
+        },
         layout: remote_video::wanted_layout(),
-        ..media_options(true)
+        ..media_options(true, with_video)
     };
     let (media, events) = MediaSession::with_options(ice.clone(), options).await?;
     let offer = media.create_offer().await?;
-    let modalities = remote_video::join_modalities();
+    let modalities = remote_video::join_modalities(with_video);
     let declared = declared_video_mids(&offer, modalities);
     tracing::info!(?declared, "meeting join declares its video lines");
     let me = hub.client.self_mri().await?;
@@ -496,6 +531,7 @@ async fn join_meeting(
         roster,
         controls: Controls::default(),
         meeting: true,
+        video_lines: with_video,
         declared,
         keep_alive: None,
         pending_offer: None,
@@ -552,6 +588,7 @@ pub fn adopt(
             roster: Roster::default(),
             controls: Controls::default(),
             meeting: false,
+            video_lines: true,
             declared: Vec::new(),
             keep_alive: None,
             pending_offer: None,
@@ -567,7 +604,8 @@ pub fn adopt(
         // A direct call's sharing line shows the other side's screen (no subscription).
         call.video.negotiated(&call.media, "").await;
         call.start_keep_alive(None);
-        call.run(events, pushes, opts, sink, rx, vec![]).await;
+        let mut rx = rx;
+        call.run(events, pushes, opts, sink, &mut rx, vec![]).await;
     });
     Box::new(LiveHandle(tx))
 }
@@ -772,12 +810,16 @@ impl Talk {
     }
 }
 
-/// A call's media options: [`share::media_options`], plus in a meeting the data channel that
-/// carries live captions.
-fn media_options(meeting: bool) -> MediaOptions {
+/// A call's media options: [`share::media_options`] (no video lines when `video` is off), plus in
+/// a meeting the data channel that carries live captions.
+fn media_options(meeting: bool, video: bool) -> MediaOptions {
     MediaOptions {
         data_channel: meeting,
-        ..share::media_options()
+        ..if video {
+            share::media_options()
+        } else {
+            MediaOptions::default()
+        }
     }
 }
 
@@ -820,7 +862,13 @@ fn speaker_name(roster: &Roster, user_id: &str) -> String {
         .unwrap_or_default()
 }
 
-fn people(roster: &Roster, me: &str, talk: &Talk, video: &RemoteVideo) -> Vec<Person> {
+fn people(
+    roster: &Roster,
+    me: &str,
+    own_tenant: Option<&str>,
+    talk: &Talk,
+    video: &RemoteVideo,
+) -> Vec<Person> {
     roster
         .participants()
         .iter()
@@ -839,6 +887,11 @@ fn people(roster: &Roster, me: &str, talk: &Talk, video: &RemoteVideo) -> Vec<Pe
             me: p.mri == me,
             role: p.role.map(|r| r.name().to_owned()).unwrap_or_default(),
             video_slot: video.slot_of(&p.mri),
+            outsider: if p.mri == me {
+                None
+            } else {
+                classify_outsider(&p.mri, p.tenant_id.as_deref(), own_tenant, p.guest)
+            },
         })
         .collect()
 }
@@ -890,8 +943,12 @@ struct Call {
     roster: Roster,
     controls: Controls,
     meeting: bool,
+    /// The call offered video lines (false: the audio-only rejoin after the media servers
+    /// refused them).
+    video_lines: bool,
     /// The video mids a meeting's join declared (`mediaDescriptions`): the only lines it may
-    /// switch with `UpdateMediaDescriptions`. None by default, and none in a 1:1 call.
+    /// switch with `UpdateMediaDescriptions`. None in a 1:1 call, with `IRONTEAMS_MEETING_VIDEO_DESCRIBE=0`
+    /// and in the audio-only rejoin after the media servers refused the lines.
     declared: Vec<String>,
     keep_alive: Option<JoinHandle<()>>,
     link: Link,
@@ -1153,9 +1210,9 @@ impl Call {
         mut pushes: mpsc::UnboundedReceiver<CallPush>,
         opts: JoinOptions,
         sink: EventSink,
-        mut ctl: mpsc::UnboundedReceiver<Control>,
+        ctl: &mut mpsc::UnboundedReceiver<Control>,
         early: Vec<Control>,
-    ) {
+    ) -> bool {
         let (sender_tx, sender_rx) = watch::channel(self.media.audio_sender());
         let (play_tx, play_rx) = watch::channel(None);
         let mut audio = Audio {
@@ -1184,6 +1241,16 @@ impl Call {
             self.control(c, &mut audio, &sink).await;
         }
         let me = self.s.me.mri.clone();
+        // Ours, to tell who is from another organization (the call's own roster entry names it
+        // too, when the service sends tenant ids).
+        let own_tenant = match self.hub.client.tenant_id().await {
+            Ok(t) => Some(t),
+            Err(_) => self.roster.get(&me).and_then(|p| p.tenant_id.clone()),
+        };
+        let started = Instant::now();
+        // The service ended the call refusing the video lines we declared: the caller rejoins
+        // audio only.
+        let mut video_refused = false;
         let (mut in_lobby, mut was_in_call) = (false, false);
         let mut shown: Option<Phase> = None;
         let mut own_hand: Option<bool> = None;
@@ -1292,7 +1359,17 @@ impl Call {
                             }
                         }
                         CallEvent::Rejected(r) | CallEvent::Ended(r) => {
-                            tracing::info!(code = r.code, sub = r.sub_code, "call ended by the service");
+                            tracing::info!(
+                                code = r.code,
+                                sub = r.sub_code,
+                                phrase = %r.phrase,
+                                "call ended by the service"
+                            );
+                            video_refused = fallback::call_refused_video(
+                                self.video_lines && !self.declared.is_empty(),
+                                &r,
+                                started.elapsed(),
+                            );
                             break Some(self.ended_text());
                         }
                         CallEvent::RosterUpdate(delta) => {
@@ -1383,7 +1460,13 @@ impl Call {
                 if let Some(name) = self.video.presenter_changed(&self.roster, &me) {
                     sink.send(Event::Presenter(name));
                 }
-                sink.send(Event::Roster(people(&self.roster, &me, &talk, &self.video)));
+                sink.send(Event::Roster(people(
+                    &self.roster,
+                    &me,
+                    own_tenant.as_deref(),
+                    &talk,
+                    &self.video,
+                )));
                 if let Some(p) = self.roster.get(&me) {
                     in_lobby = p.presence == Presence::Lobby;
                     let hand = p.hand.is_some();
@@ -1452,8 +1535,13 @@ impl Call {
             f.abort();
         }
         self.hub.remove_session(self.s.callbacks.session_id());
-        if let Some(reason) = ended {
-            sink.send(Event::Ended(reason));
+        match ended {
+            Some(_) if video_refused => true,
+            Some(reason) => {
+                sink.send(Event::Ended(reason));
+                false
+            }
+            None => false,
         }
     }
 
@@ -1498,7 +1586,7 @@ impl Call {
                     Err(e) => {
                         tracing::warn!(%e, "screen share not started");
                         self.share.stop().await;
-                        sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
+                        sink.send(Event::Error(share::capture_error_text(&e.to_string())));
                     }
                 }
             }
@@ -1506,7 +1594,7 @@ impl Call {
             ShareMsg::Picked(Err(e)) => {
                 self.share.picked_nothing();
                 tracing::warn!(%e, "screen capture failed");
-                sink.send(Event::Error(format!("Couldn't share your screen: {e}")));
+                sink.send(Event::Error(share::capture_error_text(&e)));
             }
             ShareMsg::Input(input) => self.input_answered(input, sink).await,
             ShareMsg::Ended => {
@@ -1929,8 +2017,11 @@ impl Call {
                 if self.ice.is_empty() {
                     self.ice = self.hub.ice_servers(&self.ngc.endpoints().region).await;
                 }
-                match MediaSession::with_options(self.ice.clone(), media_options(self.meeting))
-                    .await
+                match MediaSession::with_options(
+                    self.ice.clone(),
+                    media_options(self.meeting, self.video_lines),
+                )
+                .await
                 {
                     Ok((fresh, ev)) => match fresh.accept_offer(&sdp).await {
                         Ok(ans) => {
@@ -2166,7 +2257,13 @@ mod tests {
             "8:orgid:g": {"version": 1, "state": "active", "details": {"displayName": ""},
                 "endpoints": {"e": {"lobby": {}}}}
         }}));
-        let p = people(&r, "8:orgid:me", &Talk::default(), &RemoteVideo::default());
+        let p = people(
+            &r,
+            "8:orgid:me",
+            None,
+            &Talk::default(),
+            &RemoteVideo::default(),
+        );
         let me = p.iter().find(|p| p.me).unwrap();
         assert!(me.muted && !me.lobby);
         let guest = p.iter().find(|p| !p.me).unwrap();

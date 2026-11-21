@@ -3,6 +3,7 @@
 use super::{UiHandle, model};
 use crate::backend::call::{CallData, Floating, Found, Person, REACTIONS, is_meeting_chat};
 use crate::backend::call_feedback::{self, Ask};
+use crate::backend::outsider::Outsider;
 use crate::data::{Pixels, initials};
 use crate::{
     AppWindow, CallCaption, CallFound, CallPerson, CallReaction, CallStore, SettingsStore,
@@ -289,6 +290,7 @@ fn call_person(p: Person, images: &HashMap<String, Image>, video: bool) -> CallP
         me: p.me,
         role: p.role.into(),
         speaking: p.speaking,
+        badge: p.outsider.map_or("", Outsider::label).into(),
     }
 }
 
