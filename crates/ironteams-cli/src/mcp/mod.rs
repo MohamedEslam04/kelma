@@ -203,7 +203,10 @@ async fn serve(paths: &Paths, label: &str) -> Result<()> {
             }
         })
     };
-    eprintln!("ironteams mcp: serving account {label:?} on stdio");
+    eprintln!(
+        "ironteams mcp: serving account {label:?} on stdio; writes are logged in {}",
+        server.audit.path().display()
+    );
     let running = server
         .serve(rmcp::transport::stdio())
         .await
