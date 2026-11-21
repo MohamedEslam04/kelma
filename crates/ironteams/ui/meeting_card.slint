@@ -53,10 +53,12 @@ export component MeetingCardView inherits Rectangle {
         RecapsStore.command("recaps-chat", root.card.recap-chat);
     }
 
+    // Centred, at most 460px (360px for a transcript): the spacers take what the card leaves.
     row := HorizontalLayout {
-        alignment: center;
+        Rectangle { horizontal-stretch: 1; }
         Rectangle {
-            width: min(root.slim ? 360px : 460px, root.width);
+            max-width: root.slim ? 360px : 460px;
+            horizontal-stretch: 1000;
             border-radius: 6px;
             border-width: 1px;
             border-color: Theme.border;
@@ -134,5 +136,6 @@ export component MeetingCardView inherits Rectangle {
                 }
             }
         }
+        Rectangle { horizontal-stretch: 1; }
     }
 }
