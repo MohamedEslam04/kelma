@@ -34,6 +34,7 @@ mod composer_send;
 mod drive;
 mod engage;
 mod find;
+mod first_click;
 mod format;
 mod format_live;
 mod global_search;

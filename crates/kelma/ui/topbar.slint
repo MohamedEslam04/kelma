@@ -43,6 +43,9 @@ export global TopBarStore {
     in-out property <length> box-x: 288px;
     in-out property <length> box-w: 420px;
     in-out property <bool> more-open: false;
+    // This press closed the "…" menu (app.slint `pointer-pressed`): on the "…" button it stays
+    // closed (the button toggles it).
+    in-out property <bool> more-closed-by-press: false;
 
     // input, focus, close, activate, submit, back, forward, visit.
     callback command(string, string);
@@ -437,14 +440,19 @@ export component MoreButton inherits Rectangle {
     Icon { source: @image-url("icons/more.svg"); width: 18px; height: 18px; x: 6px; y: 6px; }
     touch := TouchArea {
         mouse-cursor: pointer;
-        clicked => { TopBarStore.more-open = !TopBarStore.more-open; }
+        clicked => {
+            if !TopBarStore.more-closed-by-press { TopBarStore.more-open = !TopBarStore.more-open; }
+            TopBarStore.more-closed-by-press = false;
+        }
     }
 }
 
 // "Settings and more": Settings, Zoom, Keyboard shortcuts, Check for updates, About and Help.
 export component MoreMenu inherits Rectangle {
     callback show-shortcuts();
-    // Clicking outside closes it.
+    // How tall the panel is (app.slint `pointer-pressed` knows its place).
+    out property <length> panel-height: panel.height;
+    // Clicking outside closes it (a press the window reported closed it already).
     TouchArea { clicked => { TopBarStore.more-open = false; } }
     menu-keys := FocusScope {
         key-pressed(event) => {
@@ -453,7 +461,7 @@ export component MoreMenu inherits Rectangle {
         }
     }
     init => { menu-keys.focus(); }
-    Rectangle {
+    panel := Rectangle {
         x: root.width - self.width - 52px;
         y: 46px;
         width: 260px;

@@ -25,6 +25,9 @@ export global PeopleStore {
 
     // Profile card.
     in-out property <bool> card-open: false;
+    // The person whose clicked card this press closed (app.slint `pointer-pressed`): the click on
+    // their photo leaves it closed instead of opening it again.
+    in-out property <string> card-closed-for;
     in property <bool> card-loading: false;
     in property <PersonItem> card;
     in property <string> card-email;
@@ -63,6 +66,10 @@ export global PeopleStore {
     // it as a hover card.
     public function open-card(id: string, x: length, y: length, w: length, h: length, hover: bool) {
         if id == "" { return; }
+        if !hover && id == root.card-closed-for {
+            root.card-closed-for = "";
+            return;
+        }
         root.anchor-x = x;
         root.anchor-y = y;
         root.anchor-w = w;

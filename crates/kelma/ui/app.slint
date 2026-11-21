@@ -196,6 +196,12 @@ export component AppWindow inherits Window {
     property <length> menu-left: max(8px, min(root.menu-x, root.width - root.menu-w - 8px));
     property <length> menu-top: max(8px, min(root.menu-y, root.height - root.menu-h - 8px));
     property <length> profile-h;
+    // The same for the "…" menu's panel and a clicked profile card (window coordinates).
+    property <length> more-h;
+    property <length> card-left;
+    property <length> card-top;
+    property <length> card-w;
+    property <length> card-h;
     in-out property <Msg> menu-msg;
     // The menu was opened from the Activity preview (not the open chat).
     in-out property <bool> menu-preview: false;
@@ -423,9 +429,9 @@ export component AppWindow inherits Window {
     }
 
     // A button went down at (x, y), before the window handles it (`main.rs`,
-    // `pointer_pressed`): the message menu and the profile menu close when it is outside them,
-    // so the press then reaches what is under it (a rail entry, a chat), as in Teams. Their
-    // full-window layers only catch a press this did not see.
+    // `pointer_pressed`): the message menu, the profile menu, the "…" menu and a clicked profile
+    // card close when it is outside them, so the press then reaches what is under it (a rail
+    // entry, a chat), as in Teams. Their full-window layers only catch a press this did not see.
     public function pointer-pressed(x: length, y: length) {
         if root.menu-open && (x < root.menu-left || x > root.menu-left + root.menu-w || y < root.menu-top || y > root.menu-top + root.menu-h) {
             root.menu-open = false;
@@ -436,6 +442,18 @@ export component AppWindow inherits Window {
             SettingsStore.profile-open = false;
             SettingsStore.confirm-sign-out = false;
             root.profile-closed-by-press = true;
+        }
+        // The "…" menu's panel: 260px wide, 52px from the right edge, 46px from the top (topbar.slint).
+        TopBarStore.more-closed-by-press = false;
+        if TopBarStore.more-open && (x < root.width - 312px || x > root.width - 52px || y < 46px || y > 46px + root.more-h) {
+            TopBarStore.more-open = false;
+            TopBarStore.more-closed-by-press = true;
+        }
+        // A hover card closes when the pointer leaves it; a clicked one on a press outside it.
+        PeopleStore.card-closed-for = "";
+        if PeopleStore.card-open && !PeopleStore.card-by-hover && (x < root.card-left || x > root.card-left + root.card-w || y < root.card-top || y > root.card-top + root.card-h) {
+            PeopleStore.card-open = false;
+            PeopleStore.card-closed-for = PeopleStore.card.id;
         }
     }
     // This press closed the profile menu: on my photo it stays closed (the photo toggles it).
@@ -1658,6 +1676,16 @@ export component AppWindow inherits Window {
             property <length> side-y: PeopleStore.anchor-y + self.height <= root.height - 8px ? PeopleStore.anchor-y : PeopleStore.anchor-y + PeopleStore.anchor-h - self.height;
             x: self.anchored ? max(8px, min(self.side-x, root.width - self.width - 8px)) : (root.width - self.width) / 2;
             y: self.anchored ? max(8px, min(self.side-y, root.height - self.height - 8px)) : max(8px, min(160px, root.height - self.height - 8px));
+            init => {
+                root.card-left = self.x;
+                root.card-top = self.y;
+                root.card-w = self.width;
+                root.card-h = self.height;
+            }
+            changed x => { root.card-left = self.x; }
+            changed y => { root.card-top = self.y; }
+            changed width => { root.card-w = self.width; }
+            changed height => { root.card-h = self.height; }
             anchor-hovered: PeopleStore.hover-id != "" && PeopleStore.hover-id == PeopleStore.card.id;
             person: PeopleStore.card;
             loading: PeopleStore.card-loading;
@@ -1838,6 +1866,8 @@ export component AppWindow inherits Window {
         width: root.width;
         height: root.height;
         show-shortcuts => { root.shortcuts-open = true; }
+        init => { root.more-h = self.panel-height; }
+        changed panel-height => { root.more-h = self.panel-height; }
     }
 
     // The call window (pre-join, meeting, call ended) covers the area right of the rail; while the meeting chat is open it is a floating bar.
