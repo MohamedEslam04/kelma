@@ -19,7 +19,7 @@ pub fn str_of(v: &Value, key: &str) -> Option<String> {
 }
 
 /// An ISO timestamp field as Unix milliseconds. Also reads a Graph `dateTimeTimeZone`
-/// (`{"dateTime": …, "timeZone": "UTC"}`), whose zone kelma treats as UTC.
+/// (`{"dateTime": …, "timeZone": "UTC"}`), whose zone IronTeams treats as UTC.
 pub fn ms_of(v: &Value, key: &str) -> Option<i64> {
     let f = &v[key];
     let s = f.as_str().or_else(|| f["dateTime"].as_str())?;

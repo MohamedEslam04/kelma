@@ -1,6 +1,6 @@
 //! Emergency numbers (plans/calls.md K3.3).
 //!
-//! kelma is not a compliant emergency endpoint: it sends no location and cannot promise the call
+//! IronTeams is not a compliant emergency endpoint: it sends no location and cannot promise the call
 //! reaches the right dispatch centre. So a number that is an emergency short code anywhere is
 //! refused before dialling, and the user is told to use a phone.
 
@@ -19,7 +19,7 @@ const EMERGENCY: &[&str] = &[
 
 /// The help text shown when a dial is refused.
 pub const REFUSAL: &str =
-    "kelma can't place emergency calls. Use a phone to call your local emergency number.";
+    "IronTeams can't place emergency calls. Use a phone to call your local emergency number.";
 
 /// Whether `dialled` is an emergency number. Spaces, dashes, dots and brackets are ignored;
 /// a leading `+` or `00` (an international number) is never an emergency short code.

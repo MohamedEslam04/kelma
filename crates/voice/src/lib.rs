@@ -1,9 +1,9 @@
-//! Voice messages for kelma, the audio engine (no UI, no network).
+//! Voice messages for IronTeams, the audio engine (no UI, no network).
 //!
 //! * [`Recorder`] captures the microphone as mono 48 kHz audio with a live waveform.
 //! * [`encode_m4a`] turns a [`Clip`] into the AAC-LC mono MP4 that Teams clients play, by
 //!   running the system `ffmpeg` on Linux and with the system's own encoder on Windows (Media
-//!   Foundation) and macOS (AudioToolbox). kelma is GPL-3.0-or-later, so no GPL-incompatible
+//!   Foundation) and macOS (AudioToolbox). IronTeams is GPL-3.0-or-later, so no GPL-incompatible
 //!   encoder such as fdk-aac is linked.
 //! * [`decode`] reads AAC-in-MP4 (and MP3, which voicemail uses) back with symphonia, pure Rust.
 //! * [`peaks`] reduces a whole clip to waveform bars for the message bubble.
@@ -30,7 +30,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// `ffmpeg` was not found (looked at `KELMA_FFMPEG`, then `PATH`). The UI should say
+    /// `ffmpeg` was not found (looked at `IRONTEAMS_FFMPEG`, then `PATH`). The UI should say
     /// "Install ffmpeg to send voice messages".
     #[error("ffmpeg is not installed, it is needed to encode voice messages")]
     EncoderMissing,

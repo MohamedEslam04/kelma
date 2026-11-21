@@ -25,13 +25,13 @@ jobs:
           git config --global --add safe.directory "$PWD"
           top=$PWD/rpmtop; v=0.1.0
           mkdir -p "$top"/{SOURCES,BUILD,RPMS,SRPMS,BUILDROOT}
-          git archive --prefix=kelma-$v/ -o "$top/SOURCES/kelma-$v.tar.gz" HEAD
+          git archive --prefix=ironteams-$v/ -o "$top/SOURCES/ironteams-$v.tar.gz" HEAD
           cargo vendor --locked vendor-dir/vendor
-          tar -C vendor-dir -c vendor | xz -T0 > "$top/SOURCES/kelma-$v-vendor.tar.xz"
-          rpmbuild -bb --define "_topdir $top" packaging/rpm/kelma.spec
+          tar -C vendor-dir -c vendor | xz -T0 > "$top/SOURCES/ironteams-$v-vendor.tar.xz"
+          rpmbuild -bb --define "_topdir $top" packaging/rpm/ironteams.spec
       - uses: actions/upload-artifact@v6
         with:
-          name: kelma-rpm
+          name: ironteams-rpm
           path: rpmtop/RPMS/**/*.rpm
 
   flatpak:
@@ -52,8 +52,8 @@ jobs:
           /tmp/gen/bin/python3 -I /tmp/gen/flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: kelma.flatpak
-          manifest-path: packaging/flatpak/io.github.mohamedeslam04.kelma.yml
+          bundle: ironteams.flatpak
+          manifest-path: packaging/flatpak/io.github.mohamedeslam04.ironteams.yml
           cache-key: flatpak-${{ hashFiles('Cargo.lock') }}
 
   aur:
@@ -69,9 +69,9 @@ jobs:
           git config --global --add safe.directory "$PWD"
           cp -r packaging/aur /home/builder/aur && chown -R builder /home/builder/aur
           # Build the checked-out commit instead of the default branch of the upstream URL.
-          git clone --bare . /home/builder/kelma.git && chown -R builder /home/builder/kelma.git
-          sed -i 's|git+${url}.git|git+file:///home/builder/kelma.git|' /home/builder/aur/PKGBUILD
+          git clone --bare . /home/builder/ironteams.git && chown -R builder /home/builder/ironteams.git
+          sed -i 's|git+${url}.git|git+file:///home/builder/ironteams.git|' /home/builder/aur/PKGBUILD
           su builder -c 'cd ~/aur && git config --global --add safe.directory "*" && makepkg --printsrcinfo > /tmp/srcinfo && makepkg -f --noconfirm'
       - name: .SRCINFO is current
-        run: diff <(sed 's|file:///home/builder/kelma.git|https://github.com/MohamedEslam04/kelma.git|' /tmp/srcinfo) packaging/aur/.SRCINFO
+        run: diff <(sed 's|file:///home/builder/ironteams.git|https://github.com/MohamedEslam04/teams-in-rust.git|' /tmp/srcinfo) packaging/aur/.SRCINFO
         shell: bash

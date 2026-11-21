@@ -6,7 +6,7 @@ use calling::media::sdp::{
     to_teams_offer,
 };
 
-/// The media servers' re-offer after a lobby admission (shape from a live kelma run).
+/// The media servers' re-offer after a lobby admission (shape from a live IronTeams run).
 const FULL_REOFFER: &str = include_str!("fixtures/media/teams_meeting_full_reoffer.sdp");
 
 /// A media server's offer with audio and the data line, as the fixtures write them.

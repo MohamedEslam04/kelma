@@ -76,7 +76,7 @@ pub enum NoOffer {
 
 impl NoOffer {
     /// `fetch`, `new-offer`, `accept-offer` or `attach-offer` (the CLI's `--no-offer` and the
-    /// GUI's `KELMA_CALL_NO_OFFER`).
+    /// GUI's `IRONTEAMS_CALL_NO_OFFER`).
     pub fn parse(name: &str) -> Option<Self> {
         Some(match name.trim() {
             "fetch" => NoOffer::FetchOffer,
@@ -276,7 +276,7 @@ impl Answering {
     }
 }
 
-/// Watches the exchange, for `--dump` / `KELMA_CALL_DUMP`: called with a name and a text.
+/// Watches the exchange, for `--dump` / `IRONTEAMS_CALL_DUMP`: called with a name and a text.
 /// `step` names a step taken (one line); `*-blob` is an SDP envelope as received (content type,
 /// then the blob, before any decoding); the rest (`caller-offer`, `our-answer`, `our-offer`,
 /// `caller-answer`) are SDPs.

@@ -1,7 +1,7 @@
 //! Install, uninstall and update requests ("Add for me / to a team / to a chat / to a meeting",
 //! "Manage your apps" › Remove / Update). Built from the web client's own request builders
 //! (`createAppEntitlement`, `deleteAppEntitlement`, `upgradeAppEntitlement`). The app's screens
-//! send them after a confirm dialog; `kelma-cli` only prints them as dry runs. They have not
+//! send them after a confirm dialog; `ironteams-cli` only prints them as dry runs. They have not
 //! been sent against a real account yet (the shapes come from the web client's code).
 
 use reqwest::Method;
@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use crate::model::enc;
 
-/// A request to the app service. The builders only build it; `api::send` sends it (kelma's
-/// screens do, after the user confirms), `kelma-cli` prints it as a dry run.
+/// A request to the app service. The builders only build it; `api::send` sends it (IronTeams's
+/// screens do, after the user confirms), `ironteams-cli` prints it as a dry run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Request {
     pub method: Method,

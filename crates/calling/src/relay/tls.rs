@@ -1,7 +1,7 @@
 //! TURN over TLS (`turns:<gateway>:443`) for networks that block UDP, through a loopback shim.
 //!
 //! webrtc-rs 0.21.1 only speaks TURN over UDP: it skips `turns:` and `transport=tcp` URLs. So
-//! kelma gives it a TURN server on loopback, `turn:127.0.0.1:<port>?transport=udp`, and
+//! IronTeams gives it a TURN server on loopback, `turn:127.0.0.1:<port>?transport=udp`, and
 //! [`TlsShim`] carries what arrives there over TLS to the relay's port 443 and back. The relayed
 //! transport stays UDP (REQUESTED-TRANSPORT 17); only the client-to-relay leg is TLS, as RFC 8656
 //! §3.1 allows. On the stream, STUN messages are delimited by their length field and ChannelData

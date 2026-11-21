@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn private_appointment_body() {
         let e = NewEvent {
-            subject: "kelma test".into(),
+            subject: "ironteams test".into(),
             start: "2026-12-18T10:00:00".into(),
             end: "2026-12-18T10:30:00".into(),
             sensitivity: Sensitivity::Private,

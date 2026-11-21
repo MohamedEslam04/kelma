@@ -1,6 +1,6 @@
 //! Store settings (the gear): the tenant's app policy and the per-app device permissions.
 //!
-//! Teams keeps device permission grants on the device, not on the server, so kelma keeps them
+//! Teams keeps device permission grants on the device, not on the server, so IronTeams keeps them
 //! in its own config ([`Grants`]); the web host asks them before an app uses the camera,
 //! location, notifications, MIDI or external links.
 
@@ -76,7 +76,7 @@ impl Grants {
             .collect()
     }
 
-    /// `{"<appId>": {"media": true, …}, …}` for kelma's config file.
+    /// `{"<appId>": {"media": true, …}, …}` for IronTeams's config file.
     pub fn to_json(&self) -> Value {
         Value::Object(
             self.0

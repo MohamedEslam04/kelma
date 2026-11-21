@@ -1,4 +1,4 @@
-//! Native file preview for kelma (data side, no UI): PDF pages to RGBA, Office files to PDF.
+//! Native file preview for IronTeams (data side, no UI): PDF pages to RGBA, Office files to PDF.
 //!
 //! * [`Document`] opens a PDF and renders a page to an [`Rgba`] bitmap at a chosen width.
 //! * [`office_to_pdf`] asks Graph to convert a Word, Excel, PowerPoint (and similar) file to
@@ -7,15 +7,15 @@
 //! # Backend: hayro
 //!
 //! PDF pages are rasterized by [`hayro`], a pure-Rust PDF renderer (Apache-2.0 OR MIT, so it
-//! fits kelma's GPL-3.0). It needs no system library at build time or at run time: it builds
+//! fits IronTeams's GPL-3.0). It needs no system library at build time or at run time: it builds
 //! the same on a developer machine and in Ubuntu CI, and there is nothing to install for the
 //! user. The standard 14 fonts and the CJK CMaps are embedded. The alternatives, weighed when
 //! this crate was made:
 //!
 //! * `pdfium-render` binds Google's PDFium at run time (`libpdfium.so`). The best fidelity,
-//!   but kelma would have to ship or ask the user for a prebuilt binary, and the preview would
+//!   but IronTeams would have to ship or ask the user for a prebuilt binary, and the preview would
 //!   fail on a machine without it.
-//! * `mupdf` builds MuPDF from source; MuPDF is AGPL, which would turn the whole of kelma
+//! * `mupdf` builds MuPDF from source; MuPDF is AGPL, which would turn the whole of IronTeams
 //!   into an AGPL work.
 //! * `poppler` bindings need the poppler-glib development files, which a plain machine and CI
 //!   do not have.

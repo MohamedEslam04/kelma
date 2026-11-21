@@ -2,7 +2,7 @@
 //!
 //! Facts only (no code copied; teams-lite has no licence file): teams-lite `NATIVE-CALLING.md`
 //! § 10.4 and its measured notes of 2026-08-06 / 2026-09-04. Everything here is UNVERIFIED
-//! against kelma's tenant.
+//! against IronTeams's tenant.
 //!
 //! - Sending a screen in a meeting is its own `contentSharing` object, asked for BEFORE the
 //!   sharing line is switched on: `POST <addModality>` (a conversation link) with

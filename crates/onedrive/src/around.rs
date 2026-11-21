@@ -198,9 +198,9 @@ pub async fn meeting_recordings(client: &Client) -> Result<Vec<Recording>> {
     Ok(out)
 }
 
-/// What the "Sync" button explains: kelma does not sync files, a Linux client does.
+/// What the "Sync" button explains: IronTeams does not sync files, a Linux client does.
 pub fn sync_help() -> String {
-    "kelma does not sync OneDrive to a folder on this computer. On Linux, use one of these \
+    "IronTeams does not sync OneDrive to a folder on this computer. On Linux, use one of these \
      instead.\n\
      \n\
      1. The `onedrive` client (abraunegg/onedrive), which syncs a local folder two ways:\n\

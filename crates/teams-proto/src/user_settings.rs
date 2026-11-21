@@ -750,7 +750,7 @@ impl Day {
 /// A local do-not-disturb schedule. Teams has no server-side quiet hours that desktop clients
 /// read, so the app stores this itself. `days` are the days a window starts on, so a Friday
 /// 22:00 to 07:00 window also covers early Saturday. `mobile` records that the user also wants
-/// the phone quiet; kelma cannot push that to the phone.
+/// the phone quiet; IronTeams cannot push that to the phone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuietHours {
     pub enabled: bool,

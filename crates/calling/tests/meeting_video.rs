@@ -134,7 +134,7 @@ async fn every_video_line_declares_signaling_feedback_and_an_ssrc_range() {
 }
 
 #[tokio::test]
-async fn the_sharing_second_layout_keeps_kelmas_first_order() {
+async fn the_sharing_second_layout_keeps_the_apps_first_order() {
     let (session, _events) =
         MediaSession::with_options(vec![], join_options(VideoLayout::SharingSecond))
             .await
@@ -195,7 +195,7 @@ async fn a_join_with_video_lines_declares_nothing_by_default() {
     session.close().await.unwrap();
 }
 
-/// Asked to (`ScreenViewer` among the modalities: `KELMA_MEETING_VIDEO_DESCRIBE=1`), a join
+/// Asked to (`ScreenViewer` among the modalities: `IRONTEAMS_MEETING_VIDEO_DESCRIBE=1`), a join
 /// declares only its send-capable video lines, as the web client's captured join does (mids 1-6
 /// and 11, the lines its SDP offers `sendrecv`; never its `recvonly` 7-10): here the camera (1)
 /// and the sharing line (11), not the receive-only gallery (2-10).

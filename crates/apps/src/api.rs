@@ -1,6 +1,6 @@
 //! Calls to the Teams app service. The web client sends these to `regionGtms.appService` or,
 //! behind a flag, to `regionGtms.middleTier`; both answer the same `beta/…/apps/…` paths
-//! (verified live 2026-11-19), so kelma uses the middle tier it already knows. Both hosts are
+//! (verified live 2026-11-19), so IronTeams uses the middle tier it already knows. Both hosts are
 //! on `teams.microsoft.com`, which gets the Spaces bearer and the skypetoken from the client.
 
 use reqwest::Method;
@@ -10,7 +10,7 @@ use teams_proto::{Client, Error, Result};
 use crate::install::Request;
 
 /// The `x-ms-client-caller` header the app service expects on every request.
-pub const CALLER: &str = "kelma";
+pub const CALLER: &str = "ironteams";
 
 /// The app service base URL for this user (the middle tier, without a trailing slash).
 pub async fn base(client: &Client) -> String {

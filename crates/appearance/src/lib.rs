@@ -1,4 +1,4 @@
-//! kelma appearance preferences.
+//! IronTeams appearance preferences.
 //!
 //! - [`AppearancePrefs`]: theme, accent, density and font scale, kept in `appearance.json` in the
 //!   app config dir (atomic writes; a missing or corrupt file gives the defaults).

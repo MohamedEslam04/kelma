@@ -2,7 +2,7 @@
 //!
 //! UNVERIFIED (docs/protocol.md): neither request has been sent against a real account. Graph
 //! documents `PUT /me/photo/$value` (JPEG or PNG, at most 4 MB) and needs `User.ReadWrite`, which
-//! the Graph `.default` token kelma holds may not carry; removing a photo is only documented on
+//! the Graph `.default` token IronTeams holds may not carry; removing a photo is only documented on
 //! the beta endpoint. A refusal comes back as an `Error::Status`, which the UI shows as it is.
 
 use crate::broker::Audience;

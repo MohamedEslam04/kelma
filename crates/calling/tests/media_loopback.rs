@@ -139,17 +139,18 @@ fn audio_only(answer: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn service_renegotiation_on_a_connected_call_keeps_audio_flowing() {
-    let (kelma, mut kelma_events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    let (ironteams, mut ironteams_events) =
+        MediaSession::with_options(vec![], local()).await.unwrap();
     let (service, mut service_events) = MediaSession::with_options(vec![], local()).await.unwrap();
-    let offer = kelma.create_offer().await.unwrap();
+    let offer = ironteams.create_offer().await.unwrap();
     let answer = service.accept_offer(&offer).await.unwrap();
-    kelma.set_answer(&answer).await.unwrap();
-    wait_for(&mut kelma_events, MediaState::Connected).await;
+    ironteams.set_answer(&answer).await.unwrap();
+    wait_for(&mut ironteams_events, MediaState::Connected).await;
     wait_for(&mut service_events, MediaState::Connected).await;
 
     for _ in 0..2 {
         let reoffer = as_service_reoffer(&service.create_offer().await.unwrap());
-        let reanswer = kelma.accept_offer(&reoffer).await.unwrap();
+        let reanswer = ironteams.accept_offer(&reoffer).await.unwrap();
         let m: Vec<&str> = reanswer
             .split("\r\n")
             .filter(|l| l.starts_with("m="))
@@ -159,17 +160,21 @@ async fn service_renegotiation_on_a_connected_call_keeps_audio_flowing() {
         service.set_answer(&audio_only(&reanswer)).await.unwrap();
     }
 
-    let (to_service, to_kelma) = tokio::join!(
-        pump(&kelma, &mut service_events, 0x00),
-        pump(&service, &mut kelma_events, 0x80),
+    let (to_service, to_ironteams) = tokio::join!(
+        pump(&ironteams, &mut service_events, 0x00),
+        pump(&service, &mut ironteams_events, 0x80),
     );
     assert!(to_service.len() >= 20, "service got {}", to_service.len());
-    assert!(to_kelma.len() >= 20, "kelma got {}", to_kelma.len());
+    assert!(
+        to_ironteams.len() >= 20,
+        "ironteams got {}",
+        to_ironteams.len()
+    );
     // Nothing but Connected was reported through the renegotiations.
-    while let Ok(state) = kelma_events.state.try_recv() {
+    while let Ok(state) = ironteams_events.state.try_recv() {
         assert_eq!(state, MediaState::Connected);
     }
-    kelma.close().await.unwrap();
+    ironteams.close().await.unwrap();
     service.close().await.unwrap();
 }
 
@@ -177,32 +182,37 @@ const FULL_REOFFER: &str = include_str!("fixtures/media/teams_meeting_full_reoff
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restarting_offer_on_a_connected_call_leaves_it_usable() {
-    let (kelma, mut kelma_events) = MediaSession::with_options(vec![], local()).await.unwrap();
+    let (ironteams, mut ironteams_events) =
+        MediaSession::with_options(vec![], local()).await.unwrap();
     let (service, mut service_events) = MediaSession::with_options(vec![], local()).await.unwrap();
-    let offer = kelma.create_offer().await.unwrap();
-    kelma
+    let offer = ironteams.create_offer().await.unwrap();
+    ironteams
         .set_answer(&service.accept_offer(&offer).await.unwrap())
         .await
         .unwrap();
-    wait_for(&mut kelma_events, MediaState::Connected).await;
+    wait_for(&mut ironteams_events, MediaState::Connected).await;
     wait_for(&mut service_events, MediaState::Connected).await;
 
-    assert!(kelma.offer_restarts(FULL_REOFFER).await);
+    assert!(ironteams.offer_restarts(FULL_REOFFER).await);
     // webrtc-rs would answer it with a new recvonly transceiver (our audio not on it), so the
     // session refuses it cleanly and the running call is untouched.
-    let err = kelma
+    let err = ironteams
         .accept_offer(FULL_REOFFER)
         .await
         .unwrap_err()
         .to_string();
     assert!(err.contains("new MediaSession"), "{err}");
 
-    let (to_service, to_kelma) = tokio::join!(
-        pump(&kelma, &mut service_events, 0x00),
-        pump(&service, &mut kelma_events, 0x80),
+    let (to_service, to_ironteams) = tokio::join!(
+        pump(&ironteams, &mut service_events, 0x00),
+        pump(&service, &mut ironteams_events, 0x80),
     );
     assert!(to_service.len() >= 20, "service got {}", to_service.len());
-    assert!(to_kelma.len() >= 20, "kelma got {}", to_kelma.len());
-    kelma.close().await.unwrap();
+    assert!(
+        to_ironteams.len() >= 20,
+        "ironteams got {}",
+        to_ironteams.len()
+    );
+    ironteams.close().await.unwrap();
     service.close().await.unwrap();
 }

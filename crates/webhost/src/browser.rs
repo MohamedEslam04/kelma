@@ -32,7 +32,7 @@ pub const CANDIDATES: &[&str] = &[
 pub const START_URL: &str = "data:text/html,";
 
 /// Environment variable that overrides browser discovery.
-pub const BROWSER_ENV: &str = "KELMA_BROWSER";
+pub const BROWSER_ENV: &str = "IRONTEAMS_BROWSER";
 
 /// The first of `candidates` found as an executable file in `path_var` (a `PATH` value).
 pub fn find_in_path(path_var: &OsStr, candidates: &[&str]) -> Option<PathBuf> {
@@ -98,13 +98,13 @@ pub fn installed_browsers() -> Vec<PathBuf> {
     }
 }
 
-/// Resolves the browser: an explicit path, else `$KELMA_BROWSER`, else the first candidate on
+/// Resolves the browser: an explicit path, else `$IRONTEAMS_BROWSER`, else the first candidate on
 /// `PATH`.
 pub fn find_browser(explicit: Option<&Path>) -> Option<PathBuf> {
     if let Some(p) = explicit {
         return is_executable(p).then(|| p.to_path_buf());
     }
-    if let Some(p) = std::env::var_os(BROWSER_ENV).filter(|p| !p.is_empty()) {
+    if let Some(p) = compat::var_os(BROWSER_ENV).filter(|p| !p.is_empty()) {
         let p = PathBuf::from(p);
         return is_executable(&p).then_some(p);
     }
@@ -122,7 +122,7 @@ pub fn launch_args(profile: &Path, size: Option<(u32, u32)>) -> Vec<String> {
         "--remote-debugging-port=0".into(),
         "--no-first-run".into(),
         "--no-default-browser-check".into(),
-        "--class=kelma-webhost".into(),
+        "--class=ironteams-webhost".into(),
     ];
     if let Some((w, h)) = size {
         args.push(format!("--window-size={w},{h}"));
@@ -275,10 +275,13 @@ mod tests {
 
     #[test]
     fn launch_args_use_an_app_window_a_private_profile_and_a_free_debug_port() {
-        let args = launch_args(Path::new("/data/kelma/webhost-profile"), Some((1200, 800)));
+        let args = launch_args(
+            Path::new("/data/ironteams/webhost-profile"),
+            Some((1200, 800)),
+        );
         for want in [
             "--app=data:text/html,",
-            "--user-data-dir=/data/kelma/webhost-profile",
+            "--user-data-dir=/data/ironteams/webhost-profile",
             "--remote-debugging-port=0",
             "--no-first-run",
             "--no-default-browser-check",

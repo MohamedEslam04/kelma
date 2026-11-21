@@ -1,11 +1,11 @@
-# Maintainer: kelma contributors
-pkgname=kelma-git
-_pkgname=kelma
+# Maintainer: IronTeams contributors
+pkgname=ironteams-git
+_pkgname=ironteams
 pkgver=r0.0000000
 pkgrel=1
-pkgdesc='Lightweight native client for Microsoft Teams chat (unofficial)'
+pkgdesc='An unofficial native Microsoft Teams client written in Rust'
 arch=('x86_64' 'aarch64')
-url='https://github.com/MohamedEslam04/kelma'
+url='https://github.com/MohamedEslam04/teams-in-rust'
 license=('GPL-3.0-or-later')
 # wayland, libx11, libxcursor, libxi, libxrender, libglvnd and libxkbcommon-x11 are loaded with dlopen.
 depends=('fontconfig' 'libxkbcommon' 'libxkbcommon-x11' 'dbus' 'gcc-libs' 'glibc' 'hicolor-icon-theme' 'wayland' 'libx11' 'libxcursor' 'libxi' 'libxrender' 'libglvnd')
@@ -42,7 +42,7 @@ build() {
   cd "${_pkgname}"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  cargo build --frozen --release -p kelma
+  cargo build --frozen --release -p ironteams
 }
 
 check() {
@@ -53,8 +53,8 @@ check() {
 
 package() {
   cd "${_pkgname}"
-  install -Dm755 target/release/kelma "${pkgdir}/usr/bin/kelma"
-  local id=io.github.mohamedeslam04.kelma
+  install -Dm755 target/release/ironteams "${pkgdir}/usr/bin/ironteams"
+  local id=io.github.mohamedeslam04.ironteams
   install -Dm644 "packaging/${id}.desktop" "${pkgdir}/usr/share/applications/${id}.desktop"
   install -Dm644 "packaging/${id}.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/${id}.svg"
   install -Dm644 "packaging/${id}.metainfo.xml" "${pkgdir}/usr/share/metainfo/${id}.metainfo.xml"

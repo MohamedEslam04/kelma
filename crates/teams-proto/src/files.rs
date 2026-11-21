@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(f.unique_id, "5f0c-uuid");
         assert!(f.site_url.ends_with("me_contoso_com/"));
         let prop = files_property(&f);
-        // Round-trips through the parser kelma uses for incoming messages.
+        // Round-trips through the parser IronTeams uses for incoming messages.
         let parsed = crate::model::parse_files(Some(&json!({ "files": prop })));
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "Report Q3.pdf");

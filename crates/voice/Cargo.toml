@@ -4,10 +4,11 @@ version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "kelma voice messages: microphone recording, AAC-in-MP4 encoding (ffmpeg on Linux, Media Foundation on Windows, AudioToolbox on macOS), pure-Rust decoding, waveform peaks and pitch-keeping playback (no UI, no network)"
+description = "IronTeams voice messages: microphone recording, AAC-in-MP4 encoding (ffmpeg on Linux, Media Foundation on Windows, AudioToolbox on macOS), pure-Rust decoding, waveform peaks and pitch-keeping playback (no UI, no network)"
 publish = false
 
 [dependencies]
+compat = { version = "0.0.0", path = "../compat" }
 devices = { version = "0.0.0", path = "../devices" }
 symphonia = { version = "0.6.1", default-features = false, features = ["aac", "isomp4", "mp3", "id3v2"] }
 thiserror = "2.0.21"

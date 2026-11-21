@@ -4,7 +4,7 @@ version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "kelma tray: StatusNotifierItem tray icon with unread badge, Unity launcher badge and login autostart (XDG, Windows Run key, macOS LaunchAgent)"
+description = "IronTeams tray: StatusNotifierItem tray icon with unread badge, Unity launcher badge and login autostart (XDG, Windows Run key, macOS LaunchAgent)"
 publish = false
 
 [dependencies]
@@ -15,7 +15,7 @@ crossbeam-channel = "0.5.17"
 tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 
 # The StatusNotifierItem and the launcher badge are D-Bus, Linux only. Windows and macOS show the
-# tray through Slint's SystemTrayIcon in the app (`kelma::native_tray`).
+# tray through Slint's SystemTrayIcon in the app (`ironteams::native_tray`).
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.7", default-features = false, features = ["async-io"] }
 # Same major as ksni's zbus, so one copy is built. Used for the Unity LauncherEntry signal.

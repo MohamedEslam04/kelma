@@ -205,7 +205,7 @@ mod decoder {
     ) -> mpsc::Receiver<RgbFrame> {
         let (tx, rx) = mpsc::channel(2);
         let spawned = std::thread::Builder::new()
-            .name("kelma-video-decode".into())
+            .name("ironteams-video-decode".into())
             .spawn(move || {
                 let mut decoder = match H264Decoder::new() {
                     Ok(d) => d,

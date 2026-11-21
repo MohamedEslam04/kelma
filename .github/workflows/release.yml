@@ -27,9 +27,9 @@ env:
   # The name users see (MSI product, .app bundle, Start menu, artifact file names).
   APP_NAME: IronTeams
   # Reverse-DNS id: macOS bundle identifier, and the name of the .desktop, .svg and .metainfo.xml.
-  APP_ID: io.github.mohamedeslam04.kelma
+  APP_ID: io.github.mohamedeslam04.ironteams
   # The cargo package and binary that is shipped.
-  BIN: kelma
+  BIN: ironteams
 
 jobs:
   meta:

@@ -5,7 +5,7 @@ use serde_json::Value;
 
 /// `x-microsoft-skype-client`: the calling format (`SkypeSpaces/<build>/<platform>/TsCallingVersion=...`),
 /// not the Skype-era one the messaging services want. mautrix-teams and ost send this shape.
-pub const CLIENT_HEADER: &str = "SkypeSpaces/1415/kelma/TsCallingVersion=2025.49.01.15";
+pub const CLIENT_HEADER: &str = "SkypeSpaces/1415/ironteams/TsCallingVersion=2025.49.01.15";
 
 /// Requests to call-controller and conversation backends (`*.cc.skype.com`, `*.conv.skype.com`)
 /// go through this proxy as `<FLIGHTPROXY_EP>/<host>/<path>`.

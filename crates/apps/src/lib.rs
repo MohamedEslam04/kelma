@@ -1,4 +1,4 @@
-//! Teams apps for kelma: the app bar, the "View more apps" flyout, the Store (home, search,
+//! Teams apps for ironteams: the app bar, the "View more apps" flyout, the Store (home, search,
 //! app page, Manage your apps), install requests, the Store settings, and the bots and
 //! messaging extensions installed in a chat or team.
 //!

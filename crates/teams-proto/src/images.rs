@@ -1311,7 +1311,7 @@ mod tests {
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(
-            "kelma-images-{name}-{}-{}",
+            "ironteams-images-{name}-{}-{}",
             std::process::id(),
             crate::time::now_ms()
         ));

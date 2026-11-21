@@ -1,4 +1,4 @@
-//! Audio and camera devices for kelma's settings UI (data side, no UI).
+//! Audio and camera devices for IronTeams's settings UI (data side, no UI).
 //!
 //! * [`audio_inputs`] / [`audio_outputs`] list sound devices with stable ids.
 //! * [`cameras`] lists V4L2 capture devices with their pixel formats and frame sizes.

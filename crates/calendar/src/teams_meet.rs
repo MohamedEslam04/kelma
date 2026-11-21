@@ -153,7 +153,7 @@ impl EventType {
     }
 
     /// Webinars, town halls, virtual appointments and live events need Graph `VirtualEvent.*`
-    /// (admin consent) or the Teams web UI, so kelma sends the user to the web for them.
+    /// (admin consent) or the Teams web UI, so IronTeams sends the user to the web for them.
     pub fn opens_in_web(self) -> bool {
         !matches!(self, EventType::Event | EventType::ChannelMeeting)
     }

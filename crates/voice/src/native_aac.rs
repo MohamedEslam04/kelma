@@ -261,7 +261,7 @@ mod win {
         unsafe extern "system" fn(PCWSTR, *mut c_void, *mut c_void, *mut *mut c_void) -> HRESULT;
 
     /// Media Foundation's entry points, loaded at run time: Windows N editions without the Media
-    /// Feature Pack have no Media Foundation, and kelma must still start there.
+    /// Feature Pack have no Media Foundation, and IronTeams must still start there.
     pub(super) struct Mf {
         startup: Startup,
         shutdown: Shutdown,

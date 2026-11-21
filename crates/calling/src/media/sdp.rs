@@ -78,7 +78,7 @@ const DIRECTIONS: [&str; 4] = ["sendrecv", "sendonly", "recvonly", "inactive"];
 // (`MediaOptions::video`) the first video section labelled for it. The rest would only be
 // declined, `x-data` fails the whole description (`SdpInvalidValue`; with the data channel it is
 // rewritten as an SCTP section instead, see `DATA_KIND`), and the gallery's nine
-// receive-only `main-video` lines need receivers kelma does not have. The rest are answered as
+// receive-only `main-video` lines need receivers IronTeams does not have. The rest are answered as
 // stubs. The media servers give each kind its own ICE credentials although one BUNDLE names
 // every mid, which webrtc-rs refuses ("multiple conflicting ice-ufrag values"): kept video
 // sections take the first kept section's credentials, i.e. they are bundled onto the audio
@@ -151,7 +151,7 @@ fn decode(blob: &str, dictionary: Option<&[u8]>) -> Result<String> {
         Some(dict) => inflate(&raw, Some(dict))
             .ok_or_else(|| media("SDP blob does not inflate with the given dictionary")),
         None => Err(media(
-            "SDP blob is deflated with Teams' preset dictionary, which kelma does not ship",
+            "SDP blob is deflated with Teams' preset dictionary, which IronTeams does not ship",
         )),
     }
 }

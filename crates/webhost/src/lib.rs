@@ -1,4 +1,4 @@
-//! kelma's web host: opens a web app in a Chromium-family `--app` window with its own profile,
+//! IronTeams's web host: opens a web app in a Chromium-family `--app` window with its own profile,
 //! drives it over the Chrome DevTools Protocol and answers TeamsJS calls from Rust.
 //!
 //! See `docs/adr/0003-web-host.md` for why this is a Chromium window and not WebKitGTK.
@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(
-        "no Chromium-family browser found (looked for {}); set KELMA_BROWSER or the browser path",
+        "no Chromium-family browser found (looked for {}); set IRONTEAMS_BROWSER or the browser path",
         browser::CANDIDATES.join(", ")
     )]
     NoBrowser,

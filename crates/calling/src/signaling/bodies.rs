@@ -102,13 +102,13 @@ fn call_invitation(
         "transferor": null,
         "links": cb.call_links(&CALL_LINK_NAMES),
         "clientContentForMediaController": cb.call_links(&MEDIA_CONTROLLER_LINK_NAMES),
-        "pstnContent": {"emergencyCallCountry": "", "platformName": "kelma", "publicApiCall": false},
+        "pstnContent": {"emergencyCallCountry": "", "platformName": "ironteams", "publicApiCall": false},
         "mediaContent": media_content(s, offer, direct),
     })
 }
 
 /// A meeting join's invitation. Only when `modalities` name `ScreenViewer` (the caller's opt-in,
-/// `KELMA_MEETING_VIDEO_DESCRIBE=1` in kelma) are the video lines of `offer` declared, as the web
+/// `IRONTEAMS_MEETING_VIDEO_DESCRIBE=1` in IronTeams) are the video lines of `offer` declared, as the web
 /// client and mautrix-teams (`calls.go` `videoMedia`) join: the media controller is told each
 /// send-capable line (`mediaDescriptions`, receive-only until the camera or a share switches it
 /// with `UpdateMediaDescriptions`) and the send bandwidth is seeded (`applyChannelParameters`).
@@ -342,7 +342,7 @@ pub fn acceptance_body(s: &CallSession, modalities: &[Modality], answer: &SdpBlo
         "links": cb.acceptance_links(),
         "clientContentForMediaController": cb.call_links(&["controlVideoStreaming", "csrcInfo"]),
         "mediaContent": media_content(s, answer, false),
-        "pstnContent": {"emergencyCallCountry": "", "platformName": "kelma", "publicApiCall": false},
+        "pstnContent": {"emergencyCallCountry": "", "platformName": "ironteams", "publicApiCall": false},
         "callKeepAliveInterval": null,
     }})
 }
@@ -373,7 +373,7 @@ pub fn mediafree_acceptance_body(s: &CallSession, modalities: &[Modality]) -> Va
         "links": s.callbacks.acceptance_links(),
         "clientContentForMediaController": s.callbacks.call_links(&["controlVideoStreaming", "csrcInfo"]),
         "mediaContent": null,
-        "pstnContent": {"emergencyCallCountry": "", "platformName": "kelma", "publicApiCall": false},
+        "pstnContent": {"emergencyCallCountry": "", "platformName": "ironteams", "publicApiCall": false},
         "callKeepAliveInterval": null,
     }});
     b["callAcceptance"]["links"]["mediaAnswer"] = json!(s.callbacks.call("mediaAnswer"));

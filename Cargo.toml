@@ -6,7 +6,7 @@ exclude = ["spikes"]
 [workspace.package]
 edition = "2024"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/MohamedEslam04/kelma"
+repository = "https://github.com/MohamedEslam04/teams-in-rust"
 
 [profile.release]
 lto = "thin"

@@ -12,7 +12,7 @@ pub enum ResolvedTheme {
 }
 
 /// `Light` and `Dark` win; `System` follows the portal. With no portal answer, or "no
-/// preference", the theme is dark: kelma's built-in look, which every view supports (several views
+/// preference", the theme is dark: IronTeams's built-in look, which every view supports (several views
 /// still hard-code dark colours, so a light fallback would give a half-light window).
 pub fn resolve_theme(prefs: &AppearancePrefs, portal: Option<PortalScheme>) -> ResolvedTheme {
     match prefs.theme {
@@ -26,7 +26,7 @@ pub fn resolve_theme(prefs: &AppearancePrefs, portal: Option<PortalScheme>) -> R
     }
 }
 
-/// The user's accent if set, else the portal's, else `None` (use kelma's built-in accent).
+/// The user's accent if set, else the portal's, else `None` (use IronTeams's built-in accent).
 pub fn resolve_accent(prefs: &AppearancePrefs, portal: Option<Rgb>) -> Option<Rgb> {
     prefs.accent.or(portal)
 }

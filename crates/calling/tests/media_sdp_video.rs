@@ -8,7 +8,7 @@ use calling::media::sdp::{
 };
 use calling::video::VideoRole;
 
-/// The media servers' re-offer after a lobby admission (shape from a live kelma run).
+/// The media servers' re-offer after a lobby admission (shape from a live ironteams run).
 const FULL_REOFFER: &str = include_str!("fixtures/media/teams_meeting_full_reoffer.sdp");
 const SHARE: &[VideoRole] = &[VideoRole::ApplicationSharing];
 
@@ -132,12 +132,12 @@ const OUR_ANSWER: &str = "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n\
 a=fingerprint:sha-256 AA:BB\r\na=group:BUNDLE 1 3\r\n\
 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:1\r\n\
 a=ice-ufrag:ours\r\na=ice-pwd:ourpassword\r\na=rtcp-mux\r\na=rtpmap:111 opus/48000/2\r\n\
-a=ssrc:1111 cname:kelma\r\na=sendrecv\r\n\
+a=ssrc:1111 cname:ironteams\r\na=sendrecv\r\n\
 a=candidate:1 1 udp 2130706431 192.0.2.10 50000 typ host\r\n\
 m=video 9 UDP/TLS/RTP/SAVPF 107\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:3\r\n\
 a=ice-ufrag:ours\r\na=ice-pwd:ourpassword\r\na=rtcp-mux\r\na=rtpmap:107 H264/90000\r\n\
 a=fmtp:107 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n\
-a=msid:applicationsharing-video kelma-share\r\na=ssrc:2222 cname:kelma\r\na=sendrecv\r\n";
+a=msid:applicationsharing-video ironteams-share\r\na=ssrc:2222 cname:ironteams\r\na=sendrecv\r\n";
 
 #[test]
 fn the_answer_has_every_offered_line_and_a_recvonly_sharing_line() {
@@ -162,11 +162,11 @@ const OUR_OFFER: &str = "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n\
 a=fingerprint:sha-256 AA:BB\r\na=group:BUNDLE 0 1\r\n\
 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=setup:actpass\r\na=mid:0\r\n\
 a=ice-ufrag:ours\r\na=ice-pwd:ourpassword\r\na=rtcp-mux\r\na=rtpmap:111 opus/48000/2\r\n\
-a=msid:kelma-1111 kelma-audio\r\na=ssrc:1111 cname:kelma\r\na=sendrecv\r\n\
+a=msid:ironteams-1111 ironteams-audio\r\na=ssrc:1111 cname:ironteams\r\na=sendrecv\r\n\
 a=candidate:1 1 udp 2130706431 192.0.2.10 50000 typ host\r\n\
 m=video 9 UDP/TLS/RTP/SAVPF 107\r\nc=IN IP4 0.0.0.0\r\na=setup:actpass\r\na=mid:1\r\n\
 a=ice-ufrag:ours\r\na=ice-pwd:ourpassword\r\na=rtcp-mux\r\na=rtpmap:107 H264/90000\r\n\
-a=msid:applicationsharing-video kelma-share\r\na=ssrc:2222 cname:kelma\r\na=sendrecv\r\n";
+a=msid:applicationsharing-video ironteams-share\r\na=ssrc:2222 cname:ironteams\r\na=sendrecv\r\n";
 
 #[test]
 fn our_offer_labels_the_sharing_line_from_its_stream() {
@@ -199,16 +199,16 @@ fn a_re_offer_states_the_sharing_direction() {
     assert_eq!(stopped.lines().count(), sharing.lines().count());
 }
 
-/// A webrtc-rs offer as one went out live on a 1:1 call kelma answered: an extra `main-video`
+/// A webrtc-rs offer as one went out live on a 1:1 call ironteams answered: an extra `main-video`
 /// receiver took mid 2, the sharing line moved to mid 3, and the declined `x-data` is missing.
 const MOVED_REOFFER: &str = "v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n\
 a=fingerprint:sha-256 AA:BB\r\na=group:BUNDLE 0 1 2 3\r\n\
 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendrecv\r\n\
 m=video 9 UDP/TLS/RTP/SAVPF 107\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\n\
-a=msid:main-video kelma-1\r\na=sendonly\r\n\
+a=msid:main-video ironteams-1\r\na=sendonly\r\n\
 m=video 9 UDP/TLS/RTP/SAVPF 107\r\nc=IN IP4 0.0.0.0\r\na=mid:2\r\na=recvonly\r\n\
 m=video 9 UDP/TLS/RTP/SAVPF 107\r\nc=IN IP4 0.0.0.0\r\na=mid:3\r\n\
-a=msid:applicationsharing-video kelma-2\r\na=sendrecv\r\n";
+a=msid:applicationsharing-video ironteams-2\r\na=sendrecv\r\n";
 
 /// Our answer to the browser's offer: mid 0-2 bundled, the `x-data` line declined.
 const NEGOTIATED: &str = "v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n\

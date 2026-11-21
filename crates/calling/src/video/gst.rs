@@ -16,13 +16,13 @@ use crate::{Error, Result};
 const FRAME_QUEUE: usize = 2;
 
 /// Overrides where `gst-launch-1.0` is found.
-pub const GST_LAUNCH_ENV: &str = "KELMA_GST_LAUNCH";
+pub const GST_LAUNCH_ENV: &str = "IRONTEAMS_GST_LAUNCH";
 
-/// The `gst-launch-1.0` to run: `$KELMA_GST_LAUNCH`, else where the official GStreamer installers
+/// The `gst-launch-1.0` to run: `$IRONTEAMS_GST_LAUNCH`, else where the official GStreamer installers
 /// put it when that is not on `PATH` (an app started from Finder or the Start menu does not see a
 /// shell's `PATH`), else the bare name, found on `PATH`.
 pub(crate) fn gst_launch() -> std::path::PathBuf {
-    if let Some(p) = std::env::var_os(GST_LAUNCH_ENV).filter(|p| !p.is_empty()) {
+    if let Some(p) = compat::var_os(GST_LAUNCH_ENV).filter(|p| !p.is_empty()) {
         return p.into();
     }
     installed_gst_launch()

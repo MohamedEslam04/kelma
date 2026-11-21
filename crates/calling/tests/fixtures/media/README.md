@@ -22,7 +22,7 @@ credentials, SDES keys, fingerprints and TURN ids are dummies.
 - `teams_meeting_full_reoffer.sdp`: the full offer the media servers send once a lobby participant
   is admitted, in effect a new session: `RTP/AVP` with a fingerprint, the audio mid moves to `1`, and
   each kind has its own ICE credentials (audio, the ten `main-video` lines 2 and 5-13, sharing at
-  mid 3 on port 3481, `x-data` at mid 4). Shape from a live kelma run, every value invented.
-- `teams_web_video_offer.sdp`: a browser's (Teams web) 1:1 offer with video, the shape a live kelma
+  mid 3 on port 3481, `x-data` at mid 4). Shape from a live ironteams run, every value invented.
+- `teams_web_video_offer.sdp`: a browser's (Teams web) 1:1 offer with video, the shape a live ironteams
   run answered: audio (mid 0), `main-video` `recvonly` (mid 1), `applicationsharing-video`
   `inactive` (mid 2) and `x-data` (mid 3), all on one bundled transport. Every value invented.

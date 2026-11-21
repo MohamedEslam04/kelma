@@ -1,6 +1,6 @@
 //! Tells the desktop portal which app is asking, before the first portal call.
 //!
-//! A kelma started from a terminal is not a registered app, so the portal names it after its
+//! A IronTeams started from a terminal is not a registered app, so the portal names it after its
 //! parent process ("Konsole" in KDE's ScreenCast and RemoteDesktop dialogs). The host portal
 //! registry (`org.freedesktop.host.portal.Registry.Register`, xdg-desktop-portal 1.19 and newer)
 //! lets a host app say which desktop file it is; `ashpd::register_host_app` calls it on the
@@ -44,7 +44,7 @@ async fn register(id: &str) {
     let app_id = match ashpd::AppID::try_from(id) {
         Ok(a) => a,
         Err(e) => {
-            tracing::warn!(%e, id, "not a valid portal app id; the portal names kelma itself");
+            tracing::warn!(%e, id, "not a valid portal app id; the portal names IronTeams itself");
             return;
         }
     };
@@ -58,11 +58,11 @@ async fn register(id: &str) {
 mod tests {
     use super::*;
 
-    /// The portal refuses an id that is not reverse-DNS (`kelma` alone has one segment).
+    /// The portal refuses an id that is not reverse-DNS (`ironteams` alone has one segment).
     #[test]
     fn the_portal_accepts_reverse_dns_ids_only() {
         assert!(ashpd::AppID::try_from("io.github.example.app").is_ok());
-        assert!(ashpd::AppID::try_from("kelma").is_err());
+        assert!(ashpd::AppID::try_from("ironteams").is_err());
     }
 
     #[tokio::test]

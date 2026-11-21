@@ -15,7 +15,7 @@ use serde_json::Value;
 /// `contentType` of the banner an announcement post carries in `properties.cards`.
 pub const ANNOUNCEMENT_BANNER: &str = crate::delivery::ANNOUNCEMENT_CONTENT_TYPE;
 
-/// The banner colors kelma offers when it sends an announcement: name and `colorTheme` index.
+/// The banner colors ironteams offers when it sends an announcement: name and `colorTheme` index.
 pub const BANNER_THEMES: [(&str, u8); 5] = [
     ("blue", 0),
     ("green", 1),
@@ -91,7 +91,7 @@ pub struct Cell {
     pub image: Option<String>,
 }
 
-/// An action button. `url` is `None` for actions kelma cannot run.
+/// An action button. `url` is `None` for actions ironteams cannot run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Button {
     pub title: String,
@@ -500,7 +500,7 @@ mod tests {
                     {"type": "TextBlock", "text": "Release readiness", "size": "Large", "weight": "Bolder"}
                 ]},
                 {"type": "FactSet", "facts": [
-                    {"title": "Owner", "value": "kelma"},
+                    {"title": "Owner", "value": "ironteams"},
                     {"title": "Date", "value": "Friday"}
                 ]},
                 {"type": "ColumnSet", "columns": [
@@ -542,7 +542,7 @@ mod tests {
         assert_eq!(facts.len(), 2);
         assert_eq!(
             (facts[0].label.as_str(), facts[0].text.as_str()),
-            ("Owner", "kelma")
+            ("Owner", "ironteams")
         );
     }
 

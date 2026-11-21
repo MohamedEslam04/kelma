@@ -1,13 +1,16 @@
-# kelma
+# IronTeams
+
+IronTeams — an unofficial native Microsoft Teams client written in Rust.
 
 A lightweight native desktop client for Microsoft Teams on Linux, written in Rust with [Slint](https://slint.dev).
+Formerly called kelma; the repository was `MohamedEslam04/kelma` before it became `teams-in-rust`.
 
-The Teams web app takes around 1 GB of RAM. kelma gives you the same chat experience in a familiar
+The Teams web app takes around 1 GB of RAM. IronTeams gives you the same chat experience in a familiar
 Teams-like layout and uses a fraction of that memory: see [Memory](#memory).
 
 ![Chat](docs/screenshots/chat.png)
 
-> **Unofficial.** Microsoft does not affiliate with, endorse or support kelma. "Microsoft Teams"
+> **Unofficial.** Microsoft does not affiliate with, endorse or support IronTeams. "Microsoft Teams"
 > is a trademark of Microsoft Corporation. See the [disclaimer](#disclaimer).
 
 ## Features
@@ -39,10 +42,10 @@ Teams-like layout and uses a fraction of that memory: see [Memory](#memory).
   1:1 incoming and outgoing call screens (`calls` feature, on by default; `crates/calling`).
 - **Settings:** theme (light, dark, system), accent, density and text size; app language with
   Arabic for the main screens; date and time format and time zone; notifications; devices;
-  privacy; files and links (open Office files in the browser, the desktop app or kelma);
+  privacy; files and links (open Office files in the browser, the desktop app or IronTeams);
   app permissions; accounts; accessibility; an opt-in update check.
 - **Desktop:** tray icon with unread badge, close to tray, autostart, window state, desktop
-  notifications, a local redacted problem report (`kelma-cli diag`).
+  notifications, a local redacted problem report (`ironteams-cli diag`).
 - **Live:** real-time updates over Teams' push channel, automatic reconnect and catch-up.
 
 
@@ -54,7 +57,7 @@ xkbcommon and D-Bus.
 ```sh
 # Fedora: sudo dnf install fontconfig-devel libxkbcommon-devel dbus-devel
 # Debian/Ubuntu: sudo apt install libfontconfig1-dev libxkbcommon-dev libdbus-1-dev pkg-config
-git clone https://github.com/MohamedEslam04/kelma && cd kelma
+git clone https://github.com/MohamedEslam04/teams-in-rust && cd teams-in-rust
 ./packaging/install.sh      # builds and installs to ~/.local (binary, .desktop file, icon)
 ```
 
@@ -64,20 +67,20 @@ git clone https://github.com/MohamedEslam04/kelma && cd kelma
 |---|---|---|
 | Flatpak | `packaging/flatpak/` | sandboxed: network, Wayland/X11, PipeWire, notifications and the Secret Service only |
 | Arch (AUR) | `packaging/aur/PKGBUILD` | the `-git` package, built from the latest commit: `makepkg -si` |
-| RPM (Fedora) | `packaging/rpm/kelma.spec` | builds offline from vendored crates |
+| RPM (Fedora) | `packaging/rpm/ironteams.spec` | builds offline from vendored crates |
 
 Each folder says how to build the package. None of them is published to a repository yet, and
 updates come from your package manager. Settings › About has an opt-in check (off by default)
 that asks GitHub for the latest release once per start and never downloads anything.
 
-Start **kelma** from your launcher. On first start it shows a code: open the link, enter the code
+Start **IronTeams** from your launcher. On first start it shows a code: open the link, enter the code
 and sign in with your work account.
 
 ### Windows and macOS
 
 Tagged releases (`v*`, `.github/workflows/release.yml`) build a Windows MSI and a portable zip,
 and a macOS `.dmg` for Apple Silicon and for Intel, next to a Linux tarball, AppImage, RPM and
-Flatpak. To build yourself: `cargo build --release -p kelma` with Rust and CMake (Windows: the
+Flatpak. To build yourself: `cargo build --release -p ironteams` with Rust and CMake (Windows: the
 MSVC build tools; macOS: the Xcode command line tools). The macOS app is ad-hoc signed, not
 notarized: open it with right click › Open the first time.
 
@@ -106,33 +109,37 @@ has been tried on real Windows or macOS hardware yet.
 | Web apps (web host) | Chromium-family browser | Edge or Chrome, compile-only | Chrome, Edge, Brave… in `/Applications`, compile-only |
 | Screen-locked presence (Away) | `org.freedesktop.ScreenSaver` | not detected | not detected |
 
-The AAC encoder: kelma is GPL-3.0-or-later and must not link fdk-aac, so Linux runs the system
+The AAC encoder: IronTeams is GPL-3.0-or-later and must not link fdk-aac, so Linux runs the system
 `ffmpeg`, while Windows and macOS use the encoder that comes with the system (Media Foundation is
 loaded at run time, so Windows N editions without the Media Feature Pack still start, and fall
 back to ffmpeg). GStreamer is not bundled: install the runtime from
 [gstreamer.freedesktop.org](https://gstreamer.freedesktop.org/download/) for camera and screen
-sharing on Windows and macOS (`KELMA_GST_LAUNCH` points at another `gst-launch-1.0`).
+sharing on Windows and macOS (`IRONTEAMS_GST_LAUNCH` points at another `gst-launch-1.0`).
 
 ### Environment variables
 
 | Variable | Effect |
 |---|---|
-| `KELMA_RENDERER=femtovg` | GPU renderer instead of the default software renderer (uses more memory) |
-| `KELMA_LOG=kelma=info,teams_proto=info` | Logging to stderr. Tokens are never logged |
-| `KELMA_DEMO=1` | Offline demo with sample data: no account, no network |
-| `KELMA_HOME=<dir>` | Keep config, cache and data under `<dir>` |
+| `IRONTEAMS_RENDERER=femtovg` | GPU renderer instead of the default software renderer (uses more memory) |
+| `IRONTEAMS_LOG=ironteams=info,teams_proto=info` | Logging to stderr. Tokens are never logged |
+| `IRONTEAMS_DEMO=1` | Offline demo with sample data: no account, no network |
+| `IRONTEAMS_HOME=<dir>` | Keep config, cache and data under `<dir>` |
+
+The old `KELMA_*` names still work when the `IRONTEAMS_*` one is not set. On the first start after the
+rename, the old `kelma` config, data and cache folders are moved to `ironteams`, and a saved sign-in
+under the old keyring name is moved to the new one when it is first read, so you stay signed in.
 
 ### Report a problem
 
-kelma collects no telemetry and never uploads anything. If something breaks, write a local
+IronTeams collects no telemetry and never uploads anything. If something breaks, write a local
 bundle and attach it to an issue yourself after reading it:
 
 ```sh
-kelma --report-problem              # also in the launcher's right-click menu
-kelma-cli diag --log kelma.log      # optionally include a log: KELMA_LOG=kelma=debug kelma 2> kelma.log
+ironteams --report-problem              # also in the launcher's right-click menu
+ironteams-cli diag --log ironteams.log      # optionally include a log: IRONTEAMS_LOG=ironteams=debug ironteams 2> ironteams.log
 ```
 
-The `.tar.gz` goes to your Downloads folder (`--out PATH` changes that). It holds the kelma
+The `.tar.gz` goes to your Downloads folder (`--out PATH` changes that). It holds the IronTeams
 version, OS and desktop facts, the non-secret config and the logs you pass in. Tokens, cookies,
 e-mail addresses, MRIs, conversation ids, GUIDs (tenant ids included), tenant domains and
 user names are replaced by placeholders. The keyring and the message cache are never read.
@@ -146,11 +153,11 @@ swapped-out pages where noted), release build, KDE Plasma on Wayland, Fedora 44:
 |---|---|
 | Teams PWA in a Chromium browser | ~1100 MB |
 | Pidgin + purple-teams | ~147 MB |
-| **kelma**, real work account, chat with images open | **~62 MB** (PSS 8 + swapped 54) |
-| **kelma**, real work account, 10 min idle, chat list only | **~29 MB** PSS (swap not counted) |
-| kelma demo mode | 39 MB |
+| **IronTeams**, real work account, chat with images open | **~62 MB** (PSS 8 + swapped 54) |
+| **IronTeams**, real work account, 10 min idle, chat list only | **~29 MB** PSS (swap not counted) |
+| IronTeams demo mode | 39 MB |
 
-kelma keeps the conversation list and messages in an SQLite cache. Only the visible part of the
+IronTeams keeps the conversation list and messages in an SQLite cache. Only the visible part of the
 message list exists in memory (virtualized list), and images are downscaled when they are decoded.
 
 ## Development
@@ -158,8 +165,8 @@ message list exists in memory (virtualized list), and images are downscaled when
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-KELMA_DEMO=1 cargo run -p kelma
-cargo run -p kelma-cli -- login | chats | teams | read <id> | send <id> <text> | tail
+IRONTEAMS_DEMO=1 cargo run -p ironteams
+cargo run -p ironteams-cli -- login | chats | teams | read <id> | send <id> <text> | tail
 ```
 
 | Crate | Role |
@@ -168,8 +175,8 @@ cargo run -p kelma-cli -- login | chats | teams | read <id> | send <id> <text> |
 | `crates/render` | Teams HTML to a rich-text model and back, with per-paragraph text direction |
 | `crates/store` | SQLite cache, drafts, outbox and saved messages |
 | `crates/session` | Keyring, accounts and config persistence |
-| `crates/kelma` | The desktop app (Slint UI and engine) |
-| `crates/kelma-cli` | Command-line client for protocol work |
+| `crates/ironteams` | The desktop app (Slint UI and engine) |
+| `crates/ironteams-cli` | Command-line client for protocol work |
 | `crates/calendar` | Outlook calendar over Microsoft Graph |
 | `crates/onedrive` | OneDrive and SharePoint files |
 | `crates/apps` | App bar, installed apps, the Store, bots and message extensions |
@@ -185,24 +192,24 @@ cargo run -p kelma-cli -- login | chats | teams | read <id> | send <id> <text> |
 [`docs/protocol.md`](docs/protocol.md) documents every endpoint and what has been verified.
 The ADRs in [`docs/adr/`](docs/adr/) explain the toolkit, the web host and the composer choices.
 
-Parallel builds on a small machine: run cargo through `flock /tmp/kelma-build.lock cargo …` so only one
-build compiles the large `kelma` crate at a time. GitHub CI runs fmt, clippy and the whole test
+Parallel builds on a small machine: run cargo through `flock /tmp/ironteams-build.lock cargo …` so only one
+build compiles the large `ironteams` crate at a time. GitHub CI runs fmt, clippy and the whole test
 suite on every push to `main` and `feat/**` and on pull requests.
 
 Translations: interface strings are wrapped in `@tr()` and compiled in from
-`crates/kelma/translations/<lang>/LC_MESSAGES/kelma.po`.
+`crates/ironteams/translations/<lang>/LC_MESSAGES/ironteams.po`.
 
 ## Disclaimer
 
-kelma talks to the same internal endpoints the Teams web client uses. They are undocumented and
-Microsoft can change them at any time, which would break kelma. Your organization's policies may
-not allow third-party clients, so check with your IT team before you use kelma with a work account.
+IronTeams talks to the same internal endpoints the Teams web client uses. They are undocumented and
+Microsoft can change them at any time, which would break IronTeams. Your organization's policies may
+not allow third-party clients, so check with your IT team before you use IronTeams with a work account.
 Use it at your own risk.
 
 ## Credits
 
 - Protocol knowledge from [purple-teams](https://github.com/EionRobb/purple-teams) by Eion Robb (GPL-3.0).
-- Color emoji: [Twemoji](https://github.com/mozilla/twemoji-colr) (CC-BY 4.0). See `crates/kelma/ui/fonts/README.md`.
+- Color emoji: [Twemoji](https://github.com/mozilla/twemoji-colr) (CC-BY 4.0). See `crates/ironteams/ui/fonts/README.md`.
 
 ## License
 

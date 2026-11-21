@@ -3,7 +3,7 @@
   per machine under Program Files. Built by .github/workflows/release.yml, which passes the name:
 
     wix build packaging/windows/app.wxs -arch x64 -d Version=0.1.0 -d Stage=stage
-        -d AppName=kelma -d Exe=kelma.exe -o kelma.msi
+        -d AppName=ironteams -d Exe=ironteams.exe -o ironteams.msi
 
   `Stage` is the folder the release job fills (the .exe, app.ico, LICENSE.txt, dictionaries\).
   The UpgradeCode never changes, also across a rename: a newer MSI replaces the installed one.
@@ -16,7 +16,7 @@
 
     <Icon Id="app.ico" SourceFile="$(var.Stage)\app.ico" />
     <Property Id="ARPPRODUCTICON" Value="app.ico" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/MohamedEslam04/kelma" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/MohamedEslam04/teams-in-rust" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="$(var.AppName)">
@@ -46,7 +46,7 @@
         <File Source="$(var.Stage)\dictionaries\ar.dic" />
       </Component>
       <Component Directory="ProgramMenuFolder">
-        <Shortcut Name="$(var.AppName)" Description="Microsoft Teams chat client (unofficial)"
+        <Shortcut Name="$(var.AppName)" Description="An unofficial native Microsoft Teams client written in Rust"
                   Target="[INSTALLFOLDER]$(var.Exe)" WorkingDirectory="INSTALLFOLDER" Icon="app.ico" />
         <RegistryValue Root="HKMU" Key="Software\$(var.AppName)" Name="StartMenuShortcut" Type="integer"
                        Value="1" KeyPath="yes" />

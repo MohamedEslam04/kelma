@@ -1,4 +1,4 @@
-//! On-disk SQLite cache for kelma.
+//! On-disk SQLite cache for ironteams.
 //!
 //! The UI only keeps the visible window of messages in memory; everything
 //! else lives here. Rows are plain structs so this crate does not depend on

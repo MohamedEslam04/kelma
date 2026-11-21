@@ -10,7 +10,7 @@
 //!
 //! Facts: rusty-teams `crates/calling/src/data_channel.rs` and `captions.rs`
 //! `parse_caption_message` (MIT). The media session opens the channel with
-//! `MediaOptions::data_channel` (`media/sdp.rs` maps the `x-data` line); UNVERIFIED live by kelma.
+//! `MediaOptions::data_channel` (`media/sdp.rs` maps the `x-data` line); UNVERIFIED live by ironteams.
 
 use serde_json::Value;
 use std::collections::HashMap;

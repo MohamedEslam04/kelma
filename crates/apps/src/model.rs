@@ -13,7 +13,7 @@ pub struct WorksIn {
 }
 
 /// A device permission an app's manifest asks for. The Store settings (gear) grant or deny
-/// each one per app; the grants live in kelma's own config (see [`crate::Grants`]).
+/// each one per app; the grants live in IronTeams's own config (see [`crate::Grants`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DevicePermission {
     Media,

@@ -19,7 +19,7 @@
 //! `caption_bot` and `signaling.rs` `add_caption_bot`/`bot_command` (MIT); eisbaw/ost
 //! `src/calling/recording.rs` (MIT); mautrix-teams `teams-webclient.yaml`
 //! `callAddBotParticipant` and the `aadRecorder` scheme (AGPL, facts only). None of it is
-//! verified live by kelma yet; see `docs/protocol-calls.md`.
+//! verified live by IronTeams yet; see `docs/protocol-calls.md`.
 
 use super::controls::control_url;
 use super::{CallSession, NgcClient};
@@ -451,7 +451,7 @@ impl RecorderFlow {
 
 impl NgcClient {
     /// A token for the recorder service (minted with the Teams client id, as the web client
-    /// does). UNVERIFIED live for kelma's sign-in.
+    /// does). UNVERIFIED live for IronTeams's sign-in.
     pub async fn recorder_token(&self) -> Result<String> {
         Ok(self
             .client

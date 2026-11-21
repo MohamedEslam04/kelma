@@ -7,10 +7,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 pub const FILE_NAME: &str = "general.json";
 
-/// A language kelma can show its interface in.
+/// A language IronTeams can show its interface in.
 ///
 /// The list is static: English (the source text) and Arabic (right-to-left, with a catalogue in
-/// `crates/kelma/translations`). Add a language here together with its `.po` catalogue.
+/// `crates/ironteams/translations`). Add a language here together with its `.po` catalogue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Language {
     /// BCP-47 tag.
@@ -38,7 +38,7 @@ static LANGUAGES: [Language; 2] = [
 /// The language every unmatched request falls back to.
 pub const FALLBACK_LANGUAGE: &str = "en";
 
-/// The languages kelma offers.
+/// The languages IronTeams offers.
 pub fn available_languages() -> &'static [Language] {
     &LANGUAGES
 }
@@ -244,13 +244,13 @@ pub struct GeneralPrefs {
     /// IANA zone name (`Africa/Cairo`). `None` follows the system.
     #[serde(deserialize_with = "de_time_zone")]
     pub time_zone: Option<String>,
-    /// Start kelma at login. This is the user's intent; the login entry is the tray crate's.
+    /// Start IronTeams at login. This is the user's intent; the login entry is the tray crate's.
     #[serde(deserialize_with = "lenient")]
     pub auto_start: bool,
     /// Start hidden, in the tray.
     #[serde(deserialize_with = "lenient")]
     pub open_in_background: bool,
-    /// Closing the window keeps kelma running in the tray. On by default: that is how kelma
+    /// Closing the window keeps IronTeams running in the tray. On by default: that is how IronTeams
     /// behaved before the switch existed.
     #[serde(deserialize_with = "lenient")]
     pub keep_running_on_close: bool,

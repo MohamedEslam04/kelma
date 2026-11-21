@@ -1,0 +1,1979 @@
+// IronTeams main window: Teams-like dark layout (rail, chat list, conversation, composer).
+// The pieces live in sibling modules; this file keeps the AppWindow state, callbacks and wiring.
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ActivityRow, ChatRow, ComposerEmoji, EmojiItem, Msg, PendingAttachment, Recipient, TeamRow } from "types.slint";
+import { Avatar, GlyphAvatar, Icon, IconButton, Pill } from "widgets.slint";
+import { Sidebar } from "sidebar.slint";
+import { MessageRow } from "message_row.slint";
+export { MessagePointer } from "message_row.slint";
+import { Composer, EmojiApi } from "composer.slint";
+import { MessageMenu } from "message_menu.slint";
+import { ReactionPicker } from "reaction_picker.slint";
+import { ForwardDialog } from "forward_dialog.slint";
+import { SelectBar } from "select_bar.slint";
+import { LoginView } from "login.slint";
+import { CalendarView, JoinBanner, CalStore } from "calendar.slint";
+import { CallsPage, CallsPageStore } from "calls_page.slint";
+import { ActivityView } from "activity.slint";
+import { PeopleStore, PersonHover } from "people.slint";
+import { NewChatPane } from "new_chat.slint";
+import { ParticipantsPanel, LeaveConfirm } from "participants.slint";
+import { PinnedBanner } from "pinned_banner.slint";
+import { ImmersiveReader } from "reader.slint";
+import { ProfileCard } from "profile_card.slint";
+import { TeamsStore } from "teams_store.slint";
+import { TeamsPage } from "teams_page.slint";
+import { TeamsDialogs } from "teams_dialogs.slint";
+export { ChatWindow } from "chat_window.slint";
+import { OneDriveView, DriveStore, DriveFilePicker } from "onedrive.slint";
+import { ListStore, SectionDialog, LeaveChannelDialog } from "lists.slint";
+import { RemindStore, RemindPanel } from "remind.slint";
+import { ChannelPosts, ChannelStore, AnnouncementBar } from "channel_posts.slint";
+import { AddTabDialog, ChannelTabButton, ChannelTabOverlays, FindStore, SearchView, QuickView, ChatFindBar, SharedView, DetailsPane } from "find.slint";
+import { ShortcutApi, ShortcutsDialog } from "shortcuts.slint";
+import { CommandPalette, PaletteApi, PaletteStore, PaletteItem } from "palette.slint";
+import { MediaStore, ImageViewer } from "media.slint";
+import { AppsStore, TasksStore } from "apps_store.slint";
+import { RailApps, AppsOverlays } from "apps_rail.slint";
+import { AppsHost } from "apps_host.slint";
+import { RecapTab, RecapsChatPane } from "apps_recaps.slint";
+import { SettingsPage, ProfileMenu, SettingsStore } from "settings.slint";
+import { EngageView, EngageStore } from "engage.slint";
+import { CallWindow, CallMini, CallStore } from "call_window.slint";
+import { DirectCallStore, CallIncoming } from "call_incoming.slint";
+import { CallOutgoing, CallHeaderButtons } from "call_outgoing.slint";
+import { ComposerAppsOverlay } from "composer_apps.slint";
+import { SendStore, ScheduledList } from "composer_send.slint";
+import { ChatHeaderStore, HeaderMoreButton, RemoveHistoryConfirm } from "chat_header.slint";
+import { StorylineView } from "storyline.slint";
+import { TopBarStore, TopSearch, SearchDropdown, NavButtons, MoreButton, MoreMenu } from "topbar.slint";
+
+export { Theme } from "theme.slint";
+export { PersonItem, PinnedItem, ActivityRow, ChatRow, ReactionItem, EmojiItem, ComposerEmoji, Edited, PendingAttachment, Recipient, FileItem, ImageItem, LinkCard, LoopCard, Msg, ChannelRow, TeamRow, VoiceItem, VideoClipItem } from "types.slint";
+export { EmojiApi } from "composer.slint";
+export { SpellApi, SpellWord } from "spelling.slint";
+export { FormatApi, FormatEdit } from "composer_format.slint";
+export { ShortcutApi } from "shortcuts.slint";
+export { PaletteApi, PaletteStore, PaletteAction, PaletteItem } from "palette.slint";
+export { MentionApi } from "mention_picker.slint";
+export { SnippetApi, SnippetStore, SnippetItem } from "snippet_picker.slint";
+export { VoiceStore } from "voice_player.slint";
+export { VoiceRecStore } from "voice_recorder.slint";
+export { ClipStore } from "video_clip.slint";
+export { LoopStore, LoopRow } from "loop_editor.slint";
+export { PeopleStore } from "people.slint";
+export { ListStore, SectionRow, SectionChoice } from "lists.slint";
+export { RemindStore, ReminderRow, SnoozedRow } from "remind.slint";
+export { ChannelStore, PostItem } from "channel_posts.slint";
+export { FindStore, HitRow, PickRow, SharedRow } from "find.slint";
+export { MediaStore } from "media.slint";
+export { EngageStore, EPost } from "engage.slint";
+export { GifStore, GifItem } from "gif_picker.slint";
+export { CallStore, CallPerson, CallCaption, CallFound, CallVideo } from "call_window.slint";
+export { DirectCallStore } from "call_incoming.slint";
+export { CallsPageStore, CallHistoryItem, CallPersonItem, VoicemailItem } from "calls_page.slint";
+export { TeamsStore, TeamsActions, TChannel, TTeam, TDiscover, TPerson, TTag, TDeleted, TSetting, TStat, TCommunity, TPost } from "teams_store.slint";
+export { CalStore, CalForm, CalDay, CalBlock, CalAllDay, CalMonthItem, CalMonthCell, CalMiniCell, CalFilterOpt, CalCalendarRow, CalSavedView, CalSettingsData, CalPerm, CalPeek, CalAttendeeRow, CalAttachmentRow, CalProposalRow, CalZone, CalDetail, CalSchedRow, CalSuggest, CalRoomList, CalRoom } from "calendar.slint";
+export { DriveStore, DriveRow, DriveCard, DriveNav, SharePerson, SharePerm, DriveVersion } from "onedrive.slint";
+export { ComposerApps, CaCommand, CaResult, CaCard } from "composer_apps.slint";
+export { SendStore, ScheduledItem, QuickChoice, PickCell } from "composer_send.slint";
+export { ChatHeaderStore } from "chat_header.slint";
+export { QuickViewsStore, ChatTipStore } from "chat_list_extras.slint";
+export { StorylineStore } from "storyline.slint";
+import { ChannelMeetButton, ParityNotice, WebParityStore } from "web_parity.slint";
+export { WebParityStore } from "web_parity.slint";
+export { AppsStore, TasksStore, FlowsStore, NotesStore, ListsStore, RecapsStore, AppCard, AppNav, RailApp, PermRow, AppRow, BoardColumn, TableRow } from "apps_store.slint";
+export { SettingsStore, SOption, SToggle, SNotify, SPerson, SAccount, SOrg, SDevice, SAppPerm, SFind } from "settings.slint";
+export { TopBarStore, TopRow } from "topbar.slint";
+
+export component AppWindow inherits Window {
+    title: root.window-title;
+    icon: @image-url("icons/app.svg");
+    preferred-width: 1400px;
+    preferred-height: 900px;
+    min-width: 640px;
+    min-height: 560px;
+    background: Theme.main;
+    default-font-size: 14px * Theme.font-scale;
+
+    // --- state set from Rust ---
+    in property <string> login-state: "checking"; // checking | code | error | ready
+    in property <string> user-code;
+    in property <string> verify-url;
+    in property <string> login-error;
+    in property <string> me-initials;
+    in property <bool> connected: true;
+    in property <string> banner;
+    // An info notice (update available) instead of an error toast, with one action link.
+    in property <bool> banner-info: false;
+    in property <string> banner-action;
+
+    in-out property <string> view: "chat"; // chat | teams | activity | calendar | onedrive
+    // Any other page (an app, search, a notification) shrinks a running call to its floating bar.
+    changed view => {
+        if CallStore.phase != "" { CallStore.minimized = true; }
+        TopBarStore.command("visit", root.view + "\u{1f}" + root.current-id);
+    }
+    // Back and Forward follow the chats opened as well as the pages.
+    changed current-id => {
+        TopBarStore.command("visit", root.view + "\u{1f}" + root.current-id);
+        // A chat opened (from anywhere) takes the window in one-pane mode.
+        root.pane-list = false;
+    }
+    // Opens a page of the left rail the way a click on it does (also Back and Forward, and the
+    // search box's commands).
+    public function navigate(v: string) {
+        // Settings covers the page: going to a page leaves it, as in Teams (also for the page
+        // already open under it).
+        root.leave-settings();
+        // Leaving the call view keeps the call running in the small floating bar.
+        if CallStore.phase != "" { CallStore.minimized = true; }
+        let from = root.view;
+        root.view = v;
+        // Back from the Teams page: the chat that was open in the Chat view, not the channel
+        // that was opened on the Teams page.
+        if v == "chat" && from == "teams" && root.last-chat-id != "" && root.last-chat-id != root.current-id {
+            root.select-chat(root.last-chat-id);
+        }
+        if v == "teams" && !root.current-is-channel && root.last-channel-id != "" {
+            root.select-channel(root.last-channel-id, root.last-channel-title);
+        }
+        if v == "activity" { root.activity-refresh(); }
+        if v == "onedrive" { DriveStore.command("enter", ""); }
+        if v == "calls" { CallsPageStore.command("open", ""); }
+    }
+    // Settings covers the call window and its floating card, so a call that starts (answered,
+    // placed or joined) closes Settings and shows itself, as Teams does.
+    property <bool> call-showing: CallStore.phase != "";
+    changed call-showing => {
+        if self.call-showing && SettingsStore.open { SettingsStore.close(); }
+    }
+    in-out property <string> filter: "all";
+    in property <[ChatRow]> chats-favorites;
+    in property <[ChatRow]> chats-main;
+    in property <[ChatRow]> chats-channels;
+    in property <[TeamRow]> teams;
+    in property <string> current-id;
+    in property <string> current-title;
+    in property <string> current-initials;
+    in property <color> current-color: Theme.accent-strong;
+    in property <image> current-avatar;
+    in property <bool> current-has-avatar;
+    // The kind of the open chat ("group", "meeting", "chat", "notes" or "channel").
+    in property <string> current-kind;
+    // The header draws a glyph instead of initials, as the chat list does: a calendar for a
+    // meeting chat, the people for a group chat without a picture.
+    property <string> header-glyph: root.current-kind == "meeting" ? "meeting" : (root.current-kind == "group" && !root.current-has-avatar ? "group" : "");
+    // The other person of an open 1:1 chat ("" otherwise) and their availability.
+    in property <string> current-person;
+    in property <string> current-presence;
+    in property <bool> current-is-channel;
+    // The last channel that was open (Rust sets it; it is remembered across starts): the Teams
+    // page opens it again instead of showing the chat that is open.
+    in-out property <string> last-channel-id;
+    in-out property <string> last-channel-title;
+    // The last conversation opened outside the Teams page: the Chat page shows it again.
+    in-out property <string> last-chat-id;
+    // The Teams page with no channel open: its right pane asks for one, it never shows a chat.
+    property <bool> teams-no-channel: root.view == "teams" && !root.current-is-channel;
+    // The open chat is muted ("More chat options" offers Unmute).
+    in property <bool> current-muted;
+    in property <string> thread-root;     // non-empty: viewing a channel thread
+    in property <[Msg]> messages;
+    in property <string> typing;
+    in property <bool> loading-older;
+    // The open chat or channel is reading its newest page (what the store had already shows).
+    in property <bool> loading-latest;
+    // The open chat is one the user is not a member of (a meeting they have not joined): the pane
+    // shows the text instead of the messages and the composer. Tied to the chat's id so a chat
+    // switch drops it at once.
+    in property <string> unavailable-id;
+    in property <string> unavailable-text;
+    property <bool> unavailable: root.unavailable-text != "" && root.unavailable-id == root.current-id && root.thread-root == "";
+    in-out property <string> reply-author;
+    in-out property <string> reply-preview;
+    in-out property <string> editing-id;
+    in-out property <string> draft;
+    in-out property <string> post-subject;
+    // The message list sits at the newest message. Set by the list itself; Rust is told.
+    in-out property <bool> at-bottom: true;
+    // New messages that arrived while scrolled up (the jump button shows the count).
+    in property <int> new-count;
+    // Row of the "New messages" divider to scroll to when a chat opens there.
+    in property <int> divider-index: -1;
+
+    // Message menu, "More reactions" picker, forward dialog and multi-select (see the
+    // message_menu, reaction_picker, forward_dialog and select_bar modules).
+    in-out property <bool> menu-open: false;
+    in-out property <length> menu-x;
+    in-out property <length> menu-y;
+    // Where the open message menu is (its size comes from the menu), and how tall the profile
+    // menu's panel is: what `pointer-pressed` counts as inside them.
+    property <length> menu-w;
+    property <length> menu-h;
+    property <length> menu-left: max(8px, min(root.menu-x, root.width - root.menu-w - 8px));
+    property <length> menu-top: max(8px, min(root.menu-y, root.height - root.menu-h - 8px));
+    property <length> profile-h;
+    // The same for the "…" menu's panel and a clicked profile card (window coordinates).
+    property <length> more-h;
+    property <length> card-left;
+    property <length> card-top;
+    property <length> card-w;
+    property <length> card-h;
+    in-out property <Msg> menu-msg;
+    // The menu was opened from the Activity preview (not the open chat).
+    in-out property <bool> menu-preview: false;
+    // Immersive Reader of a message.
+    in-out property <bool> reader-open: false;
+    in-out property <Msg> reader-msg;
+    in-out property <bool> picker-open: false;
+    in-out property <length> picker-x;
+    in-out property <length> picker-y;
+    in-out property <string> picker-msg-id;
+    in property <[EmojiItem]> picker-items;
+    in-out property <bool> forward-open: false;
+    in property <[Recipient]> forward-results;
+    in property <[Recipient]> forward-picked;
+    in-out property <int> forward-count: 1;
+    in-out property <string> forward-preview-author;
+    in-out property <string> forward-preview-text;
+    in-out property <bool> select-mode: false;
+    in property <int> select-count;
+
+    // Activity view
+    in property <[ActivityRow]> activity-items;
+    in property <int> activity-unread;
+    in property <int> chats-unread;
+    in-out property <string> activity-filter: "all";
+    in-out property <string> activity-selected;
+    in property <string> activity-preview-id;
+    in property <string> activity-preview-title;
+    in property <string> activity-preview-location;
+    in property <bool> activity-preview-is-channel;
+    in property <bool> activity-preview-loading;
+    in property <[Msg]> activity-preview;
+    in property <string> activity-highlight;
+    // Unread Activity items plus unread chats, like Teams; shown in the window title.
+    out property <int> badge-total: root.activity-unread + root.chats-unread;
+    out property <string> window-title: root.badge-total > 0 ? "(" + root.badge-total + ") IronTeams" : "IronTeams";
+    in-out property <bool> enter-sends: true;
+    // Ctrl+. shows the shortcut list; Ctrl+Shift+X makes the composer taller (plan chat 5.9).
+    in-out property <bool> shortcuts-open: false;
+    in-out property <bool> composer-expanded: false;
+    in-out property <int> msg-focus-tick: 0;
+    // The first sync after start-up has finished; "While you were away" waits for it and shows once.
+    in property <bool> synced: false;
+    in-out property <bool> away-dismissed: false;
+    // Unread chats and the ones that mention me, from the chat list as drawn (src/catch_up.rs).
+    property <[int]> catch-counts: ShortcutApi.catch-up-counts(root.chats-favorites, ListStore.sections, root.chats-main, root.chats-channels);
+    property <int> catch-chats: root.catch-counts.length > 0 ? root.catch-counts[0] : 0;
+    // Catching up everything ends the card, so it does not come back with the next message.
+    changed catch-chats => { if root.synced && root.catch-chats == 0 { root.away-dismissed = true; } }
+    // Alt+Down / Alt+Up (1 / -1) and the chip (0) open an unread chat, or say there is none.
+    function catch-up(step: int) {
+        if ShortcutApi.catch-up-target(root.current-id, step, root.chats-favorites, ListStore.sections, root.chats-main, root.chats-channels) != "" {
+            root.view = "chat";
+            FindStore.quick-open = false;
+            root.select-chat(ShortcutApi.catch-up-target(root.current-id, step, root.chats-favorites, ListStore.sections, root.chats-main, root.chats-channels));
+        } else {
+            ShortcutApi.notify(@tr("You're all caught up"));
+        }
+    }
+    // The composer's "Mark as important"; main.rs reads it when the message is sent.
+    in-out property <bool> important: false;
+    // "Set delivery options" › Urgent (the send button's menu); read the same way.
+    in-out property <bool> urgent: false;
+    in-out property <bool> composer-focused;
+    in-out property <int> skin-tone: 0;
+    in property <[ComposerEmoji]> recent-emoji;
+    in property <[PendingAttachment]> pending-attachments;
+    in property <int> cursor-tick; // Rust bumps it to put the composer cursor at the end
+    // A channel's top level shows post cards (channel_posts.slint) instead of the flat list.
+    property <bool> posts-mode: root.current-is-channel && root.thread-root == "" && ChannelStore.active;
+
+    // --- callbacks to Rust ---
+    callback retry-login();
+    callback copy-code();
+    callback select-chat(string);
+    callback select-channel(string, string);
+    callback toggle-team(int);
+    callback toggle-favorite(string);
+    callback set-filter(string);
+    callback search(string);
+    callback send(string);
+    callback typing-tick();
+    callback draft-edited(string);
+    callback load-older();
+    callback react(string, string);
+    callback reply(string);
+    callback cancel-reply();
+    callback edit(string);
+    callback delete(string);
+    callback open-url(string);
+    callback open-thread(string);
+    callback close-thread();
+    callback attach-image();
+    callback attach-file();
+    callback set-enter-sends(bool);
+    callback emoji-used(string);
+    callback paste-image();
+    callback remove-attachment(int);
+    callback skin-tone-changed(int);
+    callback dismiss-banner();
+    callback banner-action-clicked();
+    callback picker-search(string);
+    callback copy-link(string);
+    callback toggle-save(string);
+    callback pin(string);
+    callback mark-unread(string);
+    callback forward-begin(string);
+    callback forward-begin-selected();
+    callback forward-search(string);
+    callback forward-toggle(string);
+    callback forward-send(string);
+    callback forward-cancel();
+    callback select-begin(string);
+    callback toggle-select(string);
+    callback select-cancel();
+    callback at-bottom-changed(bool);
+    // Chat list "Mark as unread" (the message menu has its own `mark-unread(message id)`).
+    callback mark-chat-unread(string);
+    callback mark-all-read();
+    callback jump-to-newest();
+    callback retry-send(string);
+    callback discard-send(string);
+    // The chat header's "Schedule a meeting": opens the calendar's new-event form with the chat's members.
+    callback schedule-meeting(string);
+    // Meet now from anywhere: the calendar's prompt, with an optional meeting title.
+    function meet-now(title: string) {
+        root.view = "calendar";
+        CalStore.ask("meet-now", "Meet now", "Starts a Teams meeting right away and gives you the link.", "Meeting title (optional)", "", "", "Start meeting");
+        CalStore.prompt-text1 = title;
+    }
+    callback activity-refresh();
+    callback activity-select(string);
+    callback activity-set-filter(string);
+    callback activity-search(string);
+    callback activity-mark(string, bool);
+    callback activity-mark-all();
+    callback activity-go-to();
+    callback activity-reply(string);
+    callback activity-settings();
+
+    // Group chat header: renaming in place (the pencil).
+    in-out property <bool> renaming: false;
+    in-out property <string> rename-text;
+
+    // Rust bumps these counters to request a scroll to the bottom / composer focus.
+    in-out property <int> scroll-tick;
+    in-out property <int> focus-tick;
+    in-out property <int> divider-tick;
+    // Older messages were added above: keep the row at `anchor-index` (the one that was first)
+    // where it was on screen.
+    in-out property <int> anchor-tick;
+    // Width of the chat and teams list (the divider next to it drags it; Rust remembers it).
+    in-out property <length> sidebar-width: 320px;
+    // Narrow windows. Below 800px one pane shows at a time, as in Teams: an open chat takes the
+    // window and its header's Back shows the list again. Above it the list gives way so the
+    // conversation keeps 480px.
+    property <bool> single-pane: root.width < 800px;
+    in-out property <bool> pane-list: false;
+    property <bool> list-only: root.single-pane && (root.current-id == "" || root.pane-list || root.teams-no-channel);
+    property <bool> chat-only: root.single-pane && !root.list-only;
+    property <length> list-width: min(root.sidebar-width, max(220px, root.width - AppsStore.rail-width - 5px - 480px));
+    in property <int> anchor-index: -1;
+
+
+    // The command palette runs the same things the rail, the shortcuts and Settings run.
+    function leave-settings() {
+        if SettingsStore.open { SettingsStore.close(); }
+    }
+    // The palette's input had the keyboard focus and is gone: hand the keys back to the window
+    // (and to the composer in a chat) so the shortcuts keep working.
+    function palette-done() {
+        PaletteStore.restore-tick += 1;
+        if root.view == "chat" { root.focus-tick += 1; }
+    }
+    function run-palette(item: PaletteItem) {
+        PaletteStore.open = false;
+        if item.kind == "chat" {
+            root.leave-settings();
+            root.view = "chat";
+            root.select-chat(item.id);
+            root.palette-done();
+        } else {
+            PaletteStore.recents = PaletteApi.push-recent(PaletteStore.recents, item.id);
+            root.run-palette-action(item.cmd, item.arg);
+        }
+    }
+    function run-palette-action(cmd: string, arg: string) {
+        if cmd == "go" {
+            root.leave-settings();
+            root.view = arg;
+            if arg == "activity" { root.activity-refresh(); }
+            if arg == "onedrive" { DriveStore.command("enter", ""); }
+            if arg == "calls" { CallsPageStore.command("open", ""); }
+            root.palette-done();
+        }
+        if cmd == "new-chat" {
+            root.leave-settings();
+            root.view = "chat";
+            PeopleStore.new-chat-open = true;
+            PeopleStore.command("new-chat-open", "");
+        }
+        if cmd == "search" {
+            root.leave-settings();
+            root.view = "search";
+            FindStore.focus-tick += 1;
+        }
+        // The quick switcher (Ctrl+Alt+G).
+        if cmd == "goto" {
+            root.leave-settings();
+            root.view = "search";
+            FindStore.command("search-tab", "chats");
+            FindStore.focus-tick += 1;
+        }
+        if cmd == "mark-all-read" { root.mark-all-read(); root.palette-done(); }
+        if cmd == "settings" { SettingsStore.show(arg); }
+        if cmd == "toggle-theme" { SettingsStore.command("theme", SettingsStore.theme-shown == "dark" ? "light" : "dark"); root.palette-done(); }
+        if cmd == "shortcuts" { root.shortcuts-open = true; root.palette-done(); }
+        if cmd == "report-problem" { SettingsStore.command("report-problem", ""); root.palette-done(); }
+        if cmd == "status" { SettingsStore.command("status", arg); root.palette-done(); }
+        // Opens the profile menu on its own confirmation, so nothing signs out by itself.
+        if cmd == "sign-out" {
+            SettingsStore.open-profile();
+            SettingsStore.confirm-sign-out = true;
+        }
+    }
+
+    // A button went down at (x, y), before the window handles it (`main.rs`,
+    // `pointer_pressed`): the message menu, the profile menu, the "…" menu and a clicked profile
+    // card close when it is outside them, so the press then reaches what is under it (a rail
+    // entry, a chat), as in Teams. Their full-window layers only catch a press this did not see.
+    public function pointer-pressed(x: length, y: length) {
+        if root.menu-open && (x < root.menu-left || x > root.menu-left + root.menu-w || y < root.menu-top || y > root.menu-top + root.menu-h) {
+            root.menu-open = false;
+        }
+        // The profile panel: 300px wide, 8px from the right edge, 46px from the top (settings.slint).
+        root.profile-closed-by-press = false;
+        if SettingsStore.profile-open && (x < root.width - 308px || x > root.width - 8px || y < 46px || y > 46px + root.profile-h) {
+            SettingsStore.profile-open = false;
+            SettingsStore.confirm-sign-out = false;
+            root.profile-closed-by-press = true;
+        }
+        // The "…" menu's panel: 260px wide, 52px from the right edge, 46px from the top (topbar.slint).
+        TopBarStore.more-closed-by-press = false;
+        if TopBarStore.more-open && (x < root.width - 312px || x > root.width - 52px || y < 46px || y > 46px + root.more-h) {
+            TopBarStore.more-open = false;
+            TopBarStore.more-closed-by-press = true;
+        }
+        // A hover card closes when the pointer leaves it; a clicked one on a press outside it.
+        PeopleStore.card-closed-for = "";
+        if PeopleStore.card-open && !PeopleStore.card-by-hover && (x < root.card-left || x > root.card-left + root.card-w || y < root.card-top || y > root.card-top + root.card-h) {
+            PeopleStore.card-open = false;
+            PeopleStore.card-closed-for = PeopleStore.card.id;
+        }
+    }
+    // This press closed the profile menu: on my photo it stays closed (the photo toggles it).
+    property <bool> profile-closed-by-press;
+
+    if root.login-state != "ready": LoginView {
+        state: root.login-state;
+        user-code: root.user-code;
+        verify-url: root.verify-url;
+        error: root.login-error;
+        copy-code => { root.copy-code(); }
+        open-url(u) => { root.open-url(u); }
+        retry => { root.retry-login(); }
+    }
+
+    if root.login-state == "ready": win-keys := FocusScope {
+        // The command palette closed: take the keys back (a chat hands them to the composer).
+        property <int> palette-restore: PaletteStore.restore-tick;
+        changed palette-restore => { if root.view != "chat" { self.focus(); } }
+        // The page's own input (the composer, the search box) is gone on the pages that have
+        // none, which would leave the keyboard shortcuts, Alt+Left among them, without a focus.
+        // An open command palette keeps its own input (it hands the keys back when it closes).
+        property <string> page: root.view;
+        changed page => {
+            if !PaletteStore.open && self.page != "chat" && self.page != "teams" && self.page != "search" { self.focus(); }
+        }
+        // The Teams page with no channel picked drops the conversation (and its composer, which
+        // may hold the focus): take the keys so Alt+Down and the other shortcuts still work.
+        property <bool> no-channel: root.teams-no-channel;
+        changed no-channel => {
+            if self.no-channel && !PaletteStore.open { self.focus(); }
+        }
+        // Shift+Esc marks every chat read, wherever the focus is. The Activity view handles it
+        // itself (marks every Activity item read).
+        capture-key-pressed(event) => {
+            if (event.text == Key.Escape && event.modifiers.shift && root.view != "activity") {
+                root.mark-all-read();
+                return accept;
+            }
+            // Alt+Down / Alt+Up: the next / previous unread chat or channel in the list.
+            if (event.text == Key.DownArrow || event.text == Key.UpArrow) && event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift {
+                root.catch-up(event.text == Key.DownArrow ? 1 : -1);
+                return accept;
+            }
+            // Alt+Q: collapse every section of the chat list.
+            if ((event.text == "Q" || event.text == "q") && event.modifiers.alt && !event.modifiers.shift) {
+                ListStore.command("collapse-all", "");
+                return accept;
+            }
+            // Alt+Left and Alt+Right: Back and Forward.
+            if event.text == Key.LeftArrow && event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift {
+                TopBarStore.command("back", "");
+                return accept;
+            }
+            if event.text == Key.RightArrow && event.modifiers.alt && !event.modifiers.control && !event.modifiers.shift {
+                TopBarStore.command("forward", "");
+                return accept;
+            }
+            // Ctrl+Alt+E: Search.
+            if ((event.text == "E" || event.text == "e") && event.modifiers.control && event.modifiers.alt) {
+                root.view = "search";
+                FindStore.focus-tick += 1;
+                return accept;
+            }
+            if (event.text == "," || event.text == "<") && event.modifiers.control && event.modifiers.shift { SettingsStore.show("general"); return accept; } // Ctrl+Shift+,: Settings.
+            // Alt+Shift+N: New chat.
+            if ((event.text == "N" || event.text == "n") && event.modifiers.alt && event.modifiers.shift) {
+                root.view = "chat";
+                PeopleStore.new-chat-open = true;
+                PeopleStore.command("new-chat-open", "");
+                return accept;
+            }
+            // Ctrl+Shift+1 to 9: the nth entry of the app bar. In the composer Ctrl+Shift+7 and 8
+            // are the numbered and bullet list (Teams), so they stay with the composer there.
+            if (event.modifiers.control && event.modifiers.shift && AppsStore.shortcut-index(event.text) > 0 && !(root.composer-focused && (AppsStore.shortcut-index(event.text) == 7 || AppsStore.shortcut-index(event.text) == 8))) {
+                AppsStore.command("shortcut", "" + AppsStore.shortcut-index(event.text));
+                return accept;
+            }
+            // The other Teams chords (plan chat 5.9); the mapping is in src/shortcuts.rs.
+            if ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift) != "" {
+                win-keys.run-shortcut(ShortcutApi.action(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift));
+                return accept;
+            }
+            reject
+        }
+        // Esc, when nothing else took it: closes the shortcut list, then the thread, then the reply.
+        key-pressed(event) => {
+            if event.text == Key.Escape && !event.modifiers.shift {
+                if root.shortcuts-open { root.shortcuts-open = false; return accept; }
+                if root.menu-open { root.menu-open = false; root.focus-tick += 1; return accept; }
+                if root.thread-root != "" { root.close-thread(); return accept; }
+                if root.reply-preview != "" { root.cancel-reply(); return accept; }
+            }
+            reject
+        }
+        function run-shortcut(a: string) {
+            // Alt+Shift+A and Alt+Shift+V: the call button's Audio call and Video call.
+            if a == "audio-call" && root.view == "chat" && DirectCallStore.available && DirectCallStore.is-direct(root.current-id) {
+                DirectCallStore.command("dial", root.current-id);
+            }
+            if a == "video-call" && root.view == "chat" && DirectCallStore.is-direct(root.current-id) {
+                WebParityStore.notice = @tr("Video calls aren't available in IronTeams yet. Alt+Shift+A starts an audio call.");
+            }
+            if a == "shortcuts" { root.shortcuts-open = !root.shortcuts-open; }
+            if a == "palette" { PaletteStore.open = !PaletteStore.open; }
+            if a == "goto" {
+                root.view = "search";
+                FindStore.command("search-tab", "chats");
+                FindStore.focus-tick += 1;
+            }
+            if a == "filter-box" { root.view = "chat"; top-search.focus-input(); }
+            // Ctrl+E: the top search box. Ctrl+/: the box with a "/" in it, which lists the commands.
+            if a == "search-box" { top-search.focus-input(); }
+            if a == "commands" { top-search.start-command(); }
+            if a == "filter-unread" { root.filter = root.filter == "unread" ? "all" : "unread"; root.set-filter(root.filter); }
+            if a == "filter-chats" { root.filter = root.filter == "chats" ? "all" : "chats"; root.set-filter(root.filter); }
+            if a == "filter-channels" { root.filter = root.filter == "channels" ? "all" : "channels"; root.set-filter(root.filter); }
+            if a == "filter-clear" { root.filter = "all"; root.set-filter("all"); }
+            if a == "focus-composer" { root.focus-tick += 1; }
+            if a == "focus-messages" { root.msg-focus-tick += 1; }
+            if a == "expand-composer" { root.composer-expanded = !root.composer-expanded; root.focus-tick += 1; }
+            if a == "attach-file" { root.attach-file(); }
+            if a == "share-screen" && root.view == "chat" && DirectCallStore.available && DirectCallStore.is-direct(root.current-id) {
+                DirectCallStore.command("share-screen", root.current-id);
+            }
+        }
+        VerticalLayout {
+        // Top bar with search
+        Rectangle {
+            height: 48px;
+            background: Theme.topbar;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                HorizontalLayout {
+                    // Narrow windows give the room to the search box: the logo alone.
+                    width: root.width < 1000px ? 30px : 260px;
+                    spacing: 8px;
+                    Image { source: @image-url("icons/logo.svg"); colorize: Theme.accent; width: 22px; height: 22px; y: 13px; }
+                    if root.width >= 1000px: Text { text: "IronTeams"; color: Theme.fg; font-size: 15px * Theme.font-scale; font-weight: 600; vertical-alignment: center; }
+                }
+                NavButtons { }
+                top-search := TopSearch { }
+                Rectangle { horizontal-stretch: 1; }
+                if !root.connected: Text { text: @tr("Reconnecting…"); color: #ffb900; font-size: 12px * Theme.font-scale; vertical-alignment: center; }
+                // Focus mode (banners held back, this device only): click to turn it off.
+                if SettingsStore.focus-on: Pill {
+                    y: 11px;
+                    label: @tr("Focus");
+                    active: true;
+                    accessible-description: SettingsStore.focus-label();
+                    clicked => { SettingsStore.command("focus", "0"); }
+                }
+                MoreButton { y: 9px; }
+                Avatar { initials: root.me-initials; img: SettingsStore.me-photo; has-img: SettingsStore.me-has-photo; presence: SettingsStore.me-presence; size: 30px; y: 9px;
+                    // A rest shows our own card, as in Teams; a click opens the profile menu.
+                    me-photo := PersonHover { person: PeopleStore.me; click-opens: false; activated => { if !root.profile-closed-by-press { SettingsStore.open-profile(); } root.profile-closed-by-press = false; } accessible-role: button; accessible-label: @tr("Profile menu"); accessible-action-default => { SettingsStore.open-profile(); } }
+                }
+            }
+        }
+
+        if CalStore.join-text != "": JoinBanner { }
+
+        HorizontalLayout {
+            // Left rail
+            Rectangle {
+                width: AppsStore.rail-width;
+                background: Theme.rail;
+                VerticalLayout {
+                    padding-top: 8px;
+                    spacing: 4px;
+                    for item in [{key: "activity", label: @tr("Activity"), icon: @image-url("icons/activity.svg")}, {key: "chat", label: @tr("Chat"), icon: @image-url("icons/chat.svg")}, {key: "teams", label: @tr("Teams"), icon: @image-url("icons/teams.svg")}, {key: "calendar", label: @tr("Calendar"), icon: @image-url("icons/calendar.svg")}, {key: "calls", label: @tr("Calls"), icon: @image-url("icons/call-direct.svg")}, {key: "onedrive", label: "OneDrive", icon: @image-url("icons/cloud.svg")}]: ri := Rectangle {
+                        property <int> badge-count: item.key == "activity" ? root.activity-unread : (item.key == "chat" ? root.chats-unread : 0);
+                        // Calls shows only in a build with calls.
+                        property <bool> shown: item.key != "calls" || CallsPageStore.available;
+                        height: shown ? 56px : 0px;
+                        visible: shown;
+                        Rectangle {
+                            x: 0;
+                            width: 3px;
+                            height: 32px;
+                            y: 12px;
+                            border-radius: 2px;
+                            background: root.view == item.key ? Theme.accent : transparent;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            Icon { source: item.icon; tint: root.view == item.key || rt.has-hover ? Theme.accent : Theme.fg-muted; width: 22px; height: 22px; x: (parent.width - 22px) / 2; }
+                            Text { text: item.label; color: root.view == item.key ? Theme.accent : Theme.fg-muted; font-size: 10px * Theme.font-scale; horizontal-alignment: center; overflow: elide; }
+                        }
+                        if ri.badge-count > 0: Rectangle {
+                            x: parent.width / 2 + 2px;
+                            y: 4px;
+                            height: 16px;
+                            width: max(16px, badge-text.preferred-width + 8px);
+                            border-radius: 8px;
+                            background: Theme.unread-badge;
+                            accessible-role: text;
+                            accessible-label: @tr("{} unread", ri.badge-count);
+                            badge-text := Text { text: ri.badge-count > 99 ? "99+" : ri.badge-count; color: #ffffff; font-size: 10px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        rt := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.navigate(item.key); }
+                        }
+                    }
+                    RailApps { view <=> root.view; }
+                }
+            }
+
+            // Sidebar
+            if root.view != "calendar" && root.view != "onedrive" && root.view != "calls": Sidebar {
+                visible: root.view != "activity" && root.view != "search" && !root.chat-only;
+                width: root.view == "activity" || root.view == "search" || root.chat-only ? 0px
+                    : root.list-only ? root.width - AppsStore.rail-width : root.list-width;
+                max-height: 100000px;
+                view: root.view;
+                filter <=> root.filter;
+                chats-favorites: root.chats-favorites;
+                chats-main: root.chats-main;
+                chats-channels: root.chats-channels;
+                teams: root.teams;
+                current-id: root.current-id;
+                catch-chats: root.catch-chats;
+                catch-mentions: root.catch-counts.length > 1 ? root.catch-counts[1] : 0;
+                away-visible: root.synced && !root.away-dismissed && root.catch-chats > 0;
+                catch-up => { root.catch-up(0); }
+                dismiss-away => { root.away-dismissed = true; }
+                mark-unread(id) => { root.mark-chat-unread(id); }
+                mark-all-read => { root.mark-all-read(); }
+                leave-chat(id) => { PeopleStore.leave-confirm = id; }
+                new-chat => {
+                    PeopleStore.new-chat-open = true;
+                    PeopleStore.command("new-chat-open", "");
+                }
+                meet-now => { root.meet-now(""); }
+                manage-teams => { TeamsStore.open = true; TeamsStore.command("open", ""); }
+                open-community(id) => { EngageStore.open = true; EngageStore.command("open", id); }
+                select-chat(id) => { FindStore.quick-open = false; root.select-chat(id); }
+                select-channel(id, title) => { FindStore.quick-open = false; root.select-channel(id, title); }
+                toggle-team(i) => { root.toggle-team(i); }
+                toggle-favorite(id) => { root.toggle-favorite(id); }
+                set-filter(f) => { root.set-filter(f); }
+                quick-view(kind) => { FindStore.command("quick", kind); }
+            }
+
+            // The divider: drag to resize the list, as in Teams.
+            if root.view != "calendar" && root.view != "onedrive" && root.view != "activity" && root.view != "search" && !root.single-pane: Rectangle {
+                width: 5px;
+                background: list-split.pressed || list-split.has-hover ? Theme.accent : Theme.border;
+                accessible-role: slider;
+                accessible-label: @tr("Chat list width");
+                accessible-value: round(root.sidebar-width / 1px);
+                accessible-value-minimum: 220;
+                accessible-value-maximum: 600;
+                accessible-action-increment => { root.sidebar-width = min(600px, root.sidebar-width + 20px); }
+                accessible-action-decrement => { root.sidebar-width = max(220px, root.sidebar-width - 20px); }
+                list-split := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => {
+                        if self.pressed {
+                            root.sidebar-width = max(220px, min(600px, root.sidebar-width + self.mouse-x - self.pressed-x));
+                        }
+                    }
+                }
+            }
+
+            if root.view == "calendar": CalendarView { horizontal-stretch: 1; window-width: root.width; }
+            if root.view == "onedrive": OneDriveView { horizontal-stretch: 1; window-width: root.width; }
+            if root.view == "calls": CallsPage {
+                horizontal-stretch: 1;
+                window-width: root.width;
+                open-chat(mri) => {
+                    root.view = "chat";
+                    CallsPageStore.command("chat", mri);
+                }
+                view-contacts => {
+                    root.view = "search";
+                    FindStore.command("search-tab", "people");
+                    FindStore.focus-tick += 1;
+                }
+            }
+
+            // Conversation (in one-pane mode, not while the list has the window)
+            if root.view != "calendar" && root.view != "onedrive" && root.view != "calls" && !(root.list-only && root.view != "activity" && root.view != "search"): Rectangle {
+                background: Theme.main;
+                if root.view == "search": SearchView {
+                    z: 40;
+                    width: parent.width;
+                    height: parent.height;
+                    close => { root.view = "chat"; }
+                }
+                if FindStore.quick-open && root.view == "chat": QuickView {
+                    z: 18;
+                    width: parent.width;
+                    height: parent.height;
+                    close => { FindStore.quick-open = false; FindStore.command("quick-close", ""); }
+                }
+                if root.view == "activity": ActivityView {
+                    z: 20;
+                    width: parent.width;
+                    height: parent.height;
+                    items: root.activity-items;
+                    unread-count: root.activity-unread;
+                    filter <=> root.activity-filter;
+                    selected-id <=> root.activity-selected;
+                    preview-id: root.activity-preview-id;
+                    preview-title: root.activity-preview-title;
+                    preview-location: root.activity-preview-location;
+                    preview-is-channel: root.activity-preview-is-channel;
+                    preview-loading: root.activity-preview-loading;
+                    preview: root.activity-preview;
+                    highlight: root.activity-highlight;
+                    banner: root.banner;
+                    select(id) => { root.activity-select(id); }
+                    set-filter(f) => { root.activity-set-filter(f); }
+                    search(q) => { root.activity-search(q); }
+                    mark(id, read) => { root.activity-mark(id, read); }
+                    mark-all => { root.activity-mark-all(); }
+                    go-to => { root.view = "chat"; root.activity-go-to(); }
+                    send-reply(t) => { root.activity-reply(t); }
+                    open-url(u) => { root.open-url(u); }
+                    react(id, k) => { root.react(id, k); }
+                    more-reactions(id, x, y) => {
+                        root.picker-msg-id = id;
+                        root.picker-x = x;
+                        root.picker-y = y;
+                        root.picker-open = true;
+                        root.picker-search("");
+                    }
+                    menu(m, x, y) => {
+                        root.menu-msg = m;
+                        root.menu-preview = true;
+                        root.menu-x = x;
+                        root.menu-y = y;
+                        root.menu-open = true;
+                    }
+                    notification-settings => { root.activity-settings(); }
+                    dismiss-banner => { root.dismiss-banner(); }
+                }
+                if PeopleStore.new-chat-open && root.view != "activity": NewChatPane {
+                    z: 30;
+                    width: parent.width;
+                    height: parent.height;
+                    to: PeopleStore.new-chat-to;
+                    results: PeopleStore.new-chat-results;
+                    hint: PeopleStore.new-chat-hint;
+                    query(q) => { PeopleStore.command("new-chat-query", q); }
+                    add(id) => { PeopleStore.command("new-chat-add", id); }
+                    remove(id) => { PeopleStore.command("new-chat-remove", id); }
+                    name(n) => { PeopleStore.command("new-chat-name", n); }
+                    send(t) => { PeopleStore.command("new-chat-send", t); }
+                    close => {
+                        PeopleStore.new-chat-open = false;
+                        PeopleStore.command("new-chat-close", "");
+                    }
+                }
+                if root.current-id == "" && !root.teams-no-channel: VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/chat.svg"); colorize: Theme.border; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
+                    Text { text: @tr("Select a chat to start messaging"); color: Theme.fg-subtle; horizontal-alignment: center; }
+                }
+                if root.teams-no-channel: VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/teams.svg"); colorize: Theme.border; width: 96px; height: 96px; x: (parent.width - 96px) / 2; }
+                    Text { text: @tr("Pick a channel"); color: Theme.fg-subtle; horizontal-alignment: center; }
+                }
+                if root.banner != "": Rectangle {
+                    z: 10;
+                    x: (parent.width - self.width) / 2;
+                    y: 70px;
+                    width: min(parent.width - 40px, banner-text.preferred-width + 60px + (root.banner-action != "" ? 110px : 0px));
+                    height: 36px;
+                    border-radius: 6px;
+                    background: root.banner-info ? #1f2a3b : #3b1f22;
+                    border-width: 1px;
+                    border-color: root.banner-info ? Theme.accent : Theme.danger;
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 6px;
+                        spacing: 8px;
+                        banner-text := Text { text: root.banner; color: #ffffff; font-size: 12px * Theme.font-scale; vertical-alignment: center; overflow: elide; }
+                        if root.banner-action != "": Rectangle {
+                            width: 100px;
+                            accessible-role: button;
+                            accessible-label: root.banner-action;
+                            accessible-action-default => { root.banner-action-clicked(); }
+                            Text { text: root.banner-action; color: #ffffff; font-size: 12px * Theme.font-scale; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.banner-action-clicked(); } }
+                        }
+                        IconButton { icon: @image-url("icons/close.svg"); size: 24px; y: 6px; clicked => { root.dismiss-banner(); } }
+                    }
+                }
+                if root.current-id != "" && !root.teams-no-channel: VerticalLayout {
+                    // Header. When it is narrow (half a laptop screen), participants, find,
+                    // details and Schedule a meeting move into the … menu so the name stays readable.
+                    header := Rectangle {
+                        property <bool> compact: self.width < 720px;
+                        height: 60px;
+                        background: Theme.sidebar;
+                        HorizontalLayout {
+                            padding-left: 20px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            if root.single-pane && root.thread-root == "": IconButton {
+                                icon: @image-url("icons/back.svg");
+                                y: 14px;
+                                tooltip: @tr("Back to the chat list");
+                                clicked => { root.pane-list = true; }
+                            }
+                            if root.thread-root != "": IconButton { icon: @image-url("icons/back.svg"); y: 14px; clicked => { root.close-thread(); } }
+                            if root.header-glyph == "meeting": GlyphAvatar {
+                                y: 12px;
+                                size: 36px;
+                                icon: @image-url("icons/calendar.svg");
+                                tone: Theme.accent.transparentize(0.8);
+                                tint: Theme.accent;
+                                accessible-label: @tr("Meeting chat");
+                            }
+                            if root.header-glyph == "group": GlyphAvatar {
+                                y: 12px;
+                                size: 36px;
+                                icon: @image-url("icons/people.svg");
+                                tone: Theme.surface-hover;
+                                tint: Theme.fg-muted;
+                                accessible-label: @tr("Group chat");
+                            }
+                            if root.header-glyph == "": Avatar {
+                                y: 12px;
+                                initials: root.current-initials;
+                                tone: root.current-color;
+                                img: root.current-avatar;
+                                has-img: root.current-has-avatar;
+                                presence: root.current-person != "" ? root.current-presence : "";
+                                size: 36px;
+                                // A 1:1 chat's photo opens the person's card: on a rest, or a click.
+                                if root.current-person != "": PersonHover {
+                                    person: root.current-person;
+                                    accessible-role: button;
+                                    accessible-label: @tr("Open profile of {}", root.current-title);
+                                    accessible-action-default => { PeopleStore.open-card(root.current-person, self.absolute-position.x, self.absolute-position.y, self.width, self.height, false); }
+                                }
+                            }
+                            if !root.renaming || root.thread-root != "": Text {
+                                text: root.thread-root != "" ? @tr("Thread") : root.current-title;
+                                color: Theme.fg;
+                                font-size: 17px * Theme.font-scale;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 0;
+                                // Everything else gives way first.
+                                min-width: min(self.preferred-width, 120px);
+                            }
+                            if root.renaming && root.thread-root == "": Rectangle {
+                                y: 14px;
+                                height: 32px;
+                                width: 260px;
+                                horizontal-stretch: 0;
+                                border-radius: 4px;
+                                background: Theme.sidebar;
+                                border-width: 1px;
+                                border-color: Theme.accent;
+                                FocusScope {
+                                    capture-key-pressed(event) => {
+                                        if event.text == Key.Escape {
+                                            root.renaming = false;
+                                            return accept;
+                                        }
+                                        if event.text == Key.Return {
+                                            root.renaming = false;
+                                            PeopleStore.command("rename", rename-input.text);
+                                            return accept;
+                                        }
+                                        reject
+                                    }
+                                    rename-input := TextInput {
+                                        x: 10px;
+                                        width: parent.width - 20px;
+                                        text <=> root.rename-text;
+                                        color: Theme.fg;
+                                        font-size: 15px * Theme.font-scale;
+                                        single-line: true;
+                                        vertical-alignment: center;
+                                        accessible-role: text-input;
+                                        accessible-label: @tr("Group name");
+                                        init => { self.focus(); self.select-all(); }
+                                    }
+                                }
+                            }
+                            if PeopleStore.header-group && root.thread-root == "" && !root.renaming: rename-btn := IconButton {
+                                icon: @image-url("icons/edit.svg");
+                                tooltip: @tr("Rename chat");
+                                size: 28px;
+                                y: 16px;
+                                clicked => {
+                                    root.rename-text = root.current-title;
+                                    root.renaming = true;
+                                }
+                            }
+                            for tab in (root.current-is-channel ? [{k: "posts", l: @tr("Posts")}, {k: "files", l: @tr("Files")}]
+                                : (root.current-person != "" || root.current-id == "48:notes") && root.thread-root == "" ? [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}, {k: "storyline", l: @tr("Storyline")}]
+                                : [{k: "chat", l: @tr("Chat")}, {k: "shared", l: @tr("Shared")}]): tab-item := Rectangle {
+                                // The Shared (Files) and Storyline tabs replace the conversation, see `FindStore`.
+                                property <string> key: tab.k == "files" ? "shared" : (tab.k == "posts" ? "chat" : tab.k);
+                                property <bool> active: FindStore.chat-tab == self.key || (self.key == "chat" && FindStore.chat-tab != "shared" && FindStore.chat-tab != "storyline");
+                                width: min(tab-label.preferred-width, 200px);
+                                accessible-role: AccessibleRole.tab;
+                                accessible-label: tab.l;
+                                accessible-checked: self.active;
+                                VerticalLayout {
+                                    alignment: center;
+                                    tab-label := Text { text: tab.l; color: tab-item.active ? Theme.fg : Theme.fg-muted; font-size: 14px * Theme.font-scale; font-weight: tab-item.active ? 600 : 400; overflow: elide; }
+                                    Rectangle { height: 3px; border-radius: 1px; background: tab-item.active ? Theme.accent : transparent; }
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        FindStore.chat-tab = tab-item.key;
+                                        FindStore.command("tab", FindStore.chat-tab);
+                                    }
+                                }
+                            }
+                            // The channel's other tabs (empty for chats), then "+" Add a tab (a chat's
+                            // tab goes to the chat, see `FindStore.tab-for-chat`).
+                            if root.thread-root == "" && CallStore.is-meeting-chat(root.current-id): RecapTab { chat-id: root.current-id; tab <=> FindStore.chat-tab; }
+                            for ct in FindStore.channel-tabs: ChannelTabButton { tab: ct; }
+                            if root.thread-root == "": IconButton {
+                                icon: @image-url("icons/plus.svg");
+                                y: 14px;
+                                tooltip: @tr("Add a tab");
+                                clicked => {
+                                    FindStore.tab-for-chat = !root.current-is-channel;
+                                    FindStore.tab-add-open = true;
+                                }
+                            }
+                            if root.thread-root == "" && !root.current-is-channel && !header.compact: IconButton {
+                                icon: @image-url("icons/calendar.svg");
+                                y: 14px;
+                                tooltip: @tr("Schedule a meeting");
+                                clicked => { root.schedule-meeting(root.current-id); }
+                            }
+                            if root.thread-root == "" && CallStore.is-meeting-chat(root.current-id): IconButton { icon: @image-url("icons/video.svg"); y: 14px; tooltip: "Join meeting"; clicked => { CallStore.command("join-chat", root.current-id); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            if root.thread-root == "" && root.current-is-channel && !header.compact: ChannelMeetButton {
+                                y: 14px;
+                                meet-now => { root.meet-now(root.current-title); }
+                                schedule-meeting => { root.schedule-meeting(root.current-id); }
+                            }
+                            if root.thread-root == "" && !root.current-is-channel: CallHeaderButtons { chat-id: root.current-id; y: 14px; height: 32px; }
+                            // "View and add participants": group and 1:1 chats (a 1:1 starts a group).
+                            if (PeopleStore.header-group || PeopleStore.member-count > 0) && !root.current-is-channel && root.thread-root == "" && !header.compact: people-btn := Rectangle {
+                                width: people-count.preferred-width + 40px;
+                                height: 32px;
+                                y: 14px;
+                                horizontal-stretch: 0;
+                                border-radius: 4px;
+                                background: people-touch.has-hover || PeopleStore.participants-open ? Theme.surface-hover : transparent;
+                                accessible-role: button;
+                                accessible-label: @tr("View and add participants");
+                                accessible-value: PeopleStore.member-count;
+                                accessible-action-default => {
+                                    PeopleStore.participants-open = true;
+                                    PeopleStore.command("participants-open", "");
+                                }
+                                Icon { source: @image-url("icons/people.svg"); x: 8px; y: 8px; width: 16px; height: 16px; tint: Theme.fg-muted; }
+                                people-count := Text { x: 30px; text: PeopleStore.member-count; color: Theme.fg-muted; font-size: 13px * Theme.font-scale; vertical-alignment: center; }
+                                people-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        PeopleStore.participants-open = true;
+                                        PeopleStore.command("participants-open", "");
+                                    }
+                                }
+                            }
+                            if root.thread-root == "" && !header.compact: IconButton {
+                                icon: @image-url("icons/search.svg");
+                                y: 14px;
+                                tooltip: root.current-is-channel ? @tr("Find in channel") : @tr("Find in chat");
+                                active: FindStore.chat-find-open;
+                                clicked => {
+                                    FindStore.chat-find-open = !FindStore.chat-find-open;
+                                    FindStore.chat-find-tick += 1;
+                                    FindStore.command(FindStore.chat-find-open ? "find-open" : "find-close", "");
+                                }
+                            }
+                            if root.thread-root == "" && !header.compact: IconButton {
+                                icon: @image-url("icons/info.svg");
+                                y: 14px;
+                                tooltip: @tr("Open chat details");
+                                active: FindStore.details-open;
+                                clicked => {
+                                    FindStore.details-open = !FindStore.details-open;
+                                    FindStore.command("details", FindStore.details-open ? "open" : "close");
+                                }
+                            }
+                            if root.thread-root == "": HeaderMoreButton {
+                                y: 14px;
+                                chat-id: root.current-id;
+                                muted: root.current-muted;
+                                channel: root.current-is-channel;
+                                extras: header.compact;
+                                mark-unread => { root.mark-chat-unread(root.current-id); }
+                                schedule-meeting => { root.schedule-meeting(root.current-id); }
+                            }
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                    }
+
+                    if FindStore.chat-find-open && root.thread-root == "": ChatFindBar { channel: root.current-is-channel; }
+
+                    if PeopleStore.pinned.length > 0 && root.thread-root == "": PinnedBanner {
+                        items: PeopleStore.pinned;
+                        index <=> PeopleStore.pinned-index;
+                        jump(id) => { PeopleStore.command("pin-jump", id); }
+                        unpin(id) => { PeopleStore.command("pin-unpin", id); }
+                    }
+
+                    // Messages
+                    Rectangle {
+                        vertical-stretch: 1;
+                        // Sees every pointer move over the list and passes it on. The list rebuilds
+                        // its rows when it jumps (a new message scrolls it down), and a photo
+                        // rebuilt under the pointer never hears that the pointer left: this tells
+                        // the hover card instead.
+                        msg-pointer := TouchArea {
+                            // The hovered photo is in the list (its middle is inside the list) and
+                            // the pointer is no longer on it.
+                            function check() {
+                                if PeopleStore.hover-id != ""
+                                    && PeopleStore.hover-x + PeopleStore.hover-w / 2 > msg-pointer.absolute-position.x
+                                    && PeopleStore.hover-x + PeopleStore.hover-w / 2 < msg-pointer.absolute-position.x + msg-pointer.width
+                                    && PeopleStore.hover-y + PeopleStore.hover-h / 2 > msg-pointer.absolute-position.y
+                                    && PeopleStore.hover-y + PeopleStore.hover-h / 2 < msg-pointer.absolute-position.y + msg-pointer.height
+                                    && (!msg-pointer.has-hover
+                                        || msg-pointer.absolute-position.x + msg-pointer.mouse-x < PeopleStore.hover-x
+                                        || msg-pointer.absolute-position.x + msg-pointer.mouse-x > PeopleStore.hover-x + PeopleStore.hover-w
+                                        || msg-pointer.absolute-position.y + msg-pointer.mouse-y < PeopleStore.hover-y
+                                        || msg-pointer.absolute-position.y + msg-pointer.mouse-y > PeopleStore.hover-y + PeopleStore.hover-h) {
+                                    PeopleStore.hover-leave(PeopleStore.hover-id);
+                                }
+                            }
+                            changed mouse-x => { msg-pointer.check(); }
+                            changed mouse-y => { msg-pointer.check(); }
+                            changed has-hover => { msg-pointer.check(); }
+                        msg-list := ListView {
+                            visible: !root.posts-mode;
+                            property <int> tick: root.scroll-tick;
+                            property <int> d-tick: root.divider-tick;
+                            property <int> a-tick: root.anchor-tick;
+                            property <bool> anchoring: false;
+                            // Stay pinned to the newest message while content grows (images loading).
+                            property <bool> pinned: true;
+                            // After a jump to the divider its real position corrects the estimate
+                            // (rows that are not on screen only have an estimated height).
+                            property <bool> aligning: false;
+                            changed pinned => {
+                                root.at-bottom = self.pinned;
+                                root.at-bottom-changed(self.pinned);
+                            }
+                            changed tick => {
+                                self.pinned = true;
+                                self.content-y = min(0px, self.visible-height - self.content-height);
+                            }
+                            changed a-tick => {
+                                self.aligning = true;
+                                self.anchoring = true;
+                                self.pinned = false;
+                            }
+                            changed d-tick => {
+                                self.aligning = true;
+                                self.content-y = min(0px, 24px - self.content-height * root.divider-index / max(1, root.messages.length));
+                            }
+                            // The content height the last `changed content-height` saw. A content-y change
+                            // that arrives with a different height is the content growing under the
+                            // view (a card, an image or a voice bubble got its real height), not the
+                            // user scrolling up, so it must not unpin the list from the newest message.
+                            property <length> seen-height: 0px;
+                            // Whether the view is at the very bottom, as the user left it.
+                            function recheck() {
+                                self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
+                            }
+                            // The user scrolled (wheel, drag, scrollbar): that is never growth.
+                            scrolled => { self.recheck(); }
+                            changed content-height => {
+                                self.seen-height = self.content-height;
+                                if self.pinned && !self.aligning {
+                                    self.content-y = min(0px, self.visible-height - self.content-height);
+                                }
+                            }
+                            changed content-y => {
+                                // Pinned only at the very bottom: rows that get their real height while
+                                // scrolling up change the content height, and a looser margin pulled the
+                                // list back down (the list shook when scrolling up).
+                                if self.content-height == self.seen-height {
+                                    self.pinned = self.content-y <= self.visible-height - self.content-height + 4px;
+                                }
+                                if self.content-y > -40px && self.content-height > self.visible-height + 40px && !self.pinned && root.messages.length > 0 && !root.loading-older && !self.aligning {
+                                    // Until the older page lands: one request per arrival at the top.
+                                    self.aligning = true;
+                                    root.load-older();
+                                }
+                            }
+                                for m in root.messages: MessageRow {
+                                    m: m;
+                                    max-bubble: min(720px, msg-list.width * 0.75);
+                                    pane-top: msg-list.absolute-position.y;
+                                    in-channel: root.current-is-channel && root.thread-root == "";
+                                    select-mode: root.select-mode;
+                                    changed y => {
+                                        if msg-list.aligning && !msg-list.anchoring && (m.new-above || m.flash) {
+                                            msg-list.content-y = min(0px, 24px - self.y);
+                                        }
+                                    }
+                                    react(k) => { root.react(m.id, k); }
+                                    reply => { root.reply(m.id); }
+                                    edit => { root.edit(m.id); }
+                                    more-reactions(x, y) => {
+                                        root.picker-msg-id = m.id;
+                                        root.picker-x = x;
+                                        root.picker-y = y;
+                                        root.picker-open = true;
+                                        root.picker-search("");
+                                    }
+                                    menu(x, y) => {
+                                        root.menu-msg = m;
+                                        root.menu-preview = false;
+                                        root.menu-x = x;
+                                        root.menu-y = y;
+                                        root.menu-open = true;
+                                        if root.current-is-channel { FindStore.command("menu-follow", m.id); }
+                                    }
+                                    toggle-select => { root.toggle-select(m.id); }
+                                    retry-send => { root.retry-send(m.id); }
+                                    discard-send => { root.discard-send(m.id); }
+                                    open-url(u) => { root.open-url(u); }
+                                    open-thread => { root.open-thread(m.id); }
+                                    profile(id) => {
+                                        if id != "" {
+                                            PeopleStore.card-by-hover = false;
+                                            PeopleStore.anchor-w = 0;
+                                            PeopleStore.command("profile", id);
+                                        }
+                                    }
+                                    profile-at(id, x, y, w, h) => { PeopleStore.open-card(id, x, y, w, h, false); }
+                                    photo-hover(id, on, x, y, w, h) => {
+                                        if on {
+                                            PeopleStore.hover-enter(id, x, y, w, h);
+                                        } else {
+                                            PeopleStore.hover-leave(id);
+                                        }
+                                    }
+                                }
+                        }
+                        }
+                        if root.posts-mode: ChannelPosts {
+                            width: parent.width;
+                            height: parent.height;
+                            z: 4;
+                            scroll-tick: root.scroll-tick;
+                            react(id, k) => { root.react(id, k); }
+                            edit(id) => { root.edit(id); }
+                            more-reactions(id, x, y) => {
+                                root.picker-msg-id = id;
+                                root.picker-x = x;
+                                root.picker-y = y;
+                                root.picker-open = true;
+                                root.picker-search("");
+                            }
+                            menu(m, x, y) => {
+                                root.menu-msg = m;
+                                root.menu-preview = false;
+                                root.menu-x = x;
+                                root.menu-y = y;
+                                root.menu-open = true;
+                            }
+                            open-url(u) => { root.open-url(u); }
+                            profile(id) => { if id != "" { PeopleStore.command("profile", id); } }
+                            open-thread(id) => { root.open-thread(id); }
+                            retry-send(id) => { root.retry-send(id); }
+                            discard-send(id) => { root.discard-send(id); }
+                        }
+                        // Alt+Shift+M lands here: the arrow keys, Page Up/Down, Home and End scroll the list.
+                        msg-scope := FocusScope {
+                            width: 0px;
+                            height: 0px;
+                            property <int> tick: root.msg-focus-tick;
+                            changed tick => { self.focus(); }
+                            key-pressed(event) => {
+                                if event.text == Key.UpArrow { msg-list.content-y = min(0px, msg-list.content-y + 48px); msg-list.recheck(); return accept; }
+                                if event.text == Key.DownArrow { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - 48px)); msg-list.recheck(); return accept; }
+                                if event.text == Key.PageUp { msg-list.content-y = min(0px, msg-list.content-y + msg-list.visible-height * 0.9); msg-list.recheck(); return accept; }
+                                if event.text == Key.PageDown { msg-list.content-y = min(0px, max(msg-list.visible-height - msg-list.content-height, msg-list.content-y - msg-list.visible-height * 0.9)); msg-list.recheck(); return accept; }
+                                if event.text == Key.Home { msg-list.content-y = 0px; msg-list.recheck(); return accept; }
+                                if event.text == Key.End { root.scroll-tick += 1; return accept; }
+                                if event.text == Key.Escape { root.focus-tick += 1; return accept; }
+                                reject
+                            }
+                        }
+                        // Once the bigger list is laid out, the row that was first goes back to the
+                        // top of the view: from below, ensure-row-visible puts it there, measured
+                        // (rows that were never drawn only have an estimated height).
+                        Timer {
+                            interval: 30ms;
+                            running: msg-list.anchoring;
+                            triggered => {
+                                msg-list.anchoring = false;
+                                msg-list.content-y = min(0px, msg-list.visible-height - msg-list.content-height);
+                                msg-list.ensure-row-visible(root.anchor-index, ScrollBehavior.instant);
+                            }
+                        }
+                        Timer {
+                            interval: 700ms;
+                            running: msg-list.aligning;
+                            triggered => { msg-list.aligning = false; }
+                        }
+                        if !root.at-bottom && root.messages.length > 0 && !root.posts-mode: Rectangle {
+                            z: 5;
+                            x: (parent.width - self.width) / 2;
+                            y: parent.height - self.height - 12px;
+                            width: jump-text.preferred-width + 28px;
+                            height: 32px;
+                            border-radius: 16px;
+                            background: jump-touch.has-hover ? Theme.accent-strong : Theme.accent;
+                            drop-shadow-blur: 8px;
+                            drop-shadow-color: #00000080;
+                            jump-text := Text {
+                                text: root.new-count > 0 ? @tr("↓ Jump to newest · {}", root.new-count) : @tr("↓ Jump to newest");
+                                color: #ffffff;
+                                font-size: 12px * Theme.font-scale;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            jump-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.scroll-tick += 1;
+                                    root.jump-to-newest();
+                                }
+                            }
+                        }
+                        if root.unavailable: Rectangle {
+                            z: 7;
+                            background: Theme.main;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 12px;
+                                padding-left: 24px;
+                                padding-right: 24px;
+                                Image { source: @image-url("icons/chat.svg"); colorize: Theme.border; width: 72px; height: 72px; }
+                                Text {
+                                    text: root.unavailable-text;
+                                    color: Theme.fg-subtle;
+                                    font-size: 14px * Theme.font-scale;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                        if root.loading-older: Rectangle {
+                            y: 8px;
+                            height: 24px;
+                            width: 200px;
+                            x: (parent.width - 200px) / 2;
+                            border-radius: 12px;
+                            background: Theme.surface;
+                            Text { text: @tr("Loading older messages…"); color: Theme.fg-muted; font-size: 12px * Theme.font-scale; }
+                        }
+                        if root.loading-latest && !root.loading-older: Rectangle {
+                            z: 6;
+                            // Below the Posts tab's "Post in channel" bar.
+                            y: root.posts-mode ? 52px : 8px;
+                            height: 24px;
+                            width: latest-text.preferred-width + 28px;
+                            x: (parent.width - self.width) / 2;
+                            border-radius: 12px;
+                            background: Theme.surface;
+                            latest-text := Text {
+                                text: root.posts-mode ? @tr("Loading new posts…") : @tr("Loading new messages…");
+                                color: Theme.fg-muted;
+                                font-size: 12px * Theme.font-scale;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // The chat's scheduled messages ("Sending on …"), below the newest message.
+                    if SendStore.scheduled.length > 0 && root.thread-root == "" && !root.posts-mode: ScheduledList {
+                        max-bubble: min(720px, parent.width * 0.75);
+                    }
+
+                    if root.typing != "": HorizontalLayout {
+                        padding-left: 24px;
+                        Text { text: root.typing; color: Theme.fg-muted; font-size: 12px * Theme.font-scale; overflow: elide; }
+                    }
+
+                    if root.select-mode: SelectBar {
+                        count: root.select-count;
+                        forward => {
+                            root.forward-count = root.select-count;
+                            root.forward-preview-author = "";
+                            root.forward-preview-text = "";
+                            root.forward-open = true;
+                            root.forward-begin-selected();
+                        }
+                        cancel => {
+                            root.select-mode = false;
+                            root.select-cancel();
+                        }
+                    }
+
+                    if root.posts-mode && ChannelStore.compose-open: AnnouncementBar { }
+
+                    // Composer
+                    if (!root.posts-mode || ChannelStore.compose-open) && !root.unavailable: Composer {
+                        vertical-stretch: 0;
+                        window-width: root.width;
+                        current-is-channel: root.current-is-channel;
+                        thread-root: root.thread-root;
+                        reply-author: root.reply-author;
+                        reply-preview: root.reply-preview;
+                        editing-id: root.editing-id;
+                        draft <=> root.draft;
+                        post-subject <=> root.post-subject;
+                        focus-tick <=> root.focus-tick;
+                        enter-sends <=> root.enter-sends;
+                        expanded <=> root.composer-expanded;
+                        important <=> root.important;
+                        urgent <=> root.urgent;
+                        input-focus(f) => { root.composer-focused = f; }
+                        edit-last => {
+                            if ShortcutApi.last-own(root.messages) != "" { root.edit(ShortcutApi.last-own(root.messages)); }
+                        }
+                        set-enter-sends(on) => { root.set-enter-sends(on); }
+                        skin-tone <=> root.skin-tone;
+                        recent-emoji: root.recent-emoji;
+                        pending-attachments: root.pending-attachments;
+                        paste-image => { root.paste-image(); }
+                        remove-attachment(i) => { root.remove-attachment(i); }
+                        cursor-tick: root.cursor-tick;
+                        emoji-used(e) => { root.emoji-used(e); }
+                        skin-tone-changed(t) => { root.skin-tone-changed(t); }
+                        send(text) => {
+                            if root.posts-mode && ChannelStore.announcement {
+                                ChannelStore.command("announce", root.post-subject + "\u{9}" + ChannelStore.headline + "\u{9}" + ChannelStore.theme + "\u{9}" + text);
+                            } else {
+                                root.send(text);
+                            }
+                            if root.posts-mode {
+                                ChannelStore.compose-open = false;
+                                ChannelStore.announcement = false;
+                                ChannelStore.headline = "";
+                            }
+                        }
+                        typing-tick => { root.typing-tick(); }
+                        draft-edited(text) => { root.draft-edited(text); }
+                        cancel-reply => { root.cancel-reply(); }
+                        attach-image => { root.attach-image(); }
+                        attach-file => { root.attach-file(); }
+                        attach-cloud => { DriveStore.command("pick-begin", "attach"); }
+                    }
+                }
+                if root.current-id != "" && FindStore.chat-tab == "storyline" && root.view != "activity": StorylineView {
+                    z: 8;
+                    y: 60px;
+                    width: parent.width;
+                    height: parent.height - 60px;
+                }
+                // The Shared (Files) tab and the details pane sit below the 60px header.
+                if root.current-id != "" && !root.teams-no-channel && FindStore.chat-tab == "shared" && root.view != "activity": SharedView {
+                    z: 8;
+                    y: 60px;
+                    width: parent.width;
+                    height: parent.height - 60px;
+                }
+                // A meeting chat's Recap tab (the Meeting Recaps recap page).
+                if root.current-id != "" && !root.teams-no-channel && FindStore.chat-tab == "recap" && root.view != "activity": RecapsChatPane {
+                    z: 8;
+                    y: 60px;
+                    width: parent.width;
+                    height: parent.height - 60px;
+                }
+                if root.current-id != "" && !root.teams-no-channel && FindStore.details-open && root.thread-root == "" && root.view != "activity": DetailsPane {
+                    z: 9;
+                    x: parent.width - self.width;
+                    y: 60px;
+                    height: parent.height - 60px;
+                    title: root.current-title;
+                }
+            }
+        }
+    }
+    }
+
+    if root.login-state == "ready" && root.menu-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    root.menu-open = false;
+                }
+            }
+        }
+        msg-menu := MessageMenu {
+            x: root.menu-left;
+            y: root.menu-top;
+            init => {
+                root.menu-w = self.width;
+                root.menu-h = self.height;
+            }
+            changed height => { root.menu-h = self.height; }
+            // Esc: the window's keys do not see it (the menu is not inside them).
+            close => { root.menu-open = false; root.focus-tick += 1; }
+            mine: root.menu-msg.mine;
+            saved: root.menu-msg.saved;
+            translate: root.menu-msg.translate;
+            translate-message => { root.menu-open = false; MediaStore.command("translate", root.menu-msg.id); }
+            see-original => { root.menu-open = false; MediaStore.command("original", root.menu-msg.id); }
+            // Channel posts offer it too; that write is not known yet and says so (actions.rs).
+            can-pin: true;
+            can-follow: !root.menu-preview && root.current-is-channel && root.thread-root == "";
+            pinned: root.menu-msg.pinned;
+            urls: root.menu-msg.urls;
+            preview: root.menu-preview;
+            unpin => { root.menu-open = false; PeopleStore.command("pin-unpin", root.menu-msg.id); }
+            open-link(u) => { root.menu-open = false; root.open-url(u); }
+            copy-link-url(u) => { root.menu-open = false; MediaStore.command("link-copy", u); }
+            immersive-reader => { root.menu-open = false; root.reader-msg = root.menu-msg; root.reader-open = true; }
+            share-outlook => { root.menu-open = false; MediaStore.command("outlook", root.menu-msg.id); }
+            report => { root.menu-open = false; MediaStore.command("report", root.menu-msg.id); }
+            translation-settings => { root.menu-open = false; SettingsStore.show("general"); }
+            create-task => { root.menu-open = false; TasksStore.command("task-from-message", root.menu-msg.plain); }
+            following: FindStore.menu-following;
+            // One follow path for channel posts: the same call as the post card's menu.
+            toggle-follow => {
+                root.menu-open = false;
+                ChannelStore.command(FindStore.menu-following ? "unfollow" : "follow-msg", root.menu-msg.id);
+                FindStore.menu-following = !FindStore.menu-following;
+            }
+            reply => { root.menu-open = false; root.reply(root.menu-msg.id); }
+            forward-one => {
+                root.menu-open = false;
+                root.forward-count = 1;
+                root.forward-preview-author = root.menu-msg.sender;
+                root.forward-preview-text = root.menu-msg.plain;
+                root.forward-open = true;
+                root.forward-begin(root.menu-msg.id);
+            }
+            forward-many => {
+                root.menu-open = false;
+                root.select-mode = true;
+                root.select-begin(root.menu-msg.id);
+            }
+            copy-link => { root.menu-open = false; root.copy-link(root.menu-msg.id); }
+            toggle-save => { root.menu-open = false; root.toggle-save(root.menu-msg.id); }
+            pin => { root.menu-open = false; root.pin(root.menu-msg.id); }
+            mark-unread => { root.menu-open = false; root.mark-unread(root.menu-msg.id); }
+            remind(delay) => { root.menu-open = false; RemindStore.command("remind", root.menu-msg.id + "\u{9}" + delay); }
+            edit => { root.menu-open = false; root.edit(root.menu-msg.id); }
+            delete => { root.menu-open = false; root.delete(root.menu-msg.id); }
+        }
+    }
+
+    if root.login-state == "ready" && root.reader-open: ImmersiveReader {
+        z: 190;
+        width: root.width;
+        height: root.height;
+        sender: root.reader-msg.sender;
+        time: root.reader-msg.time;
+        text: root.reader-msg.plain;
+        rtl: root.reader-msg.rtl;
+        close => { root.reader-open = false; }
+    }
+
+    if root.login-state == "ready" && root.shortcuts-open: ShortcutsDialog {
+        z: 200;
+        width: root.width;
+        height: root.height;
+        close => { root.shortcuts-open = false; }
+        open-palette => { root.shortcuts-open = false; PaletteStore.open = true; }
+    }
+
+    if root.login-state == "ready" && PaletteStore.open: CommandPalette {
+        z: 210;
+        width: root.width;
+        height: root.height;
+        chats-favorites: root.chats-favorites;
+        chats-main: root.chats-main;
+        chats-channels: root.chats-channels;
+        run(item) => { root.run-palette(item); }
+        close => { PaletteStore.open = false; root.palette-done(); }
+    }
+
+    if root.login-state == "ready" && root.picker-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    root.picker-open = false;
+                }
+            }
+        }
+        ReactionPicker {
+            x: max(8px, min(root.picker-x, root.width - self.width - 8px));
+            y: max(8px, min(root.picker-y, root.height - self.height - 8px));
+            items: root.picker-items;
+            search(q) => { root.picker-search(q); }
+            pick(key) => {
+                root.picker-open = false;
+                root.react(root.picker-msg-id, key);
+            }
+        }
+    }
+
+    if root.login-state == "ready" && root.forward-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        ForwardDialog {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            results: root.forward-results;
+            picked: root.forward-picked;
+            count: root.forward-count;
+            preview-author: root.forward-preview-author;
+            preview-text: root.forward-preview-text;
+            search(q) => { root.forward-search(q); }
+            toggle(id) => { root.forward-toggle(id); }
+            send(note) => { root.forward-send(note); }
+            cancel => {
+                root.forward-open = false;
+                root.forward-cancel();
+            }
+        }
+    }
+
+    if root.login-state == "ready" && PeopleStore.participants-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    PeopleStore.participants-open = false;
+                }
+            }
+        }
+        ParticipantsPanel {
+            x: root.width - self.width - 16px;
+            y: 108px;
+            // A 1:1 chat can't be left; its "Add people" starts a group chat.
+            can-leave: PeopleStore.header-group;
+            members: PeopleStore.members;
+            add-results: PeopleStore.add-results;
+            open-profile(id) => {
+                PeopleStore.participants-open = false;
+                PeopleStore.command("profile", id);
+            }
+            add-query(q) => { PeopleStore.command("add-query", q); }
+            add-pick(id) => { PeopleStore.command("add-pick", id); }
+            history-changed(on) => { PeopleStore.command("add-history", on ? "on" : "off"); }
+            leave => {
+                PeopleStore.participants-open = false;
+                PeopleStore.leave-confirm = root.current-id;
+            }
+            close => { PeopleStore.participants-open = false; }
+        }
+    }
+
+    if root.login-state == "ready" && PeopleStore.leave-confirm != "": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        LeaveConfirm {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            confirm => {
+                PeopleStore.command("leave", PeopleStore.leave-confirm);
+                PeopleStore.leave-confirm = "";
+            }
+            cancel => { PeopleStore.leave-confirm = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && ChatHeaderStore.remove-history != "": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        RemoveHistoryConfirm {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            confirm => {
+                ListStore.command("remove-history", ChatHeaderStore.remove-history);
+                ChatHeaderStore.remove-history = "";
+            }
+            cancel => { ChatHeaderStore.remove-history = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && FindStore.tab-menu-id != "": ChannelTabOverlays {
+        width: root.width;
+        height: root.height;
+    }
+
+    if root.login-state == "ready" && FindStore.tab-add-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { clicked => { FindStore.tab-add-open = false; } }
+        AddTabDialog {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+        }
+    }
+
+    // Resting on a photo opens its person's card next to it, as in Teams. The timer lives here,
+    // not in the list row, so a row rebuilt by a new message does not lose the rest.
+    Timer {
+        interval: 600ms;
+        running: root.login-state == "ready" && PeopleStore.hover-id != "" && PeopleStore.hover-armed;
+        triggered => {
+            PeopleStore.hover-armed = false;
+            if !PeopleStore.card-open || (PeopleStore.card-by-hover && PeopleStore.card.id != PeopleStore.hover-id) {
+                PeopleStore.open-card(PeopleStore.hover-id, PeopleStore.hover-x, PeopleStore.hover-y, PeopleStore.hover-w, PeopleStore.hover-h, true);
+            }
+        }
+    }
+    // A card opened from somewhere else (no photo) opens in the middle.
+    property <bool> card-shown: PeopleStore.card-open;
+    changed card-shown => {
+        if !self.card-shown { PeopleStore.anchor-w = 0; }
+    }
+    // A hover card opened from a dropdown row goes with the dropdown, however it closes.
+    property <bool> search-shown: TopBarStore.search-open;
+    changed search-shown => {
+        if !self.search-shown && PeopleStore.card-open && PeopleStore.card-by-hover {
+            PeopleStore.card-open = false;
+            PeopleStore.hover-id = "";
+            PeopleStore.hover-armed = false;
+        }
+    }
+    property <string> hover-chat: root.current-id;
+    changed hover-chat => {
+        PeopleStore.hover-id = "";
+        PeopleStore.hover-armed = false;
+    }
+
+    if root.login-state == "ready" && PeopleStore.card-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        // Above the call window too (its roster photos open cards), and above the search
+        // dropdown (z 65) for a hover card opened from one of its rows.
+        z: PeopleStore.card-by-hover && TopBarStore.search-open ? 66 : 50;
+        // A clicked card closes on a click anywhere else; a hover card when the pointer leaves
+        // it and its photo (so the photo under it keeps its hover).
+        if !PeopleStore.card-by-hover: TouchArea {
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    PeopleStore.card-open = false;
+                }
+            }
+        }
+        profile-card := ProfileCard {
+            // Next to the photo it belongs to: on its right (on its left when that does not
+            // fit), top-aligned with it or, near the bottom, bottom-aligned (flipped above),
+            // and always inside the window. Without a photo, in the middle as before.
+            property <bool> anchored: PeopleStore.anchor-w > 0;
+            property <length> right-x: PeopleStore.anchor-x + PeopleStore.anchor-w + 8px;
+            property <length> side-x: self.right-x + self.width <= root.width - 8px ? self.right-x : PeopleStore.anchor-x - self.width - 8px;
+            property <length> side-y: PeopleStore.anchor-y + self.height <= root.height - 8px ? PeopleStore.anchor-y : PeopleStore.anchor-y + PeopleStore.anchor-h - self.height;
+            x: self.anchored ? max(8px, min(self.side-x, root.width - self.width - 8px)) : (root.width - self.width) / 2;
+            y: self.anchored ? max(8px, min(self.side-y, root.height - self.height - 8px)) : max(8px, min(160px, root.height - self.height - 8px));
+            init => {
+                root.card-left = self.x;
+                root.card-top = self.y;
+                root.card-w = self.width;
+                root.card-h = self.height;
+            }
+            changed x => { root.card-left = self.x; }
+            changed y => { root.card-top = self.y; }
+            changed width => { root.card-w = self.width; }
+            changed height => { root.card-h = self.height; }
+            anchor-hovered: PeopleStore.hover-id != "" && PeopleStore.hover-id == PeopleStore.card.id;
+            person: PeopleStore.card;
+            loading: PeopleStore.card-loading;
+            email: PeopleStore.card-email;
+            work: PeopleStore.card-work;
+            location: PeopleStore.card-location;
+            local-time: PeopleStore.card-time;
+            presence: PeopleStore.card-presence;
+            presence-label: PeopleStore.card-presence-label;
+            work-location: PeopleStore.card-work-location;
+            limit: root.height - 16px;
+            note: PeopleStore.card-note;
+            ooo: PeopleStore.card-ooo;
+            phone: PeopleStore.card-phone;
+            mobile: PeopleStore.card-mobile;
+            manager: PeopleStore.card-manager;
+            hover-mode: PeopleStore.card-by-hover;
+            quick-message(t) => {
+                PeopleStore.card-open = false;
+                PeopleStore.command("profile-message", t);
+            }
+            copy-email => { PeopleStore.command("profile-copy-email", ""); }
+            chat(id) => {
+                PeopleStore.card-open = false;
+                PeopleStore.command("profile-chat", id);
+            }
+            send-email(e) => { root.open-url("mailto:" + e); }
+            close => { PeopleStore.card-open = false; }
+        }
+    }
+
+    if root.login-state == "ready" && ListStore.dialog == "leave-channel": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        LeaveChannelDialog {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+            confirm => {
+                ListStore.command("channel-leave", ListStore.dialog-target);
+                ListStore.dialog = "";
+            }
+            cancel => { ListStore.dialog = ""; }
+        }
+    }
+
+    if root.login-state == "ready" && RemindStore.open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { clicked => { RemindStore.open = false; } }
+        RemindPanel {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+            close => { RemindStore.open = false; }
+        }
+    }
+
+    if root.login-state == "ready" && (ListStore.dialog == "new-section" || ListStore.dialog == "rename-section"): Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        SectionDialog {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 3);
+            confirm(name) => {
+                ListStore.command(ListStore.dialog, ListStore.dialog-target + "\u{9}" + name);
+                ListStore.dialog = "";
+            }
+            cancel => { ListStore.dialog = ""; }
+        }
+    }
+
+    // The OneDrive file picker, opened from the composer's "Attach cloud files" (the OneDrive view
+    // draws its own).
+    if root.login-state == "ready" && root.view != "onedrive" && DriveStore.dialog == "picker": Rectangle {
+        width: root.width;
+        height: root.height;
+        background: #00000080;
+        TouchArea { }
+        DriveFilePicker {
+            x: (root.width - self.width) / 2;
+            y: max(8px, (root.height - self.height) / 2);
+            title: DriveStore.picker-title;
+            folders-only: DriveStore.picker-folders-only;
+            rows: DriveStore.picker-rows;
+            crumbs: DriveStore.picker-crumbs;
+            loading: DriveStore.picker-loading;
+            can-choose: DriveStore.picker-can-choose;
+            choose-label: @tr("Attach");
+            open(id) => { DriveStore.command("pick-open", id); }
+            crumb(i) => { DriveStore.command("pick-crumb", "" + i); }
+            pick(id) => { DriveStore.command("pick-select", id); }
+            choose => { DriveStore.command("pick-choose", ""); }
+            cancel => { DriveStore.dialog = ""; DriveStore.command("pick-cancel", ""); }
+        }
+    }
+    // Teams management: the "Your teams and channels" page covers the area right of the rail, and
+    // its dialogs cover the window (see teams_page.slint and teams_dialogs.slint).
+    if root.login-state == "ready" && TeamsStore.open: TeamsPage {
+        x: AppsStore.rail-width;
+        y: 48px;
+        z: 40;
+        width: root.width - AppsStore.rail-width;
+        height: root.height - 48px;
+        go(id, title) => {
+            TeamsStore.open = false;
+            root.view = "teams";
+            root.select-channel(id, title);
+        }
+    }
+    // Viva Engage: a community's read-only feed covers the area right of the rail.
+    if root.login-state == "ready" && EngageStore.open && (root.view == "chat" || root.view == "teams"): EngageView {
+        x: 68px;
+        y: 48px;
+        z: 41;
+        width: root.width - 68px;
+        height: root.height - 48px;
+    }
+    if root.login-state == "ready" && TeamsStore.dialog != "": TeamsDialogs {
+        z: 50;
+        width: root.width;
+        height: root.height;
+    }
+
+    // The app screens (Store, Planner, Workflows, OneNote, Lists, app pages) cover the area right
+    // of the rail while the view is one of theirs; the overlays hold the app bar's flyout, its
+    // right click menu and the install request dialog.
+    if root.login-state == "ready" && AppsStore.owns(root.view): AppsHost {
+        x: AppsStore.rail-width;
+        y: 48px + (CalStore.join-text != "" ? 40px : 0px);
+        width: root.width - AppsStore.rail-width;
+        height: root.height - self.y;
+        view: root.view;
+    }
+
+    if root.login-state == "ready": AppsOverlays {
+        width: root.width;
+        height: root.height;
+    }
+    if root.login-state == "ready" && SettingsStore.open: SettingsPage {
+        x: AppsStore.rail-width;
+        y: 48px;
+        z: 60;
+        width: root.width - AppsStore.rail-width;
+        height: root.height - 48px;
+        enter-sends: root.enter-sends;
+        set-enter-sends(on) => { root.enter-sends = on; root.set-enter-sends(on); }
+    }
+    if root.login-state == "ready" && SettingsStore.profile-open: ProfileMenu {
+        z: 70;
+        width: root.width;
+        height: root.height;
+        init => { root.profile-h = self.panel-height; }
+        changed panel-height => { root.profile-h = self.panel-height; }
+        open-saved => { SettingsStore.profile-open = false; root.navigate("chat"); FindStore.command("quick", "saved"); }
+        open-shortcuts => { SettingsStore.profile-open = false; root.shortcuts-open = true; }
+    }
+
+    // The search box's dropdown: a layer below the top bar that closes it, and the list itself.
+    if root.login-state == "ready" && TopBarStore.search-open: Rectangle {
+        y: 48px;
+        z: 64;
+        width: root.width;
+        height: root.height - 48px;
+        TouchArea { clicked => { TopBarStore.command("close", ""); } }
+    }
+    if root.login-state == "ready" && TopBarStore.search-open: SearchDropdown {
+        z: 65;
+        x: max(8px, min(TopBarStore.box-x, root.width - self.width - 8px));
+        y: 44px;
+    }
+    // The "…" menu next to the avatar.
+    if root.login-state == "ready" && TopBarStore.more-open: MoreMenu {
+        z: 70;
+        width: root.width;
+        height: root.height;
+        show-shortcuts => { root.shortcuts-open = true; }
+        init => { root.more-h = self.panel-height; }
+        changed panel-height => { root.more-h = self.panel-height; }
+    }
+
+    // The call window (pre-join, meeting, call ended) covers the area right of the rail; while the meeting chat is open it is a floating bar.
+    if root.login-state == "ready" && CallStore.phase != "" && !CallStore.minimized: CallWindow { x: AppsStore.rail-width; y: 48px; z: 45; width: root.width - AppsStore.rail-width; height: root.height - 48px; open-chat => { CallStore.minimized = true; root.view = "chat"; root.select-chat(CallStore.chat-id); } }
+    if root.login-state == "ready" && CallStore.phase != "" && CallStore.minimized: CallMini { x: clamp(root.width - self.width - 16px + CallStore.mini-dx, AppsStore.rail-width, root.width - self.width); y: clamp(root.height - self.height - 16px + CallStore.mini-dy, 48px, root.height - self.height); z: 45; }
+
+    // The full-size picture viewer (plan chat 9.5), above everything else.
+    if root.login-state == "ready" && MediaStore.viewer-open: ImageViewer {
+        z: 60;
+        width: root.width;
+        height: root.height;
+    }
+
+    // The composer's apps picker (the "+" button).
+    if root.login-state == "ready": ComposerAppsOverlay {
+        width: root.width;
+        height: root.height;
+        meetings: root.current-id != "" && !root.current-is-channel && root.thread-root == "";
+        schedule-meeting => { root.schedule-meeting(root.current-id); }
+        meet-now => { root.meet-now(PeopleStore.header-group ? root.current-title : ""); }
+    }
+    // What IronTeams cannot do yet, said plainly (see `WebParityStore`).
+    if root.login-state == "ready" && WebParityStore.notice != "": ParityNotice {
+        z: 70;
+        width: min(root.width - 32px, 560px);
+        x: (root.width - self.width) / 2;
+        y: root.height - self.height - 16px;
+    }
+    // 1:1 calls: the ringing screen of an outgoing call and the incoming-call toast, on top.
+    if root.login-state == "ready" && DirectCallStore.outgoing-open: CallOutgoing { z: 80; width: root.width; height: root.height; }
+    if root.login-state == "ready" && DirectCallStore.incoming-open: CallIncoming { z: 90; x: root.width - self.width - 20px; y: root.height - self.height - 20px; }
+}

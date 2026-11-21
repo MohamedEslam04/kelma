@@ -5,8 +5,8 @@
 //! notebook, section and page each carry the Graph URL of their children (`sectionsUrl`,
 //! `pagesUrl`, `contentUrl`), so the same calls work for both kinds.
 //! The `onenote.com` audience (`https://www.onenote.com/api/v1.0/me/notes/...`) answers the same
-//! data for personal notebooks, but Graph covers both, so kelma uses Graph only. Editing a page
-//! is left to the web host; kelma only adds a new page.
+//! data for personal notebooks, but Graph covers both, so IronTeams uses Graph only. Editing a page
+//! is left to the web host; IronTeams only adds a new page.
 
 use crate::broker::Audience;
 use crate::client::Client;
@@ -215,7 +215,7 @@ fn decode(s: &str) -> String {
 
 const PAGES: usize = 10;
 
-/// How deep section groups nest before kelma stops descending.
+/// How deep section groups nest before IronTeams stops descending.
 pub const MAX_GROUP_DEPTH: usize = 4;
 
 impl Client {
