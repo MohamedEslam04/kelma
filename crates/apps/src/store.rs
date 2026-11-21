@@ -214,7 +214,10 @@ pub fn parse_search(v: &Value) -> Vec<SearchHit> {
                 version: str_of(h, "version").unwrap_or_default(),
                 short_description: str_of(h, "shortDescription").unwrap_or_default(),
                 accent_color: str_of(h, "accentColor").unwrap_or_default(),
-                icon: str_of(h, "smallImageUrl").unwrap_or_default(),
+                // The larger picture when the hit names one: the tiles draw it up to 48 px.
+                icon: str_of(h, "largeImageUrl")
+                    .or_else(|| str_of(h, "smallImageUrl"))
+                    .unwrap_or_default(),
                 categories: strings(&h["appCategories"]),
                 screenshots: strings(&h["screenshotUrls"]),
                 kinds: strings(&h["capabilities"]),
@@ -451,6 +454,16 @@ mod tests {
         let b = store_home_body(&["popularApps"]);
         assert_eq!(b["appCategories"], json!(["popularApps"]));
         assert_eq!(b["appsStoreOptions"]["includeTotalAppsCount"], true);
+    }
+
+    #[test]
+    fn a_search_hit_uses_its_large_icon_when_it_has_one() {
+        let hits = parse_search(&json!({"results": [
+            {"appId": "a", "smallImageUrl": "https://cdn.example/s.png", "largeImageUrl": "https://cdn.example/l.png"},
+            {"appId": "b", "smallImageUrl": "https://cdn.example/s2.png"},
+        ]}));
+        assert_eq!(hits[0].icon, "https://cdn.example/l.png");
+        assert_eq!(hits[1].icon, "https://cdn.example/s2.png");
     }
 
     #[test]

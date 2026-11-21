@@ -3,7 +3,7 @@
 //! (`Client::team_picture`, docs/protocol.md), so a refusal just leaves the initials.
 
 use super::Engine;
-use super::util::decode_image;
+use super::util::{AVATAR_PX, decode_image};
 use crate::data::Pixels;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -35,7 +35,7 @@ impl Engine {
         tokio::spawn(async move {
             match e.client.team_picture(&e.me, &group, &name).await {
                 Ok(bytes) => {
-                    if let Some(px) = decode_image(&bytes, 64, 64) {
+                    if let Some(px) = decode_image(&bytes, AVATAR_PX, AVATAR_PX) {
                         e.avatars.lock().unwrap().insert(key, Some(px));
                         e.mark(|d| {
                             d.chats = true;

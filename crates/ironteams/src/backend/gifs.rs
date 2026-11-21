@@ -168,7 +168,7 @@ impl Engine {
                 let Ok(bytes) = e.client.bytes(&url, &[], 4 * 1024 * 1024).await else {
                     return;
                 };
-                let px = tokio::task::spawn_blocking(move || decode_image(&bytes, 160, 120))
+                let px = tokio::task::spawn_blocking(move || decode_image(&bytes, 320, 240))
                     .await
                     .ok()
                     .flatten();

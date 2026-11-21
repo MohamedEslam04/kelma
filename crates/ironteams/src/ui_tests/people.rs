@@ -1416,3 +1416,49 @@ fn notes_and_channels_get_no_receipts() {
     h.select("19:team1@thread.tacv2");
     assert!(receipts(&h.app).is_empty());
 }
+
+// ---- the photo preview ---------------------------------------------------------
+
+#[test]
+fn clicking_the_photo_on_a_card_opens_the_preview_of_that_person_and_escape_closes_it() {
+    let h = harness_with_sara_email();
+    let _log = wire(&h);
+    let run = h.runner();
+    h.app
+        .global::<crate::MediaStore>()
+        .on_command(move |name, arg| {
+            if let Some(c) = crate::backend::MediaCmd::parse(&name, &arg) {
+                run(Cmd::Media(c));
+            }
+        });
+    let viewer = || h.app.global::<crate::MediaStore>();
+    h.engine
+        .test_set_avatar(&mri(3), crate::data::Pixels::new(8, 8));
+    h.select(BACKEND);
+    settle();
+
+    // The photo on the card is a button.
+    click(&lowest_photo_of_sara(&h.app));
+    assert!(ps(&h.app).get_card_open());
+    assert!(ps(&h.app).get_card().has_avatar);
+    let photo = find_label(&h.app, "View photo of Sara Hassan")
+        .into_iter()
+        .next()
+        .expect("the card's photo is a button");
+    click(&photo);
+
+    assert!(!ps(&h.app).get_card_open(), "the card makes way for it");
+    assert!(viewer().get_viewer_open());
+    assert_eq!(viewer().get_viewer_title(), "Sara Hassan");
+    assert_eq!(h.engine.test_viewer_photo(), Some(mri(3)));
+    assert_eq!(
+        viewer().get_viewer_count(),
+        0,
+        "one photo, nothing to step to"
+    );
+
+    key(&h.app, Key::Escape, true);
+    key(&h.app, Key::Escape, false);
+    assert!(!viewer().get_viewer_open(), "Escape closes the preview");
+    assert_eq!(h.engine.test_viewer_photo(), None);
+}

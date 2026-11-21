@@ -228,6 +228,27 @@ pub(super) fn one_on_one_chat_id(a: &str, b: &str) -> Option<String> {
     Some(format!("19:{}_{}@unq.gbl.spaces", ids[0], ids[1]))
 }
 
+/// The pixel size avatars are decoded to: the largest avatar is 96 logical pixels, which is 192
+/// at a scale factor of 2 (what `teams_proto::mt::AVATAR_SIZE` asks the service for).
+pub(super) const AVATAR_PX: u32 = 196;
+
+/// What a message's inline picture is decoded to: the grid draws one at most 420 x 320 logical
+/// pixels, so this is a little over that at a scale factor of 2 (the pictures kept in memory
+/// stay below 2.2 MB each).
+pub(super) const INLINE_W: u32 = 840;
+pub(super) const INLINE_H: u32 = 640;
+
+/// True for a stored avatar from before avatars were read at [`AVATAR_PX`] (they were 64 pixels
+/// at most): it is shown while the sharper picture is read again. A picture whose longer side is
+/// not readable counts as low resolution too.
+pub(super) fn avatar_is_low_res(bytes: &[u8]) -> bool {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .is_none_or(|(w, h)| w.max(h) <= 64)
+}
+
 pub(super) fn decode_image(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Pixels> {
     let img = image::load_from_memory(bytes).ok()?;
     let img = if img.width() > max_w || img.height() > max_h {
@@ -314,6 +335,28 @@ pub(super) fn row_title(kind: ConvKind, title: &str, names: &[String], channel: 
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
+
+    fn png_of(edge: u32) -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(edge, edge, image::Rgba([10, 20, 30, 255]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn a_stored_avatar_of_the_old_size_is_read_again_and_a_sharp_one_is_kept() {
+        assert!(avatar_is_low_res(&png_of(64)), "the old HR64x64 avatars");
+        assert!(avatar_is_low_res(b"not a picture"));
+        assert!(!avatar_is_low_res(&png_of(196)));
+    }
+
+    #[test]
+    fn avatars_decode_to_the_sharp_size_not_the_old_64_pixels() {
+        let px = decode_image(&png_of(400), AVATAR_PX, AVATAR_PX).unwrap();
+        assert_eq!((px.width(), px.height()), (AVATAR_PX, AVATAR_PX));
+        let small = decode_image(&png_of(100), AVATAR_PX, AVATAR_PX).unwrap();
+        assert_eq!(small.width(), 100, "never scaled up in memory");
+    }
 
     #[test]
     fn a_blank_group_title_falls_back_to_the_members_then_to_group_chat() {

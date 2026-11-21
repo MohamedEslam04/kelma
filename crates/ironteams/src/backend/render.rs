@@ -83,7 +83,8 @@ impl Engine {
         }
         cache.insert(mri.to_string(), None);
         drop(cache);
-        // Stored avatar first, network second.
+        // Stored avatar first, network second. A stored picture of the old 64-pixel size is
+        // shown at once and read again at the sharp size.
         let stored = self
             .store
             .lock()
@@ -92,19 +93,23 @@ impl Engine {
             .ok()
             .flatten()
             .and_then(|u| u.avatar);
+        let mut shown = None;
         if let Some(bytes) = stored {
-            let px = decode_image(&bytes, 64, 64);
+            let px = decode_image(&bytes, AVATAR_PX, AVATAR_PX);
             self.avatars
                 .lock()
                 .unwrap()
                 .insert(mri.to_string(), px.clone());
-            return px;
+            if !avatar_is_low_res(&bytes) {
+                return px;
+            }
+            shown = px;
         }
         let e = self.clone();
         let mri = mri.to_string();
         tokio::spawn(async move {
             if let Ok(bytes) = e.client.avatar(&e.me, &mri).await
-                && let Some(px) = decode_image(&bytes, 64, 64)
+                && let Some(px) = decode_image(&bytes, AVATAR_PX, AVATAR_PX)
             {
                 e.avatars.lock().unwrap().insert(mri.clone(), Some(px));
                 let st = e.store.lock().unwrap();
@@ -125,7 +130,7 @@ impl Engine {
                 });
             }
         });
-        None
+        shown
     }
 
     /// Puts a decoded photo in the avatar cache, as a finished lookup would.
@@ -151,10 +156,12 @@ impl Engine {
             };
             match bytes {
                 Ok(bytes) => {
-                    match tokio::task::spawn_blocking(move || decode_image(&bytes, 480, 360))
-                        .await
-                        .ok()
-                        .flatten()
+                    match tokio::task::spawn_blocking(move || {
+                        decode_image(&bytes, INLINE_W, INLINE_H)
+                    })
+                    .await
+                    .ok()
+                    .flatten()
                     {
                         Some(px) => {
                             e.images.lock().unwrap().insert(url, Some(px));

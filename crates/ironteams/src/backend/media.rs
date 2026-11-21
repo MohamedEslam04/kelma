@@ -36,6 +36,8 @@ pub enum MediaCmd {
         msg: String,
         url: String,
     },
+    /// A person's photo was clicked (their MRI): the viewer shows it large, with their name.
+    OpenPhoto(String),
     /// Next (1) or previous (-1) picture in the viewer.
     ImageStep(i32),
     ImageClose,
@@ -75,6 +77,7 @@ impl MediaCmd {
                     url: url.to_string(),
                 }
             }
+            "photo" => MediaCmd::OpenPhoto(arg.to_string()),
             "image-step" => MediaCmd::ImageStep(arg.parse().ok()?),
             "image-close" => MediaCmd::ImageClose,
             "image-save" => MediaCmd::ImageSave,
@@ -114,6 +117,8 @@ struct Viewer {
     open: bool,
     /// The downloaded picture, for Save and Copy.
     current: Option<FetchedImage>,
+    /// A person's photo instead of a message's pictures: their MRI and name (the gallery is empty).
+    photo: Option<(String, String)>,
 }
 
 /// The translation of one message.
@@ -288,6 +293,7 @@ impl Engine {
     pub(super) async fn media_cmd(self: &Arc<Self>, cmd: MediaCmd) -> anyhow::Result<()> {
         match cmd {
             MediaCmd::OpenImage { msg, url } => self.viewer_open(&msg, &url),
+            MediaCmd::OpenPhoto(mri) => self.viewer_open_photo(&mri),
             MediaCmd::ImageStep(d) => self.viewer_step(d),
             MediaCmd::ImageClose => self.viewer_close(),
             MediaCmd::ImageSave => {
@@ -366,11 +372,14 @@ impl Engine {
                 open: v.open,
                 index: v.index,
                 count: v.gallery.len(),
-                title: v
-                    .gallery
-                    .get(v.index)
-                    .and_then(|i| i.name.clone())
-                    .unwrap_or_else(|| "Image".into()),
+                title: match &v.photo {
+                    Some((_, name)) => name.clone(),
+                    None => v
+                        .gallery
+                        .get(v.index)
+                        .and_then(|i| i.name.clone())
+                        .unwrap_or_else(|| "Image".into()),
+                },
                 pixels,
                 failed,
                 status,
@@ -396,6 +405,36 @@ impl Engine {
                 seq,
                 open: true,
                 current: None,
+                photo: None,
+            };
+        }
+        self.viewer_load();
+    }
+
+    /// Opens the viewer on a person's photo: their name at once, the large picture when it is
+    /// read.
+    fn viewer_open_photo(self: &Arc<Self>, mri: &str) {
+        let name = if mri == self.me {
+            self.my_name.clone()
+        } else {
+            self.store
+                .lock()
+                .unwrap()
+                .user(mri)
+                .ok()
+                .flatten()
+                .map(|u| u.display_name)
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "Profile photo".into())
+        };
+        {
+            let mut m = self.media.lock().unwrap();
+            let seq = m.viewer.seq + 1;
+            m.viewer = Viewer {
+                seq,
+                open: true,
+                photo: Some((mri.to_string(), name)),
+                ..Viewer::default()
             };
         }
         self.viewer_load();
@@ -436,12 +475,44 @@ impl Engine {
         if self.offline.load(Ordering::Relaxed) {
             return;
         }
-        let (seq, image) = {
+        let (seq, photo, image) = {
             let m = self.media.lock().unwrap();
             let v = &m.viewer;
-            (v.seq, v.gallery[v.index].clone())
+            (v.seq, v.photo.clone(), v.gallery.get(v.index).cloned())
         };
         let e = self.clone();
+        if let Some((mri, _)) = photo {
+            tokio::spawn(async move {
+                let size = teams_proto::mt::AVATAR_PREVIEW_SIZE;
+                match e.client.avatar_sized(&e.me, &mri, size).await {
+                    Ok(bytes) => {
+                        let content_type = teams_proto::photo::photo_content_type(&bytes)
+                            .unwrap_or("image/jpeg")
+                            .to_string();
+                        let kept = bytes.clone();
+                        let px =
+                            tokio::task::spawn_blocking(move || decode_image(&bytes, 4096, 4096))
+                                .await
+                                .ok()
+                                .flatten();
+                        let fetched = FetchedImage {
+                            bytes: kept,
+                            content_type,
+                            url: String::new(),
+                        };
+                        e.viewer_done(seq, Some(fetched), px);
+                    }
+                    Err(err) => {
+                        // The small photo the lists use is better than none.
+                        tracing::debug!(%err, "large photo not read");
+                        let small = e.avatars.lock().unwrap().get(&mri).cloned().flatten();
+                        e.viewer_done(seq, None, small);
+                    }
+                }
+            });
+            return;
+        }
+        let Some(image) = image else { return };
         tokio::spawn(async move {
             let fetched = images::fetch(&e.client, &image).await;
             match fetched {
@@ -482,10 +553,14 @@ impl Engine {
             let v = &m.viewer;
             (
                 v.current.clone(),
-                v.gallery
-                    .get(v.index)
-                    .map(ImageRef::suggested_name)
-                    .unwrap_or_default(),
+                match &v.photo {
+                    Some((_, name)) => name.clone(),
+                    None => v
+                        .gallery
+                        .get(v.index)
+                        .map(ImageRef::suggested_name)
+                        .unwrap_or_default(),
+                },
             )
         };
         let Some(image) = image else {
@@ -700,6 +775,18 @@ impl Engine {
         self.mark(|d| d.messages = true);
     }
 
+    /// The MRI of the person whose photo the viewer shows.
+    #[cfg(test)]
+    pub(crate) fn test_viewer_photo(&self) -> Option<String> {
+        self.media
+            .lock()
+            .unwrap()
+            .viewer
+            .photo
+            .as_ref()
+            .map(|(mri, _)| mri.clone())
+    }
+
     #[cfg(test)]
     pub(crate) fn test_viewer_seq(&self) -> u64 {
         self.media.lock().unwrap().viewer.seq
@@ -766,7 +853,7 @@ impl Engine {
                 fetched = urlpreview::fetch_image(&e.client, &url).await;
             }
             let px = match fetched {
-                Ok(bytes) => tokio::task::spawn_blocking(move || decode_image(&bytes, 240, 240))
+                Ok(bytes) => tokio::task::spawn_blocking(move || decode_image(&bytes, 320, 320))
                     .await
                     .ok()
                     .flatten(),
@@ -818,6 +905,10 @@ mod tests {
             })
         );
         assert_eq!(MediaCmd::parse("image", "no-separator"), None);
+        assert_eq!(
+            MediaCmd::parse("photo", "8:orgid:abc"),
+            Some(MediaCmd::OpenPhoto("8:orgid:abc".into()))
+        );
         assert_eq!(
             MediaCmd::parse("image-step", "-1"),
             Some(MediaCmd::ImageStep(-1))

@@ -1790,6 +1790,10 @@ export component AppWindow inherits Window {
                 PeopleStore.command("profile-chat", id);
             }
             send-email(e) => { root.open-url("mailto:" + e); }
+            open-photo(id) => {
+                PeopleStore.card-open = false;
+                MediaStore.command("photo", id);
+            }
             close => { PeopleStore.card-open = false; }
         }
     }
