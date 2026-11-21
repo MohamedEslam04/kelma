@@ -73,7 +73,10 @@ jobs:
           # Build the checked-out commit instead of the default branch of the upstream URL.
           git clone --bare . /home/builder/ironteams.git && chown -R builder /home/builder/ironteams.git
           sed -i 's|git+${url}.git|git+file:///home/builder/ironteams.git|' /home/builder/aur/PKGBUILD
-          su builder -c 'cd ~/aur && git config --global --add safe.directory "*" && makepkg --printsrcinfo > /tmp/srcinfo && makepkg -f --noconfirm'
+          # The runner has ~16 GB and no swap we can add inside the container: thin LTO with one
+          # codegen unit gets rustc killed. This check only needs the package to build, so it
+          # links without LTO (the shipped release profile is unchanged).
+          su builder -c 'export CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16; cd ~/aur && git config --global --add safe.directory "*" && makepkg --printsrcinfo > /tmp/srcinfo && makepkg -f --noconfirm'
       - name: .SRCINFO is current
         run: diff <(sed 's|file:///home/builder/ironteams.git|https://github.com/MohamedEslam04/teams-in-rust.git|' /tmp/srcinfo) packaging/aur/.SRCINFO
         shell: bash
