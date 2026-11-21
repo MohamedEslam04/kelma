@@ -240,12 +240,14 @@ impl Engine {
             _ => "chat",
         };
         // The read horizon before this open moves it: the "New messages" divider goes there.
+        let kind = row.as_ref().map(|c| c.kind);
         let marker = row.filter(|c| c.unread).map(|c| c.read_horizon_ms);
         let open_at = self.cfg.lock().unwrap().open_chat_at;
         self.flush_draft();
         {
             let mut v = self.view.lock().unwrap();
-            if v.current.as_deref() == Some(id.as_str()) && v.thread_root.is_none() {
+            if v.current.as_deref() == Some(id.as_str()) && v.thread_root.is_none() && !v.not_member
+            {
                 return Ok(());
             }
             v.current = Some(id.clone());
@@ -261,11 +263,13 @@ impl Engine {
             v.open_at = open_at;
             v.opening = true;
             v.loaded = false;
+            v.not_member = false;
             v.at_bottom = true;
             v.new_count = 0;
         }
         self.ui.selection(false, 0);
         self.ui.new_count(0);
+        self.ui.unavailable(String::new(), String::new());
         // Shows the chat's stored draft and reply target (or clears the reply bar).
         self.restore_draft(&id);
         self.push_attachments();
@@ -282,7 +286,7 @@ impl Engine {
         });
         let offline = self.offline.load(std::sync::atomic::Ordering::Relaxed);
         self.ui.loading_latest(!offline);
-        let fetched = self.client.messages(&id, None, PAGE as u32).await;
+        let fetched = self.newest_page(&id).await;
         if self.view.lock().unwrap().current.as_deref() == Some(id.as_str()) {
             self.ui.loading_latest(false);
         }
@@ -304,6 +308,17 @@ impl Engine {
                 self.mark(|d| d.messages = true);
                 self.ui.info(OPEN_OFFLINE.into());
                 self.retry_history(id);
+                return Ok(());
+            }
+            // Teams lists a meeting chat the user was invited to, but only a member can read it:
+            // the pane says so (and drops the composer) instead of a red error.
+            Err(e @ teams_proto::Error::NotMember { .. }) => {
+                tracing::info!(err = %e, "not a member of the opened chat");
+                self.view.lock().unwrap().not_member = true;
+                self.view.lock().unwrap().loaded = true;
+                self.ui
+                    .unavailable(id.clone(), not_member_text(kind, &id).into());
+                self.mark(|d| d.messages = true);
                 return Ok(());
             }
             Err(e) => return Err(e.into()),
@@ -333,6 +348,24 @@ impl Engine {
         }
         self.prefetch_threads(&id);
         Ok(())
+    }
+
+    /// The newest page of a chat's history (tests can make it fail).
+    async fn newest_page(
+        &self,
+        id: &str,
+    ) -> teams_proto::Result<teams_proto::chatsvc::HistoryPage> {
+        #[cfg(test)]
+        if let Some(e) = self.history_error.lock().unwrap().take() {
+            return Err(e);
+        }
+        self.client.messages(id, None, PAGE as u32).await
+    }
+
+    /// Tests: the next newest-page read of an opened chat fails with `e`.
+    #[cfg(test)]
+    pub(crate) fn test_fail_history(&self, e: teams_proto::Error) {
+        *self.history_error.lock().unwrap() = Some(e);
     }
 
     /// Fetches the open chat's newest page again after a fetch got no answer: a few times, further
@@ -412,6 +445,15 @@ fn channel_listed(kind: ConvKind, teams_known: bool, in_a_team: bool) -> bool {
     kind != ConvKind::Channel || !teams_known || in_a_team
 }
 
+/// What the conversation pane says for a chat whose messages the user may not read.
+fn not_member_text(kind: Option<ConvKind>, id: &str) -> &'static str {
+    if kind == Some(ConvKind::Meeting) || super::call::is_meeting_chat(id) {
+        "You're not in this meeting chat yet. It becomes available after you join the meeting."
+    } else {
+        "You're no longer a member of this conversation."
+    }
+}
+
 /// The chat service's answer for a deleted channel or chat.
 fn is_soft_deleted(err: &str) -> bool {
     err.contains("SoftDeleted") || err.contains("soft-deleted")
@@ -428,6 +470,23 @@ mod deleted_tests {
         // Without the teams (the read failed) nothing is dropped.
         assert!(channel_listed(ConvKind::Channel, false, false));
         assert!(channel_listed(ConvKind::Group, true, false));
+    }
+
+    #[test]
+    fn the_not_member_note_names_the_kind_of_chat() {
+        let meeting =
+            "You're not in this meeting chat yet. It becomes available after you join the meeting.";
+        assert_eq!(
+            not_member_text(Some(ConvKind::Meeting), "19:x@thread.v2"),
+            meeting
+        );
+        assert_eq!(not_member_text(None, "19:meeting_abc@thread.v2"), meeting);
+        let other = "You're no longer a member of this conversation.";
+        assert_eq!(
+            not_member_text(Some(ConvKind::Group), "19:x@thread.v2"),
+            other
+        );
+        assert_eq!(not_member_text(None, "19:x@thread.v2"), other);
     }
 
     #[test]

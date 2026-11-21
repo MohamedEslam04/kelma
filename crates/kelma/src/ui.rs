@@ -332,6 +332,7 @@ impl UiHandle {
     }
 
     fn transient(&self, text: String, info: bool) {
+        let text = crate::backend::util::plain_banner(&text);
         self.run(move |w| {
             let shown: SharedString = text.into();
             w.set_banner_action(SharedString::new());
@@ -368,6 +369,15 @@ impl UiHandle {
     /// The open chat or channel is reading its newest page.
     pub fn loading_latest(&self, on: bool) {
         self.run(move |w| w.set_loading_latest(on));
+    }
+
+    /// The open chat is one the user is not in: `text` replaces its messages and composer (empty
+    /// again when the chat is opened anew).
+    pub fn unavailable(&self, id: String, text: String) {
+        self.run(move |w| {
+            w.set_unavailable_id(id.into());
+            w.set_unavailable_text(text.into());
+        });
     }
 
     pub fn focus(&self) {
