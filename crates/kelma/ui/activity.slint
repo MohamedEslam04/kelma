@@ -5,6 +5,7 @@ import { ActivityRow, Msg } from "types.slint";
 import { Avatar, Icon, IconButton, Pill } from "widgets.slint";
 import { MessageRow } from "message_row.slint";
 import { DirectCallStore } from "call_incoming.slint";
+import { PersonHover } from "people.slint";
 
 component MenuEntry inherits Rectangle {
     in property <string> label;
@@ -112,6 +113,18 @@ component ActivityItem inherits Rectangle {
                 menu.show();
             }
         }
+    }
+
+    // The photo opens the actor's card on hover; a click still opens the item (above the row's
+    // own click area, which would otherwise take the pointer from the photo).
+    if root.data.person != "": photo-hover := PersonHover {
+        x: 12px;
+        y: (root.height - 36px) / 2;
+        width: 36px;
+        height: 36px;
+        person: root.data.person;
+        click-opens: false;
+        activated => { root.clicked(); }
     }
 
     // A missed call: call back or open the chat from the row, as Teams does (above the row's

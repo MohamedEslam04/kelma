@@ -446,3 +446,19 @@ fn a_missed_call_row_offers_call_and_chat() {
     let last: Vec<String> = log.borrow().iter().rev().take(2).cloned().collect();
     assert_eq!(last, ["go-to", "select missed"]);
 }
+
+#[test]
+fn the_photo_of_a_feed_row_opens_its_actors_card() {
+    let (app, _state, _log) = feed();
+    let row = |id: &str, person: &str| ActivityRow {
+        id: id.into(),
+        title: "Someone mentioned you".into(),
+        person: person.into(),
+        ..Default::default()
+    };
+    app.set_activity_items(ModelRc::new(VecModel::from(vec![
+        row("with", "8:orgid:actor"),
+        row("without", ""),
+    ])));
+    assert_eq!(ids(&app, "ActivityItem::photo-hover").len(), 1);
+}

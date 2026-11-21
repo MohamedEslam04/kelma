@@ -29,6 +29,7 @@ pub fn row(d: ActivityData) -> ActivityRow {
         location: d.location.into(),
         rtl_preview: d.rtl_preview,
         call_mri: d.call_mri.into(),
+        person: d.person.into(),
     }
 }
 

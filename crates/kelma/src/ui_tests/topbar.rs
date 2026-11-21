@@ -254,6 +254,7 @@ fn typing_asks_for_suggestions_and_arrow_keys_choose_one() {
     ui.topbar_suggestions(
         "sa".into(),
         vec![SuggestData {
+            person: String::new(),
             kind: "person",
             id: "p1".into(),
             title: "Sara Hassan".into(),
@@ -285,6 +286,7 @@ fn a_channel_suggestion_opens_the_channel_in_the_teams_view() {
     UiHandle::new(app.as_weak()).topbar_suggestions(
         "gen".into(),
         vec![SuggestData {
+            person: String::new(),
             kind: "channel",
             id: "c1".into(),
             title: "Platform › General".into(),
@@ -635,6 +637,14 @@ fn typing_a_name_lists_the_people_chats_and_channels_of_the_cache() {
     type_text(&h.app, "sara");
     assert_eq!(row_kinds(&h.app), ["person", "search"]);
     assert_eq!(row_titles(&h.app)[0], "Sara Hassan");
+    // The photo knows its person, so it opens the hover card like the chat list's.
+    let person = tb(&h.app).get_rows().iter().next().unwrap().person;
+    assert!(person.starts_with("8:orgid:"), "{person}");
+    assert_eq!(
+        ids(&h.app, "DropRow::photo-hover").len(),
+        1,
+        "only the person row has a photo to rest on"
+    );
     // A group chat and a channel too.
     tb(&h.app).set_input("".into());
     type_text(&h.app, "team");

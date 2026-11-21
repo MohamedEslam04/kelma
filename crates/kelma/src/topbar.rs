@@ -219,6 +219,8 @@ pub struct Row {
     pub time: String,
     /// A message hit whose text runs right to left.
     pub rtl: bool,
+    /// A person row: who the photo's hover card is for ("" for the rest).
+    pub person: String,
 }
 
 impl Row {
@@ -235,6 +237,7 @@ impl Row {
             snippet: String::new(),
             time: String::new(),
             rtl: false,
+            person: String::new(),
         }
     }
 }
@@ -293,6 +296,7 @@ pub fn rows(
             subtitle: s.subtitle.clone(),
             initials: s.initials.clone(),
             color: s.color,
+            person: s.person.clone(),
             section: if i == 0 { "Suggestions" } else { "" },
             ..Row::plain(s.kind, &s.id, s.title.clone())
         })
@@ -508,6 +512,7 @@ mod tests {
             subtitle: "Person".into(),
             initials: "SH".into(),
             color: 1,
+            person: String::new(),
         }
     }
 

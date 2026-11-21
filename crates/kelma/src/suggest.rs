@@ -17,6 +17,8 @@ pub struct SuggestData {
     pub subtitle: String,
     pub initials: String,
     pub color: u32,
+    /// A person row: who the photo's hover card is for ("" for the rest; the engine fills it).
+    pub person: String,
 }
 
 /// Suggestions per kind.
@@ -84,6 +86,7 @@ pub fn suggest(convs: &[ConversationRow], query: &str) -> Vec<SuggestData> {
             },
             initials: initials(&c.title),
             color: color_for(&c.id),
+            person: String::new(),
         }));
     }
     out

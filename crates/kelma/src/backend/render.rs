@@ -174,7 +174,7 @@ impl Engine {
         None
     }
 
-    fn other_member(&self, conv_id: &str) -> Option<String> {
+    pub(super) fn other_member(&self, conv_id: &str) -> Option<String> {
         one_on_one_members(conv_id)
             .into_iter()
             .find(|m| m != &self.me)
@@ -273,8 +273,9 @@ impl Engine {
                     .unwrap_or_default(),
                 _ => String::new(),
             };
+            // The own notes chat shows our photo, which opens our card like any 1:1 row's.
             let person = match r.kind {
-                ConvKind::OneOnOne => avatar_mri.clone().unwrap_or_default(),
+                ConvKind::OneOnOne | ConvKind::Notes => avatar_mri.clone().unwrap_or_default(),
                 _ => String::new(),
             };
             let data = ChatData {
@@ -392,12 +393,16 @@ impl Engine {
             return;
         };
         let row = self.store.lock().unwrap().conversation(&id).ok().flatten();
+        // A channel always reads "Team › Channel" once its team is known, whatever title it was
+        // opened with (the restored last channel and the chat list pass none or the plain name).
         let (title, kind) = match &row {
             Some(r) => (
-                if title_override.is_empty() {
-                    r.title.clone()
-                } else {
-                    title_override.clone()
+                match (&r.kind, &r.team_name) {
+                    (ConvKind::Channel, Some(t)) if !t.is_empty() => {
+                        format!("{t} › {}", r.title)
+                    }
+                    _ if title_override.is_empty() => r.title.clone(),
+                    _ => title_override.clone(),
                 },
                 r.kind,
             ),

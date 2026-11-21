@@ -169,6 +169,27 @@ fn the_teams_page_opens_the_last_channel_or_asks_for_one_never_a_chat() {
     assert!(find_label(&h.app, "Pick a channel").is_empty());
 }
 
+/// A channel's header reads "Team › Channel" however it was opened: with the plain name (the
+/// restored last channel has no title), with no title (the chat list) or while it is already open.
+#[test]
+fn a_channel_header_always_reads_team_then_channel() {
+    let h = Harness::new();
+    h.runner()(Cmd::SelectChannel(TECH.into(), "tech only".into()));
+    assert_eq!(h.app.get_current_title(), TECH_TITLE);
+    assert_eq!(h.app.get_last_channel_title(), TECH_TITLE);
+    h.select(NOTES);
+    h.select(TECH);
+    assert_eq!(h.app.get_current_title(), TECH_TITLE);
+    h.select(NOTES);
+    h.runner()(Cmd::SelectChannel(TECH.into(), String::new()));
+    assert_eq!(h.app.get_current_title(), TECH_TITLE);
+    // Already open as a plain chat row, then picked from the Teams page.
+    h.select(NOTES);
+    h.select(TECH);
+    h.runner()(Cmd::SelectChannel(TECH.into(), TECH_TITLE.into()));
+    assert_eq!(h.app.get_current_title(), TECH_TITLE);
+}
+
 /// A channel opened on the Teams page does not replace the chat of the Chat page: Chat goes back
 /// to the last chat, Teams to the last channel.
 #[test]
