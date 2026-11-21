@@ -103,7 +103,10 @@ impl Client {
         if let Some(b) = before_ms {
             url.push_str(&format!("&endTime={}", b - 1));
         }
-        let v = self.json("messages", Method::GET, &url, None).await?;
+        let v = self
+            .json("messages", Method::GET, &url, None)
+            .await
+            .map_err(Error::into_not_member)?;
         let raw = v
             .get("messages")
             .and_then(Value::as_array)

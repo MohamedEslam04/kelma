@@ -65,7 +65,7 @@ pub(crate) mod storyline;
 mod sync;
 mod team_photo;
 mod unread;
-mod util;
+pub(crate) mod util;
 mod video_clips;
 mod voice_messages;
 
@@ -244,6 +244,9 @@ struct View {
     opening: bool,
     /// Set once the newest page of the opened chat is in the store.
     loaded: bool,
+    /// The open chat refused its history because the user is not in it (`open`): it shows a
+    /// calm note instead of messages and a composer, and opening it again asks once more.
+    not_member: bool,
     /// The list is at (or about to follow) the newest message.
     at_bottom: bool,
     /// The first message shown before an older page was added, for the list to keep in place.
@@ -323,6 +326,9 @@ pub struct Engine {
     pub focused: Arc<AtomicBool>,
     /// Demo mode: no network, so network errors are not shown.
     pub offline: AtomicBool,
+    /// Tests: the error the next newest-page read of an opened chat answers with.
+    #[cfg(test)]
+    history_error: Mutex<Option<teams_proto::Error>>,
     /// The live connection is up; while it is not, the outbox waits.
     connected: AtomicBool,
     /// One outbox flush at a time keeps messages in order.
@@ -399,6 +405,8 @@ impl Engine {
             name_requests: Mutex::new(HashSet::new()),
             focused: Arc::new(AtomicBool::new(true)),
             offline: AtomicBool::new(false),
+            #[cfg(test)]
+            history_error: Mutex::new(None),
             connected: AtomicBool::new(true),
             flush_lock: tokio::sync::Mutex::new(()),
             retry_pending: AtomicBool::new(false),

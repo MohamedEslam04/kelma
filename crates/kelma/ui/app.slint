@@ -180,6 +180,12 @@ export component AppWindow inherits Window {
     in property <bool> loading-older;
     // The open chat or channel is reading its newest page (what the store had already shows).
     in property <bool> loading-latest;
+    // The open chat is one the user is not a member of (a meeting they have not joined): the pane
+    // shows the text instead of the messages and the composer. Tied to the chat's id so a chat
+    // switch drops it at once.
+    in property <string> unavailable-id;
+    in property <string> unavailable-text;
+    property <bool> unavailable: root.unavailable-text != "" && root.unavailable-id == root.current-id && root.thread-root == "";
     in-out property <string> reply-author;
     in-out property <string> reply-preview;
     in-out property <string> editing-id;
@@ -1290,6 +1296,24 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+                        if root.unavailable: Rectangle {
+                            z: 7;
+                            background: Theme.main;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 12px;
+                                padding-left: 24px;
+                                padding-right: 24px;
+                                Image { source: @image-url("icons/chat.svg"); colorize: Theme.border; width: 72px; height: 72px; }
+                                Text {
+                                    text: root.unavailable-text;
+                                    color: Theme.fg-subtle;
+                                    font-size: 14px * Theme.font-scale;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
                         if root.loading-older: Rectangle {
                             y: 8px;
                             height: 24px;
@@ -1346,7 +1370,7 @@ export component AppWindow inherits Window {
                     if root.posts-mode && ChannelStore.compose-open: AnnouncementBar { }
 
                     // Composer
-                    if !root.posts-mode || ChannelStore.compose-open: Composer {
+                    if (!root.posts-mode || ChannelStore.compose-open) && !root.unavailable: Composer {
                         vertical-stretch: 0;
                         window-width: root.width;
                         current-is-channel: root.current-is-channel;

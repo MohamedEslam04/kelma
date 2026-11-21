@@ -17,6 +17,11 @@ pub enum Error {
         status: u16,
         body: String,
     },
+    /// The chat service refused a read because the signed-in user is not in the thread: a
+    /// meeting chat they were invited to but have not joined, or a chat they left. Built by
+    /// [`Error::into_not_member`] from the 403 answer, which is raw JSON no banner should show.
+    #[error("{context}: not a member of the conversation")]
+    NotMember { context: &'static str },
     #[error("auth: {0}")]
     Auth(String),
     #[error("protocol: {0}")]
@@ -48,7 +53,28 @@ impl Error {
     }
 }
 
+/// Whether a 403 answer's body is the chat service's "you are not a member of this thread":
+/// error code 209 with the sub code `AclCheckFailed` ("The initiator ... is not a member of ...").
+fn is_not_member_body(body: &str) -> bool {
+    body.contains("AclCheckFailed")
+        || body.contains("\"errorCode\":209")
+        || body.contains("is not a member of")
+}
+
 impl Error {
+    /// Turns a 403 that says the user is not in the thread into [`Error::NotMember`]; any other
+    /// error comes back unchanged.
+    pub fn into_not_member(self) -> Self {
+        match self {
+            Error::Status {
+                context,
+                status: 403,
+                body,
+            } if is_not_member_body(&body) => Error::NotMember { context },
+            e => e,
+        }
+    }
+
     /// True when the request may succeed later without changes: no connection, a timeout, a
     /// dropped socket or a temporary server answer. False for rejections such as 400 or 403.
     pub fn is_transient(&self) -> bool {
@@ -76,6 +102,52 @@ mod tests {
         assert!(!Error::Protocol("x".into()).is_transient());
         assert!(!Error::Auth("x".into()).is_transient());
         assert!(!Error::NotSignedIn.is_transient());
+    }
+
+    // The answer for a meeting chat the user was invited to and has not joined (made-up ids).
+    const NOT_A_MEMBER: &str = r#"{"errorCode":209,"message":"{\"subCode\":\"AclCheckFailed\",\"details\":\"The initiator 8:orgid:00000000-0000-0000-0000-000000000000 is not a member of the thread 19:meeting_abc@thread.v2\"}"}"#;
+
+    #[test]
+    fn a_403_for_a_thread_the_user_is_not_in_is_a_not_member_error() {
+        let e = Error::status("messages", 403, NOT_A_MEMBER).into_not_member();
+        assert!(
+            matches!(
+                e,
+                Error::NotMember {
+                    context: "messages"
+                }
+            ),
+            "{e:?}"
+        );
+        assert!(!e.is_transient());
+        // Nothing of the raw answer is left in the text.
+        let shown = e.to_string();
+        assert!(!shown.contains("HTTP") && !shown.contains('{'), "{shown}");
+        // The cut body (400 characters) still reads as one.
+        let cut = Error::status(
+            "messages",
+            403,
+            &format!("{NOT_A_MEMBER}{}", "x".repeat(500)),
+        );
+        assert!(matches!(cut.into_not_member(), Error::NotMember { .. }));
+        let by_code = Error::status("messages", 403, r#"{"errorCode":209}"#);
+        assert!(matches!(by_code.into_not_member(), Error::NotMember { .. }));
+    }
+
+    #[test]
+    fn other_answers_are_not_turned_into_not_member() {
+        for (status, body) in [
+            (403, r#"{"errorCode":403,"message":"Forbidden"}"#),
+            (404, NOT_A_MEMBER),
+            (500, ""),
+        ] {
+            let e = Error::status("messages", status, body).into_not_member();
+            assert!(matches!(e, Error::Status { .. }), "{status}: {e:?}");
+        }
+        assert!(matches!(
+            Error::NotSignedIn.into_not_member(),
+            Error::NotSignedIn
+        ));
     }
 
     #[test]
