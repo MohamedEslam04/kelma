@@ -35,6 +35,8 @@ pub struct ChatData {
     pub person: String,
     /// A private channel (the list shows a lock after its name).
     pub private: bool,
+    /// `chat` (1:1), `notes`, `group`, `meeting` or `channel`: the row's avatar style.
+    pub kind: &'static str,
 }
 
 /// A chip above the composer.

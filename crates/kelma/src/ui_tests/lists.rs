@@ -825,3 +825,191 @@ fn a_team_in_the_teams_view_has_the_team_menu_on_its_more_button_and_right_click
         "team-show 19:team1@thread.tacv2|0"
     );
 }
+
+// ---- meeting chats and row kinds ----------------------------------------------------------
+
+/// A meeting chat `ago_min` minutes old whose last message is `preview` ("" for none).
+fn meeting(id: &str, title: &str, ago_min: i64, preview: &str) -> ConversationRow {
+    ConversationRow {
+        id: id.into(),
+        kind: ConvKind::Meeting,
+        title: title.into(),
+        team_id: None,
+        team_name: None,
+        last_activity_ms: teams_proto::time::now_ms() - ago_min * 60_000,
+        last_preview: preview.into(),
+        unread: false,
+        favorite: false,
+        read_horizon_ms: 0,
+    }
+}
+
+/// The lists harness, tall enough for the whole list, with more meeting chats: seven that were
+/// written in (one a "Meet now"), and one nobody wrote in.
+fn meetings_harness() -> Harness {
+    let h = harness();
+    h.app
+        .window()
+        .set_size(slint::LogicalSize::new(1200., 2400.));
+    h.engine.test_store(|st| {
+        for (n, title) in ["Design sync", "Budget call", "Retro", "Kickoff", "Weekly"]
+            .iter()
+            .enumerate()
+        {
+            let id = format!("19:meeting_{n}@thread.v2");
+            st.upsert_conversation(&meeting(&id, title, 10 + n as i64 * 10, "See you there"))
+                .unwrap();
+        }
+        st.upsert_conversation(&meeting(MEET_NOW, "Meet now", 5, "Let's start"))
+            .unwrap();
+        st.upsert_conversation(&meeting(EMPTY_MEETING, "Planning sync", 3, ""))
+            .unwrap();
+    });
+    h.runner()(Cmd::SetFilter("all".into()));
+    h
+}
+
+const MEET_NOW: &str = "19:meetnow@thread.v2";
+const EMPTY_MEETING: &str = "19:emptymeeting@thread.v2";
+
+fn meeting_rows(app: &AppWindow) -> Vec<String> {
+    app.get_chats_main()
+        .iter()
+        .filter(|c| c.section == "meetings")
+        .map(|c| c.title.to_string())
+        .collect()
+}
+
+#[test]
+fn meeting_chats_gather_in_a_collapsed_meetings_section_that_shows_five_then_all() {
+    let h = meetings_harness();
+    // Newest first, out of the Chats rows, after them in the main list.
+    assert_eq!(
+        meeting_rows(&h.app),
+        [
+            "Sprint review",
+            "Meet now",
+            "Design sync",
+            "Budget call",
+            "Retro",
+            "Kickoff",
+            "Weekly"
+        ]
+    );
+    let main: Vec<_> = h.app.get_chats_main().iter().collect();
+    let first = main.iter().position(|c| c.section == "meetings").unwrap();
+    assert!(main[first..].iter().all(|c| c.section == "meetings"));
+    assert!(main[..first].iter().all(|c| c.kind != "meeting"));
+    assert_eq!(ls(&h.app).get_meetings_count(), 7);
+
+    // Collapsed by default: the header shows, its rows do not.
+    assert!(!ls(&h.app).get_meetings_open());
+    assert_eq!(find_label(&h.app, "Meetings, collapsed").len(), 1);
+    assert!(find_label(&h.app, "Sprint review").is_empty());
+    assert!(find_label(&h.app, "Meeting chat").is_empty());
+
+    // Opened: the newest five and "See all".
+    click(&find_label(&h.app, "Meetings, collapsed")[0]);
+    assert!(ls(&h.app).get_meetings_open());
+    assert_eq!(find_label(&h.app, "Meeting chat").len(), 5);
+    assert_eq!(find_label(&h.app, "Retro").len(), 1);
+    assert!(find_label(&h.app, "Kickoff").is_empty());
+    click(&find_label(&h.app, "See all (7)")[0]);
+    assert_eq!(find_label(&h.app, "Meeting chat").len(), 7);
+    assert_eq!(find_label(&h.app, "Weekly").len(), 1);
+    click(&find_label(&h.app, "Show less")[0]);
+    assert_eq!(find_label(&h.app, "Meeting chat").len(), 5);
+
+    // "Collapse all sections" closes it with the others.
+    let log = wire(&h);
+    let more = ElementHandle::find_by_element_id(&h.app, "IconButton::touch")
+        .filter(|b| b.absolute_position().x < 400. && b.absolute_position().y < 120.)
+        .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
+        .expect("list menu button");
+    click(&more);
+    click(&find_label(&h.app, "Collapse all sections")[0]);
+    assert_eq!(*log.borrow(), vec!["collapse-all "]);
+    assert!(!ls(&h.app).get_meetings_open());
+}
+
+#[test]
+fn an_empty_meeting_chat_is_left_out_of_the_list_but_the_filter_and_search_find_it() {
+    let h = meetings_harness();
+    let ids = |h: &Harness| -> Vec<String> { h.chats().iter().map(|c| c.id.to_string()).collect() };
+    assert!(!ids(&h).contains(&EMPTY_MEETING.to_string()));
+    assert!(ids(&h).contains(&MEET_NOW.to_string()));
+
+    // The Meeting chats filter lists every meeting chat, among the chats (no section header).
+    h.runner()(Cmd::SetFilter("meetings".into()));
+    let rows = h.chats();
+    assert_eq!(rows.len(), 8);
+    assert!(rows.iter().any(|c| c.id == EMPTY_MEETING));
+    assert!(
+        rows.iter()
+            .all(|c| c.kind == "meeting" && c.section == "chats")
+    );
+    assert_eq!(ls(&h.app).get_meetings_count(), 0);
+    assert!(find_label(&h.app, "Meetings, collapsed").is_empty());
+
+    // Search finds it too.
+    h.runner()(Cmd::SetFilter("all".into()));
+    h.runner()(Cmd::Search("Planning".into()));
+    assert_eq!(ids(&h), [EMPTY_MEETING]);
+    h.runner()(Cmd::Search(String::new()));
+
+    // A favorite meeting chat stays in Favorites, empty or not.
+    h.engine
+        .test_store(|st| st.set_favorite(EMPTY_MEETING, true).unwrap());
+    h.runner()(Cmd::SetFilter("all".into()));
+    assert!(ids_in(h.app.get_chats_favorites()).contains(&EMPTY_MEETING.to_string()));
+    assert!(!meeting_rows(&h.app).contains(&"Planning sync".to_string()));
+}
+
+#[test]
+fn a_meet_now_chat_names_its_day_and_a_titled_one_keeps_its_line() {
+    let h = meetings_harness();
+    let row = |id: &str| h.chats().into_iter().find(|c| c.id == id).unwrap();
+    let meet_now = row(MEET_NOW);
+    assert_eq!(meet_now.title, "Meet now");
+    let (day, rest) = meet_now
+        .preview
+        .split_once(" · ")
+        .unwrap_or_else(|| panic!("a day first: {:?}", meet_now.preview));
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    assert!(
+        months.iter().any(|m| day.starts_with(m)),
+        "a day like \"Nov 10\": {day:?}"
+    );
+    assert_eq!(rest, "Let's start");
+    assert_eq!(row("19:meeting_0@thread.v2").preview, "See you there");
+    assert_eq!(row(MEETING).preview, "Recording started");
+}
+
+#[test]
+fn each_kind_of_row_has_its_own_avatar() {
+    let h = meetings_harness();
+    click(&find_label(&h.app, "Meetings, collapsed")[0]);
+    let kind = |id: &str| {
+        h.chats()
+            .into_iter()
+            .find(|c| c.id == id)
+            .map(|c| c.kind.to_string())
+            .unwrap()
+    };
+    assert_eq!(kind(AHMED), "chat");
+    assert_eq!(kind(NOTES), "notes");
+    assert_eq!(kind(BACKEND), "group");
+    assert_eq!(kind(MEETING), "meeting");
+    assert_eq!(kind(GENERAL), "channel");
+    // Drawn: a people glyph per group chat, a calendar per meeting chat, a "#" square per
+    // channel; people keep their photo or initials.
+    let count = |k: &str| h.chats().iter().filter(|c| c.kind == k).count();
+    assert_eq!(find_label(&h.app, "Group chat").len(), count("group"));
+    assert_eq!(find_label(&h.app, "Meeting chat").len(), 5);
+    assert_eq!(find_label(&h.app, "Channel").len(), count("channel"));
+    // A channel without its team's picture shows the team's initials, not the channel's.
+    let general = h.chats().into_iter().find(|c| c.id == GENERAL).unwrap();
+    assert_eq!(general.initials, "CL");
+}
