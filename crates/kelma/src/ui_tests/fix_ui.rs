@@ -281,3 +281,15 @@ fn point_at_el(app: &AppWindow, e: &ElementHandle) {
     let (p, s) = (e.absolute_position(), e.size());
     move_to(app, p.x + s.width / 2., p.y + s.height / 2.);
 }
+
+#[test]
+fn the_own_notes_row_opens_our_card_from_its_photo() {
+    let h = Harness::new();
+    h.runner()(Cmd::SetFilter("all".into()));
+    let notes = h
+        .chats()
+        .into_iter()
+        .find(|c| c.id == NOTES)
+        .expect("the notes row");
+    assert_eq!(notes.person, demo::ME);
+}

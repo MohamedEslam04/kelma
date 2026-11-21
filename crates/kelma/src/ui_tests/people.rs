@@ -1105,9 +1105,10 @@ fn resting_on_a_one_on_one_photo_in_the_chat_list_opens_the_persons_card() {
     let h = Harness::new();
     let _log = wire(&h);
     h.select(NOTES);
+    // The notes row (our own photo) is the first row with a photo; a 1:1 chat comes after it.
     let photo = ids(&h.app, "ChatItem::photo-hover")
         .into_iter()
-        .next()
+        .last()
         .expect("a 1:1 chat with a photo in the list");
     let (p, s) = (photo.absolute_position(), photo.size());
     point_at(&h.app, &photo);

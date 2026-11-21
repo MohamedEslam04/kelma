@@ -6,6 +6,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Avatar, Icon } from "widgets.slint";
 import { SettingsStore } from "settings_store.slint";
+import { PersonHover } from "people.slint";
 import { SFont, ZoomRow } from "settings_widgets.slint";
 
 // One row of the dropdown. `kind`: command | person | chat | channel | message | search | recent
@@ -24,6 +25,8 @@ export struct TopRow {
     snippet-plain: string,
     time: string,
     rtl: bool,
+    // A person row: whose hover card the photo opens.
+    person: string,
     avatar: image,
     has-avatar: bool,
     // Where the row's body starts in the list (below its group's heading).
@@ -350,6 +353,17 @@ component DropRow inherits Rectangle {
                 }
             }
             touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+            // The photo opens the person's card on hover; a click still picks the row. After the
+            // row's own TouchArea, which would otherwise take the pointer from the photo.
+            if root.data.kind == "person" && root.data.person != "": photo-hover := PersonHover {
+                x: 12px;
+                y: 6px;
+                width: 24px;
+                height: 24px;
+                person: root.data.person;
+                click-opens: false;
+                activated => { root.clicked(); }
+            }
         }
     }
 }

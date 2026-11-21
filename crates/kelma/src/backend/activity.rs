@@ -264,6 +264,7 @@ pub(crate) fn row_data(
             ActivityKind::MissedCall => item.actor_mri.clone(),
             _ => String::new(),
         },
+        person: item.actor_mri.clone(),
     }
 }
 
@@ -584,6 +585,12 @@ mod tests {
         );
         let mention = item("2", ActivityKind::Mention, "u1", "hi", 1, false);
         assert_eq!(row_data(&mention, String::new(), None).call_mri, "");
+    }
+
+    #[test]
+    fn every_row_names_its_actor_for_the_hover_card() {
+        let mention = item("2", ActivityKind::Mention, "u1", "hi", 1, false);
+        assert_eq!(row_data(&mention, String::new(), None).person, "8:orgid:u1");
     }
 
     fn item(

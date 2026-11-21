@@ -18,7 +18,10 @@ impl Engine {
             .unwrap()
             .conversations(ConvFilter::All, ALL)
             .unwrap_or_default();
-        let rows = suggest::suggest(&convs, &query);
+        let mut rows = suggest::suggest(&convs, &query);
+        for r in rows.iter_mut().filter(|r| r.kind == "person") {
+            r.person = self.other_member(&r.id).unwrap_or_default();
+        }
         self.ui.topbar_suggestions(query, rows);
     }
 

@@ -112,6 +112,7 @@ fn to_row(r: &Row, top: f32, messages: &[HitData]) -> TopRow {
         snippet_plain: s(r.snippet.replace("**", "")),
         time: s(r.time.as_str()),
         rtl: r.rtl,
+        person: s(r.person.as_str()),
         avatar,
         has_avatar,
         top,
