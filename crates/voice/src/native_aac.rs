@@ -3,7 +3,9 @@
 //! Both write the file at `output` (MP4 needs a seekable output); AudioToolbox brands it `mp42`
 //! as ffmpeg does, Media Foundation with its own default brand.
 
+#[cfg(any(windows, target_os = "macos"))]
 use crate::{Clip, Error, Result};
+#[cfg(any(windows, target_os = "macos"))]
 use std::path::Path;
 
 /// Sample rate of the encoded stream (what Teams voice messages use).
