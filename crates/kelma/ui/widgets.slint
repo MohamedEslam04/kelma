@@ -109,6 +109,7 @@ export component Pill inherits Rectangle {
     background: active ? #3b3d6b : (t.has-hover ? Theme.surface-hover : transparent);
     accessible-role: button;
     accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
     HorizontalLayout {
         padding-left: 10px;
         padding-right: 10px;
