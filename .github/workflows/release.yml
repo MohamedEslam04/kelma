@@ -121,7 +121,7 @@ jobs:
           mkdir -p pack
           cp "target/release/$BIN" LICENSE pack/
           bash packaging/release/velopack.sh linux pack "$BIN" assets/icons/app-512.png \
-            --categories 'Network;Chat;InstantMessaging;'
+            --runtime linux-x64 --categories 'Network;Chat;InstantMessaging;'
       - name: Smoke test (the packaged AppImage)
         run: |
           img=$(realpath "$(ls velopack-out/*.AppImage | head -1)")
@@ -183,7 +183,8 @@ jobs:
           else
             echo "::warning::No Windows signing certificate (WINDOWS_CERT_PFX): Setup.exe is unsigned and SmartScreen warns on first install."
           fi
-          bash packaging/release/velopack.sh win stage "$BIN.exe" assets/icons/app.ico ${sign[@]+"${sign[@]}"}
+          # Without --runtime vpk assumes x86 and ships the 32-bit Setup.exe stub.
+          bash packaging/release/velopack.sh win stage "$BIN.exe" assets/icons/app.ico --runtime win-x64 ${sign[@]+"${sign[@]}"}
           rm -f "$RUNNER_TEMP/cert.pfx"
       - name: Smoke test (the packaged app)
         run: |
@@ -275,7 +276,8 @@ jobs:
             # Apple Silicon refuses unsigned code: an ad-hoc signature at least.
             codesign --force --deep --sign - "bundle/$APP_NAME.app"
           fi
-          bash packaging/release/velopack.sh ${{ matrix.channel }} "bundle/$APP_NAME.app" "$BIN" assets/icons/app.icns ${sign[@]+"${sign[@]}"}
+          bash packaging/release/velopack.sh ${{ matrix.channel }} "bundle/$APP_NAME.app" "$BIN" assets/icons/app.icns \
+            --runtime ${{ matrix.channel }} ${sign[@]+"${sign[@]}"}
       - name: Smoke test (the packaged app)
         run: |
           mkdir smoke
