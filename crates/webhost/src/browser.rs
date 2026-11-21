@@ -163,9 +163,10 @@ fn process_alive(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
-    // SAFETY: signal 0 only checks that the process exists. EPERM: it exists, owned by another user.
-    unsafe { libc::kill(pid, 0) == 0 }
-    || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    // SAFETY: signal 0 only checks that the process exists.
+    let sent = unsafe { libc::kill(pid, 0) } == 0;
+    // EPERM: it exists, owned by another user.
+    sent || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// How to stop the browser.
