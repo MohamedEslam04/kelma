@@ -1,5 +1,5 @@
 //! The write tools. `draft_*` tools change nothing in Teams: they freeze what would happen and
-//! return a preview. `send_draft` does one draft, once.
+//! return a preview. `send_draft` does one approved draft, once.
 
 use super::Server;
 use super::drafts::{Action, DraftError, LIFETIME_MS};

@@ -1,4 +1,4 @@
-//! The read tools. None of them changes anything in Teams.
+//! The read tools. None of them changes anything in Teams or in the server.
 
 use super::Server;
 use super::guard::{check_chat, is_chat, kind_name};
